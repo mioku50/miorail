@@ -21,7 +21,7 @@ function fixture(): StillRepaySnapshotV1 {
   assert(known.ok); known.market.params = { ...PARAMS };
   s.morpho.get('cbBTC')!.info.params = { ...PARAMS };
   s.balances.set(ADDRESSES.usdc.toLowerCase(), ok(4_000_000n));
-  return { universe: u, snapshot: s, chainId: 8453, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1 };
+  return { universe: u, snapshot: s, chainId: 8453, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1, loanAllowanceToMorpho: 7n };
 }
 const read = (f: StillRepaySnapshotV1) => readRepayStandingV1({ collateralTokenAddress: ADDRESSES.cbbtc, marketId: CRYPTO[0]!.morphoMarket, walletAddress: WALLET,
   deps: { now: () => NOW, snapshot: async address => { assert.equal(address, WALLET); return f; } } });
@@ -39,7 +39,25 @@ describe('Repay reads one exact registered market without borrowing gates', () =
     assert.equal(r.debtAssets, toAssetsUpV1(1_000_000n, accrued.totalBorrowAssets, accrued.totalBorrowShares));
     assert.equal(r.walletLoanAssets, 4_000_000n); assert.equal(r.walletCollateralAssets, 200_000n);
     assert.equal(r.blueBundlesRuntimeHash, STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1);
+    assert.equal(r.loanAllowanceToMorphoAssets, 7n);
     assert.equal(result.readAt, NOW.toISOString());
+  });
+  it('needs no bundle since a repayment is the wallet’s own calls to Morpho Blue (2026-11-07), and keeps an unread allowance unread', async () => {
+    for (const hash of [null, `0x${'1'.repeat(64)}` as const]) {
+      const f = fixture(); f.blueBundlesRuntimeHash = hash; delete f.loanAllowanceToMorpho;
+      const result = await read(f); assert.equal(result.state, 'read');
+      if (result.state === 'read') assert.equal(result.standing.loanAllowanceToMorphoAssets, null);
+    }
+  });
+  it('reads a repayment in steps again only at a block that holds the step that just landed', async () => {
+    const seen: Array<bigint | undefined> = [];
+    const at = (atLeastBlock: bigint) => readRepayStandingV1({ collateralTokenAddress: ADDRESSES.cbbtc, marketId: CRYPTO[0]!.morphoMarket, walletAddress: WALLET, atLeastBlock,
+      deps: { now: () => NOW, snapshot: async (_address, least) => { seen.push(least); return fixture(); } } });
+    const block = fixture().snapshot.block.number;
+    assert.equal((await at(block)).state, 'read');
+    const behind = await at(block + 1n);
+    assert.equal(behind.state === 'refused' && behind.refusal, 'repay_market_unread');
+    assert.deepEqual(seen, [block, block + 1n]);
   });
   it('permits repayment state with an unread oracle, no liquidity and debt above a new-loan limit', async () => {
     const f = fixture(); const source = f.snapshot.morpho.get('cbBTC')!;
@@ -66,12 +84,11 @@ describe('Repay reads one exact registered market without borrowing gates', () =
       if (result.state === 'refused') assert.equal(result.refusal, 'repay_balance_unread');
     });
   }
-  for (const mutation of ['chain', 'runtime', 'market', 'loan', 'params', 'clock', 'shares', 'rate', 'fee'] as const) {
+  for (const mutation of ['chain', 'market', 'loan', 'params', 'clock', 'shares', 'rate', 'fee'] as const) {
     it(`refuses inconsistent ${mutation} instead of treating it as no debt`, async () => {
       const f = fixture(); const source = f.snapshot.morpho.get('cbBTC')!;
       assert(source.market.ok && source.position.ok);
       if (mutation === 'chain') f.chainId = 1;
-      if (mutation === 'runtime') f.blueBundlesRuntimeHash = `0x${'1'.repeat(64)}`;
       if (mutation === 'market') source.info.id = `0x${'1'.repeat(64)}`;
       if (mutation === 'loan') source.info.params.loanToken = ADDRESSES.weth;
       if (mutation === 'params') source.info.params.oracle = `0x${'3'.repeat(40)}`;

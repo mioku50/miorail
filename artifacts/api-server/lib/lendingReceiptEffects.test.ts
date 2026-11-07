@@ -5,6 +5,7 @@ import { hashApprovedCallsV1 } from '@mioagent/route-domain';
 import type { VerifiedReceiptLogV1, VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_WITHDRAW_COLLATERAL_ABI_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { morphoDirectBorrowPlanV1, morphoDirectRepayPlanV1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
 import { aaveV4ExecutionEventAbiV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.js';
 import { lendingReceiptVerifierV1, type LendingReceiptPositionV1 } from './lendingReceiptEffects.js';
 import { type LoanExecutionV1 } from './loanExecutionStore.js';
@@ -343,5 +344,101 @@ describe('repay all on Morpho, then the wallet takes its collateral back: what t
     const plain = execution('morpho', 'repay'); Object.assign(plain.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
     const { result } = await check(plain, [...repaid(), withdrawn()], { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n });
     assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_unrequested_collateral_withdrawal');
+  });
+});
+
+// 2026-11-07, the operator: «да делай прямые вызовы для всех кошельков». A Still loan on Morpho is now the
+// wallet's own calls to Morpho Blue: the wallet is the caller of every protocol event, is paid by Morpho Blue
+// itself, and pays Morpho Blue exactly what it repays. One approved as a bundle is read as it was approved.
+describe('the wallet’s own calls to Morpho Blue: what the receipt must show', () => {
+  const CBBTC = CRYPTO[0]!, WETH_MARKET = CRYPTO[1]!.morphoMarket;
+  const PARAMS = { loanToken: ADDRESSES.usdc, collateralToken: CBBTC.token, oracle: '0x663becd10dae6c4a3dcd89f1d76c1174199639b9', irm: '0x46415998764c29ab2a25cbea6254146d50d22687', lltv: 860_000_000_000_000_000n };
+  const WETH_PARAMS = { loanToken: ADDRESSES.usdc, collateralToken: ADDRESSES.weth, oracle: '0xfea2d58cefcb9fcb597723c6bae66ffe4193afe4', irm: '0x46415998764c29ab2a25cbea6254146d50d22687', lltv: 860_000_000_000_000_000n };
+  const withdrawEvents = parseAbi(['event WithdrawCollateral(bytes32 indexed id,address caller,address indexed onBehalf,address indexed receiver,uint256 assets)']);
+  const withCalls = (record: LoanExecutionV1, calls: readonly unknown[]) => { record.run.calls = [...calls] as LoanExecutionV1['run']['calls']; record.run.callsHash = hashApprovedCallsV1(record.run.calls); return record; };
+  const supplied = (caller: string = WALLET, market: string = CBBTC.morphoMarket, assets = 10n): VerifiedReceiptLogV1 => ({ address: ADDRESSES.morpho,
+    topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SupplyCollateral', args: { id: market as Hex, caller: caller as Address, onBehalf: WALLET as Address } }) as Hex[],
+    data: encodeAbiParameters([{ type: 'uint256' }], [assets]) });
+  const LOANED = { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n };
+  function borrowed(): LoanExecutionV1 {
+    const record = execution('morpho', 'borrow'); Object.assign(record.run.facts, { collateralSupplyAssets: '10' });
+    const plan = morphoDirectBorrowPlanV1({ walletAddress: WALLET, marketId: CBBTC.morphoMarket, marketParams: PARAMS, collateralSymbol: 'cbBTC', collateralSupplyAssets: 10n, borrowAssets: 2_000_000n });
+    assert.ok(plan.ok); return withCalls(record, plan.ok ? plan.plan.calls : []);
+  }
+  const loan = (patch: { caller?: string; receiver?: string } = {}) => [transfer(CBBTC.token, WALLET, ADDRESSES.morpho, 10n), supplied(),
+    transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 2_000_000n), morphoEvent('borrow', { caller: WALLET, ...patch })];
+
+  it('a loan: the wallet pledges and borrows itself, and Morpho Blue pays it', async () => {
+    const { result } = await check(borrowed(), loan(), LOANED);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    // The bundle's caller or receiver, or USDC from anyone but Morpho Blue, is not the wallet's own loan.
+    assert.deepEqual((await check(borrowed(), loan({ caller: MORPHO_BLUE_BUNDLES_BASE_V1 }), LOANED)).result, { state: 'mismatched', errorCode: 'loan_protocol_caller_mismatch' });
+    assert.deepEqual((await check(borrowed(), loan({ receiver: MORPHO_BLUE_BUNDLES_BASE_V1 }), LOANED)).result, { state: 'mismatched', errorCode: 'loan_protocol_event_mismatch' });
+    const routed = [...loan().slice(0, 2), transfer(ADDRESSES.usdc, OTHER, WALLET, 2_000_000n), morphoEvent('borrow', { caller: WALLET })];
+    assert.deepEqual((await check(borrowed(), routed, LOANED)).result, { state: 'mismatched', errorCode: 'loan_borrow_source_mismatch' });
+    // The pledge must be exactly the one chosen, and the position must hold it.
+    assert.notEqual((await check(borrowed(), loan().filter((_, i) => i !== 1), LOANED)).result.state, 'matched');
+    assert.notEqual((await check(borrowed(), loan(), { ...LOANED, collateralAssets: 100n })).result.state, 'matched');
+  });
+
+  it('native ETH: the wallet wraps exactly the chosen ETH itself, pledges it and authorizes nobody', async () => {
+    const record = execution('morpho', 'borrow');
+    Object.assign(record.run.facts, { collateralTokenAddress: ADDRESSES.weth.toLowerCase(), collateralSymbol: 'WETH', marketId: WETH_MARKET, collateralSupplyAssets: '10',
+      nativeFunding: { maximumNativeAssets: '10', reserveAssets: '500000000000000', balanceBeforeAssets: '100000000000000000', balanceAfterAssets: '99999999999999990',
+        authorizedBefore: false, feeQuoteState: 'wallet_quote_required' as const } });
+    const plan = morphoDirectBorrowPlanV1({ walletAddress: WALLET, marketId: WETH_MARKET, marketParams: WETH_PARAMS, collateralSymbol: 'WETH', collateralSupplyAssets: 10n, borrowAssets: 2_000_000n, nativeSupply: true });
+    assert.ok(plan.ok); withCalls(record, plan.ok ? plan.plan.calls : []);
+    const wrap = (dst: string = WALLET, wad = 10n): VerifiedReceiptLogV1 => ({ address: ADDRESSES.weth,
+      topics: encodeEventTopics({ abi: morphoEvents, eventName: 'Deposit', args: { dst: dst as Address } }) as Hex[], data: encodeAbiParameters([{ type: 'uint256' }], [wad]) });
+    const grant: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SetAuthorization', args: {
+      caller: WALLET as Address, authorizer: WALLET as Address, authorized: MORPHO_BLUE_BUNDLES_BASE_V1 } }) as Hex[], data: encodeAbiParameters([{ type: 'bool' }], [true]) };
+    const logs = (first = wrap(), extra: VerifiedReceiptLogV1[] = []) => [first, transfer(ADDRESSES.weth, WALLET, ADDRESSES.morpho, 10n), supplied(WALLET, WETH_MARKET),
+      transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 2_000_000n), morphoEvent('borrow', { market: WETH_MARKET, caller: WALLET }), ...extra];
+    // The authorization read at the receipt is still what it was before: nobody was given a right.
+    const AT_RECEIPT = { ...LOANED, nativeAuthorized: false };
+    const { result } = await check(record, logs(), AT_RECEIPT);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    for (const [bad, code] of [[logs(wrap(MORPHO_BLUE_BUNDLES_BASE_V1)), 'loan_native_wrapping_event_mismatch'], [logs(wrap(WALLET, 9n)), 'loan_native_wrapping_event_mismatch'],
+      [logs(wrap(), [grant]), 'loan_native_authorization_mismatch']] as const) {
+      assert.deepEqual((await check(record, bad, AT_RECEIPT)).result, { state: 'mismatched', errorCode: code });
+    }
+    assert.equal((await check(record, logs(), { ...LOANED, nativeAuthorized: true })).result.state, 'unavailable');
+    const bundled = [wrap(), transfer(ADDRESSES.weth, WALLET, ADDRESSES.morpho, 10n), supplied(MORPHO_BLUE_BUNDLES_BASE_V1, WETH_MARKET),
+      transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 2_000_000n), morphoEvent('borrow', { market: WETH_MARKET, caller: WALLET })];
+    assert.deepEqual((await check(record, bundled, AT_RECEIPT)).result, { state: 'mismatched', errorCode: 'loan_native_protocol_source_mismatch' });
+  });
+
+  function repaidAll(back = false): LoanExecutionV1 {
+    const record = execution('morpho', 'repay');
+    Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000', debtAfterAssets: '0', debtAfterShares: '0',
+      ...(back ? { collateralReturnAssets: '100', collateralBeforeAssets: '100', collateralAfterAssets: '0' } : {}) });
+    const plan = morphoDirectRepayPlanV1({ walletAddress: WALLET, marketId: CBBTC.morphoMarket, marketParams: PARAMS, amount: { mode: 'all' }, borrowShares: 300n,
+      maximumAssets: 4_000_000n, repaying: true, ...(back ? { returnCollateralAssets: 100n } : {}) });
+    assert.ok(plan.ok); return withCalls(record, plan.ok ? plan.plan.calls : []);
+  }
+  const repay = (assets = 3_000_000n, caller: string = WALLET) => [transfer(ADDRESSES.usdc, WALLET, ADDRESSES.morpho, assets), morphoEvent('repay', { assets, shares: 300n, caller })];
+
+  it('a repayment: the wallet pays Morpho Blue exactly what it repays, within the cap, and takes nothing back', async () => {
+    const CLOSED = { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n };
+    const { result } = await check(repaidAll(), repay(), CLOSED);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    assert.deepEqual((await check(repaidAll(), repay(3_000_000n, MORPHO_BLUE_BUNDLES_BASE_V1), CLOSED)).result, { state: 'mismatched', errorCode: 'loan_protocol_caller_mismatch' });
+    // More than the cap, a refund, or a debt left: not this repayment.
+    assert.notEqual((await check(repaidAll(), repay(4_000_001n), CLOSED)).result.state, 'matched');
+    assert.notEqual((await check(repaidAll(), [...repay(), transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 1n)], CLOSED)).result.state, 'matched');
+    assert.notEqual((await check(repaidAll(), repay(), { ...CLOSED, debtShares: 1n })).result.state, 'matched');
+  });
+
+  it('repay all, then take the collateral back: the wallet’s own repayment and its own withdrawal', async () => {
+    const withdrawn: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: withdrawEvents, eventName: 'WithdrawCollateral', args: {
+      id: bytes32(CBBTC.morphoMarket), onBehalf: WALLET as Address, receiver: WALLET as Address } }) as Hex[],
+      data: encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [WALLET as Address, 100n]) };
+    const logs = [...repay(), transfer(CBBTC.token, ADDRESSES.morpho, WALLET, 100n), withdrawn];
+    const { result } = await check(repaidAll(true), logs, { debtAssets: 0n, debtShares: 0n, collateralAssets: 0n });
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    if (result.state === 'matched') assert.equal(result.proof.collateralReturnedAssets, '100');
+    // The repayment is in the approved calls, so it must also be in the receipt.
+    const { result: unpaid } = await check(repaidAll(true), logs.slice(2), { debtAssets: 0n, debtShares: 0n, collateralAssets: 0n });
+    assert.equal(unpaid.state === 'mismatched' && unpaid.errorCode, 'loan_protocol_event_not_unique');
   });
 });

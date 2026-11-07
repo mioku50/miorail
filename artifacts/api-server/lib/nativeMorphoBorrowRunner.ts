@@ -4,12 +4,18 @@ import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { TERMS } from '@mioagent/still-engine/policy';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readBorrowStandingV1 } from './stillBorrowStanding.js';
-import { buildNativeMorphoBorrowPlanV1, nativeMorphoFundingRefusalV1 } from './nativeMorphoBorrowPlan.js';
+import { morphoDirectBorrowPlanV1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
+import { NATIVE_MULTICALL_RUNTIME_HASH_V1, NATIVE_WETH_RUNTIME_HASH_V1, nativeMorphoFundingRefusalV1 } from './nativeMorphoBorrowPlan.js';
+import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDirectWords.js';
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 
-export interface NativeMorphoBorrowRequestV1 { walletAddress: string; supplyAssets: bigint; borrowAssets: bigint }
+export interface NativeMorphoBorrowRequestV1 {
+  walletAddress: string; supplyAssets: bigint; borrowAssets: bigint;
+  /** One batch (the default), or one transaction per call for a wallet that cannot send a batch. */
+  delivery?: 'atomic' | 'sequential';
+}
 export interface NativeMorphoBorrowDepsV1 {
   read?: typeof readBorrowStandingV1; chain?: SimulationChainV1; env?: NodeJS.ProcessEnv; now?: () => Date;
 }
@@ -17,7 +23,8 @@ const fail = (refusal: string, detail: string): LendingRunV1 => ({state:'refused
 
 /** Explicit native-only funding. Never substitutes native ETH for a legacy
  * ERC-20 question. Same shared market math, reader, simulator and owned ledger.
- * Bytes are built from the pinned protocol ABI, not an Actions API attestation. */
+ * The wallet wraps exactly the chosen ETH itself, pledges it and borrows, in its
+ * own calls to Morpho Blue (2026-11-07), so no contract is authorized for it. */
 export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, deps: NativeMorphoBorrowDepsV1 = {}): Promise<LendingRunV1> {
   const now = deps.now ?? (()=>new Date());
   const asset = CRYPTO.find(row=>row.id==='ETH')!;
@@ -33,9 +40,18 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
   if (budget) return fail(budget.refusal,budget.detail);
   const draw = morphoStillDrawV1({market:s.market.state,position:s.position,borrowAssets:q.borrowAssets,additionalCollateralAssets:q.supplyAssets});
   if (!draw.ok) return fail(draw.refusal,'The selected loan exceeds the measured Still allowance or available market liquidity.');
-  const plan = buildNativeMorphoBorrowPlanV1({walletAddress:q.walletAddress,params:funding.params,
-    supplyAssets:q.supplyAssets,borrowAssets:q.borrowAssets,deployment:funding.deployment,now:now()});
-  if (!plan.ok) return fail(plan.refusal,plan.detail);
+  // The wrap is WETH's own deposit, and the funding is observed through Multicall3: both runtimes are pinned.
+  const pin = funding.deployment;
+  if (pin.chainId !== 8453 || pin.wethRuntimeHash.toLowerCase() !== NATIVE_WETH_RUNTIME_HASH_V1 || pin.multicallRuntimeHash.toLowerCase() !== NATIVE_MULTICALL_RUNTIME_HASH_V1) {
+    return fail('native_borrow_runtime_unverified','The WETH or observation runtime changed or could not be read.');
+  }
+  const sequential = q.delivery === 'sequential', held = s.collateralAllowanceToMorphoAssets;
+  if (sequential && typeof held !== 'bigint') return fail('native_borrow_standing_unread','This wallet’s WETH allowance to Morpho Blue could not be read, and a loan in steps needs it.');
+  const direct = morphoDirectBorrowPlanV1({walletAddress:q.walletAddress,marketId:asset.morphoMarket,marketParams:funding.params,collateralSymbol:'WETH',
+    collateralSupplyAssets:q.supplyAssets,borrowAssets:q.borrowAssets,nativeSupply:true,
+    ...(sequential ? {delivery:'sequential' as const,allowanceAssets:typeof held==='bigint' ? held : 0n} : {})});
+  if (!direct.ok) return fail(direct.refusal,direct.detail);
+  const plan = { calls: [...direct.plan.calls], steps: direct.plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })) };
   const identity = {marketId:asset.morphoMarket,walletAddress:q.walletAddress.toLowerCase(),loanTokenAddress:ADDRESSES.usdc,
     collateralTokenAddress:asset.token,oracleAddress:funding.params.oracle,collateralSupplyAssets:q.supplyAssets,
     nativeFunding:{balance:funding.balance,authorizedBefore:funding.deployment.authorized}};
@@ -51,15 +67,21 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
   if (answer.response.status!=='success') return fail('native_borrow_simulation_reverted','The atomic wrap, collateral deposit or loan reverted in simulation.');
   const changes = answer.response.assetChanges;
   if (!changes || changes.status!=='available') return fail('native_borrow_effects_unread','The simulation did not establish the wallet’s asset movements.');
-  let usdcIn=0n;
+  // What may move, and only with Morpho Blue: the ETH wrapped into this wallet's WETH, that WETH
+  // pledged to Morpho Blue, and the borrowed USDC from it.
+  const morpho = ADDRESSES.morpho.toLowerCase(), weth = ADDRESSES.weth.toLowerCase();
+  let usdcIn=0n, wrapped=0n, pledged=0n;
   for (const c of changes.changes) {
     if (!/^(0|[1-9][0-9]{0,77})$/.test(c.amountAtomic)) return fail('native_borrow_effects_unread','A wallet movement was not an exact amount.');
     const amount=BigInt(c.amountAtomic); if(amount===0n) continue;
-    if(c.token.toLowerCase()!==ADDRESSES.usdc.toLowerCase() || c.direction!=='in' || c.kind!=='erc20_transfer' ||
-      c.counterparty?.toLowerCase()!=='0x4d28d900e381ece4b351302f1abe588496793a2b') return fail('native_borrow_unrequested_asset_change','An unrelated wallet token moved or USDC came from an unreviewed source.');
-    usdcIn+=amount;
+    const token=c.token.toLowerCase(), party=c.counterparty?.toLowerCase();
+    if(token===ADDRESSES.usdc.toLowerCase() && c.direction==='in' && c.kind==='erc20_transfer' && party===morpho) usdcIn+=amount;
+    else if(token===weth && c.direction==='in' && c.kind==='weth_deposit') wrapped+=amount;
+    else if(token===weth && c.direction==='out' && c.kind==='erc20_transfer' && party===morpho) pledged+=amount;
+    else return fail('native_borrow_unrequested_asset_change','An unrelated wallet token moved, or USDC or WETH moved with a contract other than Morpho Blue.');
   }
   if(usdcIn!==q.borrowAssets) return fail('native_borrow_arrival_mismatch','The selected USDC amount did not reach this wallet exactly.');
+  if(wrapped!==q.supplyAssets || pledged!==q.supplyAssets) return fail('native_borrow_pledge_mismatch','Exactly the selected ETH was not wrapped and pledged.');
   const measured = verifyMorphoBorrowPoststateV1({request,response:answer.response,
     expected:{...identity,borrowAssets:q.borrowAssets,position:s.position,blockNumber:s.market.state.blockNumber}});
   if(!measured.ok) return fail(measured.refusal,measured.detail);
@@ -79,11 +101,11 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
       authorizedBefore:funding.deployment.authorized,feeQuoteState:'wallet_quote_required'},
     warnings:['Only the selected native ETH is wrapped and pledged. Wallet-held WETH is not spent.',
       'The ETH left in your wallet is measured before wallet/network fees. Those fees are not quoted here; your wallet calculates them before approval.',
-      'The atomic contract enforces the deadline and Still’s crypto LTV cap. Collateral can still be liquidated.',
-      'Calls are built from the verified protocol ABI and independently simulated; they are not an Actions API attestation.']};
-  const expiry=Math.min(now().getTime()+30_000,Number(plan.deadline)*1000);
-  if(expiry<=now().getTime()) return fail('native_borrow_expired','The native-funded loan review expired during measurement.');
+      'Still’s limit for this loan was checked in the simulation above; Morpho enforces its own liquidation limit onchain. Collateral can still be liquidated.',
+      MORPHO_DIRECT_CALLS_WARNING_V1,
+      ...(sequential ? [morphoStepsWarningV1(plan.calls.length,'borrow')] : [])]};
+  const expiry=now().getTime()+30_000;
   return {state:'ready',facts,calls:plan.calls,callsHash,signingTermsHash:stableHashV1('native-morpho-terms/v1',{wallet:identity.walletAddress,callsHash,facts:lendingSigningTermsFactsV1(facts)}),
-    expiresAt:new Date(expiry).toISOString(),atomicRequired:true,steps:plan.steps,
+    expiresAt:new Date(expiry).toISOString(),...(sequential ? {atomicRequired:false as const,delivery:'sequential' as const} : {atomicRequired:true as const}),steps:plan.steps,
     measured:{provider:answer.providerId,blockNumber:answer.response.blockNumber,loanDeltaAssets:usdcIn.toString()}};
 }

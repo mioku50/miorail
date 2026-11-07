@@ -19,7 +19,8 @@ function harness(all = false, mutate?: (body: SimulationProviderResponseV1) => v
   const s: StillRepayStandingV1 = { chainId: 8453, walletAddress: wallet, marketId: CRYPTO[0]!.morphoMarket,
     collateral: { address: ADDRESSES.cbbtc, symbol: 'cbBTC', decimals: 8 }, loan: { address: ADDRESSES.usdc, symbol: 'USDC', decimals: 6 }, params,
     position: { collateral: 100_000_000n, borrowShares: 500_000_000_000n }, storedTotals: totals, accruedTotals: { ...totals }, debtAssets: 500_000n,
-    walletLoanAssets: 2_000_000n, walletCollateralAssets: 777n, block: { number: 53_100_000n, timestamp }, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1 };
+    walletLoanAssets: 2_000_000n, walletCollateralAssets: 777n, block: { number: 53_100_000n, timestamp }, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1,
+    loanAllowanceToMorphoAssets: 0n };
   const amount = all ? 500_000n : 200_000n, maximum = all ? 600_000n : amount;
   let simulated = 0;
   const provider: SimulationProvider = { providerId: 'repay-fixture', async simulate(req) {
@@ -35,9 +36,9 @@ function harness(all = false, mutate?: (body: SimulationProviderResponseV1) => v
     const body: SimulationProviderResponseV1 = { status: 'success', blockNumber: Number(s.block.number), gasUsed: '200000', stateChanges: [], revertReason: null,
       observations: { requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: wallet, callsHash: req.callsHash, ...observations }),
         results: (['before','after'] as const).flatMap(phase => observations[phase].map(p => ({ phase, ...p, status: 'success' as const, returnData: encode(p.id, phase === 'after') }))) },
+      // The wallet pays Morpho Blue itself, exactly what is repaid (2026-11-07): no pull of the cap, no refund.
       assetChanges: { status: 'available', unavailableReason: null, changes: [
-        { kind: 'erc20_transfer', token: ADDRESSES.usdc, direction: 'out', amountAtomic: maximum.toString(), counterparty: STILL_REPAY_BLUE_BUNDLES_V1, callIndex: 2 },
-        ...(all ? [{ kind: 'erc20_transfer' as const, token: ADDRESSES.usdc, direction: 'in' as const, amountAtomic: (maximum - amount).toString(), counterparty: STILL_REPAY_BLUE_BUNDLES_V1, callIndex: 2 }] : []),
+        { kind: 'erc20_transfer', token: ADDRESSES.usdc, direction: 'out', amountAtomic: amount.toString(), counterparty: ADDRESSES.morpho, callIndex: 2 },
       ] } };
     mutate?.(body); return { ok: true, body };
   } };
@@ -67,17 +68,41 @@ describe('canonical repayment runner proves the actual debt reduction', () => {
     }
     assert.equal(h.simulated(), 0);
   });
-  it('accepts exact assets and full shares with an atomic bounded funding/refund', async () => {
+  it('accepts exact assets and all the debt shares as the wallet’s own calls to Morpho Blue, within the cap', async () => {
     for (const all of [false, true]) {
       const h = harness(all), r = await runMorphoRepayV1(h.request, h.deps);
       assert.equal(r.state, 'ready', r.state === 'refused' ? `${r.refusal}: ${r.detail}` : '');
-      if (r.state === 'ready') { assert.equal(r.calls.length, 4); assert.equal(r.atomicRequired, true); assert.equal(r.facts.debtAfterShares, all ? '0' : '300000000000'); }
+      if (r.state !== 'ready') continue;
+      assert.equal(r.calls.length, 4); assert.equal(r.atomicRequired, true); assert.equal(r.facts.debtAfterShares, all ? '0' : '300000000000');
+      assert.deepEqual(r.calls.map(c => [c.to, c.callType]), [[ADDRESSES.usdc.toLowerCase(), 'approval'], [ADDRESSES.usdc.toLowerCase(), 'approval'],
+        [ADDRESSES.morpho.toLowerCase(), 'other'], [ADDRESSES.usdc.toLowerCase(), 'approval']]);
+      assert.equal(r.calls.some(c => c.to === STILL_REPAY_BLUE_BUNDLES_V1 || c.spender === STILL_REPAY_BLUE_BUNDLES_V1), false);
+      assert.equal(r.measured.loanDeltaAssets, all ? '-500000' : '-200000');
     }
   });
-  it('requires gross funding, exact counterparties, observations and every wallet asset effect', async () => {
+  it('in steps, sets the cap unless it is already exact, and repays in its own transaction, read at the block that holds the step', async () => {
+    let seen: unknown;
+    const h = harness(true);
+    const read = h.deps.read;
+    const r = await runMorphoRepayV1({ ...h.request, delivery: 'sequential', atLeastBlock: 53_100_000n }, { ...h.deps, read: async (input: { atLeastBlock?: bigint }) => { seen = input; return read(); } });
+    assert.equal(r.state, 'ready', r.state === 'refused' ? `${r.refusal}: ${r.detail}` : ''); if (r.state !== 'ready') return;
+    assert.equal(r.atomicRequired, false); assert.equal(r.delivery, 'sequential');
+    assert.deepEqual(r.calls.map(c => c.callType), ['approval', 'other']);
+    assert.equal((seen as { atLeastBlock?: bigint }).atLeastBlock, 53_100_000n);
+    assert.match(r.facts.warnings.join(' '), /Your wallet sends this as 2 steps, one transaction each/);
+    const exact = harness(true); exact.s.loanAllowanceToMorphoAssets = 600_000n;
+    const again = await runMorphoRepayV1({ ...exact.request, delivery: 'sequential' }, exact.deps);
+    assert.equal(again.state === 'ready' && again.calls.map(c => c.callType).join(), 'other');
+    const unread = harness(true); unread.s.loanAllowanceToMorphoAssets = null;
+    const refused = await runMorphoRepayV1({ ...unread.request, delivery: 'sequential' }, unread.deps);
+    assert.equal(refused.state === 'refused' && refused.refusal, 'repay_allowance_unread'); assert.equal(unread.simulated(), 0);
+  });
+  it('requires the exact USDC paid to Morpho Blue, observations and every wallet asset effect', async () => {
     for (const mutate of [
       (b: SimulationProviderResponseV1) => { delete b.observations; },
-      (b: SimulationProviderResponseV1) => { b.assetChanges!.changes[0]!.counterparty = ADDRESSES.morpho; },
+      (b: SimulationProviderResponseV1) => { b.assetChanges!.changes[0]!.counterparty = STILL_REPAY_BLUE_BUNDLES_V1; },
+      // Nothing beyond the debt is taken, so nothing comes back.
+      (b: SimulationProviderResponseV1) => { b.assetChanges!.changes.push({ ...b.assetChanges!.changes[0]!, direction: 'in', amountAtomic: '1' }); },
       (b: SimulationProviderResponseV1) => { b.assetChanges!.changes[0]!.amountAtomic = '199999'; },
       (b: SimulationProviderResponseV1) => { b.assetChanges!.changes.push({ kind: 'erc20_transfer', token: ADDRESSES.cbbtc, direction: 'out', amountAtomic: '1', counterparty: ADDRESSES.morpho, callIndex: 2 }); },
       (b: SimulationProviderResponseV1) => { b.status = 'reverted'; },
@@ -102,7 +127,8 @@ describe('repay all and take the collateral back on Morpho', () => {
     const s: StillRepayStandingV1 = { chainId: 8453, walletAddress: wallet, marketId: CRYPTO[0]!.morphoMarket,
       collateral: { address: ADDRESSES.cbbtc, symbol: 'cbBTC', decimals: 8 }, loan: { address: ADDRESSES.usdc, symbol: 'USDC', decimals: 6 }, params,
       position: { collateral, borrowShares: shares }, storedTotals: totals, accruedTotals: { ...totals }, debtAssets: owed,
-      walletLoanAssets: 2_000_000n, walletCollateralAssets: 777n, block: { number: 53_100_000n, timestamp }, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1 };
+      walletLoanAssets: 2_000_000n, walletCollateralAssets: 777n, block: { number: 53_100_000n, timestamp }, blueBundlesRuntimeHash: STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1,
+      loanAllowanceToMorphoAssets: 0n };
     let simulated = 0;
     const provider: SimulationProvider = { providerId: 'repay-fixture', async simulate(req) {
       simulated++;
@@ -118,8 +144,7 @@ describe('repay all and take the collateral back on Morpho', () => {
         observations: { requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: wallet, callsHash: req.callsHash, ...observations }),
           results: (['before','after'] as const).flatMap(phase => observations[phase].map(p => ({ phase, ...p, status: 'success' as const, returnData: encode(p.id, phase === 'after') }))) },
         assetChanges: { status: 'available', unavailableReason: null, changes: [
-          ...(debt ? [{ kind: 'erc20_transfer' as const, token: ADDRESSES.usdc, direction: 'out' as const, amountAtomic: maximum.toString(), counterparty: STILL_REPAY_BLUE_BUNDLES_V1, callIndex: 2 },
-            { kind: 'erc20_transfer' as const, token: ADDRESSES.usdc, direction: 'in' as const, amountAtomic: (maximum - owed).toString(), counterparty: STILL_REPAY_BLUE_BUNDLES_V1, callIndex: 2 }] : []),
+          ...(debt ? [{ kind: 'erc20_transfer' as const, token: ADDRESSES.usdc, direction: 'out' as const, amountAtomic: owed.toString(), counterparty: ADDRESSES.morpho, callIndex: 2 }] : []),
           { kind: 'erc20_transfer', token: ADDRESSES.cbbtc, direction: 'in', amountAtomic: collateral.toString(), counterparty: ADDRESSES.morpho, callIndex: debt ? 4 : 0 },
         ] } };
       mutate?.(body); return { ok: true, body };
@@ -134,7 +159,8 @@ describe('repay all and take the collateral back on Morpho', () => {
     assert.equal(r.calls.at(-1)!.to, ADDRESSES.morpho.toLowerCase());
     assert.deepEqual([r.facts.collateralReturnAssets, r.facts.collateralAfterAssets, r.facts.debtAfterShares, r.facts.maximumDebitAssets], ['100000000', '0', '0', '600000']);
     assert.match(r.facts.warnings[0]!, /repays all USDC debt in this Morpho market, then returns your cbBTC collateral/);
-    assert.match(r.steps[2]!.reading, /the next one returns it/);
+    assert.match(r.steps[2]!.reading, /^Repays all 500000000000 debt shares this wallet owes in the registered Morpho market\. Morpho Blue takes what they are worth when the transaction lands, never more than the 600000 atomic USDC allowed\.$/);
+    assert.equal(r.calls.some(c => c.to === STILL_REPAY_BLUE_BUNDLES_V1), false);
   });
   it('with no debt left only withdraws: no USDC, a zero maximum, and no deadline-bound repayment', async () => {
     const h = returning(false), r = await runMorphoRepayV1(h.request, h.deps);

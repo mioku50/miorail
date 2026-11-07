@@ -2,7 +2,7 @@ import { encodeFunctionResult, type Address } from 'viem';
 import { stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProvider, SimulationProviderResponseV1 } from '@mioagent/paid-intelligence';
 import { morphoAfterBorrowV1, morphoHealthV1, morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
-import { MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { erc20Abi, morphoAbi, morphoOracleAbi, multicall3Abi } from '@mioagent/still-engine/abi';
 import { nativeMorphoAuthorizationAbiV1, NATIVE_WETH_RUNTIME_HASH_V1, NATIVE_MULTICALL_RUNTIME_HASH_V1 } from './nativeMorphoBorrowPlan.js';
@@ -26,7 +26,8 @@ export function nativeMorphoHarness(authorized=false, mutate?: (body:SimulationP
       collateral:{address:asset.token,symbol:'WETH',decimals:18},loan:{address:ADDRESSES.usdc,symbol:'USDC',decimals:6},
       borrowApyWad:null,borrowAprWad:0n,oracleAddress:NATIVE_PARAMS.oracle,state:market},
       position,walletCollateralAssets:0n,health:morphoHealthV1({market,position}),capacity:morphoBorrowCapacityV1({market,position}),
-      liquidationPrice:null,liquidationIncentiveWad:1_000_000_000_000_000_000n,venuePublishedDebtAssets:null}]};
+      liquidationPrice:null,liquidationIncentiveWad:1_000_000_000_000_000_000n,venuePublishedDebtAssets:null,
+      marketParams:NATIVE_PARAMS,collateralAllowanceToMorphoAssets:0n as bigint|null}]};
   const projected=morphoAfterBorrowV1({market,position:{...position,collateral:position.collateral+q.supplyAssets},assets:q.borrowAssets})!;
   let simulations=0;
   const provider:SimulationProvider={providerId:'native-fixture',async simulate(req){
@@ -45,8 +46,11 @@ export function nativeMorphoHarness(authorized=false, mutate?: (body:SimulationP
     const body:SimulationProviderResponseV1={status:'success',blockNumber:market.blockNumber,gasUsed:'250000',stateChanges:[],revertReason:null,
       observations:{requestHash:stableHashV1('simulation-observations/v1',{chainId:8453,walletAddress:NATIVE_WALLET,callsHash:req.callsHash,...obs}),
         results:(['before','after'] as const).flatMap(phase=>obs[phase].map(p=>({...p,phase,status:'success' as const,returnData:encode(p.id,phase==='after')})))},
-      assetChanges:{status:'available',unavailableReason:null,changes:[{kind:'erc20_transfer',token:ADDRESSES.usdc,direction:'in',
-        amountAtomic:q.borrowAssets.toString(),counterparty:MORPHO_BLUE_BUNDLES_BASE_V1,callIndex:authorized?0:1}]}};
+      // The wallet's own calls (2026-11-07): it wraps the ETH, pledges the WETH to Morpho Blue, and Morpho Blue pays it the USDC.
+      assetChanges:{status:'available',unavailableReason:null,changes:[
+        {kind:'weth_deposit',token:ADDRESSES.weth,direction:'in',amountAtomic:q.supplyAssets.toString(),counterparty:null,callIndex:0},
+        {kind:'erc20_transfer',token:ADDRESSES.weth,direction:'out',amountAtomic:q.supplyAssets.toString(),counterparty:ADDRESSES.morpho,callIndex:3},
+        {kind:'erc20_transfer',token:ADDRESSES.usdc,direction:'in',amountAtomic:q.borrowAssets.toString(),counterparty:ADDRESSES.morpho,callIndex:4}]}};
     mutate?.(body);return {ok:true,body};
   }};
   return {q,reading,deployment,projected,simulations:()=>simulations,

@@ -61,38 +61,45 @@ describe('lending ready/refused wire boundaries', () => {
     assert.equal(parseLendingExecutionWireV1({ ...row, state: 'complete' }, 'execution_1'), null);
     assert.equal(parseLendingExecutionWireV1({ ...row, transactionHash: 'batch_1' }, 'execution_1'), null);
   });
-  it('accepts only the pinned Morpho BlueBundlesV1 value-bearing call for native ETH borrowing', () => {
+  it('accepts native ETH only as the wallet’s own wrap into WETH first, then calls to WETH and Morpho Blue (2026-11-07)', () => {
     const bundle = '0x4d28d900e381ece4b351302f1abe588496793a2b';
     const morpho = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
     const weth = '0x4200000000000000000000000000000000000006';
-    for (const authorizedBefore of [false, true]) {
-      const base = ready();
-      base.facts = {
-        ...base.facts, operation: 'borrow', venue: 'morpho', collateralTokenAddress: weth,
-        collateralSymbol: 'WETH', collateralDecimals: 18, collateralSupplyAssets: '10000000000000000', maximumDebitAssets: '0',
-        nativeFunding: {
-          maximumNativeAssets: '10000000000000000', reserveAssets: '500000000000000',
-          balanceBeforeAssets: '25000000000000000', balanceAfterAssets: '15000000000000000',
-          authorizedBefore, feeQuoteState: 'wallet_quote_required',
-        },
-      };
-      base.calls = authorizedBefore
-        ? [{ to: bundle, value: '10000000000000000', data: '0x04a06d67' }]
-        : [
-            { to: morpho, value: '0', data: '0xeecea000' },
-            { to: bundle, value: '10000000000000000', data: '0x04a06d67' },
-            { to: morpho, value: '0', data: '0xeecea000' },
-          ];
-      base.steps = base.calls.map((c, index) => ({ index, to: c.to, reading: 'Checked native step.' }));
-      assert.equal(parseLendingReviewWireV1(base)?.state, 'ready');
-      const html = render({ body: base });
-      assert.match(html, /Wrap and pledge exactly 0\.01 ETH\./);
-      assert.match(html, /0\.015 ETH/);
-      assert.match(html, /0\.0005 ETH/);
-      assert.match(html, /Wallet-held WETH is not spent/);
-      assert.equal(parseLendingReviewWireV1({ ...base, calls: base.calls.map(c => c.to === bundle ? { ...c, to: ADDRESS } : c),
-        steps: base.steps.map(s => s.to === bundle ? { ...s, to: ADDRESS } : s) }), null);
-    }
+    const base = ready();
+    base.facts = {
+      ...base.facts, operation: 'borrow', venue: 'morpho', collateralTokenAddress: weth,
+      collateralSymbol: 'WETH', collateralDecimals: 18, collateralSupplyAssets: '10000000000000000', maximumDebitAssets: '0',
+      nativeFunding: {
+        maximumNativeAssets: '10000000000000000', reserveAssets: '500000000000000',
+        balanceBeforeAssets: '25000000000000000', balanceAfterAssets: '15000000000000000',
+        authorizedBefore: false, feeQuoteState: 'wallet_quote_required',
+      },
+    };
+    base.calls = [
+      { to: weth, value: '10000000000000000', data: '0xd0e30db0' },
+      { to: weth, value: '0', data: '0x095ea7b3' }, { to: weth, value: '0', data: '0x095ea7b3' },
+      { to: morpho, value: '0', data: '0x238d6579' }, { to: morpho, value: '0', data: '0x50d8cd4b' },
+      { to: weth, value: '0', data: '0x095ea7b3' },
+    ];
+    base.steps = base.calls.map((c, index) => ({ index, to: c.to, reading: 'Checked native step.' }));
+    assert.equal(parseLendingReviewWireV1(base)?.state, 'ready');
+    const html = render({ body: base });
+    assert.match(html, /Wrap and pledge exactly 0\.01 ETH\./);
+    assert.match(html, /0\.015 ETH/);
+    assert.match(html, /0\.0005 ETH/);
+    assert.match(html, /Wallet-held WETH is not spent/);
+    // Not first, not exactly the chosen ETH, ETH sent anywhere else, a bundle, or another target: refused.
+    const variant = (calls: typeof base.calls) => ({ ...base, calls, steps: calls.map((c, index) => ({ index, to: c.to, reading: 'Checked native step.' })) });
+    for (const calls of [
+      [...base.calls.slice(1, 3), base.calls[0]!, ...base.calls.slice(3)],
+      base.calls.map((c, i) => i === 0 ? { ...c, value: '9999999999999999' } : c),
+      base.calls.map((c, i) => i === 4 ? { ...c, value: '1' } : c),
+      base.calls.map((c, i) => i === 0 ? { ...c, to: bundle } : c),
+      base.calls.map((c, i) => i === 3 ? { ...c, to: ADDRESS } : c),
+    ]) assert.equal(parseLendingReviewWireV1(variant(calls)), null);
+    // The same loan in steps: the wrap, the pledge and the loan, one transaction each.
+    const steps = variant([base.calls[0]!, base.calls[1]!, base.calls[3]!, base.calls[4]!]);
+    assert.equal(parseLendingReviewWireV1({ ...steps, atomicRequired: false, delivery: 'sequential' })?.state, 'ready');
   });
 });
 
@@ -359,10 +366,11 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
       { index: 1, to: ADDRESS, reading: 'Repays up to the exact confirmed USDC maximum.' }],
     facts: { ...ready().facts, venue: 'aave-v4' } });
 
-  it('is read only for Aave V4, without native ETH, and never as a half-batch', () => {
+  it('is read for Aave V4 without native ETH and, since 2026-11-07, for Morpho, and never as a half-batch', () => {
     assert.equal(parseLendingReviewWireV1(stepsBody())?.state, 'ready');
+    // A Morpho loan in steps is the wallet's own calls to Morpho Blue.
+    assert.equal(parseLendingReviewWireV1({ ...stepsBody(), facts: { ...stepsBody().facts, venue: 'morpho' as const } })?.state, 'ready');
     for (const changed of [
-      { facts: { ...stepsBody().facts, venue: 'morpho' as const } },
       { atomicRequired: true },
       { delivery: undefined },
       { facts: { ...stepsBody().facts, payment: { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: ADDRESS, assets: '3000000',

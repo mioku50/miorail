@@ -1,4 +1,4 @@
-import { keccak256, type Address } from 'viem';
+import { keccak256, parseAbi, type Address } from 'viem';
 import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { nativeMorphoAuthorizationAbiV1, nativeMorphoDeploymentMatchesV1, type NativeMorphoDeploymentV1 } from './nativeMorphoBorrowPlan.js';
 import {
@@ -22,6 +22,7 @@ import { TERMS } from '@mioagent/still-engine/policy';
 import { loadMorphoUniverse, readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-engine/read';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import { stillLimitComparisonV1 } from './stillLimitComparison.js';
+import { headAtLeastV1 } from './stillAaveStanding.js';
 
 // Still uses these two immutable markets, not the first page of an API's market
 // directory. Reuse the Mirror's chain reader and accrual, at one reading block.
@@ -62,23 +63,44 @@ export interface StillBorrowSnapshotV1 {
   universe: Universe;
   snapshot: WalletSnapshot;
   nativeDeployment?: NativeMorphoDeploymentV1;
+  /** This wallet's allowance of the collateral to Morpho Blue at the snapshot block; null when unread. */
+  collateralAllowanceToMorpho?: bigint | null;
 }
 
 export interface StillBorrowReaderDepsV1 {
   now?: () => Date;
-  snapshot?: (wallet: Address) => Promise<StillBorrowSnapshotV1>;
+  snapshot?: (wallet: Address, atLeastBlock?: bigint) => Promise<StillBorrowSnapshotV1>;
   generic?: MorphoBorrowReaderDepsV1;
 }
 
-let readFreshSnapshot: ((wallet: Address, asset: CryptoAsset, native: boolean) => Promise<StillBorrowSnapshotV1>) | null = null;
-function freshSnapshotV1(wallet: Address, asset: CryptoAsset, native: boolean): Promise<StillBorrowSnapshotV1> {
+const ALLOWANCE_ABI_V1 = parseAbi(['function allowance(address owner,address spender) view returns (uint256)']);
+
+let readFreshSnapshot: ((wallet: Address, asset: CryptoAsset, native: boolean, atLeastBlock?: bigint) => Promise<StillBorrowSnapshotV1>) | null = null;
+function freshSnapshotV1(wallet: Address, asset: CryptoAsset, native: boolean, atLeastBlock?: bigint): Promise<StillBorrowSnapshotV1> {
   if (!readFreshSnapshot) {
     const providers = createProviders(stillRpcUrlsV1(), 'miorail-still-borrow/1');
-    readFreshSnapshot = async (address, selected, native) => {
+    readFreshSnapshot = async (address, selected, native, atLeast) => {
       const markets = await loadMorphoUniverse(providers, [selected.id]);
       const universe: Universe = { ...markets, loadedAt: new Date(), aave: { ok: false, problem: 'unreadable' } };
-      const snapshot = await readWallet(providers, universe, address);
-      if (!native) return { universe, snapshot };
+      // A loan in steps is read again only at a block that holds the step that just landed.
+      let at: bigint | undefined;
+      if (atLeast !== undefined) {
+        for (const { client } of providers) {
+          try { at = await headAtLeastV1(() => client.getBlockNumber(), atLeast); break; } catch { /* the next configured provider */ }
+        }
+        if (at === undefined) throw new Error('borrow_head_behind');
+      }
+      const snapshot = await readWallet(providers, universe, address, at);
+      // The wallet's own allowance to Morpho Blue, which a loan in steps sets only when it is not already exact.
+      let collateralAllowanceToMorpho: bigint | null = null;
+      for (const { client } of providers) {
+        try {
+          collateralAllowanceToMorpho = await client.readContract({ address: selected.token, abi: ALLOWANCE_ABI_V1, functionName: 'allowance',
+            args: [address, ADDRESSES.morpho], blockNumber: snapshot.block.number });
+          break;
+        } catch { /* the next configured provider; unread stays null */ }
+      }
+      if (!native) return { universe, snapshot, collateralAllowanceToMorpho };
       for (const { client } of providers) {
         try {
           const [chainId, bundle, weth, multicall, authorized] = await Promise.all([
@@ -90,14 +112,14 @@ function freshSnapshotV1(wallet: Address, asset: CryptoAsset, native: boolean): 
               args: [address, MORPHO_BLUE_BUNDLES_BASE_V1], blockNumber: snapshot.block.number }),
           ]);
           if (!bundle || !weth || !multicall) continue;
-          return { universe, snapshot, nativeDeployment: { chainId, blueBundlesRuntimeHash: keccak256(bundle),
+          return { universe, snapshot, collateralAllowanceToMorpho, nativeDeployment: { chainId, blueBundlesRuntimeHash: keccak256(bundle),
             wethRuntimeHash: keccak256(weth), multicallRuntimeHash: keccak256(multicall), authorized } };
         } catch { /* Existing configured providers only, no credential output. */ }
       }
       throw new Error('native_deployment_unread');
     };
   }
-  return readFreshSnapshot(wallet, asset, native);
+  return readFreshSnapshot(wallet, asset, native, atLeastBlock);
 }
 
 export type StillBorrowReadingV1 = MorphoBorrowReadingV1 & {
@@ -107,6 +129,8 @@ export async function readBorrowStandingV1(input: {
   tokenAddress: string;
   walletAddress: string | null;
   nativeFunding?: boolean;
+  /** A loan in steps: read at a block no earlier than the step that just landed. */
+  atLeastBlock?: bigint;
   deps?: StillBorrowReaderDepsV1;
 }): Promise<StillBorrowReadingV1> {
   const asset = stillBorrowAssetV1(input.tokenAddress);
@@ -121,9 +145,13 @@ export async function readBorrowStandingV1(input: {
 
   let read: StillBorrowSnapshotV1;
   try {
-    read = input.deps?.snapshot ? await input.deps.snapshot(wallet as Address) : await freshSnapshotV1(wallet as Address, asset, input.nativeFunding === true);
+    read = input.deps?.snapshot ? await input.deps.snapshot(wallet as Address, input.atLeastBlock)
+      : await freshSnapshotV1(wallet as Address, asset, input.nativeFunding === true, input.atLeastBlock);
   } catch {
     return refused('venue_unread', 'Still could not read the current market from Base');
+  }
+  if (input.atLeastBlock !== undefined && read.snapshot.block.number < input.atLeastBlock) {
+    return refused('venue_unread', 'Still could not read this market at a block that holds the step that just landed.');
   }
   const known = read.universe.morpho.find((entry) => entry.ok
     ? entry.market.asset.id === asset.id
@@ -186,6 +214,8 @@ export async function readBorrowStandingV1(input: {
       liquidationPrice: morphoLiquidationPriceV1({ market: state, position }),
       liquidationIncentiveWad: morphoLiquidationIncentiveWadV1(state.lltvWad),
       venuePublishedDebtAssets: null,
+      marketParams: { loanToken: params.loanToken, collateralToken: params.collateralToken, oracle: params.oracle, irm: params.irm, lltv: params.lltv },
+      collateralAllowanceToMorphoAssets: typeof read.collateralAllowanceToMorpho === 'bigint' ? read.collateralAllowanceToMorpho : null,
     }],
   };
 }

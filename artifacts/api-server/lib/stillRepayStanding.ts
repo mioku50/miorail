@@ -1,9 +1,10 @@
-import { encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
+import { encodeAbiParameters, keccak256, parseAbi, type Address, type Hex } from 'viem';
 import { morphoAccruedTotalsV1, toAssetsUpV1, type MorphoMarketTotalsV1, type MorphoPositionV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { createProviders, type Provider } from '@mioagent/still-engine';
 import { loadMorphoUniverse, readWallet, type MorphoParams, type Universe, type WalletSnapshot } from '@mioagent/still-engine/read';
 import { ADDRESSES, CRYPTO, type CryptoAsset } from '@mioagent/still-engine/registry';
 import { stillRpcUrlsV1 } from './stillMirror.js';
+import { headAtLeastV1 } from './stillAaveStanding.js';
 
 // Official Base BlueBundlesV1 runtime, matched to verified Sourcify source and
 // eth_getCode on 2026-10-28. An upgrade or a different deployment is unread until
@@ -15,11 +16,14 @@ export interface StillRepaySnapshotV1 {
   universe: Universe;
   snapshot: WalletSnapshot;
   chainId: number;
-  blueBundlesRuntimeHash: Hex;
+  /** Read for the record; since 2026-11-07 a repayment is the wallet's own calls to Morpho Blue and needs no bundle. */
+  blueBundlesRuntimeHash: Hex | null;
+  /** This wallet's USDC allowance to Morpho Blue at the snapshot block, for a repayment in steps; null when unread. */
+  loanAllowanceToMorpho?: bigint | null;
 }
 export interface StillRepayReaderDepsV1 {
   now?: () => Date;
-  snapshot?: (wallet: Address) => Promise<StillRepaySnapshotV1>;
+  snapshot?: (wallet: Address, atLeastBlock?: bigint) => Promise<StillRepaySnapshotV1>;
 }
 export interface StillRepayStandingV1 {
   chainId: 8453;
@@ -35,14 +39,18 @@ export interface StillRepayStandingV1 {
   walletLoanAssets: bigint;
   walletCollateralAssets: bigint;
   block: { number: bigint; timestamp: bigint };
-  blueBundlesRuntimeHash: Hex;
+  blueBundlesRuntimeHash: Hex | null;
+  /** This wallet's USDC allowance to Morpho Blue at the same block; null when unread. */
+  loanAllowanceToMorphoAssets: bigint | null;
 }
 export type StillRepayReadingV1 =
   | { state: 'read'; readAt: string; standing: StillRepayStandingV1 }
   | { state: 'refused'; readAt: string; refusal: 'repay_inputs_invalid' | 'repay_market_unread' | 'repay_position_unread' | 'repay_balance_unread' | 'repay_runtime_unread'; detail: string };
 
 let providers: Provider[] | null = null;
-async function freshSnapshotV1(wallet: Address, asset: CryptoAsset): Promise<StillRepaySnapshotV1> {
+const ALLOWANCE_ABI_V1 = parseAbi(['function allowance(address owner,address spender) view returns (uint256)']);
+
+async function freshSnapshotV1(wallet: Address, asset: CryptoAsset, atLeastBlock?: bigint): Promise<StillRepaySnapshotV1> {
   providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-repay/1');
   const baseProviders: Provider[] = [];
   for (const provider of providers) {
@@ -51,16 +59,31 @@ async function freshSnapshotV1(wallet: Address, asset: CryptoAsset): Promise<Sti
   if (baseProviders.length === 0) throw new Error('repay_chain_unread');
   const markets = await loadMorphoUniverse(baseProviders, [asset.id]);
   const universe: Universe = { ...markets, loadedAt: new Date(), aave: { ok: false, problem: 'unreadable' } };
-  const snapshot = await readWallet(baseProviders, universe, wallet);
+  // A repayment in steps is read again only at a block that holds the step that just landed.
+  let at: bigint | undefined;
+  if (atLeastBlock !== undefined) {
+    for (const { client } of baseProviders) {
+      try { at = await headAtLeastV1(() => client.getBlockNumber(), atLeastBlock); break; } catch { /* the next configured provider */ }
+    }
+    if (at === undefined) throw new Error('repay_head_behind');
+  }
+  const snapshot = await readWallet(baseProviders, universe, wallet, at);
   const ordered = [...baseProviders].sort((a, b) => Number(b.label === snapshot.provider) - Number(a.label === snapshot.provider));
+  let loanAllowanceToMorpho: bigint | null = null, blueBundlesRuntimeHash: Hex | null = null;
+  for (const provider of ordered) {
+    try {
+      loanAllowanceToMorpho = await provider.client.readContract({ address: ADDRESSES.usdc, abi: ALLOWANCE_ABI_V1, functionName: 'allowance',
+        args: [wallet, ADDRESSES.morpho], blockNumber: snapshot.block.number });
+      break;
+    } catch { /* Try only the already configured providers; never print URLs. */ }
+  }
   for (const provider of ordered) {
     try {
       const code = await provider.client.getCode({ address: STILL_REPAY_BLUE_BUNDLES_V1, blockNumber: snapshot.block.number });
-      if (!code || code === '0x') continue;
-      return { universe, snapshot, chainId: 8453, blueBundlesRuntimeHash: keccak256(code) };
-    } catch { /* Try only the already configured providers; never print URLs. */ }
+      if (code && code !== '0x') { blueBundlesRuntimeHash = keccak256(code); break; }
+    } catch { /* Read for the record only. */ }
   }
-  throw new Error('repay_runtime_unread');
+  return { universe, snapshot, chainId: 8453, blueBundlesRuntimeHash, loanAllowanceToMorpho };
 }
 
 const UINT128_MAX = (1n << 128n) - 1n;
@@ -75,6 +98,8 @@ export async function readRepayStandingV1(input: {
   collateralTokenAddress: string;
   marketId: string;
   walletAddress: string | null;
+  /** A repayment in steps: read at a block no earlier than the step that just landed. */
+  atLeastBlock?: bigint;
   deps?: StillRepayReaderDepsV1;
 }): Promise<StillRepayReadingV1> {
   const readAt = (input.deps?.now?.() ?? new Date()).toISOString();
@@ -84,10 +109,11 @@ export async function readRepayStandingV1(input: {
   const asset = CRYPTO.find(row => same(row.token, token) && same(row.morphoMarket, marketId));
   if (!address(wallet) || !asset) return refused('repay_inputs_invalid', 'An exact registered market and repayment wallet are required.');
   let read: StillRepaySnapshotV1;
-  try { read = input.deps?.snapshot ? await input.deps.snapshot(wallet) : await freshSnapshotV1(wallet, asset); }
+  try { read = input.deps?.snapshot ? await input.deps.snapshot(wallet, input.atLeastBlock) : await freshSnapshotV1(wallet, asset, input.atLeastBlock); }
   catch { return refused('repay_market_unread', 'The current repayment state could not be read from Base.'); }
-  if (read.chainId !== 8453 || read.blueBundlesRuntimeHash.toLowerCase() !== STILL_REPAY_BLUE_BUNDLES_RUNTIME_HASH_V1) {
-    return refused('repay_runtime_unread', 'The reviewed repayment implementation was not established at this block.');
+  if (read.chainId !== 8453) return refused('repay_runtime_unread', 'The repayment state was not read from Base.');
+  if (input.atLeastBlock !== undefined && read.snapshot.block.number < input.atLeastBlock) {
+    return refused('repay_market_unread', 'Still could not read this market at a block that holds the step that just landed.');
   }
   const source = read.snapshot.morpho.get(asset.id);
   const known = read.universe.morpho.find(row => row.ok && row.market.asset.id === asset.id);
@@ -122,5 +148,6 @@ export async function readRepayStandingV1(input: {
     debtAssets: toAssetsUpV1(position.borrowShares, accrued.totalBorrowAssets, accrued.totalBorrowShares),
     walletLoanAssets: loan.value, walletCollateralAssets: collateral.value, block,
     blueBundlesRuntimeHash: read.blueBundlesRuntimeHash,
+    loanAllowanceToMorphoAssets: typeof read.loanAllowanceToMorpho === 'bigint' ? read.loanAllowanceToMorpho : null,
   } };
 }

@@ -65,22 +65,19 @@ export type StillBorrowSpendV1 =
   | { state: 'ready'; productName: string; packageValue: string; priceUsdc: string; expiresAt: string; refillTo?: string | null };
 
 /** What Get money says to a wallet that cannot send a batch, before anything is
- * asked: a stock loan goes in steps, a Spend payment as the last of them;
- * cbBTC, WETH, ETH and PAXG need one transaction. */
+ * asked: every Still loan goes in steps (a Morpho one too since 2026-11-07, as
+ * the wallet's own calls to Morpho Blue), and a Spend payment as the last of them. */
 export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletName: string | null; asset: StillBorrowAssetV1 | null; paying: boolean }): string | null {
   if (!input.cannotBatch) return null;
   const name = input.walletName?.trim();
   const wallet = name && name.length <= 40 && !/^(injected|browser wallet)$/i.test(name) ? name : 'This wallet';
-  const others = 'Base Account, Coinbase Wallet (Base App) or MetaMask';
-  if (input.asset === 'cbBTC' || input.asset === 'WETH' || input.asset === 'ETH' || input.asset === 'PAXG') {
-    return input.paying
-      ? `${wallet} sends one transaction at a time, and paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction. Choose a stock, or use ${others}.`
-      : `${wallet} sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now. Choose a stock, or use ${others}.`;
-  }
   if (input.paying) {
     return `${wallet} sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill. Still reads the invoice again before that step; if Bitrefill no longer waits for it, nothing is paid and the loan stays yours to repay.`;
   }
-  return `${wallet} sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one, and Still checks each next step again before it does.`;
+  if (input.asset === 'ETH') {
+    return `${wallet} sends one transaction at a time, so a loan against ETH goes in steps: your wallet first wraps the chosen ETH into WETH, then asks for each next one, and Still checks each next step again before it does.`;
+  }
+  return `${wallet} sends one transaction at a time, so this loan goes in steps: your wallet asks for each one, and Still checks each next step again before it does.`;
 }
 
 /**

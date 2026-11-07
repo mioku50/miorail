@@ -267,19 +267,19 @@ describe('Max puts Still’s limit in the loan amount, only when pressed (2026-1
 });
 
 describe('what Get money says to a wallet that cannot send a batch', () => {
-  it('a stock loan goes in steps; cbBTC, WETH, ETH, PAXG and a Spend payment need one transaction', async () => {
+  it('every loan goes in steps, a Morpho one too since 2026-11-07, and a Spend payment is the last step', async () => {
     const { stillBorrowWalletNoteV1 } = await import('../src/still/StillBorrow');
     assert.equal(stillBorrowWalletNoteV1({ cannotBatch: false, walletName: 'Rabby Wallet', asset: 'cbBTC', paying: false }), null);
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: false })!,
-      /^Rabby Wallet sends one transaction at a time, so a loan against a stock goes in steps/);
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Injected', asset: 'WETH', paying: false })!,
-      /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now\. Choose a stock/);
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'PAXG', paying: false })!,
-      /a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now/);
-    // A Spend payment goes as the last step of a stock loan, and only in one transaction against crypto.
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: true })!,
-      /^Rabby Wallet sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill\. Still reads the invoice again before that step/);
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'cbBTC', paying: true })!,
-      /paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction\. Choose a stock/);
+    for (const asset of ['NVDAc', 'cbBTC', 'WETH', 'PAXG'] as const) {
+      assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: asset as never, paying: false })!,
+        /^Rabby Wallet sends one transaction at a time, so this loan goes in steps: your wallet asks for each one, and Still checks each next step again before it does\.$/);
+    }
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Injected', asset: 'ETH', paying: false })!,
+      /^This wallet sends one transaction at a time, so a loan against ETH goes in steps: your wallet first wraps the chosen ETH into WETH/);
+    for (const asset of ['NVDAc', 'cbBTC'] as const) {
+      assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: asset as never, paying: true })!,
+        /^This wallet sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill\. Still reads the invoice again before that step/);
+    }
+    assert.doesNotMatch(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'PAXG', paying: false })!, /only as one transaction|Choose a stock/);
   });
 });

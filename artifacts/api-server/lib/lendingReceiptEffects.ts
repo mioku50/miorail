@@ -11,6 +11,7 @@ import type { LendingFactsV1 } from './lendingReview.js';
 import type { VerifiedReceiptLogV1 } from '@mioagent/route-proof';
 import { nativeMorphoAuthorizationAbiV1, NATIVE_WETH_RUNTIME_HASH_V1 } from './nativeMorphoBorrowPlan.js';
 import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1, MORPHO_WITHDRAW_COLLATERAL_ABI_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { MORPHO_DIRECT_ABI_V1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
 import { STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepayStanding.js';
 
 const events = parseAbi([
@@ -123,6 +124,9 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
       else return mismatch('loan_unrequested_receipt_asset_change');
     }
     const contract = f.venue === 'morpho' ? ADDRESSES.morpho.toLowerCase() : ADDRESSES.aaveSpoke.toLowerCase();
+    // Since 2026-11-07 a Still loan on Morpho is the wallet's own calls to Morpho Blue. One approved
+    // before that went through BlueBundles, and is read as it was approved.
+    const direct = f.venue === 'morpho' && !execution.run.calls.some(call => same(call.to, STILL_REPAY_BLUE_BUNDLES_V1));
     const protocol = rows.filter(e => e.address === contract && (same(e.args.onBehalf, wallet) || same(e.args.user, wallet)));
     const approved = (name: 'repay' | 'withdraw') => f.venue !== 'aave-v4' ? [] : execution.run.calls.filter(call => call.to.toLowerCase() === contract).flatMap(call => {
       try { const value = decodeFunctionData({ abi: aaveV4WriteAbiV1, data: call.data as Hex }); return value.functionName === name ? [value] : []; }
@@ -147,27 +151,39 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
           call!.args[1] !== returned || !same(call!.args[2], wallet) || !same(call!.args[3], wallet) || collateralIn !== returned) return mismatch('loan_withdraw_event_mismatch');
     }
     // With no debt left, taking the collateral back approved no repayment, and none may appear.
+    const morphoRepays = direct && execution.run.calls.some(call => {
+      if (call.to.toLowerCase() !== contract) return false;
+      try { return decodeFunctionData({ abi: MORPHO_DIRECT_ABI_V1, data: call.data as Hex }).functionName === 'repay'; } catch { return false; }
+    });
     const repaying = f.operation === 'borrow' || returned === null ||
-      (f.venue === 'aave-v4' ? approved('repay').length === 1 : execution.run.calls.some(call => same(call.to, STILL_REPAY_BLUE_BUNDLES_V1)));
+      (f.venue === 'aave-v4' ? approved('repay').length === 1 : direct ? morphoRepays : execution.run.calls.some(call => same(call.to, STILL_REPAY_BLUE_BUNDLES_V1)));
     const action = protocol.filter(e => e.name === (f.operation === 'borrow' ? 'Borrow' : 'Repay'));
     if (action.length !== (repaying ? 1 : 0)) return mismatch('loan_protocol_event_not_unique');
     let assets = 0n, shares = 0n;
     const e = action[0]!;
     if (!repaying) { /* Nothing was repaid: assets and shares stay zero. */ }
     else if (f.venue === 'morpho') {
-      // A borrow lands in the wallet, or in BlueBundles, which forwards it in the same transaction. Morpho's
-      // Actions bundle has borrowed that way since 2026-11-07 (Morpho Blue → BlueBundles → wallet, 840000 USDC),
-      // and this check, expecting the wallet, left the loan unknown and its market held: the repayment could not
-      // be armed. Through BlueBundles, all USDC that reaches the wallet must come from it, and the borrow check
-      // below still binds the wallet's USDC to exactly the borrowed assets.
-      const viaBundles = f.operation === 'borrow' && same(e.args.receiver, STILL_REPAY_BLUE_BUNDLES_V1);
+      // A loan approved as Morpho's Actions bundle lands in the wallet, or in BlueBundles, which forwards it in
+      // the same transaction (2026-11-07: Morpho Blue → BlueBundles → wallet, 840000 USDC). This check, expecting
+      // the wallet, left that loan unknown and its market held, so the repayment could not be armed. Through
+      // BlueBundles, all USDC that reaches the wallet must come from it, and the borrow check below still binds
+      // the wallet's USDC to exactly the borrowed assets. The wallet's own calls are paid to the wallet.
+      const viaBundles = !direct && f.operation === 'borrow' && same(e.args.receiver, STILL_REPAY_BLUE_BUNDLES_V1);
+      const received = f.operation !== 'borrow' || (direct ? same(e.args.receiver, wallet) : native ? viaBundles : viaBundles || same(e.args.receiver, wallet));
       if (!same(e.args.id, f.marketId) || typeof e.args.assets !== 'bigint' || typeof e.args.shares !== 'bigint' || e.args.assets <= 0n || e.args.shares <= 0n
-        || (f.operation === 'borrow' && !(native ? viaBundles : viaBundles || same(e.args.receiver, wallet)))) return mismatch('loan_protocol_event_mismatch');
+        || !received) return mismatch('loan_protocol_event_mismatch');
       if (viaBundles && !native && rows.some(row => row.name === 'Transfer' && row.address === ADDRESSES.usdc.toLowerCase() && same(row.args.to, wallet) &&
         !same(row.args.from, STILL_REPAY_BLUE_BUNDLES_V1))) return mismatch('loan_borrow_forward_mismatch');
       assets = e.args.assets; shares = e.args.shares;
-      if ((f.operation === 'repay' || native) && !same(e.args.caller, STILL_REPAY_BLUE_BUNDLES_V1)) return mismatch('loan_protocol_caller_mismatch');
-      if (f.operation === 'borrow' && !execution.run.calls.some(call => same(call.to, String(e.args.caller)))) return unknown('loan_protocol_caller_unread');
+      if (direct) {
+        // The wallet's own call: Morpho Blue names the wallet as the caller, and pays the wallet.
+        if (!same(e.args.caller, wallet)) return mismatch('loan_protocol_caller_mismatch');
+        if (f.operation === 'borrow' && rows.some(row => row.name === 'Transfer' && row.address === ADDRESSES.usdc.toLowerCase() && same(row.args.to, wallet) &&
+          !same(row.args.from, ADDRESSES.morpho))) return mismatch('loan_borrow_source_mismatch');
+      } else {
+        if ((f.operation === 'repay' || native) && !same(e.args.caller, STILL_REPAY_BLUE_BUNDLES_V1)) return mismatch('loan_protocol_caller_mismatch');
+        if (f.operation === 'borrow' && !execution.run.calls.some(call => same(call.to, String(e.args.caller)))) return unknown('loan_protocol_caller_unread');
+      }
     } else {
       // Reserve identity is decoded from the actual canonical method below,
       // rather than inferred from a display symbol or a fixed reserve order.
@@ -182,14 +198,20 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     }
     const requested = f.requestedAssets === null ? null : BigInt(f.requestedAssets), maximum = BigInt(f.maximumDebitAssets);
     if (f.operation === 'borrow') {
-      if (requested === null || assets !== requested || usdcNet !== assets - paidAssets || collateralOut !== (native ? 0n : BigInt(f.collateralSupplyAssets)) || grossUsdcOut !== paidAssets) return mismatch('loan_borrow_receipt_mismatch');
+      if (requested === null || assets !== requested || usdcNet !== assets - paidAssets || collateralOut !== (native && !direct ? 0n : BigInt(f.collateralSupplyAssets)) || grossUsdcOut !== paidAssets) return mismatch('loan_borrow_receipt_mismatch');
       if (f.venue === 'morpho') {
         const supplied = protocol.filter(e => e.name === 'SupplyCollateral');
         if (BigInt(f.collateralSupplyAssets) > 0n ? supplied.length !== 1 || !same(supplied[0]?.args.id, f.marketId) || supplied[0]?.args.assets !== BigInt(f.collateralSupplyAssets) : supplied.length !== 0) return mismatch('loan_collateral_event_mismatch');
       }
     } else if (assets > maximum || usdcNet !== -assets || collateralOut !== 0n || grossUsdcOut > maximum ||
-        (f.venue === 'morpho' && grossUsdcOut !== maximum) || (f.amountMode === 'assets' && assets !== requested)) return mismatch('loan_repay_receipt_mismatch');
-    if(native) {
+        (f.venue === 'morpho' && grossUsdcOut !== (direct ? assets : maximum)) || (f.amountMode === 'assets' && assets !== requested)) return mismatch('loan_repay_receipt_mismatch');
+    if (native && direct) {
+      // The wallet wrapped exactly the chosen ETH itself, pledged it itself, and authorized nobody.
+      const wrapped = rows.filter(row => row.address === ADDRESSES.weth.toLowerCase() && row.name === 'Deposit');
+      if (wrapped.length !== 1 || !same(wrapped[0]!.args.dst, wallet) || wrapped[0]!.args.wad !== BigInt(native.maximumNativeAssets)) return mismatch('loan_native_wrapping_event_mismatch');
+      if (rows.some(row => row.address === ADDRESSES.morpho.toLowerCase() && row.name === 'SetAuthorization' && same(row.args.authorizer, wallet))) return mismatch('loan_native_authorization_mismatch');
+      if (protocol.filter(row => row.name === 'SupplyCollateral').some(row => !same(row.args.caller, wallet))) return mismatch('loan_native_protocol_source_mismatch');
+    } else if(native) {
       const wrapped=rows.filter(row=>row.address===ADDRESSES.weth.toLowerCase() && row.name==='Deposit');
       const supplied=rows.filter(row=>row.address===ADDRESSES.weth.toLowerCase() && row.name==='Transfer' && same(row.args.from,STILL_REPAY_BLUE_BUNDLES_V1) && same(row.args.to,ADDRESSES.morpho));
       if(wrapped.length!==1 || !same(wrapped[0]!.args.dst,STILL_REPAY_BLUE_BUNDLES_V1) || wrapped[0]!.args.wad!==BigInt(native.maximumNativeAssets) ||

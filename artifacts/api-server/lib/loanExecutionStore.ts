@@ -52,10 +52,10 @@ function assertOwner(owner: LoanOwnerV1): void {
 function assertReady(input: { owner: LoanOwnerV1; draftId: string; run: ReadyRunV1; now: Date }): void {
   assertOwner(input.owner);
   const { run } = input;
-  // One batch, or steps only where they were granted: an Aave V4 action without
-  // native ETH; a Spend payment goes as its last step.
+  // One batch, or steps where they were granted: an Aave V4 action without native ETH, and since
+  // 2026-11-07 any Morpho one, which is the wallet's own calls to Morpho Blue; a Spend payment goes last.
   const delivery = run.atomicRequired === true ? run.delivery === undefined
-    : run.atomicRequired === false && run.delivery === 'sequential' && run.facts.venue === 'aave-v4' && !run.facts.nativeFunding &&
+    : run.atomicRequired === false && run.delivery === 'sequential' && (run.facts.venue === 'morpho' || (run.facts.venue === 'aave-v4' && !run.facts.nativeFunding)) &&
       (!run.facts.payment || run.calls.at(-1)?.callType === 'transfer');
   if (!validId(input.draftId) || run.state !== 'ready' || !delivery || !['morpho', 'aave-v4'].includes(run.facts.venue) ||
       !['borrow', 'repay'].includes(run.facts.operation) || !validId(run.facts.marketId) || run.calls.length === 0 || run.calls.length > 16 ||

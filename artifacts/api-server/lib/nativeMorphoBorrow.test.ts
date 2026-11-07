@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {describe,it} from 'node:test';
-import {decodeFunctionData,encodeFunctionResult} from 'viem';
+import {encodeFunctionResult} from 'viem';
 import {TERMS} from '@mioagent/still-engine/policy';
 import {ADDRESSES} from '@mioagent/still-engine/registry';
 import {MORPHO_BLUE_BUNDLES_BASE_V1} from '@mioagent/rwa-issuer/morphoRepayPlan';
@@ -8,8 +8,7 @@ import {multicall3Abi,erc20Abi,morphoAbi} from '@mioagent/still-engine/abi';
 import type {SimulationProviderResponseV1} from '@mioagent/paid-intelligence';
 import {issueLendingDraftV1,verifyLendingDraftV1} from './lendingDraft.js';
 import {nativeMorphoHarness,NATIVE_PARAMS,NATIVE_NOW,NATIVE_WALLET} from './nativeMorphoFixtures.testhelper.js';
-import {buildNativeMorphoBorrowPlanV1,nativeMorphoFundingBudgetV1,nativeMorphoFundingRefusalV1,nativeMorphoAuthorizationAbiV1} from './nativeMorphoBorrowPlan.js';
-import {nativeMorphoBorrowAbiV1} from './nativeMorphoAbi.js';
+import {nativeMorphoFundingBudgetV1,nativeMorphoFundingRefusalV1,nativeMorphoAuthorizationAbiV1} from './nativeMorphoBorrowPlan.js';
 import {runNativeMorphoBorrowV1} from './nativeMorphoBorrowRunner.js';
 
 describe('explicit native ETH collateral',()=>{
@@ -38,32 +37,44 @@ describe('explicit native ETH collateral',()=>{
     assert.match(empty.detail,/there is no ETH to add/);
     assert.equal(nativeMorphoFundingRefusalV1(null,1n)!.refusal,'native_balance_unread');
   });
-  for(const authorized of [false,true]) it('builds exact native funding and restores '+(authorized?'existing':'temporary')+' authority',()=>{
-    const h=nativeMorphoHarness(authorized);
-    const p=buildNativeMorphoBorrowPlanV1({...h.q,params:NATIVE_PARAMS,deployment:h.deployment,now:NATIVE_NOW});
-    if(!p.ok) assert.fail(p.refusal);
-    const {calls}=p;
-    assert.equal(calls.length,authorized?1:3);
-    const action=calls[authorized?0:1]!;
-    assert.equal(action.to,MORPHO_BLUE_BUNDLES_BASE_V1);assert.equal(action.valueWei,h.q.supplyAssets.toString());
-    const d=decodeFunctionData({abi:nativeMorphoBorrowAbiV1,data:action.data});
-    assert.equal(d.args[1],h.q.supplyAssets);assert.equal(d.args[2],h.q.borrowAssets);
-    assert.equal(d.args[3],NATIVE_PARAMS.lltv*TERMS.shareOfProtocolBps/10000n);
-    assert.equal(d.args[4].kind,0);assert.deepEqual(d.args[6],[]);assert.equal(d.args[7],0n);assert.equal(d.args[9],p.deadline);
-    if(!authorized) for(const [index,flag] of [[0,true],[2,false]] as const){
-      const call=calls[index]!;
-      const decoded=decodeFunctionData({abi:nativeMorphoAuthorizationAbiV1,data:call.data});
-      assert.equal(call.to,ADDRESSES.morpho.toLowerCase());assert.equal(call.valueWei,'0');assert.deepEqual([decoded.args[0].toLowerCase(),decoded.args[1]],[MORPHO_BLUE_BUNDLES_BASE_V1,flag]);
-    }
+  // 2026-11-07, the operator: «да делай прямые вызовы для всех кошельков». The wallet wraps exactly the chosen ETH
+  // itself, then pledges and borrows in its own calls to Morpho Blue: no bundle, and no authorization, granted or not.
+  for(const authorized of [false,true]) it('wraps, pledges and borrows as the wallet’s own calls, whatever authorization was there before ('+authorized+')',async()=>{
+    const h=nativeMorphoHarness(authorized),r=await runNativeMorphoBorrowV1(h.q,h.deps);
+    assert.equal(r.state,'ready',r.state==='refused'?r.refusal+':'+r.detail:'');
+    if(r.state!=='ready')return;
+    const weth=ADDRESSES.weth.toLowerCase(),morpho=ADDRESSES.morpho.toLowerCase();
+    assert.deepEqual(r.calls.map(c=>[c.to,c.callType,c.valueWei]),[[weth,'other',h.q.supplyAssets.toString()],[weth,'approval','0'],[weth,'approval','0'],
+      [morpho,'deposit','0'],[morpho,'other','0'],[weth,'approval','0']]);
+    assert.equal(r.calls[0]!.data,'0xd0e30db0');
+    assert.equal(r.calls.some(c=>c.to===MORPHO_BLUE_BUNDLES_BASE_V1),false);
+    assert.equal(r.calls.some(c=>c.data.startsWith('0xeecea000')),false,'no setAuthorization');
+    assert.equal(r.facts.nativeFunding!.authorizedBefore,authorized);
+    assert.match(r.facts.warnings.join(' '),/Your wallet calls Morpho Blue itself, so no contract is given the right to act for it\./);
+    assert.equal(r.expiresAt,new Date(NATIVE_NOW.getTime()+30_000).toISOString());
   });
-  it('refuses every changed deployment pin and a non-native market before producing calls',()=>{
-    for(const field of ['chainId','blueBundlesRuntimeHash','wethRuntimeHash','multicallRuntimeHash'] as const){
+  it('in steps, wraps first and then sends the same pledge and loan as a WETH loan, with no clearing calls',async()=>{
+    const h=nativeMorphoHarness(),r=await runNativeMorphoBorrowV1({...h.q,delivery:'sequential'},h.deps);
+    assert.equal(r.state,'ready',r.state==='refused'?r.refusal+':'+r.detail:'');
+    if(r.state!=='ready')return;
+    assert.equal(r.atomicRequired,false);assert.equal(r.delivery,'sequential');
+    assert.deepEqual(r.calls.map(c=>c.callType),['other','approval','deposit','other']);
+    assert.match(r.facts.warnings.join(' '),/Your wallet sends this as 4 steps, one transaction each/);
+    const unread=nativeMorphoHarness();unread.reading.markets[0]!.collateralAllowanceToMorphoAssets=null;
+    const refused=await runNativeMorphoBorrowV1({...unread.q,delivery:'sequential'},unread.deps);
+    assert.equal(refused.state,'refused');assert.equal(unread.simulations(),0);
+  });
+  it('refuses a changed WETH or observation runtime, and a non-native market, before producing calls',async()=>{
+    for(const field of ['chainId','wethRuntimeHash','multicallRuntimeHash'] as const){
       const h=nativeMorphoHarness();Object.assign(h.deployment,{[field]:field==='chainId'?1:'0x'+'00'.repeat(32)});
-      const p=buildNativeMorphoBorrowPlanV1({...h.q,params:NATIVE_PARAMS,deployment:h.deployment,now:NATIVE_NOW});
-      assert(!p.ok);assert(!('calls' in p));
+      const r=await runNativeMorphoBorrowV1(h.q,h.deps);
+      assert.equal(r.state,'refused',field);assert(!('calls' in r));assert.equal(h.simulations(),0);
     }
-    const h=nativeMorphoHarness();
-    assert(!buildNativeMorphoBorrowPlanV1({...h.q,params:{...NATIVE_PARAMS,collateralToken:ADDRESSES.cbbtc},deployment:h.deployment,now:NATIVE_NOW}).ok);
+    // The bundle is no longer called, so its runtime no longer decides anything.
+    const bundle=nativeMorphoHarness();bundle.deployment.blueBundlesRuntimeHash='0x'+'00'.repeat(32) as never;
+    assert.equal((await runNativeMorphoBorrowV1(bundle.q,bundle.deps)).state,'ready');
+    const h=nativeMorphoHarness();h.reading.nativeFunding!.params={...NATIVE_PARAMS,collateralToken:ADDRESSES.cbbtc};
+    assert.equal((await runNativeMorphoBorrowV1(h.q,h.deps)).state,'refused');assert.equal(h.simulations(),0);
   });
   it('uses a v2 signed question; v1 cannot be reinterpreted as native funding',()=>{
     const secret='native-question-fixture-secret-not-production', owner={walletAddress:NATIVE_WALLET,tenantId:'eip155:8453:'+NATIVE_WALLET};
@@ -78,15 +89,6 @@ describe('explicit native ETH collateral',()=>{
       assert.throws(()=>issueLendingDraftV1({...owner,secret,now:NATIVE_NOW,question:{...question,nativeFundingAssets:question.collateralSupplyAssets,...patch}}));
     }
   });
-  for(const authorized of [false,true]) it('proves wrap/pledge/loan and '+(authorized?'preserves':'clears')+' authorization in one evolving state',async()=>{
-    const h=nativeMorphoHarness(authorized),r=await runNativeMorphoBorrowV1(h.q,h.deps);
-    assert.equal(r.state,'ready',r.state==='refused'?r.refusal+':'+r.detail:'');
-    if(r.state!=='ready')return;
-    assert.equal(r.atomicRequired,true);assert.equal(r.facts.nativeFunding!.maximumNativeAssets,h.q.supplyAssets.toString());
-    assert.equal(r.facts.nativeFunding!.feeQuoteState,'wallet_quote_required');
-    assert.equal(r.facts.collateralAfterAssets,(h.reading.markets[0]!.position!.collateral+h.q.supplyAssets).toString());
-    assert.equal(r.facts.debtAfterShares,h.projected.position.borrowShares.toString());assert.equal(h.simulations(),1);
-  });
   it('refuses native overspend, unread funding or changed runtimes before simulation',async()=>{
     for(const mutate of [
       (h:ReturnType<typeof nativeMorphoHarness>)=>{h.reading.nativeFunding!.balance=h.q.supplyAssets+TERMS.ethGasReserveWei-1n;},
@@ -95,6 +97,7 @@ describe('explicit native ETH collateral',()=>{
     ]){const h=nativeMorphoHarness();mutate(h);assert.equal((await runNativeMorphoBorrowV1(h.q,h.deps)).state,'refused');assert.equal(h.simulations(),0);}
   });
   it('refuses changed state, hidden WETH spend, native debit, authorization or debt effects without calls',async()=>{
+    const usdc=(b:SimulationProviderResponseV1)=>b.assetChanges!.changes.find(c=>c.token===ADDRESSES.usdc)!;
     const changeProbe=(b:SimulationProviderResponseV1,id:string,data:`0x${string}`)=>{
       b.observations!.results.find(r=>r.phase==='after' && r.id===id)!.returnData=data;
     };
@@ -105,9 +108,13 @@ describe('explicit native ETH collateral',()=>{
       (b:SimulationProviderResponseV1)=>changeProbe(b,'collateral_wallet_balance',encodeFunctionResult({abi:erc20Abi,functionName:'balanceOf',result:1n})),
       (b:SimulationProviderResponseV1)=>changeProbe(b,'bundle_weth_balance',encodeFunctionResult({abi:erc20Abi,functionName:'balanceOf',result:778n})),
       (b:SimulationProviderResponseV1)=>changeProbe(b,'position',encodeFunctionResult({abi:morphoAbi,functionName:'position',result:[0n,1n,110_000_000_000_000_000n]})),
-      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes[0]!.amountAtomic='2999999';},
-      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes[0]!.counterparty=ADDRESSES.morpho;},
-      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes.push({...b.assetChanges!.changes[0]!,token:ADDRESSES.weth,direction:'out',amountAtomic:'1'});},
+      (b:SimulationProviderResponseV1)=>{usdc(b).amountAtomic='2999999';},
+      // USDC from the old bundle, or WETH wrapped, pledged or sent other than exactly the chosen ETH.
+      (b:SimulationProviderResponseV1)=>{usdc(b).counterparty=MORPHO_BLUE_BUNDLES_BASE_V1;},
+      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes[0]!.amountAtomic='1';},
+      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes[1]!.counterparty=MORPHO_BLUE_BUNDLES_BASE_V1;},
+      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes.push({...b.assetChanges!.changes[1]!,amountAtomic:'1'});},
+      (b:SimulationProviderResponseV1)=>{b.assetChanges!.changes.push({kind:'erc20_transfer',token:ADDRESSES.cbbtc,direction:'out',amountAtomic:'1',counterparty:ADDRESSES.morpho,callIndex:2});},
       (b:SimulationProviderResponseV1)=>{b.status='reverted';},
     ]){const h=nativeMorphoHarness(false,mutate),r=await runNativeMorphoBorrowV1(h.q,h.deps);assert.equal(r.state,'refused');assert(!('calls' in r));}
   });

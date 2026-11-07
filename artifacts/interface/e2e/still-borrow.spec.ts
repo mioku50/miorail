@@ -276,13 +276,14 @@ test('ETH that would spend the fee reserve is refused with the amount that works
 });
 
 for (const width of [390, 1366]) {
-  test(`a wallet with no batch methods hears which loans go in steps before it reads or reviews anything (${width}px)`, async ({ page }, testInfo) => {
+  test(`a wallet with no batch methods hears that its loan goes in steps before it reads or reviews anything (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page, true, 'no-batches');
     await openSignedIn(page, '/borrow?asset=ETH');
-    // The catch-all injected connector names no wallet, so the sentence does not either.
-    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now\./ })).toBeVisible();
-    await expect(page.getByText(/Choose a stock, or use Base Account, Coinbase Wallet \(Base App\) or MetaMask\./)).toBeVisible();
+    // The catch-all injected connector names no wallet, so the sentence does not either. Since 2026-11-07 an
+    // ETH loan goes in steps too, as the wallet's own calls: the wrap first.
+    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, so a loan against ETH goes in steps: your wallet first wraps the chosen ETH into WETH/ })).toBeVisible();
+    await expect(page.getByText(/Choose a stock|Use Base Account, Coinbase Wallet/)).toHaveCount(0);
     const methods = await page.evaluate(() => (window as unknown as { __stillBorrowWalletMethods: string[] }).__stillBorrowWalletMethods);
     expect(methods).toContain('wallet_getCapabilities');
     // Asked once: a missing method is an answer, not a blip to retry.
@@ -291,9 +292,11 @@ for (const width of [390, 1366]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath(`no-batches-${width}.png`), fullPage: true });
-    // A stock loan goes in steps, so the same wallet is told how instead of turned away.
+    // A stock loan, and a cbBTC one, go in steps: the same wallet is told how instead of turned away.
     await openSignedIn(page, '/borrow?asset=NVDAc');
-    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one/ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, so this loan goes in steps: your wallet asks for each one/ })).toBeVisible();
+    await openSignedIn(page, '/borrow?asset=cbBTC');
+    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, so this loan goes in steps: your wallet asks for each one/ })).toBeVisible();
     await expect(page.getByText(/Use Base Account, Coinbase Wallet/)).toHaveCount(0);
     expect(state.limitReads).toEqual([]);
     await noWalletAction(page);

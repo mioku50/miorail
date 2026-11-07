@@ -6,7 +6,7 @@ import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { lendingWireV1, type LendingRunV1 } from '../lib/lendingReview.js';
 import { runMorphoRepayV1 } from '../lib/morphoRepayRunner.js';
 import { runNativeMorphoBorrowV1 } from '../lib/nativeMorphoBorrowRunner.js';
-import { runMorphoBorrowV1 } from '../lib/morphoBorrowRunner.js';
+import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
 import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
@@ -127,16 +127,11 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   } else verified = verifyLendingDraftV1({ ...owner, draft: signed, secret, now, allowExpiredForStatus: true });
   if (!verified.ok) { res.status(verified.refusal.endsWith('wrong_wallet') ? 403 : 400).json({ error: verified.refusal }); return; }
   const claims = verified.claims, q = claims.question;
-  // A wallet that cannot send a batch asks for steps. They are granted only
-  // for an Aave V4 loan or repayment, a Spend payment included (it goes last);
-  // native ETH and Morpho need one transaction.
+  // A wallet that cannot send a batch asks for steps. They are granted for every
+  // Still loan and repayment: an Aave V4 one, and since 2026-11-07 a Morpho one,
+  // which is the wallet's own calls to Morpho Blue; a Spend payment goes last.
   const sequential = req.query.delivery === 'sequential';
-  if (sequential && (claims.venue !== 'aave-v4' || (q.operation === 'borrow' && q.nativeFundingAssets !== undefined))) {
-    res.json({ state: 'refused', refusal: 'lending_steps_unavailable', detail: q.operation === 'borrow' && q.payment !== undefined
-      ? 'Paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Choose a stock, or use Base Account, Coinbase Wallet (Base App) or MetaMask.'
-      : 'A loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.' });
-    return;
-  }
+  const delivery = sequential ? { delivery: 'sequential' as const } : {};
   const store = await rwaLendingRuntimeV1.store();
   const prior = await store.getByDraft({ owner, draftId: claims.draftId });
   if (prior && prior.state !== 'ready') {
@@ -183,17 +178,12 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (claims.venue === 'morpho' && q.operation === 'repay') {
     run = await rwaLendingRuntimeV1.runRepay({ collateralTokenAddress: q.collateralTokenAddress, marketId: claims.marketId,
       walletAddress: owner.walletAddress, amount: q.amountMode === 'all' ? { mode: 'all' } : { mode: 'assets', assets: BigInt(q.repayAssets!) }, maximumAssets: BigInt(q.maximumAssets),
-      ...(q.returnCollateral ? { returnCollateral: true } : {}) });
+      ...(q.returnCollateral ? { returnCollateral: true } : {}), ...delivery });
   } else if (claims.venue === 'morpho' && q.operation === 'borrow' && q.nativeFundingAssets !== undefined) {
-    run = await rwaLendingRuntimeV1.runNativeBorrow({walletAddress:owner.walletAddress,supplyAssets:BigInt(q.nativeFundingAssets),borrowAssets:BigInt(q.borrowAssets)});
+    run = await rwaLendingRuntimeV1.runNativeBorrow({walletAddress:owner.walletAddress,supplyAssets:BigInt(q.nativeFundingAssets),borrowAssets:BigInt(q.borrowAssets),...delivery});
   } else if (claims.venue === 'morpho' && q.operation === 'borrow') {
-    const answer = await rwaLendingRuntimeV1.runBorrow({ collateralTokenAddress: q.collateralTokenAddress,
-      walletAddress: owner.walletAddress, marketId: claims.marketId, borrowAssets: BigInt(q.borrowAssets), collateralSupplyAssets: BigInt(q.collateralSupplyAssets) });
-    run = answer.state === 'refused' ? { state: 'refused', refusal: answer.refusal, detail: answer.detail ?? 'The borrow was refused.' }
-      : !answer.lendingFacts ? { state: 'refused', refusal: 'lending_position_unread', detail: 'The exact measured borrowing position was not established.' }
-        : { state: 'ready', facts: answer.lendingFacts, calls: answer.calls, callsHash: answer.callsHash, signingTermsHash: answer.signingTermsHash,
-            expiresAt: answer.expiresAt, atomicRequired: true, steps: answer.plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
-            measured: { provider: answer.measured.providerId, blockNumber: answer.measured.blockNumber, loanDeltaAssets: answer.measured.arrivedAssets } };
+    run = morphoBorrowLendingRunV1(await rwaLendingRuntimeV1.runBorrow({ collateralTokenAddress: q.collateralTokenAddress,
+      walletAddress: owner.walletAddress, marketId: claims.marketId, borrowAssets: BigInt(q.borrowAssets), collateralSupplyAssets: BigInt(q.collateralSupplyAssets), ...delivery }));
   } else {
     run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question: q, ...(sequential ? { delivery: 'sequential' as const } : {}) });
   }
@@ -205,6 +195,15 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
 });
 
 /** What reads a loan's result from the chain: the same for every route that asks. */
+/** A Morpho borrow run as the lending review's run: its exact facts, calls and delivery, or its refusal. */
+function morphoBorrowLendingRunV1(answer: MorphoBorrowRunV1): LendingRunV1 {
+  if (answer.state === 'refused') return { state: 'refused', refusal: answer.refusal, detail: answer.detail ?? 'The borrow was refused.' };
+  if (!answer.lendingFacts) return { state: 'refused', refusal: 'lending_position_unread', detail: 'The exact measured borrowing position was not established.' };
+  return { state: 'ready', facts: answer.lendingFacts, calls: answer.calls, callsHash: answer.callsHash, signingTermsHash: answer.signingTermsHash,
+    expiresAt: answer.expiresAt, ...(answer.delivery === 'sequential' ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }),
+    steps: answer.plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
+    measured: { provider: answer.measured.providerId, blockNumber: answer.measured.blockNumber, loanDeltaAssets: answer.measured.arrivedAssets } };
+}
 function lendingStatusDepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>) {
   return { store, reader: rwaLendingRuntimeV1.reader(), readBatchHashes: rwaLendingRuntimeV1.readBatchHashes,
     verifyEffectPosition: rwaLendingRuntimeV1.verifyEffectPosition, now: rwaLendingRuntimeV1.now };
@@ -337,7 +336,15 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
   const payment = saved.run.facts.payment ?? null;
   const check = await recheckLoanStepsV1({ record: saved, landed: body.data.index + 1, now: rwaLendingRuntimeV1.now(),
     review: async question => {
-      const run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential', atLeastBlock: landedBlock });
+      // The same review as before the first step, by the same venue's runner, read at a block that holds the step.
+      const f = saved.run.facts, at = { delivery: 'sequential' as const, atLeastBlock: landedBlock };
+      const run = f.venue === 'aave-v4' ? await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, ...at })
+        : question.operation === 'repay'
+          ? await rwaLendingRuntimeV1.runRepay({ collateralTokenAddress: question.collateralTokenAddress, marketId: f.marketId, walletAddress: owner.walletAddress,
+            amount: question.amountMode === 'all' ? { mode: 'all' } : { mode: 'assets', assets: BigInt(question.repayAssets!) }, maximumAssets: BigInt(question.maximumAssets),
+            ...(question.returnCollateral ? { returnCollateral: true } : {}), ...at })
+          : morphoBorrowLendingRunV1(await rwaLendingRuntimeV1.runBorrow({ collateralTokenAddress: question.collateralTokenAddress, walletAddress: owner.walletAddress,
+            marketId: f.marketId, borrowAssets: BigInt(question.borrowAssets), collateralSupplyAssets: BigInt(question.collateralSupplyAssets), ...at }));
       return payment ? rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now: rwaLendingRuntimeV1.now() }) : run;
     },
     ...(payment ? { invoice: async () => {

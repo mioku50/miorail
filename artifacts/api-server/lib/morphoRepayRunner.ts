@@ -1,10 +1,12 @@
 import { hashApprovedCallsV1, stableHashV1, type ExecutionCallV1 } from '@mioagent/route-domain';
-import { MORPHO_BLUE_BASE_V1, buildMorphoRepayPlanV1, morphoWithdrawCollateralCallV1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { MORPHO_BLUE_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { morphoDirectRepayPlanV1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
 import { toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { morphoRepayProjectionV1, type MorphoRepayAmountV1 } from '@mioagent/rwa-issuer/morphoRepayMath';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
-import { readRepayStandingV1, STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepayStanding.js';
+import { readRepayStandingV1 } from './stillRepayStanding.js';
+import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDirectWords.js';
 import { buildMorphoRepayProbesV1, verifyMorphoRepayPoststateV1 } from './morphoRepayPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
@@ -18,6 +20,10 @@ export interface MorphoRepayRequestV1 {
   maximumAssets: bigint;
   /** Repay all, then take the whole collateral back to the wallet; with no debt left, only that. */
   returnCollateral?: boolean;
+  /** One batch (the default), or one transaction per call for a wallet that cannot send a batch. */
+  delivery?: 'atomic' | 'sequential';
+  /** A repayment in steps, reviewed again: read at a block no earlier than the step that just landed. */
+  atLeastBlock?: bigint;
 }
 export interface MorphoRepayRunDepsV1 {
   read?: typeof readRepayStandingV1;
@@ -29,13 +35,17 @@ const fail = (refusal: string, detail: string): LendingRunV1 => ({ state: 'refus
 
 /** A canonical repayment has no dependency on the oracle, Still's new-loan
  * ceiling, market liquidity or an API's optional post-repay health buffer.
- * Verified protocol bytes enforce the maximum debit even with old allowances.
- * The very same simulation must then prove debt reduction and preserved assets.
- * This prepares unsigned calls only; it never signs or broadcasts. */
+ * It is the wallet's own calls to Morpho Blue (2026-11-07): an allowance set to
+ * exactly the cap bounds what Morpho Blue may take, and nothing is refunded
+ * because nothing beyond the debt is taken. The very same simulation must then
+ * prove debt reduction and preserved assets. This prepares unsigned calls only;
+ * it never signs or broadcasts. */
 export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: MorphoRepayRunDepsV1 = {}): Promise<LendingRunV1> {
   const now = deps.now ?? (() => new Date());
+  const sequential = request.delivery === 'sequential';
   const reading = await (deps.read ?? readRepayStandingV1)({
     collateralTokenAddress: request.collateralTokenAddress, marketId: request.marketId, walletAddress: request.walletAddress,
+    ...(request.atLeastBlock !== undefined ? { atLeastBlock: request.atLeastBlock } : {}),
   });
   if (reading.state === 'refused') return fail(reading.refusal, reading.detail);
   const s = reading.standing;
@@ -47,9 +57,6 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
   // Taking the collateral back repays first while any debt is left; with none, it only withdraws.
   const repaying = !returning || s.position.borrowShares > 0n;
   const encodedMaximum = !repaying ? 0n : amount.mode === 'assets' ? amount.assets : request.maximumAssets;
-  let calls: ExecutionCallV1[] = [];
-  let steps: Array<{ index: number; to: string; reading: string }> = [];
-  let deadline: bigint | null = null;
   if (repaying) {
     const totals = { ...s.storedTotals, ...s.accruedTotals };
     const projected = morphoRepayProjectionV1({ totals, position: s.position, amount, maximumAssets: request.maximumAssets });
@@ -65,18 +72,18 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
             ? repayExactRoundsToZeroWordsV1({ assets: amount.assets })
             : 'The exact repayment and maximum USDC budget could not be established.');
     if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', repayWalletBelowMaximumWordsV1({ debt, maximum: encodedMaximum, wallet: s.walletLoanAssets }));
-    const planned = buildMorphoRepayPlanV1({ marketId: s.marketId, walletAddress: s.walletAddress, marketParams: s.params,
-      amount, maximumAssets: request.maximumAssets, runtimeCodeHash: s.blueBundlesRuntimeHash, now: now(), returnsCollateralAfter: returning });
-    if (!planned.ok) return fail(planned.refusal, planned.detail ?? 'The canonical repayment calls were refused.');
-    if (planned.plan.encodedMaximumAssets !== encodedMaximum) return fail('repay_plan_maximum_mismatch', 'The calldata maximum changed from the exact repayment budget.');
-    calls = [...planned.plan.calls]; steps = planned.plan.steps.map(row => ({ index: row.index, to: row.to, reading: row.reading })); deadline = planned.plan.deadline;
   }
-  if (returning) {
-    const back = morphoWithdrawCollateralCallV1({ walletAddress: s.walletAddress, marketId: s.marketId, marketParams: s.params, assets: s.position.collateral, index: calls.length });
-    if (!back.ok) return fail(back.refusal, back.detail);
-    calls.push(back.call); steps.push({ index: back.step.index, to: back.step.to, reading: back.step.reading });
+  if (sequential && repaying && typeof s.loanAllowanceToMorphoAssets !== 'bigint') {
+    return fail('repay_allowance_unread', 'This wallet’s USDC allowance to Morpho Blue could not be read, and a repayment in steps needs it.');
   }
-  const plan = { calls, steps, deadline };
+  const planned = morphoDirectRepayPlanV1({ walletAddress: s.walletAddress, marketId: s.marketId, marketParams: s.params, amount,
+    borrowShares: s.position.borrowShares, maximumAssets: encodedMaximum, repaying,
+    ...(returning ? { returnCollateralAssets: s.position.collateral } : {}),
+    ...(sequential ? { delivery: 'sequential' as const, allowanceAssets: s.loanAllowanceToMorphoAssets ?? 0n } : {}) });
+  if (!planned.ok) return fail(planned.refusal, planned.detail);
+  // The wallet's own calls carry no deadline: the review's own window bounds them.
+  const calls: ExecutionCallV1[] = [...planned.plan.calls];
+  const plan = { calls, steps: planned.plan.steps.map(row => ({ index: row.index, to: row.to, reading: row.reading })) };
   const probes = buildMorphoRepayProbesV1({ marketId: s.marketId, walletAddress: s.walletAddress,
     loanTokenAddress: s.loan.address, collateralTokenAddress: s.collateral.address });
   if (!probes.ok) return fail(probes.refusal, probes.detail);
@@ -94,7 +101,7 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
   if (answer.response.status !== 'success') return fail('repay_simulation_reverted', 'The repayment reverted in simulation. No executable review is available.');
   const changes = answer.response.assetChanges;
   if (!changes || changes.status !== 'available') return fail('repay_effects_unread', 'The simulation did not establish all wallet asset movements.');
-  let debit = 0n, grossDebit = 0n, collateralIn = 0n;
+  let debit = 0n, collateralIn = 0n;
   for (const change of changes.changes) {
     if (!/^(0|[1-9][0-9]{0,77})$/.test(change.amountAtomic)) return fail('repay_effects_unread', 'A wallet asset movement could not be read exactly.');
     const atoms = BigInt(change.amountAtomic);
@@ -103,12 +110,15 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
     if (returning && change.token.toLowerCase() === s.collateral.address.toLowerCase() && change.direction === 'in' &&
         change.counterparty?.toLowerCase() === MORPHO_BLUE_BASE_V1 && change.kind === 'erc20_transfer') { collateralIn += atoms; continue; }
     if (change.token.toLowerCase() !== ADDRESSES.usdc.toLowerCase()) return fail('repay_unrequested_asset_change', 'An asset other than USDC moved in this repayment.');
-    if (change.counterparty?.toLowerCase() !== STILL_REPAY_BLUE_BUNDLES_V1 || change.kind !== 'erc20_transfer') return fail('repay_transfer_counterparty_mismatch', 'The USDC funding or refund did not come from the reviewed repayment contract.');
-    if (change.direction === 'out') { debit += atoms; grossDebit += atoms; }
-    else if (change.direction === 'in') debit -= atoms;
-    else return fail('repay_effects_unread', 'The direction of a wallet movement could not be read.');
+    // The wallet pays Morpho Blue itself, exactly what is repaid; nothing comes back.
+    if (change.counterparty?.toLowerCase() !== MORPHO_BLUE_BASE_V1 || change.kind !== 'erc20_transfer' || change.direction !== 'out') {
+      return fail('repay_transfer_counterparty_mismatch', 'USDC moved other than from this wallet to Morpho Blue.');
+    }
+    debit += atoms;
   }
-  if (repaying ? debit <= 0n || debit > encodedMaximum || grossDebit !== encodedMaximum : debit !== 0n || grossDebit !== 0n) return fail('repay_maximum_mismatch', 'The measured USDC funding and refund do not match the calldata maximum.');
+  if (repaying ? debit <= 0n || debit > encodedMaximum || (amount.mode === 'assets' && debit !== amount.assets) : debit !== 0n) {
+    return fail('repay_maximum_mismatch', 'The measured USDC paid does not match the repayment or its cap.');
+  }
   if (collateralIn !== (returning ? s.position.collateral : 0n)) return fail('repay_effects_mismatch', 'The collateral that came back is not the whole recorded collateral.');
   const measured = verifyMorphoRepayPoststateV1({ request: simulationRequest, response: answer.response,
     expected: { marketId: s.marketId, loanTokenAddress: s.loan.address, collateralTokenAddress: s.collateral.address,
@@ -131,16 +141,19 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
           : [`No USDC debt is open in this Morpho market. This returns your ${s.collateral.symbol} collateral to this wallet, and no USDC moves.`]),
       ...(returning ? ['The collateral comes back by the wallet’s own call to Morpho Blue, so no authorization is granted; Morpho lets it go only once no debt is left.'] : []),
       ...(returning && s.collateral.symbol === 'WETH' ? ['A loan opened with native ETH holds WETH as its collateral, so it comes back as WETH.'] : []),
-      ...(repaying ? ['The maximum USDC amount is funded before the unused remainder is refunded in the same atomic batch.'] : []),
-      'Calls are prepared from the verified protocol ABI and independently simulated. No standing authorization is requested.'] };
+      ...(repaying && amount.mode === 'all' ? [sequential
+        ? 'Morpho Blue takes what the debt is worth when the repayment lands, never more than your cap.'
+        : 'Morpho Blue takes what the debt is worth when the transaction lands, never more than your cap, and the allowance is cleared in the same batch.'] : []),
+      MORPHO_DIRECT_CALLS_WARNING_V1,
+      ...(sequential ? [morphoStepsWarningV1(calls.length, 'repay', returning)] : [])] };
   const signingTermsHash = stableHashV1('still-repay-signing-terms/v1', {
     wallet: s.walletAddress,
     callsHash,
     facts: lendingSigningTermsFactsV1(facts),
   });
-  const expiry = plan.deadline === null ? now().getTime() + 30_000 : Math.min(now().getTime() + 30_000, Number(plan.deadline) * 1000);
+  const expiry = now().getTime() + 30_000;
   if (expiry <= now().getTime()) return fail('repay_expired', 'The prepared repayment expired during measurement. Read it again.');
   return { state: 'ready', facts, calls: plan.calls, callsHash, signingTermsHash, expiresAt: new Date(expiry).toISOString(),
-    atomicRequired: true, steps: plan.steps,
+    ...(sequential ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }), steps: plan.steps,
     measured: { provider: answer.providerId, blockNumber: answer.response.blockNumber, loanDeltaAssets: (-debit).toString() } };
 }

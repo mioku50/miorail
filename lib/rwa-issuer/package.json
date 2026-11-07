@@ -23,6 +23,7 @@
     "./morphoRepayMath": "./src/morphoRepayMath.ts",
     "./morphoBorrowReading": "./src/morphoBorrowReading.ts",
     "./morphoBorrowPlan": "./src/morphoBorrowPlan.ts",
+    "./morphoDirectPlan": "./src/morphoDirectPlan.ts",
     "./morphoBorrowSimulation": "./src/morphoBorrowSimulation.ts",
     "./morphoBorrowVenue": "./src/morphoBorrowVenue.ts",
     "./borrowReview": "./src/borrowReview.ts",

@@ -29,6 +29,11 @@ const APPROVE: ExecutionCallV1 = { index: 0, callType: 'approval', to: STOCK, va
 const SUPPLY: ExecutionCallV1 = { index: 1, callType: 'deposit', to: SPOKE, valueWei: '0', data: '0x12345601', asset: null, amountAtomic: '1000000', recipient: null, spender: null };
 const BORROW: ExecutionCallV1 = { index: 2, callType: 'other', to: SPOKE, valueWei: '0', data: '0x12345602', asset: null, amountAtomic: '180000', recipient: null, spender: null };
 
+// A cbBTC loan in steps (2026-11-07): the wallet's own calls to Morpho Blue.
+const CBBTC = CRYPTO[0]!.token.toLowerCase() as `0x${string}`, MORPHO = ADDRESSES.morpho.toLowerCase() as `0x${string}`;
+const M_APPROVE: ExecutionCallV1 = { index: 0, callType: 'approval', to: CBBTC, valueWei: '0', data: '0x095ea7b3bb', asset: null, amountAtomic: '1000', recipient: null, spender: MORPHO };
+const M_SUPPLY: ExecutionCallV1 = { index: 1, callType: 'deposit', to: MORPHO, valueWei: '0', data: '0x238d6579bb', asset: null, amountAtomic: '1000', recipient: MORPHO, spender: null };
+const M_BORROW: ExecutionCallV1 = { index: 2, callType: 'other', to: MORPHO, valueWei: '0', data: '0x50d8cd4bbb', asset: null, amountAtomic: '180000', recipient: WALLET, spender: null };
 const originals = { borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 } };
 let store: MemoryLoanExecutionStoreV1, chain: { allowance: boolean; supplied: boolean; overLimit: boolean };
 let asked: Array<{ question: LendingQuestionV1; delivery?: string; atLeastBlock?: bigint }>, sent: Map<string, { tx: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }>;
@@ -52,12 +57,27 @@ function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'seq
       collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: 53_000_000, warnings: [] } };
 }
 
+/** The Morpho runner as the chain stands, for a cbBTC loan: in steps, what already landed is not asked again. */
+let morphoAsked: Array<{ supply: string; delivery?: string; atLeastBlock?: bigint }>;
+function morphoReview(input: { collateralSupplyAssets?: bigint; borrowAssets: bigint; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) {
+  const supply = input.collateralSupplyAssets ?? 0n, sequential = input.delivery === 'sequential';
+  morphoAsked.push({ supply: supply.toString(), ...(input.delivery ? { delivery: input.delivery } : {}), ...(input.atLeastBlock !== undefined ? { atLeastBlock: input.atLeastBlock } : {}) });
+  const planned = sequential ? [...(supply > 0n && !chain.allowance ? [M_APPROVE] : []), ...(supply > 0n ? [M_SUPPLY] : []), M_BORROW] : [M_APPROVE, M_SUPPLY, M_BORROW, M_APPROVE];
+  const calls = planned.map((call, index) => ({ ...call, index }));
+  return { state: 'ready', marketId: CRYPTO[0]!.morphoMarket, calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${(sequential ? '44' : '33').repeat(32)}`,
+    expiresAt: new Date(NOW.getTime() + 30_000).toISOString(), atomicRequired: !sequential, ...(sequential ? { delivery: 'sequential' } : {}),
+    plan: { steps: calls.map(call => ({ index: call.index, to: call.to, reading: 'Synthetic fixture only' })) },
+    measured: { blockNumber: 53_000_000, providerId: 'fixture', arrivedAssets: '180000' },
+    lendingFacts: { operation: 'borrow', venue: 'morpho', collateralTokenAddress: CBBTC, collateralSymbol: 'cbBTC', collateralDecimals: 8, marketId: CRYPTO[0]!.morphoMarket,
+      amountMode: 'assets', requestedAssets: input.borrowAssets.toString(), maximumDebitAssets: '0', collateralSupplyAssets: supply.toString(), debtBeforeAssets: '0',
+      debtAfterAssets: '180000', collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: 53_000_000, warnings: [] } } as never;
+}
 /** The wallet sends call `call` as transaction `n`, and it lands. */
 function land(n: number, call: ExecutionCallV1, patch: Partial<BaseTransactionSourceV1> = {}) {
   sent.set(hash(n), { tx: { from: WALLET, to: call.to, value: 0n, input: call.data, ...patch },
     receipt: { transactionHash: hash(n), status: 'success', blockNumber: 53_000_010n + BigInt(n), gasUsed: 1n, effectiveGasPriceWei: 1n, logs: [], from: WALLET } });
-  if (call === APPROVE) chain.allowance = true;
-  if (call === SUPPLY) { chain.supplied = true; chain.allowance = false; }
+  if (call === APPROVE || call === M_APPROVE) chain.allowance = true;
+  if (call === SUPPLY || call === M_SUPPLY) { chain.supplied = true; chain.allowance = false; }
 }
 
 function app() {
@@ -72,10 +92,11 @@ function app() {
 }
 
 beforeEach(() => {
-  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; sent = new Map(); count = { latest: 0, pending: 0 };
+  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; morphoAsked = []; sent = new Map(); count = { latest: 0, pending: 0 };
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0,
     runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => review(input),
+    runBorrow: async (input: { collateralSupplyAssets?: bigint; borrowAssets: bigint; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => morphoReview(input),
     reader: () => ({
       async getTransactionReceipt(h: HashV1) { return sent.get(h)?.receipt ?? null; },
       async getTransaction(h: HashV1) { return sent.get(h)?.tx ?? null; },
@@ -95,7 +116,7 @@ async function draft(collateralTokenAddress: string = STOCK, supply = '1000000')
 }
 const steps = (id: string, body: Record<string, unknown>) => request(app()).post(`/api/route-intelligence/rwa/lending/executions/${id}/steps`).send(body);
 
-describe('a review grants steps only to an Aave V4 loan, and says so', () => {
+describe('a review grants steps to every Still loan, Morpho too since 2026-11-07, and says so', () => {
   it('asks the runner for steps and hands back a review that is not atomic', async () => {
     const link = await draft();
     const r = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' });
@@ -106,12 +127,28 @@ describe('a review grants steps only to an Aave V4 loan, and says so', () => {
     const batch = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`);
     assert.deepEqual([batch.body.atomicRequired, batch.body.delivery, batch.body.calls.length], [true, undefined, 4]);
   });
-  it('refuses steps for a crypto loan, which goes only as one transaction for now', async () => {
-    const link = await draft(CRYPTO[0]!.token, '0');
-    const r = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' });
-    assert.deepEqual([r.body.state, r.body.refusal], ['refused', 'lending_steps_unavailable']);
-    assert.match(r.body.detail, /Nothing was sent/);
-    assert.equal(asked.length, 0);
+  it('grants steps to a cbBTC loan, which is the wallet’s own calls to Morpho Blue, and goes on step by step', async () => {
+    const link = await draft(CRYPTO[0]!.token, '1000');
+    const ready = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' })).body;
+    assert.equal(ready.state, 'ready', JSON.stringify(ready));
+    assert.deepEqual([ready.atomicRequired, ready.delivery, ready.calls.length], [false, 'sequential', 3]);
+    assert.deepEqual(morphoAsked, [{ supply: '1000', delivery: 'sequential' }]); assert.equal(asked.length, 0);
+    const armed = await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${ready.executionId}/arm`)
+      .send({ callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
+    assert.equal(armed.status, 200);
+    const id = ready.executionId as string, attemptId = armed.body.attemptId as string;
+    land(1, M_APPROVE);
+    assert.deepEqual((await steps(id, { attemptId, index: 0, transactionHash: hash(1) })).body.state, 'next');
+    land(2, M_SUPPLY);
+    assert.deepEqual((await steps(id, { attemptId, index: 1, transactionHash: hash(2) })).body.state, 'next');
+    // Each next step was reviewed again by the Morpho runner, at the block of the step that landed, and once
+    // the pledge landed, as the loan alone.
+    assert.deepEqual(morphoAsked.slice(1), [{ supply: '1000', delivery: 'sequential', atLeastBlock: 53_000_011n }, { supply: '0', delivery: 'sequential', atLeastBlock: 53_000_012n }]);
+    land(3, M_BORROW);
+    assert.equal((await steps(id, { attemptId, index: 2, transactionHash: hash(3) })).body.state, 'submitted');
+    // Without the query, another link for the same loan is one batch, as before.
+    const batch = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await draft(CRYPTO[0]!.token, '1000')}`)).body;
+    assert.deepEqual([batch.atomicRequired, batch.delivery, morphoAsked.at(-1)!.delivery], [true, undefined, undefined]);
   });
 });
 
@@ -327,12 +364,12 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     assert.deepEqual([stopped.state, stopped.refusal, stopped.detail], ['stopped', 'spend_invoice_not_unpaid', 'Bitrefill reports this invoice as payment detected, so nothing more was sent.']);
   });
 
-  it('still refuses steps for a payment from a crypto loan', async () => {
+  it('a payment from a crypto loan goes in steps too, the loan on Morpho Blue first', async () => {
     const r = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
       .send({ collateralTokenAddress: CRYPTO[0]!.token, borrowAmountAtomic: '180000', collateralSupplyAtomic: '0', spendOrderId: ORDER_ID });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    const refused = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(r.body.reviewUrl).slice('/lending/'.length)}`).query({ delivery: 'sequential' })).body;
-    assert.deepEqual([refused.state, refused.refusal], ['refused', 'lending_steps_unavailable']);
-    assert.match(refused.detail, /Choose a stock/);
+    const review = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(r.body.reviewUrl).slice('/lending/'.length)}`).query({ delivery: 'sequential' })).body;
+    assert.notEqual(review.refusal, 'lending_steps_unavailable');
+    assert.equal(morphoAsked[0]!.delivery, 'sequential');
   });
 });

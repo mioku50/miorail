@@ -87,21 +87,23 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
       !object(value.measured) || !text(value.measured.provider) || !integer(value.measured.blockNumber) ||
       typeof value.measured.loanDeltaAssets !== 'string' || !/^-?(0|[1-9][0-9]{0,77})$/.test(value.measured.loanDeltaAssets)) return null;
   const native = value.facts.nativeFunding;
-  // Steps only where the server grants them: an Aave V4 action without native
-  // ETH; a Spend payment goes last, to Base USDC.
+  // Steps only where the server grants them: an Aave V4 action without native ETH,
+  // and since 2026-11-07 any Morpho one, which is the wallet's own calls to Morpho
+  // Blue; a Spend payment goes last, to Base USDC.
   const delivered = value.atomicRequired === true ? value.delivery === undefined
-    : value.atomicRequired === false && value.delivery === 'sequential' && value.facts.venue === 'aave-v4' && !native &&
+    : value.atomicRequired === false && value.delivery === 'sequential' && (value.facts.venue === 'morpho' || (value.facts.venue === 'aave-v4' && !native)) &&
       (!value.facts.payment || (value.calls as { to: string }[]).at(-1)?.to.toLowerCase() === USDC_BASE);
   if (!delivered) return null;
   const calls=value.calls as {to:string;value:string;data:string}[];
   if (!native) {
     if(calls.some(c=>c.value!=='0')) return null;
   } else {
-    const funded=calls.filter(c=>c.value!=='0');
-    if(funded.length!==1 || funded[0]!.to.toLowerCase()!=='0x4d28d900e381ece4b351302f1abe588496793a2b' ||
-      funded[0]!.value!==native.maximumNativeAssets || calls.length!==(native.authorizedBefore?1:3) ||
-      calls.indexOf(funded[0]!)!==(native.authorizedBefore?0:1) ||
-      calls.some(c=>c!==funded[0] && (c.to.toLowerCase()!=='0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb' || c.value!=='0'))) return null;
+    // Native ETH (2026-11-07): the wallet's own wrap of exactly the chosen ETH into Base WETH comes first;
+    // every other call moves no ETH and goes to WETH or Morpho Blue. No bundle, no authorization.
+    const funded = calls.filter(c => c.value !== '0');
+    if (value.facts.venue !== 'morpho' || funded.length !== 1 || calls[0] !== funded[0] || funded[0]!.to.toLowerCase() !== WETH_BASE ||
+        funded[0]!.value !== native.maximumNativeAssets ||
+        calls.some(c => c !== funded[0] && c.to.toLowerCase() !== WETH_BASE && c.to.toLowerCase() !== MORPHO_BLUE)) return null;
   }
   return value as unknown as LendingReadyWireV1;
 }
@@ -134,6 +136,7 @@ const HEALTH_HUNDREDTH_WAD = BigInt(10) ** BigInt(16);
 /** As the server's bucket: from 100 up the ratio is "far from liquidation", one bucket. */
 const HEALTH_FAR_WAD = BigInt(100) * BigInt(10) ** BigInt(18);
 const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const WETH_BASE = '0x4200000000000000000000000000000000000006';
 const MORPHO_BLUE = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
 const MORPHO_BUNDLER = '0x4d28d900e381ece4b351302f1abe588496793a2b';
 

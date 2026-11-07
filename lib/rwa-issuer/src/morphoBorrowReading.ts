@@ -101,6 +101,12 @@ export interface MorphoBorrowStandingV1 {
    * known direction is worth carrying; silently preferring either one is not.
    */
   venuePublishedDebtAssets: bigint | null;
+  /** The immutable market parameters, read onchain at the same block. Set by
+   * Still's chain reader, from which Still writes the wallet's own calls. */
+  marketParams?: { loanToken: string; collateralToken: string; oracle: string; irm: string; lltv: bigint };
+  /** This wallet's allowance of the collateral to Morpho Blue at the same
+   * block, for a loan in steps. Null when it could not be read. */
+  collateralAllowanceToMorphoAssets?: bigint | null;
 }
 
 export type MorphoBorrowReadingV1 =

@@ -66,7 +66,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
                 <p className="still-sub">Repay all of the debt: <strong>{usdc((BigInt(facts.debtBeforeAssets) > BigInt(facts.debtAfterAssets) ? BigInt(facts.debtBeforeAssets) - BigInt(facts.debtAfterAssets) : BigInt(0)).toString())}</strong> in
                   the simulation at block {facts.blockNumber.toLocaleString('en-US')}, plus the interest until your transaction lands.</p>
                 <p className="still-sub">The most it may take: {usdc(facts.maximumDebitAssets)}.</p>
-                <p className="still-note">That is a cap, not the payment. Your wallet must hold it, and what is not needed comes back in the same transaction.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
+                <p className="still-note">That is a cap, not the payment. Your wallet must hold it; only what is owed is taken, and the rest stays in your wallet.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
               </> : <>
                 <p className="still-sub">Repay exactly {usdc(facts.requestedAssets!)}.</p>
                 <p className="still-note">Your wallet pays exactly that.{back !== null ? '' : ' Your collateral stays deposited.'}</p>

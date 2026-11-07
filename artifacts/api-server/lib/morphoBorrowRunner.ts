@@ -22,7 +22,9 @@ import { TERMS } from '@mioagent/still-engine/policy';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { formatCents } from '@mioagent/still-engine/format';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
+import { morphoDirectBorrowPlanV1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
 import { readBorrowStandingV1, stillBorrowAssetV1 } from './stillBorrowStanding.js';
+import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDirectWords.js';
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingFactsV1 } from './lendingReview.js';
@@ -69,6 +71,10 @@ export interface MorphoBorrowRunRequestV1 {
   collateralSupplyAssets?: bigint;
   /** Which market. Optional only when the collateral has exactly one. */
   marketId?: string | null;
+  /** One batch (the default), or one transaction per call for a wallet that cannot send a batch. */
+  delivery?: 'atomic' | 'sequential';
+  /** A loan in steps, reviewed again: read at a block no earlier than the step that just landed. */
+  atLeastBlock?: bigint;
 }
 
 export interface MorphoBorrowMeasuredV1 {
@@ -95,7 +101,9 @@ export type MorphoBorrowRunV1 =
       signingTermsHash: string;
       /** Fresh review window, additionally bounded by the venue's own expiry. */
       expiresAt: string;
-      atomicRequired: true;
+      /** One batch, or, for a Still loan to a wallet without batches, one transaction per call. */
+      atomicRequired: boolean;
+      delivery?: 'sequential';
       funding?: { type: 'erc20'; token: string; amountAtomic: string };
       stillPolicy?: { termsVersion: string; shareBps: number; limitAtomic: string; debtBeforeAtomic: string; availableAtomic: string };
       /** Exact measured position for the owned lending execution record. */
@@ -166,9 +174,11 @@ export async function runMorphoBorrowV1(
   }
 
   // --- 1. The market, and this wallet's standing in it ----------------------
+  const sequential = request.delivery === 'sequential';
   const reading = await (deps.read ?? readBorrowStandingV1)({
     tokenAddress: request.collateralTokenAddress,
     walletAddress: wallet,
+    ...(request.atLeastBlock !== undefined ? { atLeastBlock: request.atLeastBlock } : {}),
     deps: { generic: deps.reader, now: deps.now },
   });
   if (reading.state === 'refused') {
@@ -205,6 +215,9 @@ export async function runMorphoBorrowV1(
   const stillAsset = stillBorrowAssetV1(request.collateralTokenAddress);
   if (supply > 0n && !stillAsset) {
     return refusedV1('market', 'collateral_supply_not_supported', 'New collateral supply is available only for the registered cbBTC, WETH and PAXG markets.', marketId, null);
+  }
+  if (sequential && !stillAsset) {
+    return refusedV1('market', 'lending_steps_unavailable', 'Only a Still loan against cbBTC, WETH or PAXG can go one transaction at a time.', marketId, null);
   }
   if (stillAsset && (
     marketId.toLowerCase() !== stillAsset.morphoMarket.toLowerCase() ||
@@ -337,40 +350,59 @@ export async function runMorphoBorrowV1(
     return refusedV1('capacity', 'would_not_be_healthy', null, marketId, render(standing.position, null, 'would_not_be_healthy'));
   }
 
-  // --- 3. The venue writes the calldata ------------------------------------
-  const prepared = await prepareMorphoBorrowV1({
-    marketId,
-    walletAddress: wallet,
-    borrowAssets: ask,
-    loanDecimals,
-    loanTokenAddress: loanAddress,
-    collateralTokenAddress: request.collateralTokenAddress,
-    ...(supply > 0n ? { collateralSupplyAssets: supply } : {}),
-    deps: { ...deps.venue, now: deps.venue?.now ?? deps.now },
-  });
-  if (!prepared.ok) {
-    const reviewRefusal: BorrowReviewRefusalV1 =
-      prepared.refusal === 'venue_proof_invalid' || prepared.refusal === 'venue_answer_unreadable' ? 'venue_response_unverified'
-        : prepared.refusal === 'venue_unreachable' ? 'venue_response_unavailable'
-          : prepared.refusal === 'venue_signature_required' ? 'venue_requires_signature'
-            : prepared.refusal === 'venue_expired' ? 'venue_preparation_expired'
-              : prepared.refusal === 'venue_intent_mismatch' || prepared.refusal === 'venue_prepared_another_chain' ? 'venue_terms_differ'
-                : 'venue_would_not_prepare';
-    return refusedV1('venue', prepared.refusal, prepared.detail, marketId, render(standing.position, null, reviewRefusal));
+  // --- 3. The calls ---------------------------------------------------------
+  // A Still loan is the wallet's own calls to Morpho Blue, which Still writes from
+  // the verified ABI and reads itself (operator, 2026-11-07: «да делай прямые
+  // вызовы для всех кошельков»). Morpho's Actions API changed three things that
+  // day, each of which stopped every such loan, and its bundle left BlueBundles a
+  // standing right on the wallet's position. A market outside Still is still
+  // prepared by the venue.
+  let plan: { ok: true; plan: MorphoBorrowPlanV1 } | { ok: false; refusal: string; detail: string };
+  let venueExpiry: number | null = null;
+  if (stillAsset) {
+    if (!standing.marketParams) {
+      return refusedV1('reading', 'market_params_unread', 'The exact market parameters were not read at this block.', marketId, render(standing.position, null, 'simulation_position_unread'));
+    }
+    const held = standing.collateralAllowanceToMorphoAssets;
+    if (sequential && supply > 0n && typeof held !== 'bigint') {
+      return refusedV1('reading', 'allowance_unread', 'This wallet’s allowance to Morpho Blue could not be read, and a loan in steps needs it.', marketId, render(standing.position, null, 'simulation_position_unread'));
+    }
+    plan = morphoDirectBorrowPlanV1({ walletAddress: wallet, marketId, marketParams: standing.marketParams,
+      collateralSymbol: stillAsset.id === 'ETH' ? 'WETH' : stillAsset.symbol, collateralSupplyAssets: supply, borrowAssets: ask,
+      ...(sequential ? { delivery: 'sequential' as const, allowanceAssets: typeof held === 'bigint' ? held : 0n } : {}) });
+  } else {
+    const prepared = await prepareMorphoBorrowV1({
+      marketId,
+      walletAddress: wallet,
+      borrowAssets: ask,
+      loanDecimals,
+      loanTokenAddress: loanAddress,
+      collateralTokenAddress: request.collateralTokenAddress,
+      deps: { ...deps.venue, now: deps.venue?.now ?? deps.now },
+    });
+    if (!prepared.ok) {
+      const reviewRefusal: BorrowReviewRefusalV1 =
+        prepared.refusal === 'venue_proof_invalid' || prepared.refusal === 'venue_answer_unreadable' ? 'venue_response_unverified'
+          : prepared.refusal === 'venue_unreachable' ? 'venue_response_unavailable'
+            : prepared.refusal === 'venue_signature_required' ? 'venue_requires_signature'
+              : prepared.refusal === 'venue_expired' ? 'venue_preparation_expired'
+                : prepared.refusal === 'venue_intent_mismatch' || prepared.refusal === 'venue_prepared_another_chain' ? 'venue_terms_differ'
+                  : 'venue_would_not_prepare';
+      return refusedV1('venue', prepared.refusal, prepared.detail, marketId, render(standing.position, null, reviewRefusal));
+    }
+    venueExpiry = Date.parse(prepared.prepared.expiresAt);
+    // --- 4. What can be proven from the bytes, before anything is executed ---
+    // Morpho approves its bundles contract for the whole collateral token; narrowed to the pledge (2026-11-07).
+    const approvals = narrowMorphoCollateralApprovalV1(prepared.prepared.transactions, {
+      collateralToken: request.collateralTokenAddress, supplyAssets: supply,
+    });
+    if (approvals.narrowed > 0) logger.info('Morpho collateral approval narrowed to the pledge', { marketId, narrowed: approvals.narrowed });
+    plan = morphoBorrowPlanV1({
+      prepared: approvals.transactions,
+      walletAddress: wallet,
+      venueSimulation: prepared.prepared.venueSimulation,
+    });
   }
-
-  // --- 4. What can be proven from the bytes, before anything is executed ---
-  // Morpho now approves its bundles contract for the whole collateral token; Still narrows that
-  // one approval to the pledge before anything is read or simulated (2026-11-07).
-  const approvals = narrowMorphoCollateralApprovalV1(prepared.prepared.transactions, {
-    collateralToken: request.collateralTokenAddress, supplyAssets: supply,
-  });
-  if (approvals.narrowed > 0) logger.info('Morpho collateral approval narrowed to the pledge', { marketId, narrowed: approvals.narrowed });
-  const plan = morphoBorrowPlanV1({
-    prepared: approvals.transactions,
-    walletAddress: wallet,
-    venueSimulation: prepared.prepared.venueSimulation,
-  });
   if (!plan.ok) {
     return refusedV1('plan', plan.refusal, plan.detail, marketId, render(standing.position, null, 'prepared_calls_refused'));
   }
@@ -510,6 +542,8 @@ export async function runMorphoBorrowV1(
       ? `You chose to add ${atomicToDecimalStringV1(supply, stillAsset!.decimals)} ${stillAsset!.id === 'ETH' ? 'WETH' : stillAsset!.symbol} from your wallet to this market. Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} with that collateral.`
       : `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
     ...review.warnings,
+    MORPHO_DIRECT_CALLS_WARNING_V1,
+    ...(sequential ? [morphoStepsWarningV1(plan.plan.calls.length, 'borrow')] : []),
   ];
   // The clock changes on every fresh read. Every economic field, every call,
   // and the raw projected debt remain bound, including sub-display rounding.
@@ -523,8 +557,7 @@ export async function runMorphoBorrowV1(
     policy: stillPolicy ?? null,
   });
   const now = deps.now?.() ?? new Date();
-  const venueExpiry = Date.parse(prepared.prepared.expiresAt);
-  if (!Number.isFinite(venueExpiry) || venueExpiry <= now.getTime()) {
+  if (venueExpiry !== null && (!Number.isFinite(venueExpiry) || venueExpiry <= now.getTime())) {
     return refusedV1('venue', 'venue_expired', 'the venue preparation expired during measurement', marketId, render(standing.position, null, 'venue_preparation_expired'));
   }
   return {
@@ -532,8 +565,9 @@ export async function runMorphoBorrowV1(
     marketId,
     review,
     signingTermsHash,
-    expiresAt: new Date(Math.min(now.getTime() + 30_000, venueExpiry)).toISOString(),
-    atomicRequired: true,
+    expiresAt: new Date(Math.min(now.getTime() + 30_000, venueExpiry ?? Number.POSITIVE_INFINITY)).toISOString(),
+    atomicRequired: !sequential,
+    ...(sequential ? { delivery: 'sequential' as const } : {}),
     ...(stillAsset && standing.position ? { lendingFacts: {
       operation: 'borrow' as const, venue: 'morpho' as const, collateralTokenAddress: stillAsset.token.toLowerCase(),
       collateralSymbol: stillAsset.id === 'ETH' ? 'WETH' : stillAsset.id, collateralDecimals: stillAsset.decimals,

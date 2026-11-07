@@ -222,10 +222,15 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     assert.deepEqual(sequentialHashesV1(second!.batchId!), [hash(1), hash(2)]);
   });
 
-  it('keeps steps to Aave V4 without native ETH or a payment, and a batch a batch', async () => {
+  it('grants steps to an Aave V4 loan without native ETH and, since 2026-11-07, to any Morpho one; a payment goes last; a batch stays a batch', async () => {
     const store = new MemoryLoanExecutionStoreV1();
     const run = sequentialRun();
-    await assert.rejects(store.putReady({ owner: OWNER, draftId: 'morpho', run: { ...run, facts: { ...run.facts, venue: 'morpho' } }, now: NOW }));
+    // A Morpho loan in steps is the wallet's own calls to Morpho Blue, native ETH included.
+    const morpho = await store.putReady({ owner: OWNER, draftId: 'morpho', run: { ...run, facts: { ...run.facts, venue: 'morpho' } }, now: NOW });
+    assert.equal(morpho.run.delivery, 'sequential');
+    const native = { maximumNativeAssets: '1', reserveAssets: '1', balanceBeforeAssets: '2', balanceAfterAssets: '1', authorizedBefore: false, feeQuoteState: 'wallet_quote_required' as const };
+    await store.putReady({ owner: OWNER, draftId: 'morpho-eth', run: { ...run, facts: { ...run.facts, venue: 'morpho', nativeFunding: native } }, now: NOW });
+    await assert.rejects(store.putReady({ owner: OWNER, draftId: 'aave-eth', run: { ...run, facts: { ...run.facts, nativeFunding: native } }, now: NOW }));
     await assert.rejects(store.putReady({ owner: OWNER, draftId: 'paying', now: NOW, run: { ...run, facts: { ...run.facts, payment: {
       merchant: 'bitrefill', orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: `0x${'3'.repeat(40)}`, assets: '180000', productName: 'x', packageValue: '1', faceCurrency: null,
       expiresAt: '2026-10-29T03:45:00.000Z' } } } }));
