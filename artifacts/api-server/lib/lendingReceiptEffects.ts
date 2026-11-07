@@ -155,8 +155,16 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     const e = action[0]!;
     if (!repaying) { /* Nothing was repaid: assets and shares stay zero. */ }
     else if (f.venue === 'morpho') {
+      // A borrow lands in the wallet, or in BlueBundles, which forwards it in the same transaction. Morpho's
+      // Actions bundle has borrowed that way since 2026-11-07 (Morpho Blue → BlueBundles → wallet, 840000 USDC),
+      // and this check, expecting the wallet, left the loan unknown and its market held: the repayment could not
+      // be armed. Through BlueBundles, all USDC that reaches the wallet must come from it, and the borrow check
+      // below still binds the wallet's USDC to exactly the borrowed assets.
+      const viaBundles = f.operation === 'borrow' && same(e.args.receiver, STILL_REPAY_BLUE_BUNDLES_V1);
       if (!same(e.args.id, f.marketId) || typeof e.args.assets !== 'bigint' || typeof e.args.shares !== 'bigint' || e.args.assets <= 0n || e.args.shares <= 0n
-        || (f.operation === 'borrow' && !same(e.args.receiver, native ? STILL_REPAY_BLUE_BUNDLES_V1 : wallet))) return mismatch('loan_protocol_event_mismatch');
+        || (f.operation === 'borrow' && !(native ? viaBundles : viaBundles || same(e.args.receiver, wallet)))) return mismatch('loan_protocol_event_mismatch');
+      if (viaBundles && !native && rows.some(row => row.name === 'Transfer' && row.address === ADDRESSES.usdc.toLowerCase() && same(row.args.to, wallet) &&
+        !same(row.args.from, STILL_REPAY_BLUE_BUNDLES_V1))) return mismatch('loan_borrow_forward_mismatch');
       assets = e.args.assets; shares = e.args.shares;
       if ((f.operation === 'repay' || native) && !same(e.args.caller, STILL_REPAY_BLUE_BUNDLES_V1)) return mismatch('loan_protocol_caller_mismatch');
       if (f.operation === 'borrow' && !execution.run.calls.some(call => same(call.to, String(e.args.caller)))) return unknown('loan_protocol_caller_unread');

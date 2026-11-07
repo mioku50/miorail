@@ -102,6 +102,28 @@ describe('protocol lending receipt effects and pinned positions', () => {
     assert.notEqual((await check(execution(), logs, { debtAssets: 1_000_000n, debtShares: 99n, collateralAssets: 100n })).result.state, 'matched');
     assert.notEqual((await check(execution(), logs, null)).result.state, 'matched');
   });
+  it('a Morpho borrow that BlueBundles forwards is matched only when all of it reaches the wallet from BlueBundles', async () => {
+    // 2026-11-07: Morpho's Actions bundle borrowed to BlueBundles, which sent the 840000 USDC on to the wallet. This
+    // check expected the wallet as receiver: the loan stayed unknown, held its market, and the repayment could not be armed.
+    const record = execution('morpho', 'borrow'); Object.assign(record.run.facts, { collateralSupplyAssets: '10' });
+    const supplied: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SupplyCollateral', args: {
+      id: CRYPTO[0]!.morphoMarket, caller: MORPHO_BLUE_BUNDLES_BASE_V1, onBehalf: WALLET as Address } }) as Hex[], data: encodeAbiParameters([{ type: 'uint256' }], [10n]) };
+    const pledge = [transfer(CRYPTO[0]!.token, WALLET, MORPHO_BLUE_BUNDLES_BASE_V1, 10n), transfer(CRYPTO[0]!.token, MORPHO_BLUE_BUNDLES_BASE_V1, ADDRESSES.morpho, 10n), supplied];
+    const borrowed = [transfer(ADDRESSES.usdc, ADDRESSES.morpho, MORPHO_BLUE_BUNDLES_BASE_V1, 2_000_000n), morphoEvent('borrow', { receiver: MORPHO_BLUE_BUNDLES_BASE_V1 })];
+    const position = { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n };
+    const forward = (to: string, value: bigint, from: string = MORPHO_BLUE_BUNDLES_BASE_V1) => transfer(ADDRESSES.usdc, from, to, value);
+    assert.equal((await check(record, [...pledge, ...borrowed, forward(WALLET, 2_000_000n)], position)).result.state, 'matched');
+    // Kept back, short, or sent to someone else: the wallet did not get the loan.
+    for (const logs of [[...pledge, ...borrowed], [...pledge, ...borrowed, forward(WALLET, 1_999_999n)], [...pledge, ...borrowed, forward(OTHER, 2_000_000n)]]) {
+      assert.deepEqual((await check(record, logs, position)).result, { state: 'mismatched', errorCode: 'loan_borrow_receipt_mismatch' });
+    }
+    // USDC that reaches the wallet from anyone but BlueBundles.
+    assert.deepEqual((await check(record, [...pledge, ...borrowed, forward(WALLET, 1_000_000n), forward(WALLET, 1_000_000n, OTHER)], position)).result,
+      { state: 'mismatched', errorCode: 'loan_borrow_forward_mismatch' });
+    // Any other receiver is still refused.
+    assert.deepEqual((await check(record, [...pledge, borrowed[0]!, morphoEvent('borrow', { receiver: OTHER }), forward(WALLET, 2_000_000n)], position)).result,
+      { state: 'mismatched', errorCode: 'loan_protocol_event_mismatch' });
+  });
   it('requires exact selected Morpho collateral event and preserved post-borrow position', async () => {
     const record = execution('morpho', 'borrow'); Object.assign(record.run.facts, { collateralSupplyAssets: '10' });
     const supplied: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SupplyCollateral', args: {
