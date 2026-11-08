@@ -23,6 +23,7 @@ import {
   StillConsoleFrame,
   StillHomeRoute,
   StillMorePage,
+  StillSafetyPage,
   StillWalletPage,
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
@@ -448,6 +449,10 @@ export function App() {
         </Route>
         <Route path="/assistants">
           <StillAssistantsPage />
+        </Route>
+        {/* How Still keeps a loan safe: public, the engine's own terms. */}
+        <Route path="/safety">
+          <StillSafetyPage />
         </Route>
 
         {/* Original stills.lat wallet permalinks stay public and read the

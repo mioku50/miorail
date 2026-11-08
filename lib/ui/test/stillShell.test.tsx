@@ -605,6 +605,10 @@ describe('the frame', () => {
     assert.match(html, /data-sky="day"/);
     const more = renderToStaticMarkup(<StillMore model={{ sky: skyStateV1({ now: WEDNESDAY }), account: null, signInHref: '/signin' }} />);
     for (const label of ['Swap AI', 'Discover', 'Watch', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    // How Still keeps a loan safe leads More (2026-11-08), and Grok is named with the other assistants.
+    assert.match(more, /<section class="still-more-group" aria-label="Safety"><h2 class="still-more-group-head">Safety<\/h2><ul class="still-links"><li><a [^>]*href="\/safety"/);
+    assert.ok(more.indexOf('aria-label="Safety"') < more.indexOf('aria-label="Spend"'), 'Safety comes first');
+    assert.match(more, /Connect Claude, ChatGPT, Grok, Cursor or Codex/);
     // Wallet MCP is Coinbase's: its page stays (the path map above), More does not offer it.
     assert.doesNotMatch(more, /Wallet MCP|href="\/extensions"/);
     // Investigate, B20 controls and Radar are one page now, and More has one door to it.

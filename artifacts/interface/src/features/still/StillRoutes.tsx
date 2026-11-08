@@ -11,6 +11,7 @@ import {
   StillHomeSignedIn,
   StillHomeSignedOut,
   StillMore,
+  StillSafety,
   assetsViewV1,
   homeViewV1,
   stillCheckMessageV1,
@@ -208,6 +209,15 @@ export function StillMorePage() {
   return (
     <StillFrame tab="more" sky={sky}>
       <StillMore model={{ sky, account: basename ?? short, signInHref }} />
+    </StillFrame>
+  );
+}
+
+export function StillSafetyPage() {
+  const sky = useStillSky();
+  return (
+    <StillFrame tab="more" sky={sky}>
+      <StillSafety model={{ sky }} />
     </StillFrame>
   );
 }

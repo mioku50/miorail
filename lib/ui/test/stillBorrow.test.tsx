@@ -67,6 +67,8 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
       assert.doesNotMatch(html, /liquidation[^.]*(?:impossible|excluded|cannot happen|never happens)|no liquidation|risk-free|guaranteed/i);
       // The limit's own warning stays where it was.
       assert.match(html, /A loan creates debt and your collateral can be liquidated\./);
+      // 2026-11-08: the whole of it, one press away, where the loan is chosen.
+      assert.match(html, /as prices move\. <a [^>]*href="\/safety"[^>]*>How it works<\/a><\/span><\/p>/);
     }
   });
 

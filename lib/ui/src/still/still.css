@@ -810,3 +810,20 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 }
 
 .still-borrow-stock-select { width:100%; min-height:44px; padding:10px 12px; border:1px solid var(--sm-line); border-radius:12px; background:var(--sm-card); color:var(--sm-ink); font:inherit; }
+
+/* How Still keeps a loan safe: one heading per rule, the bands as a short list. */
+.still-safety-page .still-safety-part { max-width: 72ch; }
+.still-safety-head { margin: 0 0 6px; font-size: 19px; font-weight: 600; line-height: 1.25; color: var(--sm-ink); }
+.still-safety-page .still-safety-part .still-note { margin: 0 0 8px; font-size: 14px; }
+.still-safety-bands { margin: 4px 0 10px; padding-left: 18px; font-size: 14px; line-height: 1.5; color: var(--sm-ink2); }
+.still-safety-bands strong { color: var(--sm-ink); font-weight: 600; }
+.still-safety-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; max-width: 880px; }
+.still-safety-figure { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--sm-card); border: 1px solid var(--sm-line); box-shadow: var(--sm-shadow); }
+.still-safety-figure .n { font-size: 32px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; color: var(--sm-accent); }
+.still-safety-figure .t { font-size: 13px; line-height: 1.35; color: var(--sm-ink2); }
+/* On a phone, one tile per line, the number beside its words, so the three take little height. */
+@media (max-width: 640px) {
+  .still-safety-figures { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .still-safety-figure { flex-direction: row; align-items: center; gap: 12px; padding: 10px 14px; }
+  .still-safety-figure .n { flex: none; min-width: 3.4em; font-size: 26px; }
+}

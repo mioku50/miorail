@@ -2,6 +2,7 @@ import React, { useId, useState } from 'react';
 
 import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
+import { STILL_SAFETY_V1 } from './StillSafety';
 import { StillIconV1 } from './icons';
 import { STOCKS, type StockId } from '@mioagent/still-engine/registry';
 
@@ -149,7 +150,8 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
           <span>
             <strong>Built to stay far from liquidation.</strong> Still lends at most half of what Aave or Morpho would, and less around
             earnings or while Wall Street is closed. Even at Still’s full limit, your collateral could lose about half its value before
-            liquidation could start. Every loan is checked again onchain before you sign, and Still can alert you on Telegram as prices move.
+            liquidation could start. Every loan is checked again onchain before you sign, and Still can alert you on Telegram as prices move.{' '}
+            <StillLink href={STILL_SAFETY_V1.path}>How it works</StillLink>
           </span>
         </p>
         {/* Said where the decision is made, not in a footnote: the operator

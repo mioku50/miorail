@@ -165,7 +165,7 @@ test('Home and the command palette reach all Still pages without another wallet 
   await page.goto('/');
   await page.getByRole('link', { name: /^Still in your assistant/ }).click();
   await expect(page).toHaveURL(/\/assistants$/);
-  for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']] as const) {
+  for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants'], ['Loan safety', '/safety']] as const) {
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox', { name: 'Command Palette', exact: true }).fill(label);
     await page.getByRole('option', { name: label, exact: true }).click();
@@ -528,3 +528,23 @@ test('Add to ChatGPT and Add to Grok copy the address and open the page where it
   await expect(page.getByRole('link', { name: 'Grok', exact: true }).first()).toHaveAttribute('href', /^https:\/\/grok\.com\/\?q=/);
   await noSidewaysScroll(page);
 });
+
+// 2026-11-08: people asked how Still's risk engine works. The answer is a page, one press from More,
+// public, and whole at a phone's width.
+for (const width of [390, 1280]) {
+  test(`How Still keeps a loan safe opens from More, public and whole (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { writes } = await install(page, false, MONDAY);
+    await page.goto('/more');
+    await page.getByRole('link', { name: /How Still keeps a loan safe/ }).click();
+    await expect(page).toHaveURL(/\/safety$/);
+    await expect(page.getByText('How Still keeps a loan safe.', { exact: true })).toBeVisible();
+    for (const heading of ['It lends half of what the protocol would.', 'Stricter while Wall Street is closed, and around earnings.', 'Safety bands, read every few minutes.',
+      'Every figure is read from Base, at one block.', 'Checked again before you sign.', 'Ask what a fall would do.', 'What Still cannot prevent.']) {
+      await expect(page.getByRole('heading', { level: 2, name: heading, exact: true })).toBeVisible();
+    }
+    await noSidewaysScroll(page);
+    await page.screenshot({ path: testInfo.outputPath(`safety-${width}.png`), fullPage: true });
+    expect(writes).toEqual([]);
+  });
+}

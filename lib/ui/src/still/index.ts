@@ -13,6 +13,7 @@ export { StillMobile } from './StillMobile';
 export * from './StillFrame';
 export * from './StillHome';
 export * from './StillPages';
+export * from './StillSafety';
 export * from './StillAgent';
 export * from './StillConsole';
 export * from './StillBorrow';

@@ -4,7 +4,7 @@ import {
   CONSOLE_SECTIONS_V1,
   type ConsoleSectionV1,
 } from '@mioagent/ui';
-import { STILL_ASSISTANTS_V1, STILL_TABS_V1 } from '@mioagent/ui/still';
+import { STILL_ASSISTANTS_V1, STILL_SAFETY_V1, STILL_TABS_V1 } from '@mioagent/ui/still';
 
 // Route + command tables.
 //
@@ -59,6 +59,7 @@ const STILL_COMMANDS: AppCommand[] = [
     path: tab.path,
   })),
   { id: 'still-assistants', icon: '', label: STILL_ASSISTANTS_V1.label, path: STILL_ASSISTANTS_V1.path },
+  { id: 'still-safety', icon: '', label: STILL_SAFETY_V1.label, path: STILL_SAFETY_V1.path },
 ];
 
 export function appCommands(): AppCommand[] {

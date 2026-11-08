@@ -10,6 +10,7 @@ import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
+import { STILL_SAFETY_V1 } from './StillSafety';
 import { StillIconV1, type StillIconNameV1 } from './icons';
 
 void React;
@@ -148,6 +149,8 @@ export interface StillMoreModelV1 {
 }
 
 const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title: string; blurb: string; href: string; icon: StillIconNameV1; badge?: string }> }> = [
+  // How the engine keeps a loan safe, for anyone who asks before borrowing (operator, 2026-11-08).
+  { label: 'Safety', rows: [{ title: 'How Still keeps a loan safe', blurb: 'Its limits, the stricter weekend and earnings terms, the safety bands, and what it cannot prevent', href: STILL_SAFETY_V1.path, icon: 'shield' }] },
   { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend', badge: 'New' }] },
   { label: 'Trade', rows: [{ title: 'Swap AI', blurb: 'Any token on Base, by a checked route', href: '/routes', icon: 'swap' }] },
   {
@@ -163,7 +166,7 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
   // that lead into it; More no longer offers it.
   {
     label: 'Assistants',
-    rows: [{ title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' }],
+    rows: [{ title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Grok, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' }],
   },
 ];
 
