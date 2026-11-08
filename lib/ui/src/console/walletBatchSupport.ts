@@ -177,8 +177,44 @@ export function subscribeWalletBatchVerdictsV1(listener: () => void): () => void
 }
 
 /**
+ * The wallet's own connection to Base failed: MetaMask's words when the RPC its
+ * Base network uses keeps failing and it stops asking it for a while. On
+ * 2026-11-08 MetaMask on a custom Base RPC answered a swap's wallet_sendCalls
+ * with -32002 "RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many
+ * errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.",
+ * and the page blamed the fee sponsor, which MetaMask never asked. It is the
+ * wallet's network, not Miorail's server and not the sponsor. `beforeSending`:
+ * the request that failed is a read a wallet makes before it signs or sends.
+ */
+const WALLET_RPC_FAILING_V1 = /RPC endpoint returned too many errors|Consider using a different RPC endpoint/i;
+const WALLET_READ_BEFORE_SENDING_V1 = /\beth_(?:getCode|call|estimateGas|getTransactionCount|chainId|getBalance|gasPrice|feeHistory|maxPriorityFeePerGas|getBlockByNumber)\b/;
+function walletNetworkFailureV1(cause: unknown): { beforeSending: boolean } | null {
+  let current: unknown = cause;
+  let words = '';
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    const record = current as { details?: unknown; message?: unknown; shortMessage?: unknown; cause?: unknown };
+    for (const text of [record.details, record.message, record.shortMessage]) if (typeof text === 'string') words += `\n${text}`;
+    current = record.cause;
+  }
+  if (!WALLET_RPC_FAILING_V1.test(words)) return null;
+  return { beforeSending: WALLET_READ_BEFORE_SENDING_V1.test(words) && !/\beth_send(?:Raw)?Transaction\b/.test(words) };
+}
+
+/** What the page says when the wallet could not reach Base, or null for any other failure. */
+export function walletNetworkFailureSentenceV1(cause: unknown, walletName?: string | null): string | null {
+  const failure = walletNetworkFailureV1(cause);
+  if (!failure) return null;
+  const sent = failure.beforeSending
+    ? ', so nothing was sent. Wait a minute and press again.'
+    : '. Check its activity before you press again: if nothing is there, nothing was sent.';
+  return namedV1(`This wallet could not reach Base: its own connection to the network (its RPC) kept failing${sent}`
+    + ' If it keeps failing, open Base in the wallet’s network settings and choose its default RPC, or remove Base and add it back from the wallet’s list of networks.', walletName);
+}
+
+/**
  * Whether the wallet's answer proves that nothing was sent: the person refused
- * (EIP-1193 4001), or the wallet said it cannot do this at all. A timeout or a
+ * (EIP-1193 4001), the wallet said it cannot do this at all, or its own
+ * connection to Base failed on a read it makes before sending. A timeout or a
  * dropped connection proves nothing and is not here.
  */
 export function walletDidNotSendV1(cause: unknown): boolean {
@@ -188,16 +224,18 @@ export function walletDidNotSendV1(cause: unknown): boolean {
     if (record.code === 4001 || record.name === 'UserRejectedRequestError') return true;
     current = record.cause;
   }
-  return walletCannotSendSentenceV1(cause) !== null;
+  return walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true;
 }
 
 /**
  * The wallet's refusal in words, when the refusal is about what the wallet can
- * do rather than about the person. Anything else keeps the wallet's own
- * message — a translation is only honest where the code says what happened.
+ * do rather than about the person, or when its own connection to Base failed.
+ * Anything else keeps the wallet's own message — a translation is only honest
+ * where the code or the wallet's words say what happened.
  */
 export function walletSubmissionFailureMessageV1(cause: unknown, walletName?: string | null): string {
-  return walletCannotSendSentenceV1(cause, walletName) ?? (cause instanceof Error ? cause.message : 'Wallet submission failed');
+  return walletCannotSendSentenceV1(cause, walletName) ?? walletNetworkFailureSentenceV1(cause, walletName)
+    ?? (cause instanceof Error ? cause.message : 'Wallet submission failed');
 }
 
 /** Whether reading the capabilities failed because the method is not there. */

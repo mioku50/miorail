@@ -89,3 +89,19 @@ export function sponsoredGasPlanV1(input: {
     state: support === true ? 'sponsored' : 'offered',
   };
 }
+
+/**
+ * The request capabilities of one `wallet_sendCalls`: the Builder Code suffix and, when the plan
+ * offers it, the fee sponsor. Both optional, so a wallet that knows neither still sends the batch.
+ * Undefined when there is neither, as wagmi expects.
+ */
+export function sendCallsCapabilitiesV1(input: {
+  suffix: string | null | undefined;
+  sponsor: ReturnType<typeof sponsoredGasPlanV1>['capability'];
+}): { dataSuffix?: { value: `0x${string}`; optional: true }; paymasterService?: { url: string; context: { sponsorship: string }; optional: true } } | undefined {
+  if (!input.suffix && !input.sponsor) return undefined;
+  return {
+    ...(input.suffix ? { dataSuffix: { value: input.suffix as `0x${string}`, optional: true as const } } : {}),
+    ...(input.sponsor ?? {}),
+  };
+}

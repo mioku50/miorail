@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
+import { logger } from '@mioagent/utils';
 import { STOCKS } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1, lendingMarketV1, verifyLendingDraftV1, type LendingDraftClaimsV1 } from '../lib/lendingDraft.js';
 import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
@@ -22,6 +23,7 @@ import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, nextStopped
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
+import { offerSponsorshipV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -36,6 +38,8 @@ export const rwaLendingRuntimeV1 = {
   walletPayments: spendWalletStoreRuntimeV1.store,
   // A loan in steps: how long to wait between reads of a step the read RPC has not seen yet.
   stepReadDelayMs: 1_500,
+  // The network fee of a loan sent as one batch, offered to Still's fee sponsor (2026-11-08).
+  sponsorship: offerSponsorshipV1,
 };
 interface OwnerV1 { tenantId: string; walletAddress: string }
 function ownerV1(req: Request): OwnerV1 | null {
@@ -250,8 +254,22 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   };
   const result = paying ? await withSpendInvoiceLockV1(paying.orderId, arm) : await arm();
   if (!result.ok) { res.status(409).json({ error: result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal }); return; }
-  res.json({ attemptId: result.attemptId });
+  res.json({ attemptId: result.attemptId, sponsorship: loanSponsorshipV1(owner, result.execution) });
 });
+/** The network fee of a loan or repayment sent as one batch, offered to Still's fee sponsor for this
+ * wallet and exactly the calls just armed, as a stock swap's is (operator, 2026-11-08). A loan in steps
+ * is a plain transaction per step, which cannot carry a sponsor. An offer that cannot be worked out is
+ * no offer: the wallet pays, as before, and the arm stands. */
+function loanSponsorshipV1(owner: OwnerV1, execution: LoanExecutionV1): SponsorshipOfferV1 | null {
+  if (execution.run.delivery === 'sequential') return null;
+  try {
+    return rwaLendingRuntimeV1.sponsorship({ wallet: owner.walletAddress, blueprintId: `loan-${execution.executionId}`, kind: 'loan',
+      calls: execution.run.calls.map(call => ({ to: call.to, value: call.valueWei, data: call.data })) });
+  } catch (cause) {
+    logger.warn('Sponsored gas offer failed', { kind: 'loan', errorName: cause instanceof Error ? cause.name : typeof cause });
+    return null;
+  }
+}
 rwaLendingRouter.post('/rwa/lending/executions/:id/submission', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const body = z.object({ attemptId: id, outcome: z.enum(['submitted','unknown','rejected','stopped']), batchId: z.string().min(1).max(2000).optional() }).strict().safeParse(req.body);

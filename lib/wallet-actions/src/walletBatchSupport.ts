@@ -29,6 +29,7 @@ export {
   walletDidNotSendV1,
   walletKnownNotToBatchV1,
   walletLacksCapabilitiesMethodV1,
+  walletNetworkFailureSentenceV1,
   walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from '@mioagent/ui';

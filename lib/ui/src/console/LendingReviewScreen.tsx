@@ -127,6 +127,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       {model.step ? <p className="still-note" role="status">{model.step.phase === 'wallet' ? `Step ${model.step.index} of ${model.step.total}: confirm it in your wallet.`
         : model.step.phase === 'confirming' ? `Step ${model.step.index} of ${model.step.total} sent. Waiting for it to land on Base…`
           : `Step ${model.step.index} of ${model.step.total} landed. Still checks the next step against the chain…`}</p> : null}
+      {body.state === 'ready' && model.onOpen && !blocked && !inSteps && model.feeNote ? <p className="still-note">{model.feeNote}</p> : null}
       {body.state === 'ready' && model.onOpen && !blocked ? <button type="button" className="still-btn" disabled={model.walletBusy} onClick={model.onOpen}>
         {model.walletBusy ? 'Waiting for your wallet…' : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
       </button> : null}

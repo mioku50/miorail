@@ -17,6 +17,11 @@ import { decodeFunctionData, encodeAbiParameters, keccak256, parseAbi, type Hex 
 // changed amount, an expired token — gets a JSON-RPC refusal, and the wallet
 // falls back to the user paying gas. Nothing here signs, broadcasts or holds a
 // key to anything but the upstream URL.
+//
+// Since 2026-11-08 (operator: «и для взятия займа и repay тоже») a Still loan
+// or repayment sent as one batch is offered the same, when its execution is
+// armed, under its own daily allowance. A loan in steps is a plain transaction
+// per step, and a plain transaction cannot carry a sponsor.
 // ---------------------------------------------------------------------------
 
 export const SPONSORED_GAS_CHAIN_ID_V1 = '0x2105';
@@ -177,6 +182,17 @@ export interface SponsorshipClaimV1 {
   digest: Hex;
   /** Unix milliseconds. */
   expiresAt: number;
+  /**
+   * What the fee is for. Absent for a stock swap, as on every token before
+   * 2026-11-08; `loan` for a Still loan or repayment sent as one batch. Each
+   * has its own daily allowance, so a loan never spends a trade's.
+   */
+  kind?: 'loan';
+}
+
+/** Whose allowance an operation counts against: the wallet's trades, or its Still loans. */
+export function sponsorshipAllowanceKeyV1(claim: { wallet: string; kind?: 'loan' }): string {
+  return claim.kind === 'loan' ? `${claim.wallet.toLowerCase()}#loan` : claim.wallet.toLowerCase();
 }
 
 /**
@@ -227,7 +243,8 @@ export function verifySponsorshipTokenV1(token: unknown, key: Buffer, nowMs: num
     typeof claim.wallet !== 'string' ||
     typeof claim.blueprintId !== 'string' ||
     typeof claim.digest !== 'string' ||
-    typeof claim.expiresAt !== 'number'
+    typeof claim.expiresAt !== 'number' ||
+    (claim.kind !== undefined && claim.kind !== 'loan')
   ) {
     return { ok: false, reason: 'malformed' };
   }
@@ -405,7 +422,7 @@ export function decideSponsoredGasV1(input: {
   if (!calls || sponsoredCallsDigestV1(calls) !== claim.digest) {
     return refuse('calls_not_approved', 'These calls are not the ones that were approved.');
   }
-  if (!input.ledger.allows(claim.wallet, op.nonce)) {
+  if (!input.ledger.allows(sponsorshipAllowanceKeyV1(claim), op.nonce)) {
     return refuse('daily_limit_reached', "Today's sponsored gas for this wallet is used up; the wallet can still pay it.");
   }
   return {

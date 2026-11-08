@@ -855,15 +855,18 @@ export function usePortfolio(
 
 /**
  * Growth plan step 2 — whether this server pays the network fee on reviewed
- * stock trades from Base Account wallets. Public and cheap; a page reads it
- * only to decide whether it may SAY so before anything is approved. The fee
- * itself is decided per approval, on the server.
+ * stock trades from Base Account wallets, and since 2026-11-08 on Still loans
+ * and repayments sent as one batch. Public and cheap; a page reads it only to
+ * decide whether it may SAY so before anything is approved. The fee itself is
+ * decided per approval, on the server. The daily limit is per wallet and per
+ * kind: trades and loans each have that many.
  */
 export interface SponsoredGasStatusV1 {
   schemaVersion: 'sponsored-gas-status/v1';
   sponsoredGas: 'on' | 'off';
   dailyLimitPerWallet: number | null;
-  scope: 'reviewed_stock_swaps';
+  /** A server deployed before 2026-11-08 says `reviewed_stock_swaps`: it sponsors no loan. */
+  scope: 'reviewed_stock_swaps' | 'reviewed_stock_swaps_and_still_loans';
   wallets: 'base_account';
 }
 

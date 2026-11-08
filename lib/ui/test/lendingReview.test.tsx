@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingFeeNoteV1, lendingReviewReadsTheSameV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
 import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayExactCoversDebtV1, repayExactWholeDebtTextV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
@@ -356,6 +356,44 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     // A payment of another amount than the loan, or on a repayment, is not a review.
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, payment: { ...payment, assets: '13250001' } } }), null);
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, operation: 'repay', payment } }), null);
+  });
+});
+
+describe('Still offers to pay a batch’s network fee (operator, 2026-11-08)', () => {
+  const NOTE = 'Still offers to pay the network fee, for up to 3 loans or repayments a day. Your wallet shows who pays before you confirm.';
+  it('takes the arm’s offer only as an https URL on Still’s own sponsorship path, with its token', () => {
+    const offer = { paymasterUrl: 'https://miorail.xyz/api/paymaster/sponsorship/abc.def', context: { sponsorship: 'abc.def' } };
+    assert.deepEqual(parseLendingFeeSponsorV1(offer), offer);
+    for (const bad of [null, undefined, 'https://miorail.xyz/api/paymaster/sponsorship/abc', {},
+      { ...offer, paymasterUrl: 'http://miorail.xyz/api/paymaster/sponsorship/abc.def' },
+      { ...offer, paymasterUrl: 'https://miorail.xyz/api/paymaster' },
+      { ...offer, paymasterUrl: 'https://api.developer.coinbase.com/rpc/v1/base/KEY' },
+      { ...offer, paymasterUrl: 'https://user:pass@miorail.xyz/api/paymaster/sponsorship/abc.def' },
+      { ...offer, paymasterUrl: 'not a url' },
+      { ...offer, context: {} }, { ...offer, context: { sponsorship: '' } }, { ...offer, context: { sponsorship: 'x'.repeat(2001) } }]) {
+      assert.equal(parseLendingFeeSponsorV1(bad), null, JSON.stringify(bad));
+    }
+  });
+  it('says so only when loans are sponsored here and the wallet says it takes a sponsor', () => {
+    assert.equal(lendingFeeNoteV1({ loansSponsored: true, walletTakesSponsor: true, dailyLimitPerWallet: 3 }), NOTE);
+    assert.equal(lendingFeeNoteV1({ loansSponsored: true, walletTakesSponsor: true, dailyLimitPerWallet: 1 }),
+      'Still offers to pay the network fee, for up to 1 loan or repayment a day. Your wallet shows who pays before you confirm.');
+    assert.equal(lendingFeeNoteV1({ loansSponsored: true, walletTakesSponsor: true, dailyLimitPerWallet: null }),
+      'Still offers to pay the network fee. Your wallet shows who pays before you confirm.');
+    for (const [loansSponsored, walletTakesSponsor] of [[false, true], [true, false], [true, null]] as const) {
+      assert.equal(lendingFeeNoteV1({ loansSponsored, walletTakesSponsor, dailyLimitPerWallet: 3 }), null);
+    }
+  });
+  it('is said beside the wallet button of a batch, never for steps or once the review is sent', () => {
+    assert.match(render({ feeNote: NOTE }), new RegExp(`<p class="still-note">${NOTE.replace(/[.]/g, '\\.')}</p><button type="button" class="still-btn"`));
+    assert.doesNotMatch(render(), /offers to pay the network fee/);
+    const steps: LendingReadyWireV1 = { ...ready(), atomicRequired: false, delivery: 'sequential',
+      calls: [{ to: ADDRESS, data: '0x095ea7b3', value: '0' }, { to: ADDRESS, data: '0x12345678', value: '0' }],
+      steps: [{ index: 0, to: ADDRESS, reading: 'Allows only the registered Aave Spoke to move up to 3000000 atomic units; the next step uses exactly this allowance.' },
+        { index: 1, to: ADDRESS, reading: 'Repays up to the exact confirmed USDC maximum.' }], facts: { ...ready().facts, venue: 'aave-v4' } };
+    assert.doesNotMatch(render({ feeNote: NOTE, body: steps }), /offers to pay the network fee/);
+    assert.doesNotMatch(render({ feeNote: NOTE, batchId: 'fixture-batch' }), /offers to pay the network fee/);
+    assert.doesNotMatch(render({ feeNote: NOTE, onOpen: null }), /offers to pay the network fee/);
   });
 });
 

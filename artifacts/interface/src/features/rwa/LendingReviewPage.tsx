@@ -3,10 +3,11 @@ import { useRoute } from 'wouter';
 import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
-import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
-import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
+import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
+import { useSponsoredGasStatus, useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1,
+  useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
 const LENDING_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1({
@@ -32,15 +33,31 @@ export function LendingReviewPage() {
       data: LENDING_BUILDER_SUFFIX_V1 ? concat([call.data as Hex, LENDING_BUILDER_SUFFIX_V1 as Hex]) : call.data as Hex }),
     receipt: async hash => (await waitForTransactionReceipt(config, { hash: hash as Hex, chainId: 8453, timeout: 180_000 }).catch(() => null))?.status ?? null,
   } : null, [batches.blocker, address, config]);
+  // Still pays a batch's network fee when the arm offers it and the wallet takes a fee sponsor
+  // (2026-11-08). After the wallet failed with the sponsor, the next press goes without one.
+  const sponsoredGas = useSponsoredGasStatus({ enabled: session.signedIn });
+  const [sponsorDeclined, setSponsorDeclined] = useState(false);
+  const feeNote = lendingFeeNoteV1({
+    loansSponsored: sponsoredGas.data?.sponsoredGas === 'on' && sponsoredGas.data.scope === 'reviewed_stock_swaps_and_still_loans',
+    walletTakesSponsor: steps || sponsorDeclined ? false : paymasterServiceSupportV1(batches.capabilities),
+    dailyLimitPerWallet: sponsoredGas.data?.dailyLimitPerWallet ?? null,
+  });
   const review = useLendingReviewConsoleV1({ draft: params?.draft ?? legacyParams?.draft ?? null,
     sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null,
-    walletBlocker: steps ? null : batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember, steps,
-    sendCalls: async ({ calls }) => {
-      const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
-        calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
-        capabilities: LENDING_BUILDER_SUFFIX_V1 ? { dataSuffix: { value: LENDING_BUILDER_SUFFIX_V1, optional: true } } : undefined,
-      });
-      return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+    walletBlocker: steps ? null : batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember, steps, feeNote,
+    sendCalls: async ({ calls, sponsorship }) => {
+      const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: batches.capabilities, declinedBefore: sponsorDeclined });
+      try {
+        const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
+          calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+          capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
+        });
+        return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+      } catch (error) {
+        // Whatever else failed, the next press must not depend on the sponsor; the person's own No is not the sponsor's.
+        if (gas.capability && !isWalletRejectionError(error)) setSponsorDeclined(true);
+        throw error;
+      }
     },
   });
   // Offered once the loan is confirmed onchain: a repayment needs no alert.

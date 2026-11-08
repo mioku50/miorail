@@ -11,6 +11,7 @@ import {
   paymasterUpstreamUrlV1,
   sponsoredCallsDigestV1,
   sponsoredGasDailyLimitV1,
+  sponsorshipAllowanceKeyV1,
   sponsorshipKeyV1,
   stripErc8021SuffixV1,
   userOperationCallsV1,
@@ -246,6 +247,34 @@ test('the daily limit counts operations, not requests', () => {
   // Another wallet has its own count.
   book.record(OTHER_WALLET, '0x9');
   assert.equal(book.allows(OTHER_WALLET, '0xa'), true);
+});
+
+test('a Still loan has its own daily allowance, so it never spends a trade’s (2026-11-08)', () => {
+  const calls = buyCalls();
+  const loanToken = issueSponsorshipTokenV1(
+    { v: 1, wallet: WALLET, blueprintId: 'loan-execution-1', digest: sponsoredCallsDigestV1(calls), expiresAt: NOW_MS + 60_000, kind: 'loan' },
+    KEY,
+  );
+  assert.notEqual(sponsorshipAllowanceKeyV1({ wallet: WALLET, kind: 'loan' }), sponsorshipAllowanceKeyV1({ wallet: WALLET }));
+  const book = ledger(1);
+  // Today's one trade is spent.
+  book.record(sponsorshipAllowanceKeyV1({ wallet: WALLET }), '0x1');
+  const trade = decide({ nonce: '0x2', ledger: book });
+  assert.equal(trade.ok ? null : trade.code, 'daily_limit_reached');
+  // The loan is counted against the loans' allowance, which is untouched.
+  const loan = decide({ nonce: '0x2', ledger: book, context: { sponsorship: loanToken } });
+  assert.equal(loan.ok && loan.claim.kind, 'loan');
+  if (loan.ok) book.record(sponsorshipAllowanceKeyV1(loan.claim), loan.nonce);
+  const second = decide({ nonce: '0x3', ledger: book, context: { sponsorship: loanToken } });
+  assert.equal(second.ok ? null : second.code, 'daily_limit_reached');
+});
+
+test('a token names a loan or nothing: a kind we do not issue is not ours', () => {
+  const odd = issueSponsorshipTokenV1(
+    { v: 1, wallet: WALLET, blueprintId: 'b', digest: sponsoredCallsDigestV1(buyCalls()), expiresAt: NOW_MS + 60_000, kind: 'anything' as 'loan' },
+    KEY,
+  );
+  assert.deepEqual(verifySponsorshipTokenV1(odd, KEY, NOW_MS), { ok: false, reason: 'malformed' });
 });
 
 test('the daily limit resets at UTC midnight', () => {

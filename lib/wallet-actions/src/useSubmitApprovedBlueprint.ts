@@ -34,7 +34,7 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import {
   SEQUENTIAL_ALLOWANCE_FAILED_V1,
   SEQUENTIAL_ALLOWANCE_UNREAD_V1,
@@ -815,9 +815,10 @@ export function useSubmitApprovedBlueprint({
           const stepsNext = goal === 'swap' && batchFailureInvitesStepsV1(cause);
           const message = stepsNext ? sequentialAfterBatchFailureV1(walletName) : walletSubmissionFailureMessageV1(cause, walletName);
           if (stepsNext) setStepsAfterFailure(true);
-          if (stepsNext || walletCannotSendSentenceV1(cause) !== null) {
+          if (stepsNext || walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureSentenceV1(cause) !== null) {
             // The wallet cannot send a batch at all, sponsored or not. Saying
             // the sponsor failed sent people to press again for the same no.
+            // Nor when it could not reach Base (MetaMask's own RPC, 11-08).
             setSponsoredGas(null);
           } else if (gas.capability) {
             // Whatever else failed, the retry must not depend on the sponsor.

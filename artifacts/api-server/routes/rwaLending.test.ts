@@ -98,6 +98,35 @@ describe('session-owned lending HTTP boundary', () => {
     const status = await request(app()).get(path); assert.equal(status.body.state, 'submitted'); assert.equal(status.body.verification, null);
     assert.equal((await request(app(other)).get(path)).status, 404);
   });
+  // Operator, 2026-11-08: «и для взятия займа и repay тоже». A batch's fee goes to Still's fee sponsor, for this wallet and
+  // exactly the calls armed; a loan in steps is plain transactions, which cannot carry one.
+  const OFFER = { paymasterUrl: 'https://miorail.xyz/api/paymaster/sponsorship/fixture-token', context: { sponsorship: 'fixture-token' } };
+  const arm = async (review: { body: { executionId: string; callsHash: string; signingTermsHash: string } }) =>
+    request(app()).post(`${base}/lending/executions/${review.body.executionId}/arm`).send({ callsHash: review.body.callsHash, signingTermsHash: review.body.signingTermsHash }).expect(200);
+  it('offers a batch’s network fee to the sponsor, for this wallet and exactly the calls it armed', async () => {
+    const offers: unknown[] = [];
+    rwaLendingRuntimeV1.sponsorship = (input) => { offers.push(input); return OFFER; };
+    const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    assert.equal(offers.length, 0, 'a review offers nothing; only an arm does');
+    assert.deepEqual((await arm(read)).body.sponsorship, OFFER);
+    assert.deepEqual(offers, [{ wallet, blueprintId: `loan-${read.body.executionId}`, kind: 'loan', calls: [{ to: ADDRESSES.aaveSpoke.toLowerCase(), value: '0', data: '0x12345678' }] }]);
+  });
+  it('offers a loan in steps no sponsor: each step is a plain transaction the wallet pays for', async () => {
+    let offered = 0;
+    rwaLendingRuntimeV1.sponsorship = () => { offered++; return OFFER; };
+    rwaLendingRuntimeV1.runAave = async ({ question }: { question: LendingQuestionV1 }) => ({ ...ready(question), atomicRequired: false as const, delivery: 'sequential' as const });
+    const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}?delivery=sequential`);
+    assert.equal(read.body.delivery, 'sequential');
+    assert.equal((await arm(read)).body.sponsorship, null);
+    assert.equal(offered, 0);
+  });
+  it('an offer that cannot be worked out is no offer, and the arm stands', async () => {
+    rwaLendingRuntimeV1.sponsorship = () => { throw new Error('fixture: the sponsor could not be asked'); };
+    const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    const armed = await arm(read);
+    assert.equal(armed.body.sponsorship, null);
+    assert.match(armed.body.attemptId, /^[0-9a-f-]{36}$/);
+  });
   it('does not accept status or a receipt supplied by the browser', async () => {
     const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`), path = `${base}/lending/executions/${read.body.executionId}`;
     const arm = await request(app()).post(`${path}/arm`).send({ callsHash: read.body.callsHash, signingTermsHash: read.body.signingTermsHash });

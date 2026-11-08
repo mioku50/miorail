@@ -25,13 +25,15 @@ export function stepsReady() {
 const stepHash = (n: number) => `0x${String(n).padStart(64, '0')}`;
 export type FixtureWindow = Window & {
   lendingStepSends: string[];
+  /** What each batch handed the wallet as Still's offer to pay its fee. */
+  lendingSponsorships: unknown[];
   lendingWalletAttempts: number;
   setLendingFixtureIdentity: (next: { session: string; connected: string }) => void;
   finishLendingWallet: (batch: string) => void;
   /** Takes the review off the page, as leaving it does. */
   closeLendingReview: () => void;
 };
-export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'steps' | 'steps-declined' = 'submitted') {
+export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'rpc-failing' | 'steps' | 'steps-declined' = 'submitted') {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
@@ -43,7 +45,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     stepsStanding: null as Record<string, unknown> | null, errorCode: null as string | null, refusedFacts: ready().facts as Record<string, unknown>,
     stopAnswers: [] as Array<{ status: number; json: Record<string, unknown> }>,
     // Holds the arm's answer until it settles, as a slow server would.
-    armHeld: null as Promise<void> | null };
+    armHeld: null as Promise<void> | null,
+    // What the arm says about the network fee: Still's offer to pay it (2026-11-08), or nothing.
+    armSponsorship: undefined as unknown };
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
@@ -61,7 +65,7 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       if (state.armHeld) await state.armHeld;
       expect(request.postDataJSON().callsHash).toBe(state.response.callsHash);
       expect(request.postDataJSON().signingTermsHash).toBe(state.response.signingTermsHash);
-      return route.fulfill({ json: { attemptId: 'attempt_1' } });
+      return route.fulfill({ json: { attemptId: 'attempt_1', ...(state.armSponsorship !== undefined ? { sponsorship: state.armSponsorship } : {}) } });
     }
     if (path.endsWith('/executions/execution_1/submission') && request.method() === 'POST') {
       const body = request.postDataJSON(); state.order.push(`submission:${body.outcome}`);
@@ -117,8 +121,8 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       const [identity,setIdentity]=React.useState({session:'${WALLET}',connected:'${WALLET}'});
       window.setLendingFixtureIdentity=setIdentity;
       const {model}=useLendingReviewConsoleV1({draft:decodeURIComponent(location.pathname.split('/').pop()),sessionWalletAddress:identity.session,walletAddress:identity.connected,
-        sendCalls:async()=>{ window.lendingWalletAttempts++;
-          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
+        sendCalls:async(batch)=>{ window.lendingWalletAttempts++; window.lendingSponsorships=[...(window.lendingSponsorships??[]),batch.sponsorship??null];
+          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'rpc-failing' ? "throw Object.assign(new Error('Requested resource not available.'),{code:-32002,shortMessage:'Requested resource not available.',details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
         },
         onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; },
         ${outcome.startsWith('steps') ? `steps:{

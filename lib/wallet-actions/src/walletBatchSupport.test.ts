@@ -14,6 +14,7 @@ import {
   walletCannotSendSentenceV1,
   walletDidNotSendV1,
   walletKnownNotToBatchV1,
+  walletNetworkFailureSentenceV1,
   walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from './walletBatchSupport';
@@ -148,4 +149,37 @@ test('the wallet is not asked again on focus: a refetch blanks an answer that is
   for (const option of ['refetchOnWindowFocus: false', 'refetchOnReconnect: false', 'retryOnMount: false']) {
     assert.ok(source.includes(option), option);
   }
+});
+
+// 2026-11-08: a friend's MetaMask, on a custom Base RPC that kept failing, answered a swap batch like
+// this (the address is a fixture's), and the page blamed the fee sponsor, which MetaMask never asked.
+function metaMaskRpcFailing(method = 'eth_getCode') {
+  const details = `RPC 0x2105 Custom ${method}: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.`;
+  return Object.assign(new Error(`Requested resource not available.\n\nRequest Arguments:\n  chain: undefined (id: 8453)\n  from: 0x1111111111111111111111111111111111111111\n\nDetails: ${details}\nVersion: viem@2.53.1`),
+    { code: -32002, shortMessage: 'Requested resource not available.', details });
+}
+
+test('a wallet that could not reach Base is told so, not that the sponsor or the wallet refused', () => {
+  const cause = metaMaskRpcFailing();
+  const sentence = 'MetaMask could not reach Base: its own connection to the network (its RPC) kept failing, so nothing was sent. Wait a minute and press again.'
+    + ' If it keeps failing, open Base in the wallet’s network settings and choose its default RPC, or remove Base and add it back from the wallet’s list of networks.';
+  assert.equal(walletNetworkFailureSentenceV1(cause, 'MetaMask'), sentence);
+  assert.equal(walletSubmissionFailureMessageV1(cause, 'MetaMask'), sentence);
+  assert.equal(walletNetworkFailureSentenceV1({ cause }, null)?.startsWith('This wallet could not reach Base'), true, 'read along the cause chain');
+  // A read before sending failed: nothing was sent, so a loan review is offered again rather than locked.
+  assert.equal(walletDidNotSendV1(cause), true);
+  // It says nothing about batches: the wallet is still asked for one next time.
+  assert.equal(walletCannotSendSentenceV1(cause), null);
+  assert.equal(walletRefusedBatchesV1(cause), false);
+});
+
+test('a wallet whose RPC failed while sending may have sent, and is not said to have sent nothing', () => {
+  const cause = metaMaskRpcFailing('eth_sendRawTransaction');
+  assert.match(walletNetworkFailureSentenceV1(cause, 'MetaMask') ?? '', /kept failing\. Check its activity before you press again: if nothing is there, nothing was sent\./);
+  assert.equal(walletDidNotSendV1(cause), false);
+  // Another unavailable resource is not this, and keeps the wallet's own words.
+  const other = Object.assign(new Error('Requested resource not available.'), { code: -32002 });
+  assert.equal(walletNetworkFailureSentenceV1(other), null);
+  assert.equal(walletSubmissionFailureMessageV1(other), 'Requested resource not available.');
+  assert.equal(walletDidNotSendV1(other), false);
 });

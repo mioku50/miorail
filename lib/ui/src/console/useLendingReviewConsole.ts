@@ -3,9 +3,9 @@ import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
-import { walletCannotSendSentenceV1, walletDidNotSendV1 } from './walletBatchSupport';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
-  type LendingExecutionWireV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
+import { walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1 } from './walletBatchSupport';
+import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1,
+  type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
 type CallsV1 = LendingReadyWireV1['calls'];
@@ -86,6 +86,8 @@ export interface LendingReviewConsoleModelV1 {
   step?: LendingStepProgressV1 | null;
   /** The page that asked this review, offered when it is refused or cannot be read. */
   back?: { href: string; label: string } | null;
+  /** Said beside the wallet button of a batch: Still offers to pay the network fee. */
+  feeNote?: string | null;
 }
 
 /** One signed-in session and one connected wallet own this hook's state.
@@ -95,7 +97,11 @@ export function useLendingReviewConsoleV1(input: {
   draft: string | null;
   sessionWalletAddress: string | null;
   walletAddress: string | null;
-  sendCalls: (batch: { calls: CallsV1 }) => Promise<string | null>;
+  /** One batch to the wallet. `sponsorship` is Still's offer to pay its network fee, when the arm made
+   * one: the host hands it to a wallet that takes a fee sponsor, and may ignore it. */
+  sendCalls: (batch: { calls: CallsV1; sponsorship?: LendingFeeSponsorV1 | null }) => Promise<string | null>;
+  /** What the host may say about the fee before the press (`lendingFeeNoteV1`); shown for a batch only. */
+  feeNote?: string | null;
   /** Why the connected wallet cannot send one batch, read from the wallet by
    * the host before anything is opened. The wallet button is not offered. */
   walletBlocker?: string | null;
@@ -227,9 +233,11 @@ export function useLendingReviewConsoleV1(input: {
           try {
             return await submitBorrowOnceV1({ key, storage, enteredWallet: () => handedToWallet, send: async () => {
               if (current.current !== identity) throw new Error('lending_identity_changed');
-              const arm = await request<{ attemptId?: unknown }>(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/arm`,
+              const arm = await request<{ attemptId?: unknown; sponsorship?: unknown }>(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/arm`,
                 { method: 'POST', body: JSON.stringify({ callsHash: approved.callsHash, signingTermsHash: approved.signingTermsHash }) });
               if (typeof arm.attemptId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(arm.attemptId)) throw new Error('lending_arm_unreadable');
+              // Still's offer to pay this batch's network fee, bound by the server to these calls; anything else is none.
+              const sponsorship = parseLendingFeeSponsorV1(arm.sponsorship);
               const report = async (outcome: 'submitted' | 'unknown' | 'rejected' | 'stopped', batchId?: string) => {
                 if (current.current !== identity || !alive.current) throw new Error('lending_identity_changed');
                 await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
@@ -295,7 +303,7 @@ export function useLendingReviewConsoleV1(input: {
               }
               try {
                 handedToWallet = true;
-                const batchId = await input.sendCalls({ calls });
+                const batchId = await input.sendCalls({ calls, sponsorship });
                 await report(batchId ? 'submitted' : 'unknown', batchId ?? undefined).catch(() => {
                   update({ walletError: 'Your wallet returned, but the submission record could not be updated. Check the onchain result before taking another action.' });
                 });
@@ -327,7 +335,7 @@ export function useLendingReviewConsoleV1(input: {
       if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
-        : walletCannotSendSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
+        : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
             : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
     } finally { opening.current = false; update({ walletBusy: false, step: null }); }
@@ -351,5 +359,7 @@ export function useLendingReviewConsoleV1(input: {
     onStop: eligible && executionId && active.execution?.steps?.stoppable && !active.walletBusy && !active.step ? () => void onStop() : null,
     step: eligible ? active.step : null,
     back: lendingBackLinkV1(input.draft),
+    // A wallet that sends in steps pays each step's fee itself, so it is told nothing about a sponsor.
+    feeNote: eligible && !sequential ? input.feeNote ?? null : null,
   } };
 }

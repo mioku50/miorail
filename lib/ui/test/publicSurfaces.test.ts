@@ -47,6 +47,10 @@ test('every wallet call site in the repository wires ERC-8021 attribution', () =
       /dataSuffix:\s*\{\s*value:/.test(text) ||
       // A hook may take the suffix as a prop and attach it from there.
       /capabilities:\s*dataSuffix/.test(text) ||
+      // Or wallet-actions' helper builds the capabilities from the file's own
+      // suffix, beside the fee sponsor (Still's loan pages, 2026-11-08); its
+      // own tests hold that the suffix goes out as dataSuffix.
+      /sendCallsCapabilitiesV1\(\{\s*suffix:\s*(?!null\b|undefined\b)[A-Za-z_$][\w$]*/.test(text) ||
       // Or the server wrote the code into each call's data, and the file
       // refuses a call without it before the wallet opens (Found's claim).
       /callBuilderCodesV1\(call\.data\)\.length === 0/.test(text);

@@ -29,6 +29,7 @@ export type { WalletConfirmButtonProps, WalletConfirmAction } from './src/Wallet
 export {
   SPONSORED_GAS_LABELS_V1,
   paymasterServiceSupportV1,
+  sendCallsCapabilitiesV1,
   sponsoredGasPlanV1,
 } from './src/sponsoredGas';
 export type { SponsoredGasOfferV1, SponsoredGasStateV1 } from './src/sponsoredGas';

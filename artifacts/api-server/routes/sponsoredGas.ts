@@ -12,6 +12,7 @@ import {
   paymasterUpstreamUrlV1,
   sponsoredCallsDigestV1,
   sponsoredGasDailyLimitV1,
+  sponsorshipAllowanceKeyV1,
   sponsorshipKeyV1,
   type SponsoredCallV1,
 } from '../lib/sponsoredGas.js';
@@ -83,17 +84,21 @@ export function offerSponsorshipV1(input: {
   wallet: string;
   blueprintId: string;
   calls: readonly SponsoredCallV1[];
+  /** A Still loan or repayment, counted against its own daily allowance; absent for a swap. */
+  kind?: 'loan';
 }): SponsorshipOfferV1 | null {
   const key = sponsoredGasRuntime.key();
   if (!key || !sponsoredGasConfiguredV1()) return null;
-  if (!sponsorshipLedgerV1.allows(input.wallet, null)) return null;
+  const wallet = input.wallet.toLowerCase();
+  if (!sponsorshipLedgerV1.allows(sponsorshipAllowanceKeyV1({ wallet, kind: input.kind }), null)) return null;
   const token = issueSponsorshipTokenV1(
     {
       v: 1,
-      wallet: input.wallet.toLowerCase(),
+      wallet,
       blueprintId: input.blueprintId,
       digest: sponsoredCallsDigestV1(input.calls),
       expiresAt: sponsoredGasRuntime.now().getTime() + SPONSORED_GAS_TOKEN_TTL_MS_V1,
+      ...(input.kind ? { kind: input.kind } : {}),
     },
     key,
   );
@@ -155,8 +160,9 @@ sponsoredGasRouter.get('/status', (_req: Request, res: Response) => {
   res.status(200).json({
     schemaVersion: 'sponsored-gas-status/v1',
     sponsoredGas: on ? 'on' : 'off',
+    // Per wallet and per kind: trades and Still loans each have this many a day.
     dailyLimitPerWallet: on ? sponsoredGasRuntime.dailyLimit() : null,
-    scope: 'reviewed_stock_swaps',
+    scope: 'reviewed_stock_swaps_and_still_loans',
     wallets: 'base_account',
   });
 });
@@ -294,13 +300,14 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
 
   // Counted only when the paymaster has agreed to the FINAL data: a stub is an
   // estimate, and an operation the upstream refused was never sponsored.
+  const kind = decision.claim.kind ?? 'swap';
   if (decision.method === 'pm_getPaymasterData') {
-    sponsorshipLedgerV1.record(decision.wallet, decision.nonce);
-    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource, bytes });
+    sponsorshipLedgerV1.record(sponsorshipAllowanceKeyV1(decision.claim), decision.nonce);
+    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, kind, tokenSource: decision.tokenSource, bytes });
   } else {
     // A stub sponsors nothing, but without this line "the wallet never asked"
     // and "it asked, then paid the fee itself" read the same in the journal.
-    logger.info('Sponsored gas stub served', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource, bytes });
+    logger.info('Sponsored gas stub served', { blueprintId: decision.claim.blueprintId, kind, tokenSource: decision.tokenSource, bytes });
   }
   reply({ result: answer.result });
 });

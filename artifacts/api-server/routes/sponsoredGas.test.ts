@@ -110,6 +110,26 @@ test('an approved operation is forwarded, and the wallet gets the paymaster’s 
   assert.deepEqual(forwarded[0]!.body.params[3], {});
 });
 
+test('a Still loan is sponsored like a trade, and counted on its own: a spent trade allowance leaves it alone (2026-11-08)', async (t) => {
+  const forwarded = stubV1(t, { dailyLimit: () => 1 });
+  const trade = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  await request(routerApp()).post(offerPath(trade)).send(rpc('pm_getPaymasterData', {}, { nonce: '0x1' })).expect(200);
+  // The one trade a day is spent, so another trade is offered nothing...
+  assert.equal(offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-2', calls: CALLS }), null);
+  // ...and a loan still is, for exactly its calls, with ETH in one of them.
+  const LOAN: SponsoredCallV1[] = [{ to: '0x4200000000000000000000000000000000000006', value: '2000000000000000', data: '0xd0e30db0' }, ...CALLS];
+  const loan = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'loan-execution-1', calls: LOAN, kind: 'loan' })!;
+  assert.ok(loan);
+  const final = await request(routerApp()).post(offerPath(loan)).send(rpc('pm_getPaymasterData', {}, { nonce: '0x2', calls: LOAN })).expect(200);
+  assert.ok(final.body.result);
+  assert.equal(forwarded.length, 2);
+  // The loan's allowance is spent now too, and the trade's offer does not pay for the loan's calls.
+  assert.equal(offerSponsorshipV1({ wallet: WALLET, blueprintId: 'loan-execution-2', calls: LOAN, kind: 'loan' }), null);
+  const crossed = await request(routerApp()).post(offerPath(trade)).send(rpc('pm_getPaymasterData', {}, { nonce: '0x3', calls: LOAN })).expect(200);
+  assert.equal(crossed.body.error?.data?.reason, 'calls_not_approved');
+  assert.equal(forwarded.length, 2);
+});
+
 /** The path of the URL the offer told the wallet to call. */
 function offerPath(offer: { paymasterUrl: string }): string {
   return new URL(offer.paymasterUrl).pathname;
@@ -380,7 +400,7 @@ test('the public status says on or off and nothing about the upstream', async (t
     schemaVersion: 'sponsored-gas-status/v1',
     sponsoredGas: 'on',
     dailyLimitPerWallet: 3,
-    scope: 'reviewed_stock_swaps',
+    scope: 'reviewed_stock_swaps_and_still_loans',
     wallets: 'base_account',
   });
   assert.doesNotMatch(JSON.stringify(on.body), /TESTKEY123|coinbase\.com/);

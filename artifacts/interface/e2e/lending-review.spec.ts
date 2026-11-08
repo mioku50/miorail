@@ -28,6 +28,21 @@ test('calls prepared again under the same terms go to the wallet at the first pr
   state.executionState = 'confirmed'; await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
   await expect(page.locator('body')).toContainText('Confirmed onchain:'); expect(await attempts(page)).toBe(1);
 });
+// 2026-11-08: Still pays a batch's network fee. The wallet is handed the arm's offer exactly, and nothing for anything else.
+const FEE_OFFER = { paymasterUrl: 'https://miorail.xyz/api/paymaster/sponsorship/fixture.token', context: { sponsorship: 'fixture.token' } };
+for (const [name, made, handed] of [
+  ['the arm’s offer, exactly', FEE_OFFER, FEE_OFFER],
+  ['nothing for an offer that names another paymaster', { ...FEE_OFFER, paymasterUrl: 'https://api.developer.coinbase.com/rpc/v1/base/KEY' }, null],
+  ['nothing when the arm makes no offer', undefined, null],
+] as const) {
+  test(`a batch hands the wallet ${name}`, async ({ page }) => {
+    const state = await install(page); state.armSponsorship = made; await page.goto('/lending/fixture-lending');
+    const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
+    await open.click(); await expect.poll(() => attempts(page)).toBe(1);
+    expect(await page.evaluate(() => (window as unknown as FixtureWindow).lendingSponsorships)).toEqual([handed]);
+    expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+  });
+}
 test('changed lending terms require another explicit click, which sends that exact review', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
@@ -72,6 +87,17 @@ test('a wallet that answers it does not support the batch sent nothing: the revi
   expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
   expect(await page.evaluate(() => (window as unknown as { lendingWalletRefusals?: number }).lendingWalletRefusals)).toBe(1);
   expect(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
+});
+test('a wallet that could not reach Base sent nothing: the review says so and is offered again, still as one batch', async ({ page }) => {
+  // MetaMask on a custom Base RPC that kept failing, 2026-11-08: it failed reading eth_getCode, before sending anything.
+  const state = await install(page, 'rpc-failing'); await page.goto('/lending/fixture-lending');
+  const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();
+  await expect(page.getByText(/^This wallet could not reach Base: its own connection to the network \(its RPC\) kept failing, so nothing was sent\./)).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('result is unknown');
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
+  // Not a refusal of batches: the wallet is not stopped from being asked for one again.
+  expect(await page.evaluate(() => (window as unknown as { lendingWalletRefusals?: number }).lendingWalletRefusals)).toBeUndefined();
+  await expect(open).toBeEnabled();
 });
 test('owner/connector mismatch masks private review before paint and does not read another wallet', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');

@@ -279,3 +279,34 @@ export function lendingBackLinkV1(draft: string | null | undefined): { href: str
   return null;
 }
 
+
+/**
+ * Still's offer to have a loan's network fee paid (ERC-7677), as the arm answered it: Still's own
+ * paymaster URL and the token the server bound to this wallet and these exact calls (2026-11-08).
+ * The token decides nothing here; the paymaster checks it against the operation the wallet builds.
+ */
+export interface LendingFeeSponsorV1 { paymasterUrl: string; context: { sponsorship: string } }
+
+/** The arm's offer, or null for anything that is not one: an https URL on Still's sponsorship path. */
+export function parseLendingFeeSponsorV1(value: unknown): LendingFeeSponsorV1 | null {
+  if (!value || typeof value !== 'object') return null;
+  const { paymasterUrl, context } = value as { paymasterUrl?: unknown; context?: unknown };
+  const token = context && typeof context === 'object' ? (context as { sponsorship?: unknown }).sponsorship : undefined;
+  if (typeof paymasterUrl !== 'string' || paymasterUrl.length > 2200 || typeof token !== 'string' || token.length < 1 || token.length > 2000) return null;
+  let url: URL;
+  try { url = new URL(paymasterUrl); } catch { return null; }
+  if (url.protocol !== 'https:' || url.username || url.password || !url.pathname.startsWith('/api/paymaster/sponsorship/')) return null;
+  return { paymasterUrl, context: { sponsorship: token } };
+}
+
+/**
+ * Said beside the wallet button of a loan or repayment sent as one batch: an offer, never a promise.
+ * Only when this server sponsors loans and the wallet says it takes a fee sponsor; whether this fee is
+ * paid is decided when the wallet asks, so the wallet's own fee line is where the answer is.
+ */
+export function lendingFeeNoteV1(input: { loansSponsored: boolean; walletTakesSponsor: boolean | null; dailyLimitPerWallet: number | null }): string | null {
+  if (!input.loansSponsored || input.walletTakesSponsor !== true) return null;
+  const limit = input.dailyLimitPerWallet;
+  const many = limit === 1 ? '1 loan or repayment' : `${limit} loans or repayments`;
+  return `Still offers to pay the network fee${limit ? `, for up to ${many} a day` : ''}. Your wallet shows who pays before you confirm.`;
+}

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
-import { SPONSORED_GAS_LABELS_V1, paymasterServiceSupportV1, sponsoredGasPlanV1 } from './sponsoredGas';
+import { SPONSORED_GAS_LABELS_V1, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1 } from './sponsoredGas';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -85,8 +85,31 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
   assert.ok(source.includes(marker));
   assert.match(
     failure.slice(0, 900),
-    /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
+    /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null \|\| walletNetworkFailureSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
   );
   const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf(marker));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');
+});
+
+test('a Still loan asks for the Builder Code and, when offered, the sponsor; both optional, and nothing when neither (2026-11-08)', () => {
+  const SUFFIX = '0x62635f7a3275756f3464740b0080218021802180218021802180218021';
+  const sponsor = sponsoredGasPlanV1({ offer: OFFER, capabilities: SUPPORTED, declinedBefore: false }).capability;
+  assert.deepEqual(sendCallsCapabilitiesV1({ suffix: SUFFIX, sponsor }), {
+    dataSuffix: { value: SUFFIX, optional: true },
+    paymasterService: { url: OFFER.paymasterUrl, context: OFFER.context, optional: true },
+  });
+  assert.deepEqual(sendCallsCapabilitiesV1({ suffix: SUFFIX, sponsor: null }), { dataSuffix: { value: SUFFIX, optional: true } });
+  assert.deepEqual(sendCallsCapabilitiesV1({ suffix: null, sponsor }), { paymasterService: { url: OFFER.paymasterUrl, context: OFFER.context, optional: true } });
+  assert.equal(sendCallsCapabilitiesV1({ suffix: null, sponsor: null }), undefined);
+});
+
+test('both loan pages hand Still’s offer to the wallet and drop it after a failed send', () => {
+  const root = path.resolve(here, '../../..');
+  for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx']) {
+    const source = readFileSync(path.join(root, page), 'utf8');
+    assert.match(source, /sendCalls: async \(\{ calls, sponsorship \}\) =>/, page);
+    assert.match(source, /sponsoredGasPlanV1\(\{ offer: sponsorship \?\? null, capabilities: [^,]+, declinedBefore: sponsorDeclined \}\)/, page);
+    assert.match(source, /capabilities: sendCallsCapabilitiesV1\(\{ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas\.capability \}\)/, page);
+    assert.match(source, /if \(gas\.capability && !isWalletRejectionError\(error\)\) setSponsorDeclined\(true\);/, page);
+  }
 });
