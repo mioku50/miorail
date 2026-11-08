@@ -2,7 +2,10 @@ import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import { stageGoalHandoffV1 } from '../console/goalHandoff';
-import { MIORAIL_CONNECTED_MCP_URL_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
+import {
+  CHATGPT_ADD_MCP_PAGE_V1, GROK_ADD_CONNECTOR_PAGE_V1, MIORAIL_CONNECTED_MCP_URL_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1, askGrokUrlV1,
+  copyOnThisPressV1,
+} from '../console/WalletMcpMiorailCard';
 import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
@@ -231,6 +234,28 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Where the copied address goes, in each assistant's own words (Grok's read from its page). */
+const PASTE_STEPS_V1 = {
+  ChatGPT: 'In ChatGPT on the web: +, then Add custom MCP server. Name it Still and paste the address as its server URL. ChatGPT offers custom MCP servers on some plans only.',
+  Grok: 'In Grok: New Connector, then Custom. Name it Still, paste the address as its Server URL and press Add Connector.',
+} as const;
+type PasteAssistantV1 = keyof typeof PASTE_STEPS_V1;
+
+/** An assistant with no link that fills in a custom connector: one press copies the address and
+ * opens the page where it is pasted, and the page then says where. */
+function AddByPasteV1({ assistant, page, value, onPressed }: { assistant: PasteAssistantV1; page: string; value: string;
+  onPressed: (assistant: PasteAssistantV1, copied: boolean) => void }) {
+  return (
+    <a className="still-btn sec" href={page} target="_blank" rel="noreferrer" onClick={() => {
+      if (copyOnThisPressV1(value)) { onPressed(assistant, true); return; }
+      // A second chance where the old copy is refused; it may still land while this page has focus.
+      const write = globalThis.navigator?.clipboard?.writeText(value);
+      onPressed(assistant, false);
+      void write?.then(() => onPressed(assistant, true), () => undefined);
+    }}>Add to {assistant}</a>
+  );
+}
+
 export interface StillAssistantsModelV1 {
   sky: SkyStateV1;
 }
@@ -249,6 +274,9 @@ export const STILL_MCP_URL_V1 = `${STILL_PUBLIC_ORIGIN_V1}/mcp/still`;
 // Still's name. No tool there takes a wallet, so another wallet's reading and a
 // what-if stay on the read-only one.
 export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
+  // The last ChatGPT or Grok press, and whether its address reached the clipboard.
+  const [pressed, setPressed] = useState<{ assistant: PasteAssistantV1; copied: boolean } | null>(null);
+  const onPressed = (assistant: PasteAssistantV1, copied: boolean) => setPressed({ assistant, copied });
   const commands: Array<[string, ReactNode]> = [
     ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http still ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
     ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add still --url ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
@@ -276,9 +304,17 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
       <div className="still-section still-feature">
         <div className="still-eyebrow">Still’s MCP server · sign in with your wallet</div>
         <CopyRow label="the Still MCP address" value={MIORAIL_CONNECTED_MCP_URL_V1} />
-        <a className="still-btn" href={addToClaudeUrlV1('Still', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ marginTop: 10 }}>Add to Claude</a>
+        <div className="still-add-row">
+          <a className="still-btn" href={addToClaudeUrlV1('Still', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer">Add to Claude</a>
+          <AddByPasteV1 assistant="ChatGPT" page={CHATGPT_ADD_MCP_PAGE_V1} value={MIORAIL_CONNECTED_MCP_URL_V1} onPressed={onPressed} />
+          <AddByPasteV1 assistant="Grok" page={GROK_ADD_CONNECTOR_PAGE_V1} value={MIORAIL_CONNECTED_MCP_URL_V1} onPressed={onPressed} />
+        </div>
+        {pressed ? <p className="still-note" role="status" style={{ marginTop: 6 }}>
+          {pressed.copied ? 'The address is copied. ' : 'Copy the address above first. '}{PASTE_STEPS_V1[pressed.assistant]}
+        </p> : null}
         <p className="still-note" style={{ marginTop: 6 }}>
-          It opens your wallet’s sign-in on first use. Then <span className="mono">miorail_prepare_still_loan</span>,{' '}
+          Claude opens its form with Still filled in. ChatGPT and Grok cannot be filled in from a link, so their buttons copy the address and open
+          the page where you paste it. In each, Still opens your wallet’s sign-in on first use. Then <span className="mono">miorail_prepare_still_loan</span>,{' '}
           <span className="mono">miorail_prepare_still_purchase</span>, <span className="mono">miorail_prepare_still_wallet_purchase</span> and{' '}
           <span className="mono">miorail_prepare_still_repay</span> turn what you name into a review link, and your own wallet signs on {STILL_PUBLIC_HOST_V1};{' '}
           <span className="mono">miorail_get_still_review_status</span> tells your assistant what happened. In a chat that draws MCP Apps, as Claude does, the
@@ -296,6 +332,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         {asks.map((ask) => (
           <p key={ask} className="still-note">
             “{ask}” <a href={askClaudeUrlV1(ask)} target="_blank" rel="noreferrer">Ask Claude</a> · <a href={askChatGptUrlV1(ask)} target="_blank" rel="noreferrer">ChatGPT</a>
+            {' · '}<a href={askGrokUrlV1(ask)} target="_blank" rel="noreferrer">Grok</a>
           </p>
         ))}
       </div>

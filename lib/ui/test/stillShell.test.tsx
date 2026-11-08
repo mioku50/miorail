@@ -10,6 +10,7 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
 import { telegramAlertsViewV1 } from '../src/console/telegramAlertsView';
+import { copyOnThisPressV1 } from '../src/console/WalletMcpMiorailCard';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
   agentAnswerV1,
@@ -626,9 +627,40 @@ describe('the frame', () => {
     assert.ok(assistants.includes(`connectorName=Still%20(read%20only)&amp;connectorUrl=${encodeURIComponent(`${STILL_PUBLIC_ORIGIN_V1}/mcp/still`)}`));
     assert.match(assistants, /href="https:\/\/claude\.ai\/new\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"/);
     assert.match(assistants, /href="https:\/\/chatgpt\.com\/\?q=/);
+    assert.match(assistants, /href="https:\/\/grok\.com\/\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"[^>]*>Grok</);
     assert.match(assistants, /grok\.com\/connectors: New Connector, Custom/);
+    // 2026-11-08: ChatGPT and Grok beside Claude. Neither fills a custom connector in from a link, so each
+    // button opens the page where the address is pasted (copied on the same press), and the page says so.
+    assert.match(assistants, /href="https:\/\/chatgpt\.com\/plugins"[^>]*>Add to ChatGPT</);
+    assert.match(assistants, /href="https:\/\/grok\.com\/connectors"[^>]*>Add to Grok</);
+    assert.match(assistants, /<div class="still-add-row"><a class="still-btn" href="https:\/\/claude\.ai[^"]*"[^>]*>Add to Claude<\/a><a class="still-btn sec" href="https:\/\/chatgpt\.com\/plugins"/);
+    assert.match(assistants, /Claude opens its form with Still filled in\. ChatGPT and Grok cannot be filled in from a link, so their buttons copy the address and open\s+the page where you paste it\./);
+    assert.doesNotMatch(assistants, /The address is copied|Copy the address above first/, 'nothing is said about a press before one');
     assert.doesNotMatch(assistants, /Wallet MCP/);
     assert.match(assistants, /not offered to US persons/);
+  });
+  // The copy happens inside the press, before the link opens another tab: Chrome refuses the
+  // asynchronous Clipboard API once this page has lost focus to the tab it opened.
+  it('copies the address on the press itself, and says false where it cannot', () => {
+    const calls: string[] = [];
+    const area = { value: '', style: {}, focus: () => calls.push('focus'), select: () => calls.push('select'),
+      setSelectionRange: (from: number, to: number) => calls.push(`range ${from}-${to}`), remove: () => calls.push('remove') };
+    const fake = { body: { appendChild: () => calls.push('append') }, createElement: () => area, activeElement: null,
+      execCommand: (command: string) => { calls.push(command); return true; } };
+    const g = globalThis as { document?: unknown };
+    const saved = g.document;
+    g.document = fake;
+    try {
+      assert.equal(copyOnThisPressV1('https://miorail.xyz/mcp/private'), true);
+      assert.equal(area.value, 'https://miorail.xyz/mcp/private');
+      assert.deepEqual(calls, ['append', 'focus', 'select', 'range 0-31', 'copy', 'remove']);
+      fake.execCommand = () => false;
+      assert.equal(copyOnThisPressV1('https://miorail.xyz/mcp/private'), false);
+      fake.execCommand = () => { throw new Error('refused'); };
+      assert.equal(copyOnThisPressV1('https://miorail.xyz/mcp/private'), false, 'a refusal is not a copy');
+      g.document = undefined;
+      assert.equal(copyOnThisPressV1('https://miorail.xyz/mcp/private'), false, 'no page, no copy');
+    } finally { g.document = saved; }
   });
 });
 

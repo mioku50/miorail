@@ -251,6 +251,8 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 }
 .still-btn.sec { background: transparent; border-color: var(--sm-ink); color: var(--sm-ink); }
 .still-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+/* Add to Claude, ChatGPT and Grok: one row, which wraps on a phone. */
+.still-add-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .still-lending-review { max-width: 1100px; }
 .still-lending-review h1 { font-size: 30px; line-height: 1.15; margin: 8px 0; }
 .still-lending-review .mr-borrow-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; margin: 20px 0; }

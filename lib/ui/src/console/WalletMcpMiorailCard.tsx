@@ -29,9 +29,39 @@ export function addToClaudeUrlV1(name: string, url: string): string {
   return `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${encodeURIComponent(name)}&connectorUrl=${encodeURIComponent(url)}`;
 }
 
-/** A new chat with the question already typed, in Claude or ChatGPT. */
+/** Where a custom MCP server is added in ChatGPT and in Grok. Neither fills one in from a link
+ * (2026-11-08: ChatGPT documents none, and grok.com's own router reads only connectorId and
+ * teamId on /connectors), so the address is copied on the press that opens the page. */
+export const CHATGPT_ADD_MCP_PAGE_V1 = 'https://chatgpt.com/plugins';
+export const GROK_ADD_CONNECTOR_PAGE_V1 = 'https://grok.com/connectors';
+
+/** A new chat with the question already typed, in Claude, ChatGPT or Grok (grok.com reads `q`
+ * on its chat page and starts the chat with it). */
 export const askClaudeUrlV1 = (question: string): string => `https://claude.ai/new?q=${encodeURIComponent(question)}`;
 export const askChatGptUrlV1 = (question: string): string => `https://chatgpt.com/?q=${encodeURIComponent(question)}`;
+export const askGrokUrlV1 = (question: string): string => `https://grok.com/?q=${encodeURIComponent(question)}`;
+
+/** Copies text on this press, before a link opens another tab: the Clipboard API is
+ * asynchronous, and Chrome refuses it once the page has lost focus to the tab it opened.
+ * A page that cannot copy this way gets false and says so. */
+export function copyOnThisPressV1(text: string): boolean {
+  const doc = globalThis.document;
+  if (!doc?.body || typeof doc.execCommand !== 'function') return false;
+  const area = doc.createElement('textarea');
+  area.value = text;
+  // Off screen, at a size that does not make a phone zoom in, and selectable (iOS selects no read-only field).
+  Object.assign(area.style, { position: 'fixed', top: '0', left: '-9999px', fontSize: '16px', opacity: '0' });
+  const before = typeof HTMLElement !== 'undefined' && doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
+  doc.body.appendChild(area);
+  let copied: boolean;
+  try {
+    area.focus(); area.select(); area.setSelectionRange(0, text.length);
+    copied = doc.execCommand('copy');
+  } catch { copied = false; }
+  area.remove();
+  before?.focus();
+  return copied;
+}
 
 /** One value to copy. A webview without clipboard access says so instead of
  * pretending it copied. */

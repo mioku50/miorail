@@ -502,3 +502,29 @@ test('unread debts never become a zero-loan count in Home or Assets', async ({ p
   await expect(page.getByText('No loans. Nothing hangs on the right.', { exact: true })).toHaveCount(0);
   expect(writes).toEqual([]);
 });
+
+// 2026-11-08: neither ChatGPT nor Grok fills a custom connector in from a link, so one press copies
+// Still's address and opens the page where it is pasted, and the page then says where to paste it.
+test('Add to ChatGPT and Add to Grok copy the address and open the page where it is pasted', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await install(page, false, MONDAY);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5187' });
+  await context.route(/^https:\/\/(?:chatgpt|grok)\.com\//, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>stub</title>' }));
+  await page.goto('/assistants');
+  await expect(page.getByRole('link', { name: 'Add to Claude', exact: true })).toBeVisible();
+  const pressings = [
+    ['ChatGPT', 'https://chatgpt.com/plugins', /^The address is copied\. In ChatGPT on the web: \+, then Add custom MCP server\. Name it Still/],
+    ['Grok', 'https://grok.com/connectors', /^The address is copied\. In Grok: New Connector, then Custom\. Name it Still, paste the address as its Server URL/],
+  ] as const;
+  for (const [assistant, opens, steps] of pressings) {
+    await page.evaluate(() => navigator.clipboard.writeText('nothing yet'));
+    const [opened] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: `Add to ${assistant}`, exact: true }).click()]);
+    await opened.waitForLoadState();
+    expect(opened.url()).toBe(opens);
+    await opened.close();
+    await expect(page.getByText(steps)).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://miorail.xyz/mcp/private');
+  }
+  await expect(page.getByRole('link', { name: 'Grok', exact: true }).first()).toHaveAttribute('href', /^https:\/\/grok\.com\/\?q=/);
+  await noSidewaysScroll(page);
+});
