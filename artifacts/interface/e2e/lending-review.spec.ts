@@ -89,15 +89,27 @@ test('a wallet that answers it does not support the batch sent nothing: the revi
   expect(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
 });
 test('a wallet that could not reach Base sent nothing: the review says so and is offered again, still as one batch', async ({ page }) => {
-  // MetaMask on a custom Base RPC that kept failing, 2026-11-08: it failed reading eth_getCode, before sending anything.
+  // MetaMask whose Base endpoint kept failing, 2026-11-08: it failed reading eth_getCode, before sending anything.
   const state = await install(page, 'rpc-failing'); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();
-  await expect(page.getByText(/^This wallet could not reach Base: its own connection to the network \(its RPC\) kept failing, so nothing was sent\./)).toBeVisible();
+  // It said to retry in 0,12 minutes: the page waits that and a second more, saying why, then asks once more.
+  await expect(page.getByText(/^Your wallet could not reach Base, so nothing was sent\. Still asks it again in 9 seconds…$/)).toBeVisible();
+  await expect(page.getByText(/^This wallet could not reach Base: its own connection to the network \(its RPC\) kept failing, so nothing was sent\./)).toBeVisible({ timeout: 15_000 });
+  expect(await attempts(page)).toBe(2);
   await expect(page.locator('body')).not.toContainText('result is unknown');
   expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
   // Not a refusal of batches: the wallet is not stopped from being asked for one again.
   expect(await page.evaluate(() => (window as unknown as { lendingWalletRefusals?: number }).lendingWalletRefusals)).toBeUndefined();
   await expect(open).toBeEnabled();
+});
+test('a wallet whose connection to Base failed before sending is asked once more after the wait it named, and the loan goes', async ({ page }) => {
+  const state = await install(page, 'rpc-failing-once'); await page.goto('/lending/fixture-lending');
+  const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();
+  await expect(page.getByText(/^Your wallet could not reach Base, so nothing was sent\. Still asks it again in 2 seconds…$/)).toBeVisible();
+  await expect.poll(() => attempts(page)).toBe(2);
+  await expect(page.locator('body')).toContainText('not a confirmed blockchain result');
+  await expect(page.getByText(/could not reach Base/)).toHaveCount(0);
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 test('owner/connector mismatch masks private review before paint and does not read another wallet', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');

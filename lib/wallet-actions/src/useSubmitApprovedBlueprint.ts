@@ -34,7 +34,7 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import {
   SEQUENTIAL_ALLOWANCE_FAILED_V1,
   SEQUENTIAL_ALLOWANCE_UNREAD_V1,
@@ -766,7 +766,9 @@ export function useSubmitApprovedBlueprint({
       setStatus('submitting');
       let result: { id: string };
       try {
-        result = await sendCalls.mutateAsync({
+        // A wallet whose own connection to Base failed before it sent anything is
+        // asked once more, after the wait it named (MetaMask, 2026-11-08).
+        result = await sendRetryingWalletNetworkV1(() => sendCalls.mutateAsync({
           calls: payload.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
           // EIP-5792 `atomicRequired`, which wagmi spells `forceAtomic`. NOT a
@@ -784,7 +786,7 @@ export function useSubmitApprovedBlueprint({
                   ...(gas.capability ?? {}),
                 }
               : undefined,
-        });
+        }));
       } catch (cause) {
         if (isWalletRejectionError(cause)) {
           setStatus('cancelled');

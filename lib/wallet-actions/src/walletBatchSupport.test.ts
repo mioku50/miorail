@@ -15,6 +15,8 @@ import {
   walletDidNotSendV1,
   walletKnownNotToBatchV1,
   walletNetworkFailureSentenceV1,
+  walletNetworkRetryAfterMsV1,
+  sendRetryingWalletNetworkV1,
   walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from './walletBatchSupport';
@@ -151,10 +153,11 @@ test('the wallet is not asked again on focus: a refetch blanks an answer that is
   }
 });
 
-// 2026-11-08: a friend's MetaMask, on a custom Base RPC that kept failing, answered a swap batch like
-// this (the address is a fixture's), and the page blamed the fee sponsor, which MetaMask never asked.
-function metaMaskRpcFailing(method = 'eth_getCode') {
-  const details = `RPC 0x2105 Custom ${method}: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.`;
+// 2026-11-08: a friend's MetaMask, on its own default Base endpoint (Infura with a QuickNode failover, which
+// MetaMask types "Custom"), answered a swap batch like this (the address is a fixture's), and the page blamed
+// the fee sponsor, which MetaMask never asked.
+function metaMaskRpcFailing(method = 'eth_getCode', after = '0,12 minutes') {
+  const details = `RPC 0x2105 Custom ${method}: RPC endpoint returned too many errors, retrying in ${after}. Consider using a different RPC endpoint.`;
   return Object.assign(new Error(`Requested resource not available.\n\nRequest Arguments:\n  chain: undefined (id: 8453)\n  from: 0x1111111111111111111111111111111111111111\n\nDetails: ${details}\nVersion: viem@2.53.1`),
     { code: -32002, shortMessage: 'Requested resource not available.', details });
 }
@@ -162,7 +165,8 @@ function metaMaskRpcFailing(method = 'eth_getCode') {
 test('a wallet that could not reach Base is told so, not that the sponsor or the wallet refused', () => {
   const cause = metaMaskRpcFailing();
   const sentence = 'MetaMask could not reach Base: its own connection to the network (its RPC) kept failing, so nothing was sent. Wait a minute and press again.'
-    + ' If it keeps failing, open Base in the wallet’s network settings and choose its default RPC, or remove Base and add it back from the wallet’s list of networks.';
+    + ' If it keeps failing, try another internet connection (turn a VPN on or off), or add another RPC for Base in the wallet’s network settings,'
+    + ' such as Base’s public https://mainnet.base.org, and make it the default.';
   assert.equal(walletNetworkFailureSentenceV1(cause, 'MetaMask'), sentence);
   assert.equal(walletSubmissionFailureMessageV1(cause, 'MetaMask'), sentence);
   assert.equal(walletNetworkFailureSentenceV1({ cause }, null)?.startsWith('This wallet could not reach Base'), true, 'read along the cause chain');
@@ -182,4 +186,46 @@ test('a wallet whose RPC failed while sending may have sent, and is not said to 
   assert.equal(walletNetworkFailureSentenceV1(other), null);
   assert.equal(walletSubmissionFailureMessageV1(other), 'Requested resource not available.');
   assert.equal(walletDidNotSendV1(other), false);
+});
+
+test('the wait the wallet names is read in its own decimal comma, and nothing else is a wait', () => {
+  assert.equal(walletNetworkRetryAfterMsV1(metaMaskRpcFailing()), 7_200);
+  assert.equal(walletNetworkRetryAfterMsV1({ cause: metaMaskRpcFailing('eth_getCode', '1.5 minutes') }), 90_000);
+  assert.equal(walletNetworkRetryAfterMsV1(metaMaskRpcFailing('eth_getCode', '30 seconds')), 30_000);
+  assert.equal(walletNetworkRetryAfterMsV1(new Error('Requested resource not available.')), null);
+});
+
+test('a wallet that could not reach Base before sending is asked once more after its wait, and only once', async () => {
+  const waits: number[] = [];
+  let calls = 0;
+  const once = await sendRetryingWalletNetworkV1(async () => { calls += 1; if (calls === 1) throw metaMaskRpcFailing(); return 'batch-1'; },
+    { onWait: ms => waits.push(ms), wait: async () => {} });
+  assert.equal(once, 'batch-1');
+  assert.equal(calls, 2);
+  // The wallet's own 7.2 s, and a second more for it to open its circuit again.
+  assert.deepEqual(waits, [8_200]);
+  // Failing again is the person's to hear about: one more ask, not a loop.
+  calls = 0;
+  await assert.rejects(sendRetryingWalletNetworkV1(async () => { calls += 1; throw metaMaskRpcFailing(); }, { wait: async () => {} }), /Requested resource not available/);
+  assert.equal(calls, 2);
+});
+
+test('nothing is asked again after a longer wait than the bound, a failure while sending, or anything else', async () => {
+  for (const cause of [
+    metaMaskRpcFailing('eth_getCode', '5 minutes'),
+    metaMaskRpcFailing('eth_sendRawTransaction'),
+    Object.assign(new Error('User rejected the request.'), { code: 4001 }),
+    new Error('wallet response lost'),
+  ]) {
+    let calls = 0;
+    await assert.rejects(sendRetryingWalletNetworkV1(async () => { calls += 1; throw cause; }, { wait: async () => { throw new Error('must not wait'); } }));
+    assert.equal(calls, 1, cause.message);
+  }
+});
+
+test('the swap and loan pages ask a wallet once more through the same helper', () => {
+  const root = path.resolve(here, '../../..');
+  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /result = await sendRetryingWalletNetworkV1\(\(\) => sendCalls\.mutateAsync\(\{/);
+  assert.match(readFileSync(path.join(root, 'lib/ui/src/console/useLendingReviewConsole.ts'), 'utf8'),
+    /const batchId = await sendRetryingWalletNetworkV1\(\(\) => input\.sendCalls\(\{ calls, sponsorship \}\), \{/);
 });

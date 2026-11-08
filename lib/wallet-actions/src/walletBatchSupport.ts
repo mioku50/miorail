@@ -30,6 +30,9 @@ export {
   walletKnownNotToBatchV1,
   walletLacksCapabilitiesMethodV1,
   walletNetworkFailureSentenceV1,
+  walletNetworkRetryAfterMsV1,
+  sendRetryingWalletNetworkV1,
+  WALLET_NETWORK_RETRY_MAX_WAIT_MS_V1,
   walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from '@mioagent/ui';

@@ -33,7 +33,7 @@ export type FixtureWindow = Window & {
   /** Takes the review off the page, as leaving it does. */
   closeLendingReview: () => void;
 };
-export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'rpc-failing' | 'steps' | 'steps-declined' = 'submitted') {
+export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'rpc-failing' | 'rpc-failing-once' | 'steps' | 'steps-declined' = 'submitted') {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
@@ -122,7 +122,7 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       window.setLendingFixtureIdentity=setIdentity;
       const {model}=useLendingReviewConsoleV1({draft:decodeURIComponent(location.pathname.split('/').pop()),sessionWalletAddress:identity.session,walletAddress:identity.connected,
         sendCalls:async(batch)=>{ window.lendingWalletAttempts++; window.lendingSponsorships=[...(window.lendingSponsorships??[]),batch.sponsorship??null];
-          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'rpc-failing' ? "throw Object.assign(new Error('Requested resource not available.'),{code:-32002,shortMessage:'Requested resource not available.',details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
+          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'rpc-failing' ? "throw Object.assign(new Error('Requested resource not available.'),{code:-32002,shortMessage:'Requested resource not available.',details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : outcome === 'rpc-failing-once' ? "if(window.lendingWalletAttempts===1) throw Object.assign(new Error('Requested resource not available.'),{code:-32002,details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,01 minutes. Consider using a different RPC endpoint.'}); return 'fixture-batch';" : "return 'fixture-batch';"}
         },
         onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; },
         ${outcome.startsWith('steps') ? `steps:{

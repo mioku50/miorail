@@ -179,12 +179,14 @@ export function subscribeWalletBatchVerdictsV1(listener: () => void): () => void
 /**
  * The wallet's own connection to Base failed: MetaMask's words when the RPC its
  * Base network uses keeps failing and it stops asking it for a while. On
- * 2026-11-08 MetaMask on a custom Base RPC answered a swap's wallet_sendCalls
- * with -32002 "RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many
- * errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.",
- * and the page blamed the fee sponsor, which MetaMask never asked. It is the
- * wallet's network, not Miorail's server and not the sponsor. `beforeSending`:
- * the request that failed is a read a wallet makes before it signs or sends.
+ * 2026-11-08 MetaMask answered a swap's wallet_sendCalls with -32002 "RPC
+ * 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in
+ * 0,12 minutes. Consider using a different RPC endpoint.", on its own default
+ * Base endpoint (Infura, with a QuickNode failover): "Custom" is the type
+ * MetaMask gives Base's endpoint, not a sign of an RPC the person added. The
+ * page blamed the fee sponsor, which MetaMask never asked. It is the wallet's
+ * connection, not Miorail's server and not the sponsor. `beforeSending`: the
+ * request that failed is a read a wallet makes before it signs or sends.
  */
 const WALLET_RPC_FAILING_V1 = /RPC endpoint returned too many errors|Consider using a different RPC endpoint/i;
 const WALLET_READ_BEFORE_SENDING_V1 = /\beth_(?:getCode|call|estimateGas|getTransactionCount|chainId|getBalance|gasPrice|feeHistory|maxPriorityFeePerGas|getBlockByNumber)\b/;
@@ -208,7 +210,59 @@ export function walletNetworkFailureSentenceV1(cause: unknown, walletName?: stri
     ? ', so nothing was sent. Wait a minute and press again.'
     : '. Check its activity before you press again: if nothing is there, nothing was sent.';
   return namedV1(`This wallet could not reach Base: its own connection to the network (its RPC) kept failing${sent}`
-    + ' If it keeps failing, open Base in the wallet’s network settings and choose its default RPC, or remove Base and add it back from the wallet’s list of networks.', walletName);
+    + ' If it keeps failing, try another internet connection (turn a VPN on or off), or add another RPC for Base in the wallet’s network settings,'
+    + ' such as Base’s public https://mainnet.base.org, and make it the default.', walletName);
+}
+
+/**
+ * How long the wallet said it waits before it asks its RPC again, in milliseconds, or null when it
+ * did not say. MetaMask writes the minutes with the reader's decimal comma: "retrying in 0,12 minutes".
+ */
+export function walletNetworkRetryAfterMsV1(cause: unknown): number | null {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    const record = current as { details?: unknown; message?: unknown; shortMessage?: unknown; cause?: unknown };
+    for (const text of [record.details, record.message, record.shortMessage]) {
+      const match = typeof text === 'string' ? /retrying in ([0-9]{1,4}(?:[.,][0-9]{1,4})?) (minute|second)s?\b/i.exec(text) : null;
+      if (match) return Math.round(Number(match[1]!.replace(',', '.')) * (match[2]!.toLowerCase() === 'minute' ? 60_000 : 1_000));
+    }
+    current = record.cause;
+  }
+  return null;
+}
+
+/** The longest a press waits for a wallet's connection to Base to come back before the person is told. */
+export const WALLET_NETWORK_RETRY_MAX_WAIT_MS_V1 = 20_000;
+
+/**
+ * Sends the same request once more when the wallet's own connection to Base failed on a read it
+ * makes before sending, after the wait the wallet named (MetaMask, 2026-11-08: "retrying in 0,12
+ * minutes"). Nothing was sent, so this is the same request again, never a second one. A wallet that
+ * named a longer wait than the bound, failed while sending, or failed any other way is not asked
+ * again: the caller says what happened.
+ */
+export async function sendRetryingWalletNetworkV1<T>(send: () => Promise<T>, options: {
+  retries?: number;
+  maxWaitMs?: number;
+  /** Told before each wait, with its length, so the page can say why it is waiting. */
+  onWait?: (ms: number) => void;
+  wait?: (ms: number) => Promise<void>;
+} = {}): Promise<T> {
+  const retries = options.retries ?? 1;
+  const maxWaitMs = options.maxWaitMs ?? WALLET_NETWORK_RETRY_MAX_WAIT_MS_V1;
+  const wait = options.wait ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); }));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await send();
+    } catch (error) {
+      if (attempt >= retries || walletNetworkFailureV1(error)?.beforeSending !== true) throw error;
+      const named = walletNetworkRetryAfterMsV1(error);
+      if (named !== null && named > maxWaitMs) throw error;
+      const ms = Math.min(maxWaitMs, (named ?? 4_000) + 1_000);
+      options.onWait?.(ms);
+      await wait(ms);
+    }
+  }
 }
 
 /**

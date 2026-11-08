@@ -3,7 +3,7 @@ import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
-import { walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1 } from './walletBatchSupport';
+import { sendRetryingWalletNetworkV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1 } from './walletBatchSupport';
 import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
@@ -303,7 +303,13 @@ export function useLendingReviewConsoleV1(input: {
               }
               try {
                 handedToWallet = true;
-                const batchId = await input.sendCalls({ calls, sponsorship });
+                // A wallet whose own connection to Base failed before it sent anything is asked once more, after
+                // the wait it named (MetaMask, 2026-11-08); the person is told why the press is waiting.
+                let waited = false;
+                const batchId = await sendRetryingWalletNetworkV1(() => input.sendCalls({ calls, sponsorship }), {
+                  onWait: ms => { waited = true; update({ walletError: `Your wallet could not reach Base, so nothing was sent. Still asks it again in ${Math.ceil(ms / 1000)} seconds…` }); },
+                });
+                if (waited) update({ walletError: null });
                 await report(batchId ? 'submitted' : 'unknown', batchId ?? undefined).catch(() => {
                   update({ walletError: 'Your wallet returned, but the submission record could not be updated. Check the onchain result before taking another action.' });
                 });
