@@ -5,7 +5,8 @@
 //   → poll wallet_getCallsStatus → confirm (server records, read-only verify).
 
 import { useEffect, useRef, useState, useCallback, createElement, type ReactNode } from 'react';
-import { useAccount, useCapabilities, useSendCalls, useCallsStatus } from 'wagmi';
+import { useAccount, useCapabilities, useConfig, useSendCalls, useCallsStatus } from 'wagmi';
+import { requireLiveWalletConnectionV1 } from './liveWalletConnection';
 import { base } from 'wagmi/chains';
 import type { Address, Hex } from 'viem';
 import { usePrepareAction, useConfirmAction } from '@mioagent/api-client-react';
@@ -157,6 +158,7 @@ export function useWalletConfirmAction({
   const prepareAction = usePrepareAction();
   const confirmAction = useConfirmAction();
   const sendCalls = useSendCalls();
+  const config = useConfig();
   const { address } = useAccount();
   const walletCapabilities = useCapabilities({
     account: address,
@@ -261,6 +263,8 @@ export function useWalletConfirmAction({
       }
 
       setStatus('sending');
+      // A restored connection is brought back before the wallet is asked (2026-11-09).
+      await requireLiveWalletConnectionV1(config);
       const result = await sendCalls.mutateAsync({
         calls: prepared.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
         chainId: base.id,

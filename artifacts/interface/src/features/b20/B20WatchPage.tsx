@@ -39,7 +39,7 @@ import {
   useRemoveB20Watch,
   useStatus,
 } from '@mioagent/api-client-react';
-import { useCallsStatus, useSendCalls } from 'wagmi';
+import { useCallsStatus, useConfig, useSendCalls } from 'wagmi';
 
 /** Canonical Base USDC — the one asset this family quotes in. The profile
  * identity the server computed is restated from it, so a mismatch is caught
@@ -49,6 +49,7 @@ import {
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
   isWalletRejectionError,
+  requireLiveWalletConnectionV1,
   transactionHashesFromReceipts,
 } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
@@ -428,6 +429,7 @@ export function B20WatchSection() {
   const recordSubmission = useB20RecordEntrySubmission();
   const reconcileSubmission = useB20ReconcileEntrySubmission();
   const sendCalls = useSendCalls();
+  const config = useConfig();
   const entryStatus = useB20EntryStatus(planId, { enabled: Boolean(planId) });
 
   const entryReview = entryStatus.data?.review ?? prepareEntry.data?.review ?? null;
@@ -522,6 +524,8 @@ export function B20WatchSection() {
     try {
       // The payload comes from the server and is passed through untouched. No
       // calldata is built, rewritten or reordered in this browser.
+      // A restored connection is brought back before the wallet is asked (2026-11-09).
+      await requireLiveWalletConnectionV1(config);
       const result = await sendCalls.mutateAsync({
         calls: begun.payload.calls as never,
         chainId: 8453,
@@ -558,7 +562,7 @@ export function B20WatchSection() {
         batchId: null,
       });
     }
-  }, [planId, beginSubmission, profileIdentityV1, sendCalls, recordSubmission]);
+  }, [planId, beginSubmission, profileIdentityV1, sendCalls, config, recordSubmission]);
 
   const refreshEntryProof = useCallback(() => {
     const walletStatus = walletBatchStatus.data as {

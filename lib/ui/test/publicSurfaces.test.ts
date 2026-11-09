@@ -63,6 +63,19 @@ test('every wallet call site in the repository wires ERC-8021 attribution', () =
   );
 });
 
+test('every wallet call site brings a restored connection back before the wallet is asked', () => {
+  // 2026-11-09: wagmi restores the last connection from storage as a bare record and keeps it until
+  // its reconnect finishes; the page says Connected, and a press in that window failed four swaps of
+  // one wallet with "connector.getChainId is not a function", the wallet never asked.
+  const unguarded: string[] = [];
+  for (const file of sourceFilesV1(root)) {
+    const text = readFileSync(file, 'utf8');
+    if (!/\buseSendCalls\s*\(/.test(text)) continue;
+    if (!/\brequireLiveWalletConnectionV1\(/.test(text)) unguarded.push(path.relative(root, file));
+  }
+  assert.deepEqual(unguarded, [], 'a wallet call site without the live-connection check fails on a restored record');
+});
+
 test('every remaining Base Account call surface receives ERC-8021 attribution', () => {
   const b20 = source('artifacts/interface/src/features/b20/B20WatchPage.tsx');
   const mini = source('artifacts/miniapp/app/components/MiniConsole.tsx');

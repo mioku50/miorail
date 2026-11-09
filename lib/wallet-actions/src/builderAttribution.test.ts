@@ -107,7 +107,11 @@ describe('T67X-B6: attribution touches nothing financial', () => {
     // own data; a batch now does the same for such a wallet, and only through
     // attributedCallsV1, which keeps the approved bytes first and unchanged
     // (attribution.test.ts) and leaves a wallet that adds the code alone.
-    assert.match(source, /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities: walletCapabilities/);
+    assert.match(source, /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities,/);
+    // Those capabilities are the wallet's answer: read beside the account, or asked again when the
+    // press had to bring a restored connection back (2026-11-09).
+    assert.match(source, /let capabilities: unknown = walletCapabilities;/);
+    assert.match(source, /if \(restored\) \{\s*const fresh = await batchSupport\.readNow\(\);\s*capabilities = fresh\.capabilities;/);
     const spliced = [...source.matchAll(/payload\.calls[\s\S]{0,200}suffix/g)];
     assert.equal(spliced.length, 1, 'the suffix meets the approved calls in one place');
     assert.ok(source.slice(0, spliced[0]!.index).endsWith('attributedCallsV1({ calls: '), 'and only inside attributedCallsV1');

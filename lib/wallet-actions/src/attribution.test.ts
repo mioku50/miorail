@@ -100,7 +100,7 @@ test('a batch the fee sponsor pays for goes as approved, whatever the wallet say
 
 test('the swap, both loan pages and the Spend payment send their calls through the helper', () => {
   const here = path.dirname(url.fileURLToPath(import.meta.url)), root = path.resolve(here, '../../..');
-  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities: walletCapabilities, chainId: base\.id, sponsored: gas\.state === 'sponsored' \}\)/);
+  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities, chainId: base\.id, sponsored: gas\.state === 'sponsored' \}\)/);
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx', 'artifacts/interface/src/features/still/StillSpendWalletPage.tsx']) {
     assert.match(readFileSync(path.join(root, page), 'utf8'), /calls: attributedCallsV1\(\{ calls: /, page);
   }

@@ -1,13 +1,13 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useAccount, useSendCalls } from "wagmi";
+import { useAccount, useConfig, useSendCalls } from "wagmi";
 import { useRecordBlueprintSubmission } from "@mioagent/api-client-react";
 import {
   StockActionReviewScreen,
   useStockActionReviewConsoleV1,
 } from "@mioagent/ui";
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
-import { builderCodeToDataSuffix } from "@mioagent/wallet-actions";
+import { builderCodeToDataSuffix, requireLiveWalletConnectionV1 } from "@mioagent/wallet-actions";
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review, in Base App.
@@ -36,11 +36,14 @@ export default function BaseAppStockActionReviewPage() {
   const draft = typeof params?.draft === "string" ? decodeURIComponent(params.draft) : null;
   const { address } = useAccount();
   const sendCalls = useSendCalls();
+  const config = useConfig();
   const recordSubmission = useRecordBlueprintSubmission();
 
   const reviewConsole = useStockActionReviewConsoleV1({
     draft,
     sendCalls: async ({ calls, atomicRequired }) => {
+      // A restored connection is brought back before the wallet is asked (2026-11-09).
+      await requireLiveWalletConnectionV1(config);
       const result = await sendCalls.mutateAsync({
         calls: calls as never,
         chainId: 8453,

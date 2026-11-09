@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useLocation, useRoute } from 'wouter';
-import { useAccount, useSendCalls } from 'wagmi';
+import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import {
   ConsoleShell,
   MarketRealityScreen,
@@ -22,7 +22,7 @@ import {
   useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletConnectionV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 /**
@@ -86,12 +86,15 @@ export function StockActionReviewPage() {
   // wagmi dependency, and which wallet is reachable is a fact about the host.
   // -------------------------------------------------------------------------
   const sendCalls = useSendCalls();
+  const config = useConfig();
   const recordSubmission = useRecordBlueprintSubmission();
   const batches = useWalletBatchSupportV1();
   const reviewConsole = useStockActionReviewConsoleV1({
     draft: params?.draft ?? null,
     walletBlocker: batches.blocker,
     sendCalls: async ({ calls, atomicRequired }) => {
+      // A restored connection is brought back before the wallet is asked (2026-11-09).
+      await requireLiveWalletConnectionV1(config);
       const result = await sendCalls.mutateAsync({
         calls: calls as never,
         chainId: 8453,

@@ -85,7 +85,7 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
   assert.ok(source.includes(marker));
   assert.match(
     failure.slice(0, 900),
-    /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null \|\| walletNetworkFailureSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
+    /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null \|\| walletNetworkFailureSentenceV1\(cause\) !== null\s*\|\| walletConnectionNotReadyV1\(cause\)\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
   );
   const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf(marker));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');

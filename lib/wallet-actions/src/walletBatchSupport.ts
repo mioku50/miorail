@@ -19,6 +19,7 @@ import {
 
 export {
   WALLET_CANNOT_BATCH_V1,
+  WALLET_CONNECTION_NOT_READY_V1,
   WALLET_HAS_NO_BATCHES_V1,
   WALLET_UPGRADE_DECLINED_V1,
   atomicBatchSupportV1,
@@ -26,6 +27,7 @@ export {
   walletBatchBlockerV1,
   walletBatchKeyV1,
   walletCannotSendSentenceV1,
+  walletConnectionNotReadyV1,
   walletDidNotSendV1,
   walletKnownNotToBatchV1,
   walletLacksCapabilitiesMethodV1,

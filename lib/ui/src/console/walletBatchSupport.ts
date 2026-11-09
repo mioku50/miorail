@@ -266,9 +266,34 @@ export async function sendRetryingWalletNetworkV1<T>(send: () => Promise<T>, opt
 }
 
 /**
+ * The page's own connection to the wallet was not live, so the wallet was never asked. After a
+ * reload wagmi keeps the restored connection as a bare record ({ id, name, type, uid }) until its
+ * reconnect finishes; useAccount already gives the address, so the page says Connected, and an
+ * action in that window throws "connector.getChainId is not a function" (2026-11-09: four swaps of
+ * one wallet failed so in one evening, and the page showed that sentence). wagmi's own names for
+ * the same state are ConnectorUnavailableReconnectingError and ConnectorNotConnectedError, and
+ * wallet-actions throws WalletConnectionNotReadyError when it could not bring the connection back.
+ */
+export const WALLET_CONNECTION_NOT_READY_V1 =
+  'Your wallet’s connection in this tab was not ready, so the wallet was not asked and nothing was sent. Open the wallet, unlock it if it is locked, and press again.';
+const CONNECTION_NOT_READY_NAMES_V1 = new Set(['WalletConnectionNotReadyError', 'ConnectorUnavailableReconnectingError', 'ConnectorNotConnectedError']);
+const BARE_CONNECTOR_V1 = /\bconnector\.(?:getChainId|getAccounts|getProvider) is not a function\b/;
+export function walletConnectionNotReadyV1(cause: unknown): boolean {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    const record = current as { name?: unknown; message?: unknown; cause?: unknown };
+    if (typeof record.name === 'string' && CONNECTION_NOT_READY_NAMES_V1.has(record.name)) return true;
+    if (typeof record.message === 'string' && BARE_CONNECTOR_V1.test(record.message)) return true;
+    current = record.cause;
+  }
+  return false;
+}
+
+/**
  * Whether the wallet's answer proves that nothing was sent: the person refused
- * (EIP-1193 4001), the wallet said it cannot do this at all, or its own
- * connection to Base failed on a read it makes before sending. A timeout or a
+ * (EIP-1193 4001), the wallet said it cannot do this at all, its own
+ * connection to Base failed on a read it makes before sending, or the page's
+ * connection to it was not live, so it was never asked. A timeout or a
  * dropped connection proves nothing and is not here.
  */
 export function walletDidNotSendV1(cause: unknown): boolean {
@@ -278,17 +303,20 @@ export function walletDidNotSendV1(cause: unknown): boolean {
     if (record.code === 4001 || record.name === 'UserRejectedRequestError') return true;
     current = record.cause;
   }
-  return walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true;
+  return walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true
+    || walletConnectionNotReadyV1(cause);
 }
 
 /**
  * The wallet's refusal in words, when the refusal is about what the wallet can
- * do rather than about the person, or when its own connection to Base failed.
- * Anything else keeps the wallet's own message — a translation is only honest
- * where the code or the wallet's words say what happened.
+ * do rather than about the person, when its own connection to Base failed, or
+ * when the page's connection to it was not live. Anything else keeps the
+ * wallet's own message — a translation is only honest where the code or the
+ * wallet's words say what happened.
  */
 export function walletSubmissionFailureMessageV1(cause: unknown, walletName?: string | null): string {
   return walletCannotSendSentenceV1(cause, walletName) ?? walletNetworkFailureSentenceV1(cause, walletName)
+    ?? (walletConnectionNotReadyV1(cause) ? WALLET_CONNECTION_NOT_READY_V1 : null)
     ?? (cause instanceof Error ? cause.message : 'Wallet submission failed');
 }
 

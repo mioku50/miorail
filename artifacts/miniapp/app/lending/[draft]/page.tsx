@@ -2,12 +2,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useAccount, useCapabilities, useSendCalls } from 'wagmi';
+import { useAccount, useCapabilities, useConfig, useSendCalls } from 'wagmi';
 import { useSession, useSponsoredGasStatus } from '@mioagent/api-client-react';
 import { LendingReviewScreen, lendingFeeNoteV1, useLendingReviewConsoleV1 } from '@mioagent/ui';
 import { useStillSkyV1, useStillClientPaletteV1 } from '@mioagent/ui/still';
 import { builderCodeFromEnvV1 } from '@mioagent/route-domain/builder-code';
-import { builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1 } from '@mioagent/wallet-actions';
+import { builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, requireLiveWalletConnectionV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1 } from '@mioagent/wallet-actions';
 import { WalletConnect } from '../../components/WalletConnect';
 import '@mioagent/ui/still.css';
 
@@ -21,7 +21,7 @@ export default function BaseAppLendingReviewPage() {
   const draft = typeof params?.draft === 'string' ? params.draft : null;
   const session = useSession({ retry: false, staleTime: 0 }), sky = useStillSkyV1();
   const palette = useStillClientPaletteV1(sky);
-  const { address } = useAccount(), sendCalls = useSendCalls();
+  const { address } = useAccount(), sendCalls = useSendCalls(), config = useConfig();
   // Still pays a batch's network fee when the arm offers it and the wallet takes a fee sponsor
   // (2026-11-08), as on the web; after the wallet failed with the sponsor, the next press goes without one.
   const capabilities = useCapabilities({ account: address, query: { enabled: Boolean(address), retry: false, staleTime: Number.POSITIVE_INFINITY } });
@@ -35,6 +35,9 @@ export default function BaseAppLendingReviewPage() {
   const review = useLendingReviewConsoleV1({ draft, walletAddress: address ?? null,
     sessionWalletAddress: session.data?.user?.address ?? null, feeNote,
     sendCalls: async ({ calls, sponsorship }) => {
+      // A restored connection is brought back before the wallet is asked, and outside the try below:
+      // a connection that was not ready is not the sponsor's failure (2026-11-09).
+      await requireLiveWalletConnectionV1(config);
       const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: capabilities.data, declinedBefore: sponsorDeclined });
       try {
         const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,

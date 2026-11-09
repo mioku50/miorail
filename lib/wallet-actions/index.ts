@@ -36,16 +36,20 @@ export {
 export type { SponsoredGasOfferV1, SponsoredGasStateV1 } from './src/sponsoredGas';
 export {
   WALLET_CANNOT_BATCH_V1,
+  WALLET_CONNECTION_NOT_READY_V1,
   WALLET_HAS_NO_BATCHES_V1,
   WALLET_UPGRADE_DECLINED_V1,
   atomicBatchSupportV1,
   useWalletBatchSupportV1,
   walletBatchBlockerV1,
   walletCannotSendSentenceV1,
+  walletConnectionNotReadyV1,
   walletDidNotSendV1,
   walletSubmissionFailureMessageV1,
 } from './src/walletBatchSupport';
 export type { AtomicBatchSupportV1 } from './src/walletBatchSupport';
+// 2026-11-09: a press first makes the page's connection to the wallet live (see the module).
+export { WalletConnectionNotReadyErrorV1, liveConnectorV1, requireLiveWalletConnectionV1 } from './src/liveWalletConnection';
 
 // T57: approved-blueprint submission flow (server approve → Base Account
 // wallet → idempotent submission record). Shares CallsStatusPoller,

@@ -35,7 +35,8 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { requireLiveWalletConnectionV1 } from './liveWalletConnection';
 import {
   SEQUENTIAL_ALLOWANCE_FAILED_V1,
   SEQUENTIAL_ALLOWANCE_UNREAD_V1,
@@ -698,8 +699,27 @@ export function useSubmitApprovedBlueprint({
     setStatus('approving');
 
     try {
+      // The page's connection to the wallet must be live before the server approves anything or
+      // the wallet is asked anything (2026-11-09: a restored record failed four swaps of one wallet).
+      let restored: boolean;
+      try {
+        ({ restored } = await requireLiveWalletConnectionV1(config));
+      } catch (cause) {
+        // Nothing was approved and the wallet was not asked; a refusal to reconnect keeps its own words.
+        setStatus('failed');
+        setError(walletSubmissionFailureMessageV1(cause, walletName));
+        return;
+      }
       let plan = deliveryPlan;
-      if (goal === 'swap' && plan === 'atomic' && !batchSupport.answered) {
+      // What the page read from the wallet through the restored record is asked again.
+      let capabilities: unknown = walletCapabilities;
+      if (restored) {
+        const fresh = await batchSupport.readNow();
+        capabilities = fresh.capabilities;
+        if (goal === 'swap') {
+          plan = swapDeliveryPlanV1({ ...fresh, afterBatchFailure: stepsAfterFailure, knownNotToBatch, chainId: base.id });
+        }
+      } else if (goal === 'swap' && plan === 'atomic' && !batchSupport.answered) {
         // The wallet has not said yet whether it can send a batch. The plan is
         // its answer, never the absence of one, so it is asked now.
         const fresh = await batchSupport.readNow();
@@ -759,7 +779,7 @@ export function useSubmitApprovedBlueprint({
           : null;
       const gas = sponsoredGasPlanV1({
         offer,
-        capabilities: walletCapabilities,
+        capabilities,
         declinedBefore: sponsorDeclinedRef.current,
         chainId: base.id,
       });
@@ -771,7 +791,7 @@ export function useSubmitApprovedBlueprint({
         // asked once more, after the wait it named (MetaMask, 2026-11-08).
         result = await sendRetryingWalletNetworkV1(() => sendCalls.mutateAsync({
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
-          calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities: walletCapabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
+          calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
           // EIP-5792 `atomicRequired`, which wagmi spells `forceAtomic`. NOT a
           // capability: `atomic` is what wallet_getCapabilities REPORTS, and
@@ -819,7 +839,8 @@ export function useSubmitApprovedBlueprint({
           const stepsNext = goal === 'swap' && batchFailureInvitesStepsV1(cause);
           const message = stepsNext ? sequentialAfterBatchFailureV1(walletName) : walletSubmissionFailureMessageV1(cause, walletName);
           if (stepsNext) setStepsAfterFailure(true);
-          if (stepsNext || walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureSentenceV1(cause) !== null) {
+          if (stepsNext || walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureSentenceV1(cause) !== null
+            || walletConnectionNotReadyV1(cause)) {
             // The wallet cannot send a batch at all, sponsored or not. Saying
             // the sponsor failed sent people to press again for the same no.
             // Nor when it could not reach Base (MetaMask's own RPC, 11-08).
@@ -848,7 +869,7 @@ export function useSubmitApprovedBlueprint({
       // nobody wrote down is how an app discovers months later that none of its
       // volume was ever credited.
       setBuilderAttribution(
-        builderAttributionOutcomeV1({ suffix, capabilities: walletCapabilities, chainId: base.id }),
+        builderAttributionOutcomeV1({ suffix, capabilities, chainId: base.id }),
       );
 
       // --- T67C.2: the narrowest window in the flow -------------------------

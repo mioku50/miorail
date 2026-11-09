@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useAccount, useCallsStatus, useSendCalls } from "wagmi";
+import { useAccount, useCallsStatus, useConfig, useSendCalls } from "wagmi";
 import {
   CONSOLE_COPY_V1,
   CandidateCards,
@@ -195,6 +195,7 @@ import {
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
   isWalletRejectionError,
+  requireLiveWalletConnectionV1,
   transactionHashesFromReceipts,
   useFoundWalletClaim,
   useSpendPermissionGrant,
@@ -1281,6 +1282,7 @@ export function MiniConsole() {
   const b20RecordSubmission = useB20RecordEntrySubmission();
   const b20ReconcileSubmission = useB20ReconcileEntrySubmission();
   const b20SendCalls = useSendCalls();
+  const b20WagmiConfig = useConfig();
   const b20EntryStatus = useB20EntryStatus(b20EntryPlanId, { enabled: Boolean(b20EntryPlanId) });
   const b20EntryReview = b20EntryStatus.data?.review ?? b20PrepareEntry.data?.review ?? null;
   const b20EntryState = b20EntryStatus.data?.status ?? null;
@@ -1361,6 +1363,8 @@ export function MiniConsole() {
       return;
     }
     try {
+      // A restored connection is brought back before the wallet is asked (2026-11-09).
+      await requireLiveWalletConnectionV1(b20WagmiConfig);
       const result = await b20SendCalls.mutateAsync({
         calls: begun.payload.calls as never,
         chainId: 8453,
@@ -1393,7 +1397,7 @@ export function MiniConsole() {
         batchId: null,
       });
     }
-  }, [b20BeginSubmission, b20EntryPlanId, b20ProfileIdentityV1, b20RecordSubmission, b20SendCalls]);
+  }, [b20BeginSubmission, b20EntryPlanId, b20ProfileIdentityV1, b20RecordSubmission, b20SendCalls, b20WagmiConfig]);
 
   const refreshB20EntryProof = useCallback(() => {
     const walletStatus = b20WalletBatchStatus.data as {
