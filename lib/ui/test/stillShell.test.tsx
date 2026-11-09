@@ -333,15 +333,20 @@ describe('what the wallet holds, on Assets', () => {
     assert.deepEqual(view.rows.map((row) => row.id), ['USDC', 'ETH', 'cbBTC', ...stocks]);
     assert.deepEqual(view.rows[0], {
       id: 'USDC', kind: 'cash', name: 'USD Coin', amount: '12.3456 USDC', value: '$12.34',
-      lines: [{ text: 'What a loan pays out and Repay takes; not counted in Reviewed holdings' }],
+      lines: [{ text: 'What a loan pays out and Repay takes; Still does not lend against it' }],
       sell: { goal: 'Swap 12.345678 USDC to ETH', href: `/routes?goal=${encodeURIComponent('Swap 12.345678 USDC to ETH')}`, label: 'Swap for ETH on Swap →' },
     });
     // Not held is a measured zero: the report has no line for it, and the list says 0.
     assert.deepEqual(view.rows[1], { id: 'ETH', kind: 'crypto', name: 'Ether', amount: '0 ETH', value: '$0.00', lines: [] });
     assert.deepEqual(view.rows.find((row) => row.id === 'NVDAc')!.lines[0], { strong: '3.4 hold up your Aave loan', text: ' · 0.8 free' });
-    // USDC is not a reviewed holding: the total and the count stay the reviewed set's.
+    // USDC is not a reviewed holding: the count and the reviewed total stay the reviewed set's, and
+    // the total at the top adds it (operator, 2026-11-09: a wallet of USDC read $0.00 there).
+    const reviewedCents = r.assets.reduce((sum, line) => sum + BigInt(line.valueCents!), BigInt(0));
     assert.equal(view.count, 4);
-    assert.equal(view.total, formatCents(r.assets.reduce((sum, line) => sum + BigInt(line.valueCents!), BigInt(0))));
+    assert.equal(view.reviewedTotal, formatCents(reviewedCents));
+    assert.equal(view.usdcTotal, '$12.34');
+    assert.equal(view.total, formatCents(reviewedCents + BigInt(1234)));
+    assert.equal(view.totalNote, `${formatCents(reviewedCents)} reviewed for loans · $12.34 USDC`);
     // Apple is one of Still's reviewed stocks: it is a row, not an "also".
     assert.deepEqual(view.others, []);
   });

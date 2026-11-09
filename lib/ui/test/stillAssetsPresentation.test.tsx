@@ -107,7 +107,7 @@ describe('Still Assets presentation', () => {
     assert.match(html, /^<div class="still-assets">/);
     assert.match(html, /<a href="\/stocks\/dividends" class="still-card still-feature-link">/);
     assert.match(html, /<svg class="still-chevron" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">/);
-    const summary = html.indexOf('reviewed holdings');
+    const summary = html.indexOf('reviewed for loans');
     const tabs = html.indexOf('role="tablist"');
     const holdings = html.indexOf('class="still-assets-primary"');
     const dividends = html.indexOf('<aside class="still-assets-aside still-section">');
@@ -161,6 +161,28 @@ describe('selling a holding on Swap, from Assets', () => {
     // Without the read beside it, the page says what it always said.
     assert.equal(eth(undefined).amount, '0 ETH');
     assert.equal(eth({ raw: '0', decimals: 6 }).amount, '0 ETH');
+  });
+
+  it('counts the wallet’s USDC in the total at the top, and says what the total is made of', () => {
+    // 2026-11-09, the operator: a wallet holding only USDC read $0.00 at the top of Assets.
+    const empty = report({ wallet: {} });
+    const view = assetsViewV1({ report: empty, usdc: { raw: '1355000', decimals: 6 } });
+    assert.equal(view.total, '$1.35');
+    assert.equal(view.reviewedTotal, '$0.00');
+    assert.equal(view.usdcTotal, '$1.35');
+    assert.equal(view.totalNote, '$0.00 reviewed for loans · $1.35 USDC');
+    const html = renderAssets(view);
+    assert.match(html, /<div class="still-balance-label">Holdings<\/div><div class="still-big"><span class="d">\$1<\/span><span class="c">\.(?:<!-- -->)?35<\/span>/);
+    assert.match(html, /\$0\.00 reviewed for loans · \$1\.35 USDC/);
+    assert.match(html, /What a loan pays out and Repay takes; Still does not lend against it/);
+    // While USDC is read, or when it did not answer, the total is the reviewed holdings' and says why.
+    assert.equal(assetsViewV1({ report: empty, usdc: 'loading' }).totalNote, '$0.00 reviewed for loans · USDC is being read');
+    const unread = assetsViewV1({ report: empty, usdc: 'unread' });
+    assert.equal(unread.total, '$0.00');
+    assert.equal(unread.usdcTotal, 'unread');
+    assert.equal(unread.totalNote, '$0.00 reviewed for loans · USDC not read just now, so not in the total');
+    // Without a USDC read the note names the reviewed holdings alone.
+    assert.equal(assetsViewV1({ report: empty }).totalNote, '$0.00 reviewed for loans');
   });
 
   it('offers nothing for what is all pledged, and asks how much ETH', () => {

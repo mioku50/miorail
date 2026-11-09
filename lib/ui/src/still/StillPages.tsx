@@ -45,13 +45,13 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
       ) : view ? (
         <>
           <div className="still-section still-balance">
-            <div className="still-balance-label">Reviewed holdings</div>
+            <div className="still-balance-label">Holdings</div>
             {view.total ? (
               <div className="still-big"><span className="d">{view.total.split('.')[0]}</span><span className="c">.{view.total.split('.')[1]}</span></div>
             ) : (
               <div className="still-sub">Total not read this time.</div>
             )}
-            <div className="still-balance-note">{view.count} reviewed {view.count === 1 ? 'holding' : 'holdings'} · prices are each venue’s own</div>
+            <div className="still-balance-note">{view.totalNote}</div>
             <div className="still-balance-actions">
               <StillLink href="/borrow" className="still-btn">Get money</StillLink>
               <StillLink href="/repay" className="still-btn sec">Repay</StillLink>

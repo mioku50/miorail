@@ -48,8 +48,17 @@ export interface LoanRowV1 {
 }
 
 export interface AssetsViewV1 {
-  /** What the reviewed holdings are worth, wallet and pledged. USDC is not one of them. */
+  /** Everything priced here: the reviewed holdings, wallet and pledged, and the wallet's USDC when it
+   * was read (operator, 2026-11-09: a wallet holding only USDC read $0.00 at the top of Assets, which
+   * «сбивает с толку»). Null when a reviewed holding was not priced. */
   total: string | null;
+  /** The reviewed holdings alone, wallet and pledged: what Still lends against. USDC is not one of them. */
+  reviewedTotal: string | null;
+  /** The wallet's USDC as the total holds it: its value, still being read, not read, or null when
+   * this view has no USDC read at all. */
+  usdcTotal: string | 'loading' | 'unread' | null;
+  /** What the total is made of: "$0.00 reviewed for loans · $1.35 USDC". */
+  totalNote: string;
   count: number;
   /** USDC when it was read beside the report, ETH, cbBTC and PAXG, then the stocks by value. */
   rows: AssetRowV1[];
@@ -96,7 +105,12 @@ function decimalTextV1(value: string): string {
   return tokenTextV1(BigInt(`${whole}${fraction}`), fraction.length);
 }
 
-/** USDC counts at $1: what a loan pays out and a repayment takes. */
+/** USDC counts at $1, what a loan pays out and a repayment takes: cents are its base units over 10^(decimals − 2). */
+function usdcCentsV1(usdc: Exclude<WalletUsdcV1, 'loading' | 'unread'>): bigint {
+  const raw = BigInt(usdc.raw);
+  return usdc.decimals >= 2 ? raw / BigInt(10) ** BigInt(usdc.decimals - 2) : raw * BigInt(10) ** BigInt(2 - usdc.decimals);
+}
+
 /**
  * ETH when the report has no line for it. The report counts ETH only above the network-fee reserve,
  * so a wallet with just its gas money has none there; its ETH is the read beside USDC (2026-11-09:
@@ -128,16 +142,14 @@ function usdcRowV1(usdc: WalletUsdcV1): AssetRowV1 {
   if (usdc === 'loading') return { ...row, amount: '… USDC', value: '…', lines: [] };
   if (usdc === 'unread') return { ...row, amount: '— USDC', value: null, lines: [{ text: UNREAD_V1 }] };
   const raw = BigInt(usdc.raw);
-  // Cents are its base units over 10^(decimals − 2).
-  const cents = usdc.decimals >= 2 ? raw / BigInt(10) ** BigInt(usdc.decimals - 2) : raw * BigInt(10) ** BigInt(2 - usdc.decimals);
   // Its whole balance, exactly, as Swap's goal: USDC buys ETH there, and the goal can be changed
   // before anything is compared (operator, 2026-11-09: sell from Assets as with the other rows).
   const goal = `Swap ${tokenDecimalV1(raw.toString(), usdc.decimals)} USDC to ETH`;
   return {
     ...row,
     amount: `${tokenTextV1(raw, usdc.decimals)} USDC`,
-    value: formatCents(cents),
-    lines: [{ text: 'What a loan pays out and Repay takes; not counted in Reviewed holdings' }],
+    value: formatCents(usdcCentsV1(usdc)),
+    lines: [{ text: 'What a loan pays out and Repay takes; Still does not lend against it' }],
     ...(raw > BigInt(0) ? { sell: { goal, href: `/routes?goal=${encodeURIComponent(goal)}`, label: 'Swap for ETH on Swap →' } } : {}),
   };
 }
@@ -242,8 +254,22 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       more: v.availableCents === null ? null : `Modelled additional room: ${formatCents(v.availableCents)}. A live loan limit has not been checked.`,
     }));
 
+  // The total adds the wallet's USDC once it is read; while it is read, or when it did not answer,
+  // the total is the reviewed holdings' and the note says why.
+  const usdc = input.usdc;
+  const usdcCents = typeof usdc === 'object' ? usdcCentsV1(usdc) : BigInt(0);
+  const usdcTotal = typeof usdc === 'object' ? formatCents(usdcCents) : usdc ?? null;
+  const reviewedTotal = priced ? formatCents(total) : null;
+  const usdcNote = usdcTotal === null ? null
+    : usdcTotal === 'loading' ? 'USDC is being read'
+      : usdcTotal === 'unread' ? 'USDC not read just now, so not in the total'
+        : `${usdcTotal} USDC`;
+  const reviewedNote = reviewedTotal === null ? 'Reviewed holdings not priced this time' : `${reviewedTotal} reviewed for loans`;
   return {
-    total: priced ? formatCents(total) : null,
+    total: priced ? formatCents(total + usdcCents) : null,
+    reviewedTotal,
+    usdcTotal,
+    totalNote: usdcNote === null ? reviewedNote : `${reviewedNote} · ${usdcNote}`,
     count,
     rows,
     others,
