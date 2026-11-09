@@ -127,6 +127,16 @@ describe('session-owned lending HTTP boundary', () => {
     assert.equal(armed.body.sponsorship, null);
     assert.match(armed.body.attemptId, /^[0-9a-f-]{36}$/);
   });
+  it('an arm refused while another attempt holds the market says so, in words the page shows (2026-11-09)', async () => {
+    const first = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    await arm(first);
+    const second = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    assert.notEqual(second.body.executionId, first.body.executionId);
+    const refused = await request(app()).post(`${base}/lending/executions/${second.body.executionId}/arm`)
+      .send({ callsHash: second.body.callsHash, signingTermsHash: second.body.signingTermsHash }).expect(409);
+    assert.equal(refused.body.error, 'execution_active');
+    assert.match(refused.body.detail, /^Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked\./);
+  });
   it('does not accept status or a receipt supplied by the browser', async () => {
     const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`), path = `${base}/lending/executions/${read.body.executionId}`;
     const arm = await request(app()).post(`${path}/arm`).send({ callsHash: read.body.callsHash, signingTermsHash: read.body.signingTermsHash });

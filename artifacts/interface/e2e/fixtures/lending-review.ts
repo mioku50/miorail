@@ -47,7 +47,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     // Holds the arm's answer until it settles, as a slow server would.
     armHeld: null as Promise<void> | null,
     // What the arm says about the network fee: Still's offer to pay it (2026-11-08), or nothing.
-    armSponsorship: undefined as unknown };
+    armSponsorship: undefined as unknown,
+    // An arm the server refuses, as it does while another attempt holds the market (2026-11-09).
+    armRefusal: null as { status: number; json: Record<string, unknown> } | null };
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
@@ -61,7 +63,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       } });
     }
     if (path.endsWith('/executions/execution_1/arm') && request.method() === 'POST') {
-      state.order.push('arm'); state.executionState = 'awaiting_wallet';
+      state.order.push('arm');
+      if (state.armRefusal) return route.fulfill({ status: state.armRefusal.status, json: state.armRefusal.json });
+      state.executionState = 'awaiting_wallet';
       if (state.armHeld) await state.armHeld;
       expect(request.postDataJSON().callsHash).toBe(state.response.callsHash);
       expect(request.postDataJSON().signingTermsHash).toBe(state.response.signingTermsHash);

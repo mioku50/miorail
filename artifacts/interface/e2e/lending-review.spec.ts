@@ -111,6 +111,16 @@ test('a wallet whose connection to Base failed before sending is asked once more
   await expect(page.getByText(/could not reach Base/)).toHaveCount(0);
   expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
+test('an arm refused while another loan holds the market says so, and the wallet is never asked', async ({ page }) => {
+  // 2026-11-09: a repayment said only "could not be armed" while the loan before it, landed, was still being read.
+  const state = await install(page); await page.goto('/lending/fixture-lending');
+  const detail = 'Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked. Open that review and check its onchain result; once Still has read it, this one can be sent.';
+  state.armRefusal = { status: 409, json: { error: 'execution_active', detail } };
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect(page.getByText(detail, { exact: true })).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('could not be armed');
+  expect(await attempts(page)).toBe(0);
+});
 test('owner/connector mismatch masks private review before paint and does not read another wallet', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');
   await expect(page.locator('body')).toContainText('3.125001 USDC'); const reads = state.reviewReads;

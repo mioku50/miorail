@@ -33,6 +33,66 @@ export interface BaseChainReaderV1 extends BaseReceiptReader {
   /** How many transactions this address has sent, as of the latest block or with those the node holds
    * pending; null when it cannot be read. A reader without it is one that cannot say. */
   getTransactionCount?(address: string, blockTag: 'latest' | 'pending'): Promise<number | null>;
+  /**
+   * The account's own transactions that landed after `afterBlock`, oldest first, found by its own
+   * transaction count. Only for an EIP-7702 account, which sends its batches itself (MetaMask,
+   * 2026-11-09: its batch handle is the wallet's own, and nothing outside the wallet can name it). An
+   * empty list when none landed; null for any other account, or when it cannot be read.
+   */
+  findOwnTransactionsAfter?(address: string, afterBlock: bigint): Promise<HashV1[] | null>;
+}
+
+/** An EIP-7702 delegation designator: the account's code is 0xef0100 followed by its delegate. */
+export function isDelegatedAccountCodeV1(code: string | null | undefined): boolean {
+  return typeof code === 'string' && /^0xef0100[0-9a-f]{40}$/i.test(code);
+}
+
+const OWN_TRANSACTIONS_LIMIT_V1 = 4;
+// What a search found, by account, review block and the account's count then: a page that asks every
+// few seconds does not search the chain again until the account sends something more.
+const ownTransactionsSeenV1 = new Map<string, HashV1[]>();
+
+/** The search behind `findOwnTransactionsAfter`, over any client that can read counts at a block. */
+export async function findOwnTransactionsAfterV1(client: {
+  getCode(args: { address: `0x${string}` }): Promise<string | undefined>;
+  getBlockNumber(): Promise<bigint>;
+  getTransactionCount(args: { address: `0x${string}`; blockNumber: bigint }): Promise<number>;
+  getBlock(args: { blockNumber: bigint; includeTransactions: true }): Promise<{ transactions: readonly { hash: string; from: string; nonce: number }[] }>;
+}, address: string, afterBlock: bigint): Promise<HashV1[] | null> {
+  try {
+    const wallet = address.toLowerCase() as `0x${string}`;
+    // A smart contract wallet's operations are sent by bundlers: its own count never moves.
+    if (!isDelegatedAccountCodeV1(await client.getCode({ address: wallet }))) return null;
+    const latest = await client.getBlockNumber();
+    if (afterBlock >= latest) return [];
+    const countAt = (blockNumber: bigint) => client.getTransactionCount({ address: wallet, blockNumber });
+    const [first, last] = await Promise.all([countAt(afterBlock), countAt(latest)]);
+    if (last <= first) return [];
+    const key = `${wallet}|${afterBlock}|${last}`;
+    const seen = ownTransactionsSeenV1.get(key);
+    if (seen) return [...seen];
+    const hashes: HashV1[] = [];
+    let low = afterBlock;
+    for (let nonce = first; nonce < last && hashes.length < OWN_TRANSACTIONS_LIMIT_V1; nonce += 1) {
+      // The first block whose count is past `nonce` holds the account's transaction with that nonce.
+      let lo = low, hi = latest;
+      while (hi - lo > 1n) {
+        const mid = (lo + hi) / 2n;
+        if ((await countAt(mid)) > nonce) hi = mid; else lo = mid;
+      }
+      const block = await client.getBlock({ blockNumber: hi, includeTransactions: true });
+      const own = block.transactions.find(tx => tx.from.toLowerCase() === wallet && tx.nonce === nonce);
+      if (!own) return null;
+      hashes.push(own.hash.toLowerCase() as HashV1);
+      // The next one may have landed in the same block.
+      low = hi - 1n;
+    }
+    if (ownTransactionsSeenV1.size >= 256) ownTransactionsSeenV1.delete(ownTransactionsSeenV1.keys().next().value!);
+    ownTransactionsSeenV1.set(key, hashes);
+    return [...hashes];
+  } catch {
+    return null;
+  }
 }
 
 export function createViemBaseReceiptReader(): BaseChainReaderV1 {
@@ -58,6 +118,9 @@ export function createViemBaseReceiptReader(): BaseChainReaderV1 {
       } catch {
         return null;
       }
+    },
+    async findOwnTransactionsAfter(address: string, afterBlock: bigint): Promise<HashV1[] | null> {
+      return findOwnTransactionsAfterV1(publicClient as unknown as Parameters<typeof findOwnTransactionsAfterV1>[0], address, afterBlock);
     },
     async getTransactionReceipt(hash: HashV1): Promise<VerifiedReceiptSourceV1 | null> {
       let receipt;

@@ -341,7 +341,10 @@ export function useLendingReviewConsoleV1(input: {
       if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
-        : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
+        : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName)
+          // Another attempt holds the market: the server says which, before the wallet was ever asked.
+          ?? (!handedToWallet ? serverDetailV1(error, /^execution_active$/) : null)
+          ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
             : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
     } finally { opening.current = false; update({ walletBusy: false, step: null }); }

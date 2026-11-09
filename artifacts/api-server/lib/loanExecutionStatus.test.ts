@@ -4,7 +4,7 @@ import { encodeAbiParameters, encodeFunctionData, keccak256, pad, parseAbi, stri
 import type { VerifiedReceiptSourceV1, VerifiedReceiptLogV1 } from '@mioagent/route-proof';
 import type { BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { MemoryLoanExecutionStoreV1, type LoanExecutionV1 } from './loanExecutionStore.js';
-import { bindLoanTransactionV1, refreshLoanExecutionV1, type LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
+import { bindLoanTransactionV1, delegatedAccountCallsV1, refreshLoanExecutionV1, type LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
 import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_WALLET_FIXTURE as WALLET, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX, LOAN_TARGET_FIXTURE as TARGET } from './loanExecutionTestFixtures.js';
 
 const BUNDLER = `0x${'a'.repeat(40)}` as Address, ENTRY = '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789';
@@ -147,5 +147,58 @@ describe('lending completion is chain evidence, not SDK status', () => {
     const { store, record } = await setup(); const deps = dependencies(store);
     const actual = store.recordVerification.bind(store); store.recordVerification = async () => null;
     assert.equal((await refreshLoanExecutionV1(input(record), deps))!.state, 'unknown'); store.recordVerification = actual;
+  });
+});
+
+// 2026-11-09: a MetaMask loan landed in 12 s as the wallet's own transaction to itself, through its EIP-7702
+// delegate's `execute(bytes32, bytes)`, and stayed "sent": Still could neither name its hash nor read its calls.
+describe('a batch the wallet sent itself, through its EIP-7702 delegate', () => {
+  const DELEGATED_ABI = parseAbi(['function execute(bytes32 mode, bytes executionCalldata)']);
+  const BATCH_MODE = `0x01${'0'.repeat(62)}` as Hex, SINGLE_MODE = `0x00${'0'.repeat(62)}` as Hex;
+  const EXECUTIONS = [{ type: 'tuple[]', components: [{ name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'callData', type: 'bytes' }] }] as const;
+  const execute = (mode: Hex = BATCH_MODE, calls = loanReadyFixture().calls) => encodeFunctionData({ abi: DELEGATED_ABI, functionName: 'execute',
+    args: [mode, encodeAbiParameters(EXECUTIONS, [calls.map(call => ({ target: call.to as Address, value: BigInt(call.valueWei), callData: call.data as Hex }))])] });
+  const own = (input: Hex): BaseTransactionSourceV1 => ({ from: WALLET, to: WALLET, value: 0n, input });
+  const ownReceipt = (status: 'success' | 'reverted' = 'success'): VerifiedReceiptSourceV1 => ({ ...receipt([OWN_EFFECT]), status, from: WALLET });
+  const input = (record: LoanExecutionV1) => ({ owner: OWNER, executionId: record.executionId, refresh: true });
+  const deps = (store: MemoryLoanExecutionStoreV1, reader: LoanExecutionStatusDepsV1['reader']): LoanExecutionStatusDepsV1 => ({ store, reader, readBatchHashes: async () => null,
+    verifyEffectPosition: async () => ({ state: 'matched', proof: { exactProtocolEffectsAndPinnedPosition: true } }), now: () => NOW });
+
+  it('binds exactly the approved calls in the default batch mode, and a revert as a failure', async () => {
+    const { record } = await setup();
+    assert.deepEqual(bindLoanTransactionV1({ execution: record, transaction: own(execute()), receipt: ownReceipt() }), { state: 'matched', logs: [OWN_EFFECT], operationNonce: null });
+    assert.deepEqual(bindLoanTransactionV1({ execution: record, transaction: own(execute()), receipt: ownReceipt('reverted') }), { state: 'failed', errorCode: 'loan_transaction_reverted' });
+  });
+  it('binds nothing a successful receipt would not prove: try mode, delegatecall, a mode with a selector, other calls, another sender', async () => {
+    const { record } = await setup(); const calls = record.run.calls;
+    for (const changed of [execute(`0x0101${'0'.repeat(60)}` as Hex), execute(`0xff00${'0'.repeat(60)}` as Hex), execute(`0x01000000000078210001${'0'.repeat(44)}` as Hex),
+      execute(BATCH_MODE, [...calls, calls[0]!]), execute(BATCH_MODE, calls.map((call, i) => i ? call : { ...call, to: OTHER as Address })), execute(BATCH_MODE, [...calls].reverse())]) {
+      assert.equal(bindLoanTransactionV1({ execution: record, transaction: own(changed), receipt: ownReceipt() }).state, 'unknown');
+    }
+    assert.equal(bindLoanTransactionV1({ execution: record, transaction: { ...own(execute()), from: OTHER }, receipt: { ...ownReceipt(), from: OTHER } }).state, 'unknown');
+  });
+  it('reads one call packed in the single mode, with the Builder Code wherever the wallet put it', () => {
+    const call = loanReadyFixture().calls[0]!;
+    const packed = `0x${call.to.slice(2)}${BigInt(call.valueWei).toString(16).padStart(64, '0')}${call.data.slice(2)}`.toLowerCase() as Hex;
+    const single = encodeFunctionData({ abi: DELEGATED_ABI, functionName: 'execute', args: [SINGLE_MODE, packed] });
+    assert.deepEqual(delegatedAccountCallsV1(single), [{ to: call.to.toLowerCase(), value: BigInt(call.valueWei), data: call.data.toLowerCase() }]);
+    assert.deepEqual(delegatedAccountCallsV1(attributed(single)), delegatedAccountCallsV1(single));
+    assert.equal(delegatedAccountCallsV1('0x12345678'), null);
+    assert.equal(delegatedAccountCallsV1(batch()), null, 'Coinbase’s shape is read by its own decoder');
+  });
+  it('is found by the wallet’s own count after the review when only the wallet can name its handle, and confirmed', async () => {
+    const { store, record } = await setup(); const asked: Array<[string, bigint]> = [];
+    const result = await refreshLoanExecutionV1(input(record), deps(store, { getTransaction: async () => own(execute()), getTransactionReceipt: async () => ownReceipt(),
+      findOwnTransactionsAfter: async (address, afterBlock) => { asked.push([address, afterBlock]); return [TX]; } }));
+    assert.equal(result!.state, 'confirmed'); assert.equal(result!.transactionHash, TX);
+    assert.deepEqual(asked, [[WALLET, BigInt(record.run.measured.blockNumber)]]);
+  });
+  it('leaves it sent when the wallet’s later transaction is another one, or nothing landed yet', async () => {
+    const { store, record } = await setup();
+    const other = await refreshLoanExecutionV1(input(record), deps(store, { getTransaction: async () => ({ from: WALLET, to: OTHER, value: 0n, input: '0x' }),
+      getTransactionReceipt: async () => ownReceipt(), findOwnTransactionsAfter: async () => [TX] }));
+    assert.equal(other!.state, 'submitted'); assert.equal(other!.transactionHash, null); assert.equal(other!.errorCode, null);
+    const none = await refreshLoanExecutionV1(input(record), deps(store, { getTransaction: async () => null, getTransactionReceipt: async () => null, findOwnTransactionsAfter: async () => [] }));
+    assert.equal(none!.state, 'submitted');
   });
 });

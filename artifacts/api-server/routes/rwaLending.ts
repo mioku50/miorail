@@ -253,9 +253,16 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
     return result;
   };
   const result = paying ? await withSpendInvoiceLockV1(paying.orderId, arm) : await arm();
-  if (!result.ok) { res.status(409).json({ error: result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal }); return; }
+  if (!result.ok) {
+    const error = result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal;
+    res.status(409).json({ error, ...(error === 'execution_active' ? { detail: EXECUTION_ACTIVE_DETAIL_V1 } : {}) }); return;
+  }
   res.json({ attemptId: result.attemptId, sponsorship: loanSponsorshipV1(owner, result.execution) });
 });
+/** Why an arm was refused while another attempt holds the market (2026-11-09: a repayment said only
+ * "could not be armed" while the loan before it, landed, was still being read). */
+const EXECUTION_ACTIVE_DETAIL_V1 = 'Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked. '
+  + 'Open that review and check its onchain result; once Still has read it, this one can be sent.';
 /** The network fee of a loan or repayment sent as one batch, offered to Still's fee sponsor for this
  * wallet and exactly the calls just armed, as a stock swap's is (operator, 2026-11-08). A loan in steps
  * is a plain transaction per step, which cannot carry a sponsor. An offer that cannot be worked out is

@@ -1,4 +1,4 @@
-import { decodeFunctionData, keccak256, parseAbi, stringToHex, type Hex } from 'viem';
+import { decodeAbiParameters, decodeFunctionData, keccak256, parseAbi, stringToHex, type Hex } from 'viem';
 import { hashApprovedCallsV1, stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import { ENTRY_POINT_ADDRESSES_V1, USER_OPERATION_EVENT_TOPIC_V1, type VerifiedReceiptLogV1, type VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
 import { stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
@@ -12,6 +12,33 @@ const HANDLE_OPS_ABI = parseAbi([
   'function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, bytes32 accountGasLimits, uint256 preVerificationGas, bytes32 gasFees, bytes paymasterAndData, bytes signature)[] ops, address beneficiary)',
 ]);
 const BEFORE_EXECUTION_TOPIC = keccak256(stringToHex('BeforeExecution()'));
+// ERC-7579 / ERC-7821 `execute(bytes32 mode, bytes executionData)`: what an EIP-7702 account runs when
+// the wallet sends a batch as its own transaction, to itself (MetaMask's EIP7702StatelessDeleGator,
+// 2026-11-09).
+const DELEGATED_EXECUTE_ABI = parseAbi(['function execute(bytes32 mode, bytes executionCalldata)']);
+const EXECUTIONS_V1 = [{ type: 'tuple[]', components: [{ name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'callData', type: 'bytes' }] }] as const;
+// Only the default execution type, which reverts the whole transaction when any call fails, so a
+// successful receipt means every call ran. "Try" (0x01), delegatecall (0xff) and any mode with a
+// selector or payload are not what Still approved.
+const SINGLE_DEFAULT_MODE_V1 = `0x00${'0'.repeat(62)}`, BATCH_DEFAULT_MODE_V1 = `0x01${'0'.repeat(62)}`;
+
+/** The calls an EIP-7702 account's `execute` runs, or null for anything else. */
+export function delegatedAccountCallsV1(input: string): { to: string; value: bigint; data: string }[] | null {
+  if (typeof input !== 'string' || !/^0x[0-9a-fA-F]*$/.test(input)) return null;
+  try {
+    const decoded = decodeFunctionData({ abi: DELEGATED_EXECUTE_ABI, data: stripErc8021SuffixV1(input) as Hex });
+    const mode = decoded.args[0].toLowerCase(), data = decoded.args[1].toLowerCase();
+    if (mode === BATCH_DEFAULT_MODE_V1) {
+      const [executions] = decodeAbiParameters(EXECUTIONS_V1, data as Hex);
+      return executions.map(call => ({ to: call.target.toLowerCase(), value: call.value, data: stripErc8021SuffixV1(call.callData) }));
+    }
+    // One call is packed: the target's 20 bytes, the value's 32, then the calldata.
+    if (mode === SINGLE_DEFAULT_MODE_V1 && data.length >= 2 + 104) {
+      return [{ to: `0x${data.slice(2, 42)}`, value: BigInt(`0x${data.slice(42, 106)}`), data: stripErc8021SuffixV1(`0x${data.slice(106)}`) }];
+    }
+    return null;
+  } catch { return null; }
+}
 const hash = (value: string): value is HashV1 => /^0x[0-9a-f]{64}$/.test(value);
 export type LoanTransactionBindingV1 =
   | { state: 'matched'; logs: readonly VerifiedReceiptLogV1[]; operationNonce: string | null }
@@ -45,7 +72,9 @@ export function bindLoanTransactionV1(input: {
   const wallet = execution.walletAddress.toLowerCase(), to = transaction.to?.toLowerCase();
   if (receipt.logs.length > 4096 || receipt.blockNumber < 0n || (receipt.from != null && receipt.from.toLowerCase() !== transaction.from.toLowerCase())) return unknown('loan_receipt_binding_unread');
   if (transaction.from.toLowerCase() === wallet) {
-    const calls = to === wallet ? userOperationCallsV1(transaction.input)
+    // To itself: a wallet that sends its own batch through its EIP-7702 delegate, in Coinbase's smart
+    // wallet shape or the standard `execute(bytes32, bytes)` MetaMask's delegate runs.
+    const calls = to === wallet ? userOperationCallsV1(transaction.input) ?? delegatedAccountCallsV1(transaction.input)
       : to ? [{ to, value: transaction.value, data: transaction.input }] : null;
     if (!calls || !exactCalls(execution, calls)) return unknown('loan_calls_not_matched');
     return receipt.status === 'success' ? { state: 'matched', logs: receipt.logs, operationNonce: null }
@@ -116,7 +145,15 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
     // A conflicting concurrent update must never cause a stale confirmed view.
     return next ?? { ...record, state: 'unknown' as const, errorCode: 'loan_execution_changed_while_reading' };
   };
-  const hints = record.transactionHash ? [record.transactionHash] : record.batchId ? await deps.readBatchHashes(record.batchId) : null;
+  let hints = record.transactionHash ? [record.transactionHash] : record.batchId ? await deps.readBatchHashes(record.batchId) : null;
+  // A batch the wallet sent as its own transaction has a handle only that wallet can name (MetaMask,
+  // 2026-11-09: a loan landed in 12 s and stayed "sent", and held its market against the repayment). It
+  // is found by the account's own transaction count after the review, and bound like any other.
+  let ownSearch = false;
+  if (!hints?.length && record.batchId && deps.reader.findOwnTransactionsAfter) {
+    hints = await deps.reader.findOwnTransactionsAfter(record.walletAddress, BigInt(record.run.measured.blockNumber)).catch(() => null);
+    ownSearch = true;
+  }
   if (!hints?.length || hints.length > 16 || hints.some(value => !hash(value))) {
     return record.state === 'confirmed' || record.state === 'failed' ? set('unknown', record.transactionHash, null, 'loan_receipt_unavailable') : record;
   }
@@ -131,6 +168,8 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
     const binding = bindLoanTransactionV1({ execution: record, receipt, transaction });
     if (binding.state !== 'unknown') candidates.push({ hash: txHash, receipt, transaction, binding });
   }
+  // The account's later transactions that are not this batch say nothing about it: it may not have landed yet.
+  if (ownSearch && candidates.length === 0) return record;
   if (candidates.length !== 1) return set('unknown', record.transactionHash, null, candidates.length > 1 ? 'loan_multiple_matching_transactions' : 'loan_receipt_not_matched');
   const candidate = candidates[0]!;
   const baseProof = { receiptFingerprint: receiptFingerprintV1(candidate.receipt), blockNumber: candidate.receipt.blockNumber.toString(), callsHash: record.run.callsHash };
