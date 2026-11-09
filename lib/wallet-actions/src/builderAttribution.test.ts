@@ -96,14 +96,21 @@ describe('classifying what happened to the attribution', () => {
 describe('T67X-B6: attribution touches nothing financial', () => {
   const source = readFileSync(resolve(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
 
-  test('the suffix is a capability, never part of a call', () => {
-    // If the suffix were spliced into call data, it would change the calls the
-    // server approved and the hash bound to them. It is passed beside the
-    // batch, and the wallet appends it to the outer UserOperation callData.
-    // Since growth plan step 2 the object may also carry the fee sponsor, so the
-    // suffix is spread into it — still only ever as `dataSuffix`, optional.
+  test('the suffix is a capability, and enters a call only after its approved bytes, for a wallet that will not add it', () => {
+    // It is passed beside the batch, and a wallet that reports `dataSuffix`
+    // appends it to the outer UserOperation callData. Since growth plan step 2
+    // the object may also carry the fee sponsor, so the suffix is spread into
+    // it — still only ever as `dataSuffix`, optional.
     assert.match(source, /\.\.\.\(suffix \? \{ dataSuffix: \{ value: suffix, optional: true \} \} : \{\}\)/);
-    assert.equal(/payload\.calls[\s\S]{0,200}suffix/.test(source), false, 'the suffix must never be mixed into calls');
+    // MetaMask drops that capability, and its EIP-7702 batches carried no code
+    // at all (2026-11-09). Steps already carry the code in each transaction's
+    // own data; a batch now does the same for such a wallet, and only through
+    // attributedCallsV1, which keeps the approved bytes first and unchanged
+    // (attribution.test.ts) and leaves a wallet that adds the code alone.
+    assert.match(source, /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities: walletCapabilities/);
+    const spliced = [...source.matchAll(/payload\.calls[\s\S]{0,200}suffix/g)];
+    assert.equal(spliced.length, 1, 'the suffix meets the approved calls in one place');
+    assert.ok(source.slice(0, spliced[0]!.index).endsWith('attributedCallsV1({ calls: '), 'and only inside attributedCallsV1');
   });
 
   test('nothing about the builder code reaches the submission record', () => {

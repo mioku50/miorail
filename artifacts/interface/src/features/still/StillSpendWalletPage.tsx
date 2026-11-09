@@ -6,7 +6,7 @@ import { getCallsStatus, sendTransaction } from 'wagmi/actions';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { walletRefusedBatchesV1 } from '@mioagent/ui';
 import { StillFrame, StillSpendWalletPay, spendOrderViewV1, useSpendWalletPaymentV1 } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from './useStillSky';
 
 const SPEND_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1({
@@ -38,7 +38,9 @@ export function StillSpendWalletPage() {
       let result: unknown;
       try {
         result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
-          calls: [{ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) }],
+          // A wallet that drops `dataSuffix` (MetaMask) gets the code in the call's own data.
+          calls: attributedCallsV1({ calls: [{ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) }],
+            suffix: SPEND_BUILDER_SUFFIX_V1, capabilities: batches.capabilities }),
           capabilities: SPEND_BUILDER_SUFFIX_V1 ? { dataSuffix: { value: SPEND_BUILDER_SUFFIX_V1, optional: true } } : undefined,
         });
       } catch (error) {

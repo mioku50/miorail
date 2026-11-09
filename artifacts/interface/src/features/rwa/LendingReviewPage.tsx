@@ -6,7 +6,7 @@ import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useSponsoredGasStatus, useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1,
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1,
   useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -49,7 +49,9 @@ export function LendingReviewPage() {
       const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: batches.capabilities, declinedBefore: sponsorDeclined });
       try {
         const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
-          calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+          // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
+          calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: batches.capabilities }),
           capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
         });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);

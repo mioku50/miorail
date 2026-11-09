@@ -164,3 +164,37 @@ export const BUILDER_ATTRIBUTION_LABELS_V1: Record<BuilderAttributionStatusV1, s
   unsupported_by_wallet: 'Builder attribution skipped — wallet does not support dataSuffix',
   unavailable: 'Builder attribution not established',
 };
+
+/**
+ * The calls to send, carrying the Builder Code in their own data when the wallet will not add it.
+ *
+ * A wallet that reports `dataSuffix` appends the code to the end of the transaction itself, so its
+ * calls go exactly as approved. MetaMask reports nothing and drops the optional capability: on
+ * 2026-11-09 its EIP-7702 batches carried no code at all. Then each call carries it: the approved
+ * bytes, zero bytes up to the next 32-byte word, then the code. Contracts ignore what follows their
+ * arguments; in the ERC-7579 batch MetaMask's delegate runs, the last call's data is then the very end
+ * of the transaction's input, where indexers read the code, and a call sent as its own transaction
+ * ends with the code too. The server's checks accept exactly this shape (`sameCallDataV1`).
+ *
+ * While the wallet has not answered `wallet_getCapabilities`, the calls go as approved: a wallet that
+ * supports the capability would otherwise carry the code twice, and a fee sponsor bound to the
+ * approved calls would not recognise them.
+ */
+export function attributedCallsV1<T extends { data?: string }>(input: {
+  calls: readonly T[];
+  suffix: string | null | undefined;
+  capabilities: unknown;
+  chainId?: number;
+}): T[] {
+  const suffix = input.suffix?.toLowerCase().replace(/^0x/, '') ?? '';
+  if (!suffix || !/^[0-9a-f]+$/.test(suffix) || suffix.length % 2 !== 0) return [...input.calls];
+  if (!input.capabilities || typeof input.capabilities !== 'object') return [...input.calls];
+  if (dataSuffixSupportV1(input.capabilities, input.chainId ?? 8453) === true) return [...input.calls];
+  const suffixBytes = suffix.length / 2;
+  return input.calls.map((call) => {
+    const data = (call.data ?? '0x').toLowerCase();
+    const dataBytes = (data.length - 2) / 2;
+    const fill = (32 - ((dataBytes + suffixBytes) % 32)) % 32;
+    return { ...call, data: `${data}${'00'.repeat(fill)}${suffix}` as T['data'] };
+  });
+}

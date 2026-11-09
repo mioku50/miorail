@@ -11,6 +11,7 @@ import {
   paymasterUpstreamUrlV1,
   sponsoredCallsDigestV1,
   sponsoredGasDailyLimitV1,
+  sameCallDataV1,
   sponsorshipAllowanceKeyV1,
   sponsorshipKeyV1,
   stripErc8021SuffixV1,
@@ -359,4 +360,21 @@ test('the daily limit is configurable and bounded', () => {
   assert.equal(sponsoredGasDailyLimitV1({ SPONSORED_GAS_DAILY_LIMIT_PER_WALLET: '0' } as NodeJS.ProcessEnv), 0);
   assert.equal(sponsoredGasDailyLimitV1({ SPONSORED_GAS_DAILY_LIMIT_PER_WALLET: 'lots' } as NodeJS.ProcessEnv), 3);
   assert.equal(sponsoredGasDailyLimitV1({ SPONSORED_GAS_DAILY_LIMIT_PER_WALLET: '1000' } as NodeJS.ProcessEnv), 3);
+});
+
+test('a call is the approved one as sent, with a code after it, or with exactly the zeros that end it on a word before the code (2026-11-09)', () => {
+  const approved = buyCalls()[0]!.data.toLowerCase();
+  const code = BUILDER_SUFFIX;
+  const dataBytes = (approved.length - 2) / 2, codeBytes = code.length / 2;
+  const fill = (32 - ((dataBytes + codeBytes) % 32)) % 32;
+  assert.ok(fill > 0);
+  assert.equal(sameCallDataV1(approved, approved), true);
+  assert.equal(sameCallDataV1(`${approved}${code}`, approved), true);
+  assert.equal(sameCallDataV1(`${approved}${'00'.repeat(fill)}${code}`, approved), true);
+  assert.equal(sameCallDataV1(`${approved}${'00'.repeat(fill)}${code}`.toUpperCase().replace('0X', '0x'), approved), true);
+  // Any other filler, filler without a code, or other bytes are not the approved call.
+  for (const sent of [`${approved}${'00'.repeat(fill - 1)}${code}`, `${approved}${'00'.repeat(fill + 32)}${code}`, `${approved}${'00'.repeat(fill - 1)}01${code}`,
+    `${approved}${'00'.repeat(fill)}`, `${approved}00`, `${approved.slice(0, -2)}${code}`, `${approved}${'00'.repeat(fill)}${code}00`]) {
+    assert.equal(sameCallDataV1(sent, approved), false, sent.slice(approved.length - 4));
+  }
 });

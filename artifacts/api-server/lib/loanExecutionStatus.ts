@@ -1,7 +1,7 @@
 import { decodeAbiParameters, decodeFunctionData, keccak256, parseAbi, stringToHex, type Hex } from 'viem';
 import { hashApprovedCallsV1, stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import { ENTRY_POINT_ADDRESSES_V1, USER_OPERATION_EVENT_TOPIC_V1, type VerifiedReceiptLogV1, type VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
-import { stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
+import { sameCallDataV1, stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
 import { createViemBaseReceiptReader, type BaseChainReaderV1, type BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from './stockExecutionStatus.js';
 import { loanExecutionRuntimeV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
@@ -22,19 +22,25 @@ const EXECUTIONS_V1 = [{ type: 'tuple[]', components: [{ name: 'target', type: '
 // selector or payload are not what Still approved.
 const SINGLE_DEFAULT_MODE_V1 = `0x00${'0'.repeat(62)}`, BATCH_DEFAULT_MODE_V1 = `0x01${'0'.repeat(62)}`;
 
-/** The calls an EIP-7702 account's `execute` runs, or null for anything else. */
+/** The calls an EIP-7702 account's `execute` runs, each call's data as sent (its own code kept, for
+ * `sameCallDataV1`), or null for anything else. */
 export function delegatedAccountCallsV1(input: string): { to: string; value: bigint; data: string }[] | null {
   if (typeof input !== 'string' || !/^0x[0-9a-fA-F]*$/.test(input)) return null;
+  // As sent first: the last call's own code may be the end of the whole input (attributedCallsV1), and
+  // cutting it there would cut that call. Then without a code a wallet appended to the whole input.
+  return delegatedCallsOfV1(input) ?? delegatedCallsOfV1(stripErc8021SuffixV1(input));
+}
+function delegatedCallsOfV1(input: string): { to: string; value: bigint; data: string }[] | null {
   try {
-    const decoded = decodeFunctionData({ abi: DELEGATED_EXECUTE_ABI, data: stripErc8021SuffixV1(input) as Hex });
+    const decoded = decodeFunctionData({ abi: DELEGATED_EXECUTE_ABI, data: input as Hex });
     const mode = decoded.args[0].toLowerCase(), data = decoded.args[1].toLowerCase();
     if (mode === BATCH_DEFAULT_MODE_V1) {
       const [executions] = decodeAbiParameters(EXECUTIONS_V1, data as Hex);
-      return executions.map(call => ({ to: call.target.toLowerCase(), value: call.value, data: stripErc8021SuffixV1(call.callData) }));
+      return executions.map(call => ({ to: call.target.toLowerCase(), value: call.value, data: call.callData.toLowerCase() }));
     }
     // One call is packed: the target's 20 bytes, the value's 32, then the calldata.
     if (mode === SINGLE_DEFAULT_MODE_V1 && data.length >= 2 + 104) {
-      return [{ to: `0x${data.slice(2, 42)}`, value: BigInt(`0x${data.slice(42, 106)}`), data: stripErc8021SuffixV1(`0x${data.slice(106)}`) }];
+      return [{ to: `0x${data.slice(2, 42)}`, value: BigInt(`0x${data.slice(42, 106)}`), data: `0x${data.slice(106)}` }];
     }
     return null;
   } catch { return null; }
@@ -54,7 +60,7 @@ function exactCalls(execution: BindableExecutionV1, actual: readonly { to: strin
       const expected = execution.run.calls[index]!;
       return call.to.toLowerCase() === expected.to.toLowerCase() &&
         (typeof call.value === 'bigint' || /^(?:0x[0-9a-f]+|0|[1-9][0-9]*)$/i.test(call.value)) && BigInt(call.value) === BigInt(expected.valueWei) &&
-        stripErc8021SuffixV1(call.data) === stripErc8021SuffixV1(expected.data);
+        sameCallDataV1(call.data, expected.data);
     });
 }
 const topicAddress = (topic: string | undefined): string | null => topic && /^0x0{24}[0-9a-fA-F]{40}$/.test(topic) ? `0x${topic.slice(26).toLowerCase()}` : null;
@@ -74,7 +80,7 @@ export function bindLoanTransactionV1(input: {
   if (transaction.from.toLowerCase() === wallet) {
     // To itself: a wallet that sends its own batch through its EIP-7702 delegate, in Coinbase's smart
     // wallet shape or the standard `execute(bytes32, bytes)` MetaMask's delegate runs.
-    const calls = to === wallet ? userOperationCallsV1(transaction.input) ?? delegatedAccountCallsV1(transaction.input)
+    const calls = to === wallet ? userOperationCallsV1(transaction.input, { keepCallCodes: true }) ?? delegatedAccountCallsV1(transaction.input)
       : to ? [{ to, value: transaction.value, data: transaction.input }] : null;
     if (!calls || !exactCalls(execution, calls)) return unknown('loan_calls_not_matched');
     return receipt.status === 'success' ? { state: 'matched', logs: receipt.logs, operationNonce: null }
@@ -87,7 +93,7 @@ export function bindLoanTransactionV1(input: {
     operations = decoded.args[0];
   } catch { return unknown('loan_operation_unreadable'); }
   const matching = operations.filter(op => op.sender.toLowerCase() === wallet && (() => {
-    const calls = userOperationCallsV1(op.callData); return calls && exactCalls(execution, calls);
+    const calls = userOperationCallsV1(op.callData, { keepCallCodes: true }); return calls && exactCalls(execution, calls);
   })());
   if (matching.length !== 1) return unknown('loan_calls_not_matched');
   if (receipt.status !== 'success') return { state: 'failed', errorCode: 'loan_transaction_reverted' };

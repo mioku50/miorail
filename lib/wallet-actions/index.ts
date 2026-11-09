@@ -5,6 +5,7 @@
 
 export {
   BUILDER_ATTRIBUTION_LABELS_V1,
+  attributedCallsV1,
   builderAttributionOutcomeV1,
   builderCodeAdviceV1,
   builderCodeForSurfaceV1,

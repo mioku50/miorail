@@ -177,6 +177,17 @@ describe('a batch the wallet sent itself, through its EIP-7702 delegate', () => 
     }
     assert.equal(bindLoanTransactionV1({ execution: record, transaction: { ...own(execute()), from: OTHER }, receipt: { ...ownReceipt(), from: OTHER } }).state, 'unknown');
   });
+  it('binds the calls carrying the code after the zeros that end each on a word, as Still sends a wallet that drops dataSuffix', async () => {
+    const { record } = await setup(); const code = attributed('0x').slice(2);
+    const aligned = record.run.calls.map(call => { const bytes = (call.data.length - 2) / 2, fill = (32 - ((bytes + code.length / 2) % 32)) % 32;
+      return { ...call, data: `${call.data}${'00'.repeat(fill)}${code}` as Hex }; });
+    const input = execute(BATCH_MODE, aligned);
+    assert.ok(input.endsWith(code), 'the transaction ends with the code');
+    assert.deepEqual(bindLoanTransactionV1({ execution: record, transaction: own(input), receipt: ownReceipt() }), { state: 'matched', logs: [OWN_EFFECT], operationNonce: null });
+    // One zero more than ends the call on a word is not the approved call.
+    const long = aligned.map((call, i) => i ? call : { ...call, data: call.data.replace(code, `00${code}`) as Hex });
+    assert.equal(bindLoanTransactionV1({ execution: record, transaction: own(execute(BATCH_MODE, long)), receipt: ownReceipt() }).state, 'unknown');
+  });
   it('reads one call packed in the single mode, with the Builder Code wherever the wallet put it', () => {
     const call = loanReadyFixture().calls[0]!;
     const packed = `0x${call.to.slice(2)}${BigInt(call.valueWei).toString(16).padStart(64, '0')}${call.data.slice(2)}`.toLowerCase() as Hex;

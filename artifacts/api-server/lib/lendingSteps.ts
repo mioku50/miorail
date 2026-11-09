@@ -6,7 +6,7 @@ import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { LendingRunV1 } from './lendingReview.js';
 import type { LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
 import type { LoanExecutionV1, LoanOwnerV1 } from './loanExecutionStore.js';
-import { stripErc8021SuffixV1 } from './sponsoredGas.js';
+import { sameCallDataV1 } from './sponsoredGas.js';
 
 // ---------------------------------------------------------------------------
 // A loan in steps, for a wallet that cannot send a batch.
@@ -60,7 +60,7 @@ export function bindLoanStepV1(input: { execution: LoanExecutionV1; index: numbe
   if (!call) return { state: 'unknown', errorCode: 'loan_step_out_of_range' };
   const { transaction: tx, receipt } = input;
   if (tx.from.toLowerCase() !== input.execution.walletAddress.toLowerCase() || tx.to?.toLowerCase() !== call.to.toLowerCase() ||
-      tx.value !== BigInt(call.valueWei) || stripErc8021SuffixV1(tx.input) !== stripErc8021SuffixV1(call.data) ||
+      tx.value !== BigInt(call.valueWei) || !sameCallDataV1(tx.input, call.data) ||
       (receipt.from != null && receipt.from.toLowerCase() !== tx.from.toLowerCase())) return { state: 'unknown', errorCode: 'loan_step_not_matched' };
   if (receipt.blockNumber < BigInt(input.execution.run.facts.blockNumber)) return { state: 'unknown', errorCode: 'loan_step_predates_review' };
   return receipt.status === 'success' ? { state: 'matched' } : { state: 'failed', errorCode: 'loan_step_reverted' };

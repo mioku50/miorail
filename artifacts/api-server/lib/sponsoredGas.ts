@@ -148,10 +148,37 @@ export function stripErc8021SuffixV1(data: string): string {
 }
 
 /**
- * The calls inside a smart wallet user operation, or null when the calldata
- * is not one of the two shapes Base Account's wallet produces.
+ * Whether a call's data, as the wallet sent it, is the data that was approved.
+ *
+ * The same bytes; or those bytes followed by an ERC-8021 code; or, since
+ * 2026-11-09, followed by exactly as many zero bytes as end the call on a
+ * 32-byte word and then the code. That last shape is what Miorail sends a
+ * wallet that drops the `dataSuffix` capability (MetaMask): in the ERC-7579
+ * batch its EIP-7702 delegate runs, a call ending on a word is the very end of
+ * the transaction's input, where indexers read the code. Contracts ignore what
+ * follows their arguments. Any other filler, or filler without a code, is not
+ * the approved call.
  */
-export function userOperationCallsV1(callData: string): SponsoredCallV1[] | null {
+export function sameCallDataV1(actual: string, approved: string): boolean {
+  const sent = actual.toLowerCase();
+  const expected = stripErc8021SuffixV1(approved).toLowerCase();
+  if (sent === expected) return true;
+  const body = stripErc8021SuffixV1(sent);
+  if (body === sent) return false;
+  if (body === expected) return true;
+  const suffixBytes = (sent.length - body.length) / 2;
+  const dataBytes = (expected.length - 2) / 2;
+  const fill = (32 - ((dataBytes + suffixBytes) % 32)) % 32;
+  return fill > 0 && body === `${expected}${'00'.repeat(fill)}`;
+}
+
+/**
+ * The calls inside a smart wallet user operation, or null when the calldata
+ * is not one of the two shapes Base Account's wallet produces. Each call's own
+ * ERC-8021 code is removed unless `keepCallCodes` asks for the data as sent,
+ * which `sameCallDataV1` then reads.
+ */
+export function userOperationCallsV1(callData: string, options: { keepCallCodes?: boolean } = {}): SponsoredCallV1[] | null {
   if (typeof callData !== 'string' || !/^0x[0-9a-fA-F]*$/.test(callData)) return null;
   let decoded: ReturnType<typeof decodeFunctionData<typeof SMART_WALLET_ABI_V1>>;
   try {
@@ -166,7 +193,7 @@ export function userOperationCallsV1(callData: string): SponsoredCallV1[] | null
   return raw.map((call) => ({
     to: call.target.toLowerCase(),
     value: call.value,
-    data: stripErc8021SuffixV1(call.data),
+    data: options.keepCallCodes ? call.data.toLowerCase() : stripErc8021SuffixV1(call.data),
   }));
 }
 

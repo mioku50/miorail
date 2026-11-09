@@ -7,7 +7,7 @@ import { useSession, useSponsoredGasStatus } from '@mioagent/api-client-react';
 import { LendingReviewScreen, lendingFeeNoteV1, useLendingReviewConsoleV1 } from '@mioagent/ui';
 import { useStillSkyV1, useStillClientPaletteV1 } from '@mioagent/ui/still';
 import { builderCodeFromEnvV1 } from '@mioagent/route-domain/builder-code';
-import { builderCodeToDataSuffix, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1 } from '@mioagent/wallet-actions';
+import { builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, sendCallsCapabilitiesV1, sponsoredGasPlanV1 } from '@mioagent/wallet-actions';
 import { WalletConnect } from '../../components/WalletConnect';
 import '@mioagent/ui/still.css';
 
@@ -38,7 +38,9 @@ export default function BaseAppLendingReviewPage() {
       const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: capabilities.data, declinedBefore: sponsorDeclined });
       try {
         const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
-          calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+          // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
+          calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: capabilities.data }),
           capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
         });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
