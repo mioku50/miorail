@@ -2,6 +2,7 @@ import { createPublicClient, http, type Hash } from 'viem';
 import { base } from 'viem/chains';
 import type { BaseReceiptReader, VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
 import type { HashV1 } from '@mioagent/route-domain';
+import { logger } from '@mioagent/utils';
 
 // T58: the ONLY server-side chain-read seam for Route Proof reconciliation.
 // The RPC URL comes exclusively from the server environment — NEVER from
@@ -48,6 +49,24 @@ export function isDelegatedAccountCodeV1(code: string | null | undefined): boole
 }
 
 const OWN_TRANSACTIONS_LIMIT_V1 = 4;
+/**
+ * How far below the head the search reads. Base makes a block every 200 ms, and the node behind a
+ * load balancer that answers a count may not hold the block another node just named as the head
+ * (2026-11-09: the first live search returned nothing while the same search from a script found the
+ * loan). A transaction this fresh is found on the next read.
+ */
+export const OWN_TRANSACTIONS_HEAD_MARGIN_V1 = 30n;
+const OWN_TRANSACTIONS_READ_ATTEMPTS_V1 = 3;
+
+/** One read, asked again after a short pause when a node answers with an error. */
+async function readAgainV1<T>(read: () => Promise<T>, pause: (ms: number) => Promise<void>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await read(); } catch (error) {
+      if (attempt >= OWN_TRANSACTIONS_READ_ATTEMPTS_V1) throw error;
+      await pause(250 * attempt);
+    }
+  }
+}
 // What a search found, by account, review block and the account's count then: a page that asks every
 // few seconds does not search the chain again until the account sends something more.
 const ownTransactionsSeenV1 = new Map<string, HashV1[]>();
@@ -58,14 +77,15 @@ export async function findOwnTransactionsAfterV1(client: {
   getBlockNumber(): Promise<bigint>;
   getTransactionCount(args: { address: `0x${string}`; blockNumber: bigint }): Promise<number>;
   getBlock(args: { blockNumber: bigint; includeTransactions: true }): Promise<{ transactions: readonly { hash: string; from: string; nonce: number }[] }>;
-}, address: string, afterBlock: bigint): Promise<HashV1[] | null> {
+}, address: string, afterBlock: bigint, options: { pause?: (ms: number) => Promise<void>; onError?: (error: unknown) => void } = {}): Promise<HashV1[] | null> {
+  const pause = options.pause ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); }));
   try {
     const wallet = address.toLowerCase() as `0x${string}`;
     // A smart contract wallet's operations are sent by bundlers: its own count never moves.
-    if (!isDelegatedAccountCodeV1(await client.getCode({ address: wallet }))) return null;
-    const latest = await client.getBlockNumber();
+    if (!isDelegatedAccountCodeV1(await readAgainV1(() => client.getCode({ address: wallet }), pause))) return null;
+    const latest = (await readAgainV1(() => client.getBlockNumber(), pause)) - OWN_TRANSACTIONS_HEAD_MARGIN_V1;
     if (afterBlock >= latest) return [];
-    const countAt = (blockNumber: bigint) => client.getTransactionCount({ address: wallet, blockNumber });
+    const countAt = (blockNumber: bigint) => readAgainV1(() => client.getTransactionCount({ address: wallet, blockNumber }), pause);
     const [first, last] = await Promise.all([countAt(afterBlock), countAt(latest)]);
     if (last <= first) return [];
     const key = `${wallet}|${afterBlock}|${last}`;
@@ -80,7 +100,7 @@ export async function findOwnTransactionsAfterV1(client: {
         const mid = (lo + hi) / 2n;
         if ((await countAt(mid)) > nonce) hi = mid; else lo = mid;
       }
-      const block = await client.getBlock({ blockNumber: hi, includeTransactions: true });
+      const block = await readAgainV1(() => client.getBlock({ blockNumber: hi, includeTransactions: true }), pause);
       const own = block.transactions.find(tx => tx.from.toLowerCase() === wallet && tx.nonce === nonce);
       if (!own) return null;
       hashes.push(own.hash.toLowerCase() as HashV1);
@@ -90,7 +110,8 @@ export async function findOwnTransactionsAfterV1(client: {
     if (ownTransactionsSeenV1.size >= 256) ownTransactionsSeenV1.delete(ownTransactionsSeenV1.keys().next().value!);
     ownTransactionsSeenV1.set(key, hashes);
     return [...hashes];
-  } catch {
+  } catch (error) {
+    options.onError?.(error);
     return null;
   }
 }
@@ -120,7 +141,11 @@ export function createViemBaseReceiptReader(): BaseChainReaderV1 {
       }
     },
     async findOwnTransactionsAfter(address: string, afterBlock: bigint): Promise<HashV1[] | null> {
-      return findOwnTransactionsAfterV1(publicClient as unknown as Parameters<typeof findOwnTransactionsAfterV1>[0], address, afterBlock);
+      return findOwnTransactionsAfterV1(publicClient as unknown as Parameters<typeof findOwnTransactionsAfterV1>[0], address, afterBlock, {
+        // A search that could not be read leaves a loan "sent"; the journal says why, never which wallet.
+        onError: error => logger.warn('Own transaction search unread', { errorName: error instanceof Error ? error.name : typeof error,
+          detail: error instanceof Error ? error.message.replace(/0x[0-9a-fA-F]{40,}/g, '0x…').replace(/https?:\/\/\S+/g, '(url)').slice(0, 160) : null }),
+      });
     },
     async getTransactionReceipt(hash: HashV1): Promise<VerifiedReceiptSourceV1 | null> {
       let receipt;

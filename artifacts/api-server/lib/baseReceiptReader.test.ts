@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { findOwnTransactionsAfterV1, isDelegatedAccountCodeV1 } from './baseReceiptReader.js';
+import { OWN_TRANSACTIONS_HEAD_MARGIN_V1, findOwnTransactionsAfterV1, isDelegatedAccountCodeV1 } from './baseReceiptReader.js';
 
 // 2026-11-09: MetaMask's batch handle is the wallet's own, so a loan it sent through its EIP-7702 delegate
 // is found by the account's own transaction count: the first block past each count holds that transaction.
@@ -37,8 +37,24 @@ describe('the wallet’s own transactions after a review, by its own count', () 
     assert.equal(isDelegatedAccountCodeV1(DELEGATED), true);
     assert.equal(isDelegatedAccountCodeV1(`${DELEGATED}00`), false);
   });
-  it('is null when a read fails, not an empty answer', async () => {
-    const { client: c } = client({ landed: [[600n, 16]] });
-    assert.equal(await findOwnTransactionsAfterV1({ ...c, getBlock: async () => { throw new Error('rpc down'); } }, OTHER, 501n), null);
+  it('is null when a read keeps failing, not an empty answer, and says so', async () => {
+    const { client: c } = client({ landed: [[600n, 16]] }); const errors: unknown[] = [];
+    assert.equal(await findOwnTransactionsAfterV1({ ...c, getBlock: async () => { throw new Error('rpc down'); } }, OTHER, 501n,
+      { pause: async () => {}, onError: error => errors.push(error) }), null);
+    assert.equal(errors.length, 1);
+  });
+  it('reads again when a node does not hold a block yet, and searches below the head (2026-11-09)', async () => {
+    // The first live search came back empty: a node behind the balancer did not hold the head another named.
+    const { client: own } = client({ landed: [[610n, 16]] }); const asked: bigint[] = []; let failures = 0;
+    const flaky = { ...own, getTransactionCount: async (args: { blockNumber: bigint }) => {
+      asked.push(args.blockNumber);
+      if (failures < 2) { failures += 1; throw new Error('header not found'); }
+      return own.getTransactionCount(args);
+    } };
+    assert.deepEqual(await findOwnTransactionsAfterV1(flaky, WALLET, 503n, { pause: async () => {} }), [hash(610)]);
+    assert.equal(Math.max(...asked.map(Number)), 1_000 - Number(OWN_TRANSACTIONS_HEAD_MARGIN_V1));
+    // One that landed within the margin is found on a later read, not now.
+    const { client: fresh } = client({ landed: [[990n, 16]] });
+    assert.deepEqual(await findOwnTransactionsAfterV1(fresh, WALLET, 504n, { pause: async () => {} }), []);
   });
 });
