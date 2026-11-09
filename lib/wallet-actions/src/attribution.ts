@@ -180,18 +180,19 @@ export const BUILDER_ATTRIBUTION_LABELS_V1: Record<BuilderAttributionStatusV1, s
  * supports the capability would otherwise carry the code twice, and a fee sponsor bound to the
  * approved calls would not recognise them.
  *
- * A batch Still's fee sponsor pays for goes as approved too. Only a smart account takes the sponsor,
- * and Base Account and Base App append the code to the user operation themselves (every one of their
- * batches carried it, 2026-11-08), while the sponsor checks the calls against the approved ones byte
- * for byte. Whether Base Account names `dataSuffix` in its capabilities was never read here, so the
- * sponsor must not depend on it.
+ * A batch that a wallet said it would let Still's fee sponsor pay for (it names `paymasterService`)
+ * goes as approved too: such a wallet is a smart account that appends the code to the user operation
+ * itself, and the sponsor checks the calls against the approved ones byte for byte. Only that: the
+ * sponsor's capability is also attached, optionally, for a wallet that names nothing, and MetaMask
+ * ignores it and pays (2026-11-09: a267483f sent its offered loan and stock swap without any code).
  */
 export function attributedCallsV1<T extends { data?: string }>(input: {
   calls: readonly T[];
   suffix: string | null | undefined;
   capabilities: unknown;
   chainId?: number;
-  /** The batch carries Still's fee sponsor (`paymasterService`). */
+  /** The wallet named `paymasterService` and the batch carries Still's fee sponsor: the plan's
+   * `sponsored` state, not merely an attached capability. */
   sponsored?: boolean;
 }): T[] {
   const suffix = input.suffix?.toLowerCase().replace(/^0x/, '') ?? '';

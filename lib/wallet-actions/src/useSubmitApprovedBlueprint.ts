@@ -771,7 +771,7 @@ export function useSubmitApprovedBlueprint({
         // asked once more, after the wait it named (MetaMask, 2026-11-08).
         result = await sendRetryingWalletNetworkV1(() => sendCalls.mutateAsync({
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
-          calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities: walletCapabilities, chainId: base.id, sponsored: gas.capability !== null }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
+          calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities: walletCapabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
           // EIP-5792 `atomicRequired`, which wagmi spells `forceAtomic`. NOT a
           // capability: `atomic` is what wallet_getCapabilities REPORTS, and
