@@ -202,7 +202,21 @@ const SWAP_WORDS_V2 = new RegExp(`${EDGE}(?:свап|своп|обмен|обм�
 const BUY_WORDS_V2 = new RegExp(`${EDGE}(?:купи|buy)`, 'iu');
 const SELL_WORDS_V2 = new RegExp(`${EDGE}(?:продай|продать|sell)`, 'iu');
 const LOAN_WORDS_V2 = /займ|кредит|долг|залог|погас|borrow|loan|debt|repay|collateral|lend/iu;
-const INTO_WORDS_V2 = new RegExp(`${EDGE}(?:на|в|to|into|for)\\s`, 'giu');
+// Words that may stand between such a word and the token: "на все свои ETH", "with all my USDC".
+const FILLER_V2 = '(?:(?:мои|мой|моё|моих|свои|свой|своё|своих|my|all|the|все|всё|весь|всех)\\s+)*';
+// The token received: "на ETH", "в USDC", "to ETH", "into my USDC", "for USDC".
+const RECEIVED_MARK_V2 = new RegExp(`${EDGE}(?:на|в|во|to|into|for)\\s+${FILLER_V2}`, 'giu');
+// A sale also says it with "за": «продай USDC за ETH».
+const SOLD_FOR_MARK_V2 = new RegExp(`${EDGE}(?:на|в|во|за|to|into|for)\\s+${FILLER_V2}`, 'giu');
+// What a purchase is paid with: «купи ETH за USDC», «купи Apple на 10 USDC», "buy ETH with my USDC".
+const PAID_MARK_V2 = new RegExp(`${EDGE}(?:за|на|with|using|for)\\s+(?:${FILLER_V2}\\$?\\d+(?:[.,]\\d+)?\\s*)*${FILLER_V2}`, 'giu');
+
+/** The last token a marking word stands right in front of, or null. */
+function markedTokenV2(question: string, named: ReadonlyArray<{ asset: string; at: number }>, words: RegExp): { asset: string; at: number } | null {
+  const ends = [...question.matchAll(words)].map((m) => (m.index ?? 0) + m[0].length);
+  // A token's own pattern may begin on the space in front of it.
+  return [...named].reverse().find((n) => ends.some((end) => n.at === end || n.at + 1 === end)) ?? null;
+}
 const ALL_WORDS_V2 = new RegExp(`${EDGE}(?:all|everything|max|все|всё|весь|всех|вся|целиком|полностью)(?:$|[^\\p{L}])`, 'iu');
 const HALF_WORDS_V2 = /half|половин/iu;
 
@@ -233,18 +247,29 @@ export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null 
   const dollars = /\$|доллар|\busd\b/iu.test(question);
   let from: string | null = null;
   let to: string | null = null;
+  // The token a word names comes first: «на ETH» is what is received, «купи ETH за USDC» says what
+  // pays. Only a sale or a purchase that names no other side falls back to USDC (2026-11-09: «хочу
+  // продать все свои USDC на ETH» was read as ETH to USDC, because a sale was always of the token
+  // that is not USDC).
   if (buy && !sell) {
-    to = named.find((n) => n.asset !== 'USDC')?.asset ?? null;
-    from = named.find((n) => n.asset !== to)?.asset ?? 'USDC';
-  } else if (sell && !buy) {
-    from = named.find((n) => n.asset !== 'USDC')?.asset ?? named[0]?.asset ?? null;
-    to = named.find((n) => n.asset !== from)?.asset ?? 'USDC';
+    const paid = markedTokenV2(question, named, PAID_MARK_V2);
+    if (paid) {
+      from = paid.asset;
+      to = named.find((n) => n.asset !== from)?.asset ?? null;
+    } else {
+      to = named.find((n) => n.asset !== 'USDC')?.asset ?? null;
+      from = named.find((n) => n.asset !== to)?.asset ?? 'USDC';
+    }
   } else {
-    // "...на ETH", "...to ETH": the token after the word is the one received.
-    const into = [...question.matchAll(INTO_WORDS_V2)].map((m) => m.index ?? 0);
-    const received = named.find((n) => into.some((at) => at < n.at && n.at - at <= 6));
-    to = received?.asset ?? named[1]?.asset ?? null;
-    from = named.find((n) => n.asset !== to)?.asset ?? (dollars ? 'USDC' : null);
+    const selling = sell && !buy;
+    const received = markedTokenV2(question, named, selling ? SOLD_FOR_MARK_V2 : RECEIVED_MARK_V2);
+    if (selling && !received) {
+      from = named.find((n) => n.asset !== 'USDC')?.asset ?? named[0]?.asset ?? null;
+      to = named.find((n) => n.asset !== from)?.asset ?? 'USDC';
+    } else {
+      to = received?.asset ?? named[1]?.asset ?? null;
+      from = named.find((n) => n.asset !== to)?.asset ?? (dollars ? 'USDC' : null);
+    }
   }
   if (from !== null && from === to) to = null;
 

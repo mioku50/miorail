@@ -131,15 +131,26 @@ test('the wallet’s USDC for Home: the session’s own, never cached, and a fai
     asked.push(wallet);
     return held;
   };
+  // Native ETH is read at USDC's block: Assets shows gas money the report leaves out.
+  let wei: string | null = '100000000000000';
+  const ethAt: string[] = [];
+  stillMineRuntimeV1.readNativeEth = async (wallet, block) => {
+    ethAt.push(`${wallet}@${block}`);
+    return wei;
+  };
   assert.equal((await request(app(null, async () => assert.fail('not checked')).server).get('/api/still/mine/usdc')).status, 401);
   const { server } = app(WALLET, async () => assert.fail('not checked'));
   const read = await request(server).get('/api/still/mine/usdc');
   assert.equal(read.status, 200);
   assert.equal(read.headers['cache-control'], 'private, no-store');
-  assert.deepEqual(read.body, { outcome: 'read', usdc: { raw: '12345', decimals: 6, block: '53000000' } });
+  assert.deepEqual(read.body, { outcome: 'read', usdc: { raw: '12345', decimals: 6, block: '53000000' }, eth: { raw: '100000000000000', decimals: 18, block: '53000000' } });
+  assert.deepEqual(ethAt, [`${WALLET}@53000000`]);
+  // An ETH read that did not answer is null beside a USDC that did, never a zero.
+  wei = null;
+  assert.deepEqual((await request(server).get('/api/still/mine/usdc')).body, { outcome: 'read', usdc: { raw: '12345', decimals: 6, block: '53000000' }, eth: null });
   // No other wallet can be asked for.
   assert.equal((await request(server).get(`/api/still/mine/usdc?wallet=0x${'2'.repeat(40)}`)).status, 400);
-  assert.deepEqual(asked, [WALLET]);
+  assert.deepEqual(asked, [WALLET, WALLET]);
   held = null;
   const unread = await request(server).get('/api/still/mine/usdc');
   assert.equal(unread.status, 503);

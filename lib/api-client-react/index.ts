@@ -2023,6 +2023,9 @@ export interface StillUsdcV1 {
   raw: string;
   decimals: number;
   block: string;
+  /** Native ETH in wei at the same block; null when that read did not answer. The Still report
+   * counts only ETH above the network-fee reserve, so Assets reads the gas money here. */
+  nativeEthRaw?: string | null;
 }
 
 /**
@@ -2032,12 +2035,14 @@ export interface StillUsdcV1 {
  */
 /** The signed-in wallet's own USDC, read once: for a page that needs it on demand, as a buy's Max does. */
 export async function fetchStillUsdcV1(): Promise<StillUsdcV1> {
-  const result = await fetchApi<{ outcome?: unknown; usdc?: Partial<StillUsdcV1> }>('/api/still/mine/usdc');
+  const result = await fetchApi<{ outcome?: unknown; usdc?: Partial<StillUsdcV1>; eth?: { raw?: unknown; decimals?: unknown; block?: unknown } | null }>('/api/still/mine/usdc');
   const usdc = result.usdc;
   if (result.outcome !== 'read' || !usdc || typeof usdc.raw !== 'string' || !/^\d+$/.test(usdc.raw) || usdc.decimals !== 6 || typeof usdc.block !== 'string') {
     throw new Error('still_usdc_unread');
   }
-  return { raw: usdc.raw, decimals: usdc.decimals, block: usdc.block };
+  const eth = result.eth;
+  const nativeEthRaw = eth && typeof eth.raw === 'string' && /^\d+$/.test(eth.raw) && eth.decimals === 18 && eth.block === usdc.block ? eth.raw : null;
+  return { raw: usdc.raw, decimals: usdc.decimals, block: usdc.block, nativeEthRaw };
 }
 
 export function useStillUsdcV1(walletAddress: string | null, options?: { enabled?: boolean }) {

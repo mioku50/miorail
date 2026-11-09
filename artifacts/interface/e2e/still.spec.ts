@@ -39,7 +39,7 @@ async function install(page: Page, signedIn: boolean, now: Date, earningsCalenda
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/public/still/terms') return route.fulfill({ json: JSON.parse(JSON.stringify(stillTerms(calendar(), now))) });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(WALLET, null, earningsCalendar), cached: false } });
-    if (path === '/api/still/mine/usdc' && signedIn) return route.fulfill({ json: { outcome: 'read', usdc: { raw: '12345678', decimals: 6, block: '53000000' } } });
+    if (path === '/api/still/mine/usdc' && signedIn) return route.fulfill({ json: { outcome: 'read', usdc: { raw: '12345678', decimals: 6, block: '53000000' }, eth: { raw: '0', decimals: 18, block: '53000000' } } });
     if (path === '/api/stocks/dividends/mine' && signedIn) return route.fulfill({ json: DIVIDENDS });
     if (path === '/api/public/still/mirror') {
       const subject = url.searchParams.get('subject') ?? '';
@@ -118,6 +118,8 @@ for (const width of [390, 1280]) {
     const holdings = page.getByRole('tabpanel', { name: 'Holdings', exact: true }).locator('.still-row');
     await expect(holdings.first()).toContainText('USD Coin12.3456 USDC');
     await expect(holdings.first()).toContainText('$12.34');
+    // USDC, exactly, is handed to Swap to buy ETH, as the other holdings are handed over to be sold.
+    await expect(holdings.first().getByRole('link', { name: 'Swap for ETH on Swap →', exact: true })).toHaveAttribute('href', `/routes?goal=${encodeURIComponent('Swap 12.345678 USDC to ETH')}`);
     await expect(holdings.nth(1)).toContainText('Ether0 ETH');
     await expect(page.getByText(/^Read from Base at block 53,000,000\./)).toBeVisible();
     await page.getByRole('tab', { name: 'Loans · 1', exact: true }).click();

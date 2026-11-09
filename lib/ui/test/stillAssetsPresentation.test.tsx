@@ -132,8 +132,35 @@ describe('selling a holding on Swap, from Assets', () => {
     assert.equal(goalOf(view, 'NVDAc'), `swap my 0.8 ${NVDA} to USDC`);
     assert.equal(view.rows.find((row) => row.id === 'NVDAc')!.sell!.href, `/routes?goal=${encodeURIComponent(`swap my 0.8 ${NVDA} to USDC`)}`);
     assert.equal(goalOf(view, 'cbBTC'), 'swap my 0.012 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf to USDC');
-    assert.equal(goalOf(view, 'USDC'), null);
-    assert.match(renderAssets(view), /Sell for USDC on Swap/);
+    // USDC, exactly, buys ETH on Swap (operator, 2026-11-09).
+    assert.equal(goalOf(view, 'USDC'), 'Swap 1 USDC to ETH');
+    const html = renderAssets(view);
+    assert.match(html, /Sell for USDC on Swap/);
+    assert.match(html, /Swap for ETH on Swap →/);
+    assert.equal(goalOf(assetsViewV1({ report: portfolio(), usdc: { raw: '1355000', decimals: 6 } }), 'USDC'), 'Swap 1.355 USDC to ETH');
+    assert.equal(goalOf(assetsViewV1({ report: portfolio(), usdc: { raw: '0', decimals: 6 } }), 'USDC'), null);
+  });
+
+  it('shows the ETH a wallet keeps for fees, which the report does not count, read beside USDC', () => {
+    // 2026-11-09: 0.0001 ETH is below the 0.0005 ETH reserve, so the report has no ETH line, and
+    // Assets said 0 ETH.
+    const gasOnly = report({ wallet: { ETH: 100_000_000_000_000n } });
+    assert.equal(gasOnly.assets.find((line) => line.asset === 'ETH'), undefined);
+    const eth = (usdc: Parameters<typeof assetsViewV1>[0]['usdc']) => assetsViewV1({ report: gasOnly, usdc }).rows.find((row) => row.id === 'ETH')!;
+    const held = eth({ raw: '0', decimals: 6, block: '1', nativeEthRaw: '100000000000000' });
+    assert.equal(held.amount, '0.0001 ETH');
+    assert.equal(held.value, '—');
+    assert.match(held.lines[0]!.text, /^Network-fee money: Still keeps 0\.0005 ETH for fees and does not count it$/);
+    assert.equal(held.sell, undefined);
+    // A measured zero is a zero; an ETH read that did not answer is not one.
+    assert.equal(eth({ raw: '0', decimals: 6, nativeEthRaw: '0' }).amount, '0 ETH');
+    assert.equal(eth({ raw: '0', decimals: 6, nativeEthRaw: null }).amount, '— ETH');
+    assert.equal(eth({ raw: '0', decimals: 6, nativeEthRaw: null }).value, null);
+    assert.equal(eth('loading').amount, '… ETH');
+    assert.equal(eth('unread').amount, '— ETH');
+    // Without the read beside it, the page says what it always said.
+    assert.equal(eth(undefined).amount, '0 ETH');
+    assert.equal(eth({ raw: '0', decimals: 6 }).amount, '0 ETH');
   });
 
   it('offers nothing for what is all pledged, and asks how much ETH', () => {

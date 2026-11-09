@@ -78,7 +78,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                         ))}
                         {row.sell ? (
                           <div className="line">
-                            <StillLink href={row.sell.href} onClick={() => stageGoalHandoffV1(row.sell!.goal)}>Sell for USDC on Swap →</StillLink>
+                            <StillLink href={row.sell.href} onClick={() => stageGoalHandoffV1(row.sell!.goal)}>{row.sell.label}</StillLink>
                           </div>
                         ) : null}
                       </div>

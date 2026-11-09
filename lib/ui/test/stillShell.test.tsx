@@ -334,6 +334,7 @@ describe('what the wallet holds, on Assets', () => {
     assert.deepEqual(view.rows[0], {
       id: 'USDC', kind: 'cash', name: 'USD Coin', amount: '12.3456 USDC', value: '$12.34',
       lines: [{ text: 'What a loan pays out and Repay takes; not counted in Reviewed holdings' }],
+      sell: { goal: 'Swap 12.345678 USDC to ETH', href: `/routes?goal=${encodeURIComponent('Swap 12.345678 USDC to ETH')}`, label: 'Swap for ETH on Swap →' },
     });
     // Not held is a measured zero: the report has no line for it, and the list says 0.
     assert.deepEqual(view.rows[1], { id: 'ETH', kind: 'crypto', name: 'Ether', amount: '0 ETH', value: '$0.00', lines: [] });
@@ -452,6 +453,15 @@ describe('the Agent', () => {
       ['купи Apple на 10 usdc', { from: 'USDC', to: 'AAPLc', amount: { kind: 'exact', value: '10' } }],
       ['buy 0.02 AAPL', { from: 'USDC', to: 'AAPLc', amount: null }],
       ['продай половину NVDA', { from: 'NVDAc', to: 'USDC', amount: { kind: 'share', share: 'half' } }],
+      // 2026-11-09: the operator's sale of USDC for ETH was prepared as ETH to USDC.
+      ['хочу продать все свои USDC на ETH', { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } }],
+      ['продай 10 USDC за ETH', { from: 'USDC', to: 'ETH', amount: { kind: 'exact', value: '10' } }],
+      ['sell my USDC for ETH', { from: 'USDC', to: 'ETH', amount: null }],
+      ['продай NVDA за USDC', { from: 'NVDAc', to: 'USDC', amount: null }],
+      ['продай все ETH', { from: 'ETH', to: 'USDC', amount: { kind: 'share', share: 'all' } }],
+      ['купи USDC за ETH', { from: 'ETH', to: 'USDC', amount: null }],
+      ['buy ETH with all my USDC', { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } }],
+      ['обменяй все USDC на все свои эфиры', { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } }],
     ] as const) {
       assert.deepEqual(agentSwapRequestV2(q), expected, q);
       assert.equal(agentRouteV2(q).route, 'swap', q);
@@ -470,6 +480,9 @@ describe('the Agent', () => {
     assert.match(agentSwapAnswerV2({ question: asked, report: r, usdcBalance: { raw: '0', decimals: 6, block: '1' } }).text, /^В вашем кошельке сейчас 0 USDC/);
     assert.match(agentSwapAnswerV2({ question: asked, report: r, usdcBalance: 'unread' }).text, /не удалось прочитать: это наш сбой/);
     assert.match(agentSwapAnswerV2({ question: 'swap all my USDC to ETH', report: null, usdcBalance: null }).text, /^Sign in and I will read your USDC/);
+    const sold = agentSwapAnswerV2({ question: 'хочу продать все свои USDC на ETH', report: r, usdcBalance: { raw: '1355000', decimals: 6, block: '53400000' } });
+    assert.equal(sold.actionLink?.href, `/routes?goal=${encodeURIComponent('Swap 1.355 USDC to ETH')}`);
+    assert.match(sold.text, /^Подготовил обмен: 1\.355 USDC \(весь ваш USDC/);
     // "All my ETH" is not worked out: the fee has to stay.
     assert.match(agentSwapAnswerV2({ question: 'swap all my ETH to USDC', report: r }).text, /^Name an amount of ETH/);
     // A stock is named by its address from the reading, not by its symbol.

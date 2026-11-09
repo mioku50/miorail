@@ -1,4 +1,5 @@
-import { encodeFunctionData, decodeFunctionResult } from 'viem';
+import { createPublicClient, decodeFunctionResult, encodeFunctionData, http } from 'viem';
+import { base } from 'viem/chains';
 
 import { createB20ReaderV1 } from '@mioagent/b20-control';
 
@@ -158,5 +159,22 @@ export async function readStockHoldingV1(tokenAddress: string, walletAddress: st
     };
   } catch {
     return { ok: false };
+  }
+}
+
+/**
+ * One wallet's native ETH at one block, in wei: for Assets, beside its USDC. The Still report counts
+ * only ETH above the network-fee reserve, so a wallet holding just its gas money has no ETH line
+ * there, and the page showed 0 ETH for a wallet that held some (2026-11-09). Null when unread.
+ */
+export async function readNativeEthV1(walletAddress: string, blockNumber: string): Promise<string | null> {
+  const rpcUrl = rpcUrlV1();
+  if (!rpcUrl || !/^0x[0-9a-fA-F]{40}$/.test(walletAddress) || !/^\d+$/.test(blockNumber)) return null;
+  try {
+    const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+    const wei = await client.getBalance({ address: walletAddress.toLowerCase() as `0x${string}`, blockNumber: BigInt(blockNumber) });
+    return wei.toString();
+  } catch {
+    return null;
   }
 }

@@ -74,10 +74,23 @@ test('a wallet that adds the code itself, or has not answered yet, gets the call
   assert.notDeepEqual(attributedCallsV1({ calls: CALLS, suffix: SUFFIX, capabilities: { 8453: { dataSuffix: { supported: false } } } }), CALLS);
 });
 
+test('a batch the fee sponsor pays for goes as approved, whatever the wallet says about dataSuffix', () => {
+  // The sponsor checks the calls byte for byte, and only smart accounts, which add the code to the
+  // user operation themselves, take it. Base Account's own answer about dataSuffix was never read.
+  for (const capabilities of [METAMASK, { 8453: { atomic: { status: 'supported' }, paymasterService: { supported: true } } }, { 8453: { dataSuffix: { supported: false } } }]) {
+    assert.deepEqual(attributedCallsV1({ calls: CALLS, suffix: SUFFIX, capabilities, sponsored: true }), CALLS, JSON.stringify(capabilities));
+    assert.notDeepEqual(attributedCallsV1({ calls: CALLS, suffix: SUFFIX, capabilities, sponsored: false }), CALLS, JSON.stringify(capabilities));
+  }
+});
+
 test('the swap, both loan pages and the Spend payment send their calls through the helper', () => {
   const here = path.dirname(url.fileURLToPath(import.meta.url)), root = path.resolve(here, '../../..');
-  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities: walletCapabilities/);
+  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities: walletCapabilities, chainId: base\.id, sponsored: gas\.capability !== null \}\)/);
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx', 'artifacts/interface/src/features/still/StillSpendWalletPage.tsx']) {
     assert.match(readFileSync(path.join(root, page), 'utf8'), /calls: attributedCallsV1\(\{ calls: /, page);
+  }
+  // Both loan pages send a sponsored batch as approved; Spend has no sponsor.
+  for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx']) {
+    assert.match(readFileSync(path.join(root, page), 'utf8'), /suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: [\w.]+, sponsored: gas\.capability !== null \}\)/, page);
   }
 });

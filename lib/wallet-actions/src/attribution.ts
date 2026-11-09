@@ -179,14 +179,23 @@ export const BUILDER_ATTRIBUTION_LABELS_V1: Record<BuilderAttributionStatusV1, s
  * While the wallet has not answered `wallet_getCapabilities`, the calls go as approved: a wallet that
  * supports the capability would otherwise carry the code twice, and a fee sponsor bound to the
  * approved calls would not recognise them.
+ *
+ * A batch Still's fee sponsor pays for goes as approved too. Only a smart account takes the sponsor,
+ * and Base Account and Base App append the code to the user operation themselves (every one of their
+ * batches carried it, 2026-11-08), while the sponsor checks the calls against the approved ones byte
+ * for byte. Whether Base Account names `dataSuffix` in its capabilities was never read here, so the
+ * sponsor must not depend on it.
  */
 export function attributedCallsV1<T extends { data?: string }>(input: {
   calls: readonly T[];
   suffix: string | null | undefined;
   capabilities: unknown;
   chainId?: number;
+  /** The batch carries Still's fee sponsor (`paymasterService`). */
+  sponsored?: boolean;
 }): T[] {
   const suffix = input.suffix?.toLowerCase().replace(/^0x/, '') ?? '';
+  if (input.sponsored === true) return [...input.calls];
   if (!suffix || !/^[0-9a-f]+$/.test(suffix) || suffix.length % 2 !== 0) return [...input.calls];
   if (!input.capabilities || typeof input.capabilities !== 'object') return [...input.calls];
   if (dataSuffixSupportV1(input.capabilities, input.chainId ?? 8453) === true) return [...input.calls];

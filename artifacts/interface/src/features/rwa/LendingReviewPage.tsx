@@ -51,7 +51,7 @@ export function LendingReviewPage() {
         const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
           calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
-            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: batches.capabilities }),
+            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: batches.capabilities, sponsored: gas.capability !== null }),
           capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
         });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);

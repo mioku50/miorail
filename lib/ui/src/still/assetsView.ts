@@ -1,6 +1,7 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
+import { TERMS } from '@mioagent/still-engine/policy';
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
 import { swapTokenGoalV1 } from '../console/goalHandoff';
@@ -27,9 +28,10 @@ export interface AssetRowV1 {
   /** "$785.57", "…" while it is read, or null when it was not read. */
   value: string | null;
   lines: Array<{ text: string; strong?: string }>;
-  /** Selling what is free in the wallet for USDC, on Swap: the goal it hands over and where.
-   * Absent for USDC, for nothing free (what is pledged holds up a loan) and for a row not read. */
-  sell?: { goal: string; href: string };
+  /** Selling what is free in the wallet on Swap: the goal it hands over, where, and what the link
+   * says. For USDC it buys ETH. Absent for nothing free (what is pledged holds up a loan) and for a
+   * row not read. */
+  sell?: { goal: string; href: string; label: string };
 }
 
 export interface LoanRowV1 {
@@ -64,7 +66,18 @@ export interface AssetsViewV1 {
 }
 
 /** The wallet's USDC as the page holds it: read (at its own block, when known), still being read, or not read. */
-export type WalletUsdcV1 = { raw: string; decimals: number; block?: string } | 'loading' | 'unread';
+export type WalletUsdcV1 =
+  | {
+      raw: string;
+      decimals: number;
+      block?: string;
+      /** Native ETH in wei at the same block, read beside USDC; null when it did not answer. */
+      nativeEthRaw?: string | null;
+    }
+  | 'loading'
+  | 'unread';
+
+const SELL_LABEL_V1 = 'Sell for USDC on Swap →';
 
 const UNREAD_V1 = 'Not read just now: our failure, not a fact about the wallet';
 
@@ -84,6 +97,32 @@ function decimalTextV1(value: string): string {
 }
 
 /** USDC counts at $1: what a loan pays out and a repayment takes. */
+/**
+ * ETH when the report has no line for it. The report counts ETH only above the network-fee reserve,
+ * so a wallet with just its gas money has none there; its ETH is the read beside USDC (2026-11-09:
+ * Assets said 0 ETH for a wallet holding 0.0001 ETH). It is not priced: the report's price comes
+ * with its line.
+ */
+function gasEthRowV1(usdc: WalletUsdcV1 | undefined): AssetRowV1 {
+  const row = { id: 'ETH', kind: 'crypto' as const, name: CRYPTO.find((asset) => asset.id === 'ETH')!.name };
+  const zero: AssetRowV1 = { ...row, amount: '0 ETH', value: formatCents(BigInt(0)), lines: [] };
+  const unread: AssetRowV1 = { ...row, amount: '— ETH', value: null, lines: [{ text: UNREAD_V1 }] };
+  if (usdc === 'loading') return { ...row, amount: '… ETH', value: '…', lines: [] };
+  if (usdc === 'unread') return unread;
+  // Nothing read beside the report: the page says what it said before that read existed.
+  const raw = usdc?.nativeEthRaw;
+  if (raw === undefined) return zero;
+  if (raw === null) return unread;
+  const wei = BigInt(raw);
+  if (wei === BigInt(0)) return zero;
+  return {
+    ...row,
+    amount: `${tokenTextV1(wei, 18)} ETH`,
+    value: '—',
+    lines: [{ text: `Network-fee money: Still keeps ${tokenTextV1(TERMS.ethGasReserveWei, 18)} ETH for fees and does not count it` }],
+  };
+}
+
 function usdcRowV1(usdc: WalletUsdcV1): AssetRowV1 {
   const row = { id: 'USDC', kind: 'cash' as const, name: 'USD Coin' };
   if (usdc === 'loading') return { ...row, amount: '… USDC', value: '…', lines: [] };
@@ -91,11 +130,15 @@ function usdcRowV1(usdc: WalletUsdcV1): AssetRowV1 {
   const raw = BigInt(usdc.raw);
   // Cents are its base units over 10^(decimals − 2).
   const cents = usdc.decimals >= 2 ? raw / BigInt(10) ** BigInt(usdc.decimals - 2) : raw * BigInt(10) ** BigInt(2 - usdc.decimals);
+  // Its whole balance, exactly, as Swap's goal: USDC buys ETH there, and the goal can be changed
+  // before anything is compared (operator, 2026-11-09: sell from Assets as with the other rows).
+  const goal = `Swap ${tokenDecimalV1(raw.toString(), usdc.decimals)} USDC to ETH`;
   return {
     ...row,
     amount: `${tokenTextV1(raw, usdc.decimals)} USDC`,
     value: formatCents(cents),
     lines: [{ text: 'What a loan pays out and Repay takes; not counted in Reviewed holdings' }],
+    ...(raw > BigInt(0) ? { sell: { goal, href: `/routes?goal=${encodeURIComponent(goal)}`, label: 'Swap for ETH on Swap →' } } : {}),
   };
 }
 
@@ -154,7 +197,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     // leave nothing for the network fee, and the line counts WETH beside it, so Swap asks how much.
     if (!unread && wallet > BigInt(0)) {
       const goal = line.asset === 'ETH' ? swapTokenGoalV1('ETH') : swapTokenGoalV1(line.token, tokenDecimalV1(wallet.toString(), decimals));
-      row.sell = { goal, href: `/routes?goal=${encodeURIComponent(goal)}` };
+      row.sell = { goal, href: `/routes?goal=${encodeURIComponent(goal)}`, label: SELL_LABEL_V1 };
     }
     if (line.kind === 'crypto') coins.set(line.asset, row);
     else stocks.push({ row, cents: row.value === null ? BigInt(-1) : BigInt(line.valueCents!) });
@@ -163,7 +206,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
   const rows: AssetRowV1[] = input.usdc === undefined ? [] : [usdcRowV1(input.usdc)];
   // ETH is shown either way, as what a wallet without sponsored gas pays
   // with; cbBTC, gold and the stocks when there is some.
-  rows.push(coins.get('ETH') ?? { id: 'ETH', kind: 'crypto', name: CRYPTO.find((asset) => asset.id === 'ETH')!.name, amount: '0 ETH', value: formatCents(BigInt(0)), lines: [] });
+  rows.push(coins.get('ETH') ?? gasEthRowV1(input.usdc));
   const btc = coins.get('cbBTC');
   if (btc) rows.push(btc);
   const gold = coins.get('PAXG');
