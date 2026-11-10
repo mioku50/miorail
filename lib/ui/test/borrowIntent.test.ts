@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { borrowAssetFromQueryV1, borrowCollateralDecimalsV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
-import { repayMaxV1 } from '../src/console/repayEntry.js';
+import { repayAllBoundAtomicV1, repayMaxV1 } from '../src/console/repayEntry.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
   for (const [text, decimals, atomic] of [['.00000001', 8, '1'], ['0001.20', 6, '1200000'], ['.000000000000000001', 18, '1'], ['0', 18, '0']] as const) {
@@ -155,13 +155,29 @@ describe('Max fills the amount from the server’s own read', () => {
     assert.deepEqual(stillBorrowBalanceViewV1({ state: 'refused', detail: 'Still could not establish this Aave account at one Base block.' }, 'NVDAc'),
       { maxAtomic: null, error: 'Still could not establish this Aave account at one Base block.' });
   });
-  it('on Repay, the wallet’s USDC short of the debt; a wallet that covers it moves to Repay all, with the wallet’s USDC as the bound', () => {
+  it('on Repay, the wallet’s USDC short of the debt; a wallet that covers it moves to Repay all, with the debt and a margin for interest as the bound', () => {
     // 2026-11-07: Max put the whole Morpho debt, 0.840001 USDC, into Exact USDC, and the review was refused.
-    assert.deepEqual(repayMaxV1({ debtAtomic: '840001', walletUsdcAtomic: '909427' }, 'assets'), { mode: 'all', atomic: '909427' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '840001', walletUsdcAtomic: '909427' }, 'assets'), { mode: 'all', atomic: '860000' });
+    // The wallet holds the debt but not its margin: the wallet's USDC is the bound.
     assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '10000000' }, 'assets'), { mode: 'all', atomic: '10000000' });
     assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'assets'), { mode: 'assets', atomic: '4000000' });
-    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'all'), { mode: 'all', atomic: '25000000' });
-    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'return'), { mode: 'return', atomic: '25000000' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'all'), { mode: 'all', atomic: '10010000' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'return'), { mode: 'return', atomic: '10010000' });
+    // Short of the debt, Repay all keeps the wallet's USDC, and the page says how much to send.
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'all'), { mode: 'all', atomic: '4000000' });
+  });
+  it('Max for Repay all is the debt read, rounded up to the cent, plus one cent or 0.1% of it, whichever is more', () => {
+    // 2026-11-10, the operator: Max put all 171.8 USDC of the wallet in for a debt of 0.850328 USDC.
+    assert.deepEqual(repayMaxV1({ debtAtomic: '850328', walletUsdcAtomic: '171800000' }, 'return'), { mode: 'return', atomic: '870000' });
+    assert.equal(repayAllBoundAtomicV1('850328'), BigInt(870_000));
+    assert.equal(repayAllBoundAtomicV1('2000000'), BigInt(2_010_000));
+    assert.equal(repayAllBoundAtomicV1('3125001'), BigInt(3_140_000));
+    assert.equal(repayAllBoundAtomicV1('1'), BigInt(20_000));
+    // Above ten USDC the margin is 0.1%, rounded up to the cent: 10,000.123456 owed, 10,010.14 bound.
+    assert.equal(repayAllBoundAtomicV1('10000123456'), BigInt(10_010_140_000));
+    assert.equal(repayAllBoundAtomicV1('20000000'), BigInt(20_020_000));
+    // A wallet between the debt and the bound gives all it holds, still at least the debt.
+    assert.deepEqual(repayMaxV1({ debtAtomic: '850328', walletUsdcAtomic: '860000' }, 'all'), { mode: 'all', atomic: '860000' });
   });
 });
 

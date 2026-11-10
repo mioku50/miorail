@@ -21,9 +21,10 @@ export interface RepayEntryModelV1 {
   onAmount: (value: string) => void; onMaximum: (value: string) => void; onRead: () => void; onReview: () => void;
   /** Nothing owed: prepares the stock's return alone. */
   onTakeBack: () => void;
-  /** Fills the field from the position just read: for Repay all, the wallet's
-   * USDC as the bound; for an exact amount, the wallet's USDC when it is short
-   * of the debt, and otherwise Repay all, since only it repays all of a debt. */
+  /** Fills the field from the position just read: for Repay all, the debt and a
+   * margin for interest as the bound, never more than the wallet's USDC; for an
+   * exact amount, the wallet's USDC when it is short of the debt, and otherwise
+   * Repay all, since only it repays all of a debt. */
   onMax: () => void;
 }
 
@@ -156,7 +157,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
                 value={model.mode === 'assets' ? model.amount : model.maximum} aria-describedby={`${id}-funding-note`}
                 onChange={event => model.mode === 'assets' ? model.onAmount(event.target.value) : model.onMaximum(event.target.value)} />
                 <button type="button" className="still-borrow-max" onClick={model.onMax}
-                  title={model.mode === 'assets' ? 'The USDC in your wallet, up to the debt. All of the debt is repaid with Repay all debt, so Max moves there when your wallet covers it' : 'All the USDC in your wallet, as the most this can take'}>Max</button>
+                  title={model.mode === 'assets' ? 'The USDC in your wallet, up to the debt. All of the debt is repaid with Repay all debt, so Max moves there when your wallet covers it' : 'The debt, rounded up to the cent, and a margin for the interest until your transaction lands: one cent, or 0.1% of the debt when that is more. Never more than the USDC in your wallet'}>Max</button>
                 <span>USDC</span></div>
               <p className="still-note" id={`${id}-funding-note`}>{model.mode === 'assets'
                 ? 'Exactly this amount is repaid, and it is also the most your wallet pays. It has to be less than the debt: to repay all of it, choose Repay all debt. Amounts are never rounded.'

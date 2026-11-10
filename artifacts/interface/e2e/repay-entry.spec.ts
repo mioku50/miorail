@@ -56,7 +56,7 @@ test('full repayment requires the person to type a maximum and keeps stock marke
   await max.fill('4'); await review.click(); await expect.poll(() => state.intents.length).toBe(1);
   expect(state.intents[0]).toEqual({ collateralTokenAddress: STOCKS.find(s => s.id === 'NVDAc')!.token.toLowerCase(), amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000' });
 });
-test('Max fills from the position just read: the wallet short of the debt as an exact amount, else Repay all with the wallet as the bound', async ({ page }) => {
+test('Max fills from the position just read: the wallet short of the debt as an exact amount, else Repay all with the debt and a margin for interest as the bound', async ({ page }) => {
   const state = await install(page); state.wallet = '2000000'; await page.goto('/repay?asset=cbBTC');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText('3.125001 USDC', { exact: true })).toBeVisible();
@@ -68,9 +68,10 @@ test('Max fills from the position just read: the wallet short of the debt as an 
   await expect(page.getByText('4.5 USDC', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Max', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Repay all debt', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  const bound = page.getByLabel('Most USDC it may take', { exact: true }); await expect(bound).toHaveValue('4.5');
+  // 2026-11-10: the bound is the debt, 3.125001 rounded up to 3.13, and a cent for interest; never all 4.5 USDC of the wallet.
+  const bound = page.getByLabel('Most USDC it may take', { exact: true }); await expect(bound).toHaveValue('3.14');
   await expect(page.getByText(/^You pay the whole debt: 3\.125001 USDC at block 53,200,000, plus the interest until your transaction lands\.$/)).toBeVisible();
-  await page.getByRole('button', { name: 'Max', exact: true }).click(); await expect(bound).toHaveValue('4.5');
+  await page.getByRole('button', { name: 'Max', exact: true }).click(); await expect(bound).toHaveValue('3.14');
   // Pressing Max read nothing more and prepared nothing.
   expect(state.reads).toEqual([CBBTC, CBBTC]); expect(state.intents).toEqual([]);
 });

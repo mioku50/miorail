@@ -339,7 +339,7 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     assert.ok(html.indexOf('You pay the whole debt') < html.indexOf('Most USDC it may take'));
     // 2026-11-01, the operator: a Max beside the amount, so the wallet need not be opened to look.
     // It is the person's press, never a value the page chose for them.
-    assert.match(html, /<button type="button" class="still-borrow-max" title="All the USDC in your wallet, as the most this can take">Max<\/button>/);
+    assert.match(html, /<button type="button" class="still-borrow-max" title="The debt, rounded up to the cent, and a margin for the interest until your transaction lands: one cent, or 0\.1% of the debt when that is more\. Never more than the USDC in your wallet">Max<\/button>/);
     assert.match(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, debtAtomic: '0' } })} />), /No debt was recorded in this market/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry()} />), /No debt was recorded/);
   });
