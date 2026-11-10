@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import test, { afterEach, beforeEach } from 'node:test';
 import request from 'supertest';
 import { app } from '../app';
+import { InMemoryRateLimiter } from '@mioagent/utils';
 import { authBasenameRuntime, authRouteRuntime, setWalletSignatureVerifierForTests } from './auth';
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
@@ -9,8 +10,12 @@ const WALLET_B = '0x2222222222222222222222222222222222222222';
 const originalNodeEnv = process.env.NODE_ENV;
 const originalEnsureUser = authRouteRuntime.ensureUser;
 const originalInvalidatePreparedTransactions = authRouteRuntime.invalidatePreparedTransactions;
+const originalChallengeLimiter = authRouteRuntime.challengeLimiter;
+const originalVerifyLimiter = authRouteRuntime.verifyLimiter;
 
 beforeEach(() => {
+  authRouteRuntime.challengeLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
+  authRouteRuntime.verifyLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
   // Disable the test-only default tenant for these production-auth regressions.
   process.env.NODE_ENV = 'production';
   authRouteRuntime.ensureUser = async () => undefined;
@@ -19,6 +24,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  authRouteRuntime.challengeLimiter = originalChallengeLimiter;
+  authRouteRuntime.verifyLimiter = originalVerifyLimiter;
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
   authRouteRuntime.ensureUser = originalEnsureUser;

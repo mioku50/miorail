@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
-import { Router, type Request } from 'express';
-import { createPublicClient, getAddress, http, isAddress } from 'viem';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { createPublicClient, getAddress, http, isAddress, recoverMessageAddress } from 'viem';
 import { base } from 'viem/chains';
 import { db, users } from '@mioagent/db';
+import { InMemoryRateLimiter } from '@mioagent/utils';
 import { BASE_CHAIN_ID, type TenantUser } from '../middleware/tenantAuth';
 import { invalidatePreparedTransactionsForUser } from '../lib/preparedTransactionStore.js';
 import { reverseBaseNameV1 } from '../lib/baseNameResolver.js';
@@ -17,17 +18,50 @@ const baseClient = createPublicClient({
   transport: http(process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL),
 });
 
-let verifyWalletSignature: SignatureVerifier = (input) => baseClient.verifyMessage(input);
-
 export const authRouteRuntime = {
+  challengeLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 20 }),
+  verifyLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 20 }),
+  verifyOnchain: (input: Parameters<SignatureVerifier>[0]): Promise<boolean> => baseClient.verifyMessage(input),
   ensureUser: async (userId: string) => {
     await db.insert(users).values({ id: userId }).onConflictDoNothing();
   },
   invalidatePreparedTransactions: invalidatePreparedTransactionsForUser,
 };
 
+async function defaultWalletSignatureVerifier(input: Parameters<SignatureVerifier>[0]): Promise<boolean> {
+  try {
+    const recovered = await recoverMessageAddress({ message: input.message, signature: input.signature });
+    if (recovered.toLowerCase() === input.address.toLowerCase()) return true;
+  } catch {
+    // Contract-account and wrapped signatures retain the existing chain verifier.
+  }
+  return authRouteRuntime.verifyOnchain(input);
+}
+
+let verifyWalletSignature: SignatureVerifier = defaultWalletSignatureVerifier;
+
 export function setWalletSignatureVerifierForTests(verifier?: SignatureVerifier): void {
-  verifyWalletSignature = verifier || ((input) => baseClient.verifyMessage(input));
+  verifyWalletSignature = verifier || defaultWalletSignatureVerifier;
+}
+
+function authRateLimit(kind: 'challengeLimiter' | 'verifyLimiter') {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const result = await authRouteRuntime[kind].consume(ip);
+      if (!result.success) {
+        res.setHeader('X-RateLimit-Limit', result.limit);
+        res.setHeader('X-RateLimit-Remaining', result.remaining);
+        res.setHeader('X-RateLimit-Reset', result.resetTime);
+        res.setHeader('Retry-After', Math.max(1, Math.ceil((result.resetTime - Date.now()) / 1000)));
+        res.status(429).json({ error: 'auth_rate_limited', code: 'auth_rate_limited' });
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 function requestOrigin(req: Request): { domain: string; uri: string } {
@@ -54,7 +88,7 @@ export function buildSiweMessage(input: {
   return `${input.domain} wants you to sign in with your Ethereum account:\n${input.address}\n\nSign in to Miorail.\n\nURI: ${input.uri}\nVersion: 1\nChain ID: ${BASE_CHAIN_ID}\nNonce: ${input.nonce}\nIssued At: ${input.issuedAt}\nExpiration Time: ${input.expiresAt}`;
 }
 
-authRouter.post('/challenge', (req, res) => {
+authRouter.post('/challenge', authRateLimit('challengeLimiter'), (req, res) => {
   const rawAddress = typeof req.body?.address === 'string' ? req.body.address : '';
   if (!isAddress(rawAddress)) {
     res.status(400).json({ error: 'invalid_wallet_address', code: 'invalid_wallet_address' });
@@ -77,7 +111,7 @@ authRouter.post('/challenge', (req, res) => {
   res.json({ nonce, message, expiresAt, chainId: BASE_CHAIN_ID });
 });
 
-authRouter.post('/verify', async (req, res) => {
+authRouter.post('/verify', authRateLimit('verifyLimiter'), async (req, res) => {
   const challenge = req.session.walletAuthChallenge;
   // One attempt per challenge, including failed attempts, prevents replay and guessing.
   delete req.session.walletAuthChallenge;
