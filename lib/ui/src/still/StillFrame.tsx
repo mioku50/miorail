@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState, type ReactNode }
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import { StillSkylineV1 } from './Sky';
 import { skyStateV1, type SkyEarningsV1, type SkyStateV1 } from './skyState';
+import { StillEligibilityContext } from './StillEligibility';
 
 void React;
 
@@ -170,6 +171,7 @@ export function useStillClientPaletteV1(sky: SkyStateV1): 'day' | 'night' {
 export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean }) {
   const walletControls = useContext(StillWalletControlsContext);
   const railDoors = useContext(StillRailDoorsContext);
+  const eligibility = useContext(StillEligibilityContext);
   useEffect(() => {
     // The console's pages read the same palette through data-theme; still.css
     // sets the color scheme from it.
@@ -210,7 +212,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
         </StillLink>
         {walletControls}
       </header>
-      <main className={`still-main${wide ? ' wide' : ''}`}>{children}</main>
+      <main className={`still-main${wide ? ' wide' : ''}`}>{eligibility}{children}</main>
     </div>
   );
 }

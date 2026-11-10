@@ -263,6 +263,7 @@ import {
 } from '../lib/paidIntelligenceConfig.js';
 import { simulateSwapCallsV1 } from '../lib/swapSimulation.js';
 import { createIntelligenceBudgetCharger } from '../lib/intelligenceBudgetCharger.js';
+import { stillEntryGateV1, stillRegionRuntimeV1, type StillEntryGateResultV1 } from '../lib/stillRegion.js';
 
 function signedRoutePlanUser(req: Request) {
   const user = req.session?.user;
@@ -962,6 +963,19 @@ routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req
 export const swapPrepareRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
+  /** A swap that receives a reviewed tokenized stock is a stock bought, which is not offered in the
+   * United States or to US persons (lib/stillRegion.ts). Selling one, and any other swap, is not gated.
+   * With the check off, nothing is read. */
+  stockBuyGate: async (req: Request, input: { tenantId: string; routeRunId: string }): Promise<StillEntryGateResultV1> => {
+    if (!stillRegionRuntimeV1.enabled()) return { ok: true };
+    const run = await swapPrepareRouteRuntime.gift.routeRun(input.routeRunId, input.tenantId);
+    const token = run?.intent.toAsset?.kind === 'erc20' ? run.intent.toAsset.address?.toLowerCase() ?? null : null;
+    if (!token || !(await swapPrepareRouteRuntime.reviewedStock(token))) return { ok: true };
+    return stillEntryGateV1(req, { kind: 'stock_buy', confirmation: true });
+  },
+  /** Any representation in the reviewed corpus, whoever issued it: none is offered to US persons. */
+  reviewedStock: async (tokenAddress: string): Promise<boolean> =>
+    (await createDatabaseUnderlyingAssetRepository(client).underlyingOf({ chainId: 8453, tokenAddress })) !== null,
   prepare: async (input: TransactionComposerPrepareInput) => {
     const rpcUrl = baseMainnetRpcUrlV1();
     // T67B.1: Aerodrome may be PREPARED only behind its own flag. The list is
@@ -1316,6 +1330,11 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
         giftRecipient = verdict.recipient;
       }
     }
+    const stockBuy = await swapPrepareRouteRuntime.stockBuyGate(req, { tenantId: user.id, routeRunId: parsed.data.routeRunId });
+    if (!stockBuy.ok) {
+      res.json(SwapPrepareResponseV1Schema.parse({ outcome: 'unsupported', reason: stockBuy.refusal, detail: stockBuy.detail }));
+      return;
+    }
     const result = await swapPrepareRouteRuntime.prepare({
       tenantId: user.id,
       walletAddress: user.address,
@@ -1354,6 +1373,21 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
 export const swapBlueprintRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: blueprintMigrationAvailable,
+  /** The prepare's question again where the calls are handed out: does the stored Blueprint credit a
+   * reviewed stock? With the check off, nothing is read. */
+  stockBuyGate: async (req: Request, input: { tenantId: string; routeRunId: string; blueprintId: string }): Promise<StillEntryGateResultV1> => {
+    if (!stillRegionRuntimeV1.enabled()) return { ok: true };
+    const changes = await swapBlueprintRouteRuntime.blueprintChanges(input);
+    for (const change of changes ?? []) {
+      if (change.direction !== 'credit' || !change.asset.address) continue;
+      if (await swapPrepareRouteRuntime.reviewedStock(change.asset.address.toLowerCase())) return stillEntryGateV1(req, { kind: 'stock_buy', confirmation: true });
+    }
+    return { ok: true };
+  },
+  /** The stored Blueprint's expected asset changes, or null when this tenant has no such Blueprint. */
+  blueprintChanges: async (input: { tenantId: string; routeRunId: string; blueprintId: string }) =>
+    (await createDatabaseRouteStorageRepository(client).listBlueprints(input.routeRunId, input.tenantId))
+      .find((entry) => entry.blueprint.id === input.blueprintId)?.blueprint.expectedAssetChanges ?? null,
   // A gift from holdings is approved by its own kernel, with the wallet's
   // balance read again now; every other run here is a swap.
   approve: async (input: ApproveExecutionBlueprintInput) =>
@@ -1438,6 +1472,11 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/approve', async (req
   try {
     if (!(await swapBlueprintRouteRuntime.migrationAvailable())) {
       res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
+      return;
+    }
+    const stockBuy = await swapBlueprintRouteRuntime.stockBuyGate(req, { tenantId: user.id, routeRunId: parsed.data.routeRunId, blueprintId: String(req.params.blueprintId) });
+    if (!stockBuy.ok) {
+      res.status(403).json({ error: stockBuy.refusal, code: stockBuy.refusal, detail: stockBuy.detail });
       return;
     }
     const result = await swapBlueprintRouteRuntime.approve({

@@ -2101,6 +2101,27 @@ export function useStillSpendOrderV1(orderId: string | null, options?: { refetch
   });
 }
 
+/** Where Still is offered, as the server sees this browser's connection, and whether this sign-in
+ * confirmed it is not a US person (2026-11-10). Keyed by the signed-in wallet: a new sign-in asks again. */
+export function useStillEligibilityV1(wallet: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['still-eligibility', wallet],
+    enabled: options?.enabled ?? true,
+    retry: false,
+    staleTime: 5 * 60_000,
+    queryFn: async () => fetchApi<unknown>('/api/public/still/eligibility'),
+  });
+}
+
+/** Records this sign-in's confirmation of the sentence the server named by `version`. */
+export function useConfirmStillEligibilityV1() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (version: string) => fetchApi<unknown>('/api/still/eligibility', { method: 'POST', body: JSON.stringify({ version }) }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['still-eligibility'] }),
+  });
+}
+
 /** A shared Still Spend purchase: the claim its link carries, as the server verifies it. Public. */
 export function useStillSpendShareV1(token: string | null) {
   return useQuery({

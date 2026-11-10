@@ -4,8 +4,8 @@ import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
-import { useSponsoredGasStatus, useStillSpendOrderV1 } from '@mioagent/api-client-react';
-import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
+import { useSponsoredGasStatus, useStillEligibilityV1, useStillSpendOrderV1 } from '@mioagent/api-client-react';
+import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1, stillEligibilityViewV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, requireLiveWalletConnectionV1, sendCallsCapabilitiesV1,
   sponsoredGasPlanV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
@@ -41,6 +41,11 @@ export function LendingReviewPage() {
   // (2026-11-08). After the wallet failed with the sponsor, the next press goes without one.
   const sponsoredGas = useSponsoredGasStatus({ enabled: session.signedIn });
   const [sponsorDeclined, setSponsorDeclined] = useState(false);
+  // A new loan's review waits for this sign-in's confirmation that it is not a US person, given in the
+  // line at the top of the page; once it lands, the refused review is read again, once (2026-11-10).
+  const eligibility = useStillEligibilityV1(session.signedIn ? session.wallet : null, { enabled: session.signedIn });
+  const eligibilityClear = eligibility.data !== undefined && stillEligibilityViewV1(eligibility.data)?.kind === 'clear';
+  const [reread, setReread] = useState(0);
   const feeNote = lendingFeeNoteV1({
     loansSponsored: sponsoredGas.data?.sponsoredGas === 'on' && sponsoredGas.data.scope === 'reviewed_stock_swaps_and_still_loans',
     walletTakesSponsor: steps || sponsorDeclined ? false : paymasterServiceSupportV1(batches.capabilities),
@@ -48,7 +53,7 @@ export function LendingReviewPage() {
   });
   const review = useLendingReviewConsoleV1({ draft: params?.draft ?? legacyParams?.draft ?? null,
     sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null,
-    walletBlocker: steps ? null : batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember, steps, feeNote,
+    walletBlocker: steps ? null : batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember, steps, feeNote, rereadKey: reread,
     sendCalls: async ({ calls, sponsorship }) => {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09).
@@ -69,6 +74,8 @@ export function LendingReviewPage() {
       }
     },
   });
+  const waitingForConfirmation = review.model.body?.state === 'refused' && review.model.body.refusal === 'eligibility_required';
+  useEffect(() => { if (eligibilityClear && waitingForConfirmation && reread === 0) setReread(1); }, [eligibilityClear, waitingForConfirmation, reread]);
   // Offered once the loan is confirmed onchain: a repayment needs no alert.
   const telegram = useTelegramAlertsV1({ enabled: session.signedIn });
   const confirmedLoan = review.model.execution?.state === 'confirmed' && review.model.body?.facts?.operation === 'borrow';

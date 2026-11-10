@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { BORROW_REVIEW_REFUSALS_V1 } from '@mioagent/rwa-issuer/borrowReview';
 import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 
@@ -11,6 +11,7 @@ import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1, type LendingPaymentV1 } from '../lib/lendingDraft.js';
 import { spendDraftPaymentV1, spendOrderStoreV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { readAaveBorrowCapacityWireV1 } from './rwaLending.js';
+import { stillEntryGateV1 } from '../lib/stillRegion.js';
 
 // ---------------------------------------------------------------------------
 // Borrow, for the two consoles.
@@ -44,6 +45,8 @@ export const rwaBorrowRuntimeV1 = {
   now: () => new Date(),
   spendOrders: spendOrderStoreV1,
   spendEnabled: () => stillSpendPayEnabledV1(),
+  // A new loan is not offered in the United States or to US persons (lib/stillRegion.ts).
+  entryGate: stillEntryGateV1,
 };
 
 interface BorrowSessionUserV1 {
@@ -220,11 +223,21 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
   });
 });
 
+/** The region check before a borrow (lib/stillRegion.ts): true when the request was answered with a refusal. */
+function refusedByRegionV1(req: Request, res: Response, confirmation: boolean): boolean {
+  const gate = rwaBorrowRuntimeV1.entryGate(req, { kind: 'loan', confirmation });
+  if (gate.ok) return false;
+  res.status(403).json({ error: gate.refusal, code: gate.refusal, detail: gate.detail });
+  return true;
+}
+
 /** A person selects the question, not calldata or a cached market answer.
  * This mints a wallet-bound link only. Opening it runs the existing fresh gate. */
 rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
   const user = sessionUserV1(req);
   if (!user) return unauthenticated(res);
+  // Only where the request comes from: the link hands out nothing, and the review it opens asks the rest.
+  if (refusedByRegionV1(req, res, false)) return;
 
   const body: unknown = req.body;
   const chosenToken = objectV1(body) && typeof body.collateralTokenAddress === 'string' ? body.collateralTokenAddress.toLowerCase() : null;
@@ -290,6 +303,8 @@ rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
 rwaBorrowRouter.post('/rwa/borrow/review', async (req, res) => {
   const user = sessionUserV1(req);
   if (!user) return unauthenticated(res);
+  // This answer carries a loan's calls.
+  if (refusedByRegionV1(req, res, true)) return;
 
   const body = (req.body ?? {}) as Record<string, unknown>;
   const token = String(body.collateralTokenAddress ?? '').trim().toLowerCase();
@@ -326,6 +341,7 @@ rwaBorrowRouter.post('/rwa/borrow/review', async (req, res) => {
 rwaBorrowRouter.get('/rwa/borrow/review/:draft', async (req, res) => {
   const user = sessionUserV1(req);
   if (!user) return unauthenticated(res);
+  if (refusedByRegionV1(req, res, true)) return;
 
   const secret = rwaBorrowRuntimeV1.secret();
   if (!secret) {

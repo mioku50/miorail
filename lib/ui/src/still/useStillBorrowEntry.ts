@@ -108,10 +108,11 @@ export function useStillBorrowEntryV1(input: {
     } catch (failure) {
       if (mounted.current && currentIdentity.current === openedFor) {
         const code = failure instanceof Error ? failure.message.split(':')[0]!.trim() : '';
-        setError(code === 'spend_order_not_found' ? 'Still no longer holds this Bitrefill invoice. Open a new one from Spend; nothing was paid.'
+        const region = failure instanceof Error && /^region_(?:restricted|unchecked): /.test(failure.message) ? failure.message.slice(failure.message.indexOf(': ') + 2) : null;
+        setError(region ?? (code === 'spend_order_not_found' ? 'Still no longer holds this Bitrefill invoice. Open a new one from Spend; nothing was paid.'
           : code === 'spend_order_expiring' ? 'Bitrefill’s price for this invoice ends within a few minutes. Open a new one from Spend; nothing was paid.'
             : code === 'spend_pay_off' ? 'Paying from Still is switched off on this server. Nothing was paid.'
-              : 'The loan review could not be prepared. Read your limit again before trying to review it.');
+              : 'The loan review could not be prepared. Read your limit again before trying to review it.'));
       }
     } finally { preparing.current = false; }
   };

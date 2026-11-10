@@ -116,13 +116,16 @@ export function useLendingReviewConsoleV1(input: {
   /** How the review and its execution are asked for: the page's own session by
    * default; Still's card in an assistant's chat asks through the MCP host. */
   request?: typeof lendingRequestV1;
+  /** A new value reads the review again from the start: after the person confirmed they are not a
+   * US person, a review refused for want of that confirmation (2026-11-10). */
+  rereadKey?: number;
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
   const request = input.request ?? lendingRequestV1;
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
   const connected = input.walletAddress?.toLowerCase() ?? null;
   const eligible = Boolean(input.draft && address(session) && session === connected);
   const sequential = Boolean(input.steps);
-  const identity = JSON.stringify([input.draft, session, connected, sequential]);
+  const identity = JSON.stringify([input.draft, session, connected, sequential, input.rereadKey ?? 0]);
   const current = useRef(identity); current.current = identity;
   const alive = useRef(true);
   const opening = useRef(false);

@@ -27,6 +27,7 @@ import { stocksDividendsRouter } from './stocksDividends';
 import { stocksTodayRouter } from './stocksToday';
 import { reopenClaimRouter, reopenGameRouter } from './reopenGame';
 import { publicStillRouter } from './stillPublic';
+import { publicStillEligibilityRouter, stillEligibilityRouter } from './stillEligibility';
 import { stillMineRouter } from './stillMine';
 import { stillSpendRouter } from './stillSpend';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
@@ -58,6 +59,8 @@ routes.use('/public/stocks', publicStocksRouter);
 routes.use('/public/reopen', reopenGameRouter);
 // Still's wallet check reads public chain state for any address or name, the
 // way stills.lat always has, so it opens without a session too.
+// Before a new loan, purchase or stock buy: the region the server sees, and this sign-in's confirmation.
+routes.use('/public/still', publicStillEligibilityRouter);
 routes.use('/public/still', publicStillRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
@@ -95,5 +98,7 @@ routes.use('/stocks', stocksTodayRouter);
 // Still Spend: a Bitrefill invoice for the session's wallet, paid by its own loan.
 routes.use('/still/spend', stillSpendRouter);
 // The session's own loans and what Still could lend it, never an address the client names.
+// The sign-in's confirmation that it is not a US person (lib/stillRegion.ts).
+routes.use('/still', stillEligibilityRouter);
 routes.use('/still', stillMineRouter);
 routes.use('/reopen', reopenClaimRouter);

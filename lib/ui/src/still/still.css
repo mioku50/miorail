@@ -827,3 +827,26 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
   .still-safety-figure { flex-direction: row; align-items: center; gap: 12px; padding: 10px 14px; }
   .still-safety-figure .n { flex: none; min-width: 3.4em; font-size: 26px; }
 }
+
+/* Where Still is offered (2026-11-10): one block at the top of every page,
+   aligned with the page's own head. A refusal from the United States in the
+   alarm colour, the one sentence to confirm in the accent's soft card. */
+.still-eligibility { margin: 16px 20px 0; padding: 14px 16px; border-radius: 18px; border: 1px solid var(--sm-line); background: var(--sm-card); color: var(--sm-ink); box-shadow: var(--sm-shadow); font-size: 14px; line-height: 1.45; }
+.still-eligibility strong { display: block; margin-bottom: 4px; font-size: 15px; }
+.still-eligibility p { margin: 0; }
+.still-eligibility p + p { margin-top: 6px; }
+.still-eligibility.is-restricted { border-color: var(--sm-alarm); }
+.still-eligibility.is-restricted strong { color: var(--sm-alarm); }
+.still-eligibility.is-confirm { border-color: var(--sm-accent); background: var(--sm-accent-soft); }
+.still-eligibility-check { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; font-weight: 600; cursor: pointer; }
+.still-eligibility-check input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--sm-accent); }
+.still-eligibility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }
+.still-eligibility-confirm { border: 0; border-radius: 999px; padding: 9px 20px; background: var(--sm-accent); color: var(--sm-accent-on); font: inherit; font-weight: 700; cursor: pointer; }
+.still-eligibility-confirm:disabled { opacity: 0.45; cursor: default; }
+.still-eligibility-confirm:focus-visible { outline: 2px solid var(--sm-focus); outline-offset: 2px; }
+.still-eligibility-source { font-size: 12px; color: var(--sm-ink2); }
+.still-eligibility-source a { color: var(--sm-link); }
+.still-eligibility .still-warn { margin-top: 8px; }
+@media (max-width: 599px) {
+  .still-eligibility { margin: 12px 16px 0; padding: 12px 14px; border-radius: 16px; font-size: 13px; }
+}

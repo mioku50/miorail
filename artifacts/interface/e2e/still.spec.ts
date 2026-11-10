@@ -542,7 +542,7 @@ for (const width of [390, 1280]) {
     await expect(page).toHaveURL(/\/safety$/);
     await expect(page.getByText('How Still keeps a loan safe.', { exact: true })).toBeVisible();
     for (const heading of ['It lends half of what the protocol would.', 'Stricter while Wall Street is closed, and around earnings.', 'Safety bands, read every few minutes.',
-      'Every figure is read from Base, at one block.', 'Checked again before you sign.', 'Ask what a fall would do.', 'What Still cannot prevent.']) {
+      'Every figure is read from Base, at one block.', 'Checked again before you sign.', 'Ask what a fall would do.', 'Not offered in the United States.', 'What Still cannot prevent.']) {
       await expect(page.getByRole('heading', { level: 2, name: heading, exact: true })).toBeVisible();
     }
     await noSidewaysScroll(page);

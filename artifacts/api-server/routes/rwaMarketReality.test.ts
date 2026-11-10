@@ -1395,6 +1395,24 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
     rwaMarketRealityRuntime.capture = (() => undefined) as never;
   });
 
+  test('a buy is not confirmed where Still is not offered, before anything is read; a sale is never asked', async () => {
+    const asked: string[] = [];
+    let assembled = 0;
+    rwaMarketRealityRuntime.entryGate = ((_req: unknown, input: { kind: string }) => {
+      asked.push(input.kind);
+      return { ok: false, refusal: 'region_restricted', detail: 'Still is not available where you are connecting from.' };
+    }) as never;
+    rwaMarketRealityRuntime.assemble = (async () => { assembled++; return MIXED; }) as never;
+    const buy = await request(app()).post(`/api/route-intelligence/rwa/stock-action/${draftFor({ direction: 'buy' })}/confirm`).send({});
+    assert.equal(buy.status, 403);
+    assert.equal(buy.body.code, 'region_restricted');
+    assert.equal(buy.body.confirmed, false);
+    assert.equal(assembled, 0);
+    const sell = await confirm();
+    assert.equal(sell.status, 200);
+    assert.deepEqual(asked, ['stock_buy']);
+  });
+
   test('the routers are asked about the amount being confirmed, not the draft’s cash size', async () => {
     // The defect this closes. The board is assembled at the draft's CASH size
     // and cannot answer a token question; confirming against it approved a

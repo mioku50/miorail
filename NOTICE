@@ -27,3 +27,10 @@ Token marks
   The stock icons Still's Get money shows are the ones Coinbase publishes for
   its tokenized stocks in its Tokenized Stocks API; Miorail serves them from
   its own origin and they are not part of this repository.
+
+IP geolocation by DB-IP
+  Still's region check (artifacts/api-server/lib/stillRegion.ts) places a
+  connection in a country with DB-IP's "IP to Country Lite" database,
+  https://db-ip.com, licensed under the Creative Commons Attribution 4.0
+  International License. The server downloads it each month; it is not part
+  of this repository.

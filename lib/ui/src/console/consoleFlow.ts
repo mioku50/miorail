@@ -911,6 +911,14 @@ export function swapPrepareNoticeV1(
     return { title: 'This route needs comparing again', detail: data.detail, canCompareAgain: true };
   }
   if (data.outcome === 'unsupported') {
+    // A stock is not bought from the United States or by a US person (2026-11-10): the route
+    // may be fine; where the person is, or their confirmation, is what the detail is about.
+    if (data.reason === 'region_restricted' || data.reason === 'region_unchecked') {
+      return { title: 'Still does not prepare a stock buy from here', detail: data.detail };
+    }
+    if (data.reason === 'eligibility_required') {
+      return { title: 'Confirm you are not a US person first', detail: `${data.detail} Confirm at the top of this page, then compare again.`, canCompareAgain: true };
+    }
     // A refused gift is a refused GIFT: the route itself may be fine, and the
     // detail names the rule (range, recipient, daily limit) the person can act on.
     return {

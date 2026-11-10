@@ -893,8 +893,12 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
     .object({
       outcome: z.literal('unsupported'),
       // `gift_refused`: the gift policy said no before anything was built —
-      // the detail names which rule, in the person's words.
-      reason: z.enum(['unsupported_pair', 'unsupported_provider', 'unsupported_card_state', 'gift_refused']),
+      // the detail names which rule, in the person's words. The three region
+      // reasons: a stock is not bought from the United States or by a US
+      // person, a request that cannot be placed buys none, and a sign-in that
+      // has not confirmed it is not a US person confirms first.
+      reason: z.enum(['unsupported_pair', 'unsupported_provider', 'unsupported_card_state', 'gift_refused',
+        'region_restricted', 'region_unchecked', 'eligibility_required']),
       detail: z.string().min(1).max(500),
     })
     .strict(),

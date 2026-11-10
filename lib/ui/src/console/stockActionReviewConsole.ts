@@ -116,6 +116,9 @@ export function stockSellTermsFailureCopyV1(error: unknown): string {
  * the one cause that is not about Miorail at all. */
 export function stockConfirmFailureCopyV1(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
+  // A stock is not bought from the United States or by a US person: the server's own sentence (2026-11-10).
+  const region = /^(?:region_restricted|region_unchecked|eligibility_required): (.+)$/s.exec(message);
+  if (region) return /^eligibility_required/.test(message) ? `${region[1]} Confirm at the top of this page, then confirm the buy again.` : region[1]!;
   if (message.includes('issuer_transfer_policy_denied')) {
     return 'The token’s own policy registry refuses this wallet for this action, so no clearance was issued. That is the issuer’s rule, read on chain — Miorail does not set it and cannot lift it.';
   }

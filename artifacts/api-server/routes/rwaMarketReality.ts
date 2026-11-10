@@ -68,6 +68,7 @@ import {
 } from '@mioagent/rwa-market-reality/execution-handoff';
 import { type EcosystemEvidenceV1 } from '@mioagent/rwa-issuer/ecosystemClaims';
 import { reviewedIssuerIdOrNullV1 } from '@mioagent/rwa-issuer/useAccessAgent';
+import { stillEntryGateV1 } from '../lib/stillRegion.js';
 import {
   assembleUseAccessV1,
   reviewedDefiSourcesV1,
@@ -229,6 +230,8 @@ export function marketRealityChainConfiguredV1(): boolean {
 const marketRealityCoordinatorV1 = createMarketRealityCoordinatorV1();
 
 export const rwaMarketRealityRuntime = {
+  // A stock is not bought through Still from the United States or by a US person (lib/stillRegion.ts).
+  entryGate: stillEntryGateV1,
   enabled: (env: NodeJS.ProcessEnv): boolean =>
     getMiorailProductMigrationFlags(env).routeIntelligenceV1,
   underlyings: () => createDatabaseUnderlyingAssetRepository(client),
@@ -2263,6 +2266,15 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
     return;
   }
   const claims = verified.claims;
+  // Buying a tokenized stock is not offered in the United States or to US persons: Coinbase's stocks are
+  // offered only outside it (lib/stillRegion.ts). Selling one is never gated, so a holder can always get out.
+  if (claims.direction === 'buy') {
+    const gate = rwaMarketRealityRuntime.entryGate(req, { kind: 'stock_buy', confirmation: true });
+    if (!gate.ok) {
+      res.status(403).json({ error: gate.refusal, code: gate.refusal, detail: gate.detail, confirmed: false });
+      return;
+    }
+  }
 
   try {
     if (!(await rwaMarketRealityRuntime.migrationAvailable())) {

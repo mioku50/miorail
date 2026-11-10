@@ -244,6 +244,12 @@ export function spendOrderErrorV1(message: string): string {
     case 'bitrefill_guest_refused': return 'Bitrefill is not letting Still in right now, so Spend cannot open an invoice for any product. Nothing was paid.';
     case 'spend_rate_limited': return 'Still opens at most six invoices an hour for one wallet, and you have opened six. Try again later; nothing was opened.';
     case 'spend_request_invalid': return 'Check the email address: Bitrefill sends the receipt there.';
+    case 'region_restricted':
+    case 'region_unchecked': {
+      // Still is not offered in the United States or to US persons: the server's own sentence (2026-11-10).
+      const detail = message.includes(': ') ? message.slice(message.indexOf(': ') + 2).trim() : '';
+      return detail || 'Still does not open a purchase from where you are connecting. Nothing was opened.';
+    }
     case 'bitrefill_refused': {
       // Bitrefill's own words, as the server cleaned them.
       const detail = message.includes(':') ? message.slice(message.indexOf(':') + 1).trim() : '';

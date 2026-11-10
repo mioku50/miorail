@@ -17,6 +17,7 @@
     "./report-schema": "./src/report-schema.ts",
     "./scenario": "./src/scenario.ts",
     "./terms": "./src/terms.ts",
+    "./eligibility": "./src/eligibility.ts",
     "./rpc": "./src/rpc.ts"
   },
   "scripts": {

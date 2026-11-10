@@ -24,6 +24,7 @@ import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import { offerSponsorshipV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
+import { stillEntryGateV1 } from '../lib/stillRegion.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -40,6 +41,8 @@ export const rwaLendingRuntimeV1 = {
   stepReadDelayMs: 1_500,
   // The network fee of a loan sent as one batch, offered to Still's fee sponsor (2026-11-08).
   sponsorship: offerSponsorshipV1,
+  // A new loan is not offered in the United States or to US persons; a repayment always is (lib/stillRegion.ts).
+  entryGate: stillEntryGateV1,
 };
 interface OwnerV1 { tenantId: string; walletAddress: string }
 function ownerV1(req: Request): OwnerV1 | null {
@@ -150,6 +153,13 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (Date.parse(claims.expiresAt) <= now.getTime()) {
     res.status(400).json({ error: 'lending_draft_expired' }); return;
   }
+  // A new loan's calls are not handed to a request from the United States, nor before this sign-in
+  // confirmed it is not a US person (lib/stillRegion.ts). An attempt already made is read above, and a
+  // repayment, with or without taking the collateral back, is never gated.
+  if (q.operation === 'borrow') {
+    const gate = rwaLendingRuntimeV1.entryGate(req, { kind: q.payment ? 'purchase' : 'loan', confirmation: true });
+    if (!gate.ok) { res.json({ state: 'refused', refusal: gate.refusal, detail: gate.detail }); return; }
+  }
   // Still Spend: before any loan is measured, the invoice must still be this
   // wallet's, priced as the draft says, waiting for payment at Bitrefill, and
   // not already sent by another review of it.
@@ -233,6 +243,11 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   // One invoice is paid once: a second review of it cannot be armed after the first was, nor after the
   // wallet paid it from its own USDC. With an invoice, the reads and the arm run under its lock.
   const execution = await store.get({ owner, executionId }), paying = execution?.run.facts.payment;
+  // The same question as the review's, asked again where the wallet is about to be asked.
+  if (execution?.run.facts.operation === 'borrow') {
+    const gate = rwaLendingRuntimeV1.entryGate(req, { kind: paying ? 'purchase' : 'loan', confirmation: true });
+    if (!gate.ok) { res.status(403).json({ error: gate.refusal, detail: gate.detail }); return; }
+  }
   const arm = async () => {
     if (paying) {
       const fromWallet = await (await rwaLendingRuntimeV1.walletPayments()).get({ owner, orderId: paying.orderId });

@@ -1,0 +1,37 @@
+[Unit]
+# DB-IP's free country database (IP to Country Lite, CC BY 4.0), as the table Still's API reads to refuse new loans, purchases and stock buys from the United States (artifacts/api-server/lib/stillRegion.ts).
+#
+# Oneshot, driven by miorail-region-table.timer. It writes one file under
+# /var/lib/miorail-region and nothing else: no database, no key, no wallet. A
+# table already of the month is left as it is, without a download. A download
+# it does not trust leaves the table in place and fails the unit, which the
+# ops alerts report like any other failed unit.
+Description=Miorail region table update
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STILL_REGION_TABLE_PATH_V1=/var/lib/miorail-region/region-v1.bin
+StateDirectory=miorail-region
+StateDirectoryMode=0755
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx artifacts/api-server/regionTableUpdate.ts
+
+TimeoutStartSec=600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-region-table

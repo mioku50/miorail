@@ -304,7 +304,7 @@ install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts db-backup; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts db-backup region-table; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
@@ -317,6 +317,14 @@ for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchl
 done
 
 systemctl daemon-reload
+# Still refuses new loans, purchases and stock buys from the United States by
+# one table of address ranges (artifacts/api-server/lib/stillRegion.ts), and it
+# refuses them everywhere while it has none. A host without the table builds it
+# here, before the API restarts, so the API never starts without it.
+if [ ! -s /var/lib/miorail-region/region-v1.bin ]; then
+  systemctl start miorail-region-table.service \
+    || { echo 'FAILED: the region table could not be built (journalctl -u miorail-region-table)'; exit 1; }
+fi
 systemctl enable miorail-miniapp >/dev/null
 if [ "$B20_FEED_FROZEN" = true ]; then
   # Disabled as well as stopped: an enabled-but-stopped unit comes back on the
@@ -587,6 +595,14 @@ stock_page=$(curl -fsS --max-time 20 "$oauth_origin$stock_path" 2>/dev/null) || 
 printf '%s' "$stock_page" | grep -q "property=\"og:title\" content=\"[^\"]*$stock_symbol" \
   || { echo "FAILED: $stock_path came back without its own head (nginx served the static file)"; exit 1; }
 printf '  stocks         %-28s %s\n' "$oauth_origin$stock_path" 'public board + a head naming the stock'
+
+# Still's region check (2026-11-10): on, with its table loaded. Which country
+# this host's own address is placed in does not matter here; that the table
+# answers does. Without it, every new loan, purchase and stock buy is refused.
+region_read=$(curl -fsS --max-time 20 "$oauth_origin/api/public/still/eligibility" 2>/dev/null) || region_read=''
+[ "$(printf '%s' "$region_read" | jq -r '.gate + " " + (.table.loaded | tostring)' 2>/dev/null)" = 'on true' ] \
+  || { echo 'FAILED: Still’s region check is not on with its table loaded (/api/public/still/eligibility)'; exit 1; }
+printf '  region check   %-28s %s\n' "$oauth_origin/api/public/still/eligibility" "on, table of $(printf '%s' "$region_read" | jq -r '.table.month')"
 
 # Gift pages (growth plan step 4) are headed by the API the same way, so a gift
 # shared on X or Farcaster previews as the gift. An id nobody was given must

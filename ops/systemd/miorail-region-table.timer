@@ -1,0 +1,11 @@
+[Unit]
+# Daily: DB-IP publishes each month's database early in the month, and a run that finds the table of the month in place downloads nothing. A failed run is tried again the next day; the table in place stays in use meanwhile.
+Description=Update the region table Still reads
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

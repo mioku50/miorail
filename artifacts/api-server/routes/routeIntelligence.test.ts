@@ -350,6 +350,44 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     else process.env.CHAIN_ENV = originalChainEnv;
   });
 
+  test('a swap into a reviewed stock is not prepared where Still is not offered, and says so in the route’s own words', async () => {
+    const asked: Array<{ tenantId: string; routeRunId: string }> = [];
+    let prepared = false;
+    swapPrepareRouteRuntime.stockBuyGate = async (_req, input) => {
+      asked.push(input);
+      return { ok: false, refusal: 'region_restricted', detail: 'Still is not available where you are connecting from.' };
+    };
+    swapPrepareRouteRuntime.prepare = async () => { prepared = true; throw new Error('must not run'); };
+    const response = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { outcome: 'unsupported', reason: 'region_restricted', detail: 'Still is not available where you are connecting from.' });
+    assert.deepEqual(asked, [{ tenantId: USER.id, routeRunId: PREPARE_BODY.routeRunId }]);
+    assert.equal(prepared, false);
+  });
+
+  test('the stock-buy check reads nothing while it is off, and asks only about a swap that receives a reviewed stock', async () => {
+    const read: string[] = [];
+    Object.assign(swapPrepareRouteRuntime, originalSwapPrepareRuntime);
+    swapPrepareRouteRuntime.gift = { ...originalSwapPrepareRuntime.gift, routeRun: async () => { read.push('run'); return { intent: { toAsset: { kind: 'erc20', address: '0xAbC0000000000000000000000000000000000001' } } } as never; } };
+    swapPrepareRouteRuntime.reviewedStock = async (token) => { read.push(token); return token === '0xabc0000000000000000000000000000000000001'; };
+    const req = { ip: '8.8.8.8', session: { user: USER } } as never;
+    const previous = process.env.STILL_REGION_GATE_V1;
+    try {
+      process.env.STILL_REGION_GATE_V1 = 'off';
+      assert.deepEqual(await swapPrepareRouteRuntime.stockBuyGate(req, { tenantId: USER.id, routeRunId: 'run' }), { ok: true });
+      assert.deepEqual(read, []);
+      process.env.STILL_REGION_GATE_V1 = 'on';
+      const gate = await swapPrepareRouteRuntime.stockBuyGate(req, { tenantId: USER.id, routeRunId: 'run' });
+      // No region table in a test run: an address that cannot be placed buys no stock.
+      assert.equal(!gate.ok && gate.refusal, 'region_unchecked');
+      assert.deepEqual(read, ['run', '0xabc0000000000000000000000000000000000001']);
+      swapPrepareRouteRuntime.reviewedStock = async () => false;
+      assert.deepEqual(await swapPrepareRouteRuntime.stockBuyGate(req, { tenantId: USER.id, routeRunId: 'run' }), { ok: true });
+    } finally {
+      if (previous === undefined) delete process.env.STILL_REGION_GATE_V1; else process.env.STILL_REGION_GATE_V1 = previous;
+    }
+  });
+
   test('returns a stable disabled error without preparing', async () => {
     let prepared = false;
     swapPrepareRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, b20PublicContextV1: false, b20TargetedMeasureV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false, });
@@ -556,6 +594,42 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', ()
   });
 
   const url = `/api/route-intelligence/swap/blueprints/${BLUEPRINT_ID}/approve`;
+
+  test('the calls of a Blueprint that credits a reviewed stock are not handed out where Still is not offered', async () => {
+    let approved = false;
+    swapBlueprintRouteRuntime.stockBuyGate = async () => ({ ok: false, refusal: 'eligibility_required', detail: 'Confirm first.' });
+    swapBlueprintRouteRuntime.approve = async () => { approved = true; throw new Error('must not run'); };
+    const response = await request(routeApp()).post(url).send({ routeRunId: 'run-t57-fixture', blueprintHash: `0x${'3'.repeat(64)}`, walletAddress: WALLET });
+    assert.equal(response.status, 403);
+    assert.deepEqual(response.body, { error: 'eligibility_required', code: 'eligibility_required', detail: 'Confirm first.' });
+    assert.equal(approved, false);
+  });
+
+  test('a stored Blueprint is asked about what it credits, never what it debits', async () => {
+    Object.assign(swapBlueprintRouteRuntime, originalBlueprintRuntime);
+    const asked: string[] = [];
+    const STOCK_TOKEN = '0xb200000000000000000000c2e324d24d7eecd1fb';
+    swapBlueprintRouteRuntime.blueprintChanges = async () => [
+      { asset: { address: STOCK_TOKEN }, direction: 'debit' },
+      { asset: { address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }, direction: 'credit' },
+    ] as never;
+    const originalReviewed = swapPrepareRouteRuntime.reviewedStock;
+    swapPrepareRouteRuntime.reviewedStock = async (token) => { asked.push(token); return token === STOCK_TOKEN; };
+    const previous = process.env.STILL_REGION_GATE_V1;
+    try {
+      process.env.STILL_REGION_GATE_V1 = 'on';
+      const req = { ip: '8.8.8.8', session: { user: USER } } as never;
+      // A sale: the stock leaves the wallet, so nothing is asked of where it is.
+      assert.deepEqual(await swapBlueprintRouteRuntime.stockBuyGate(req, { tenantId: USER.id, routeRunId: 'run', blueprintId: 'bp' }), { ok: true });
+      assert.deepEqual(asked, ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913']);
+      swapBlueprintRouteRuntime.blueprintChanges = async () => [{ asset: { address: STOCK_TOKEN.toUpperCase().replace('0X', '0x') }, direction: 'credit' }] as never;
+      const buy = await swapBlueprintRouteRuntime.stockBuyGate(req, { tenantId: USER.id, routeRunId: 'run', blueprintId: 'bp' });
+      assert.equal(!buy.ok && buy.refusal, 'region_unchecked');
+    } finally {
+      swapPrepareRouteRuntime.reviewedStock = originalReviewed;
+      if (previous === undefined) delete process.env.STILL_REGION_GATE_V1; else process.env.STILL_REGION_GATE_V1 = previous;
+    }
+  });
 
   test('returns a stable disabled error without approving', async () => {
     let approved = false;

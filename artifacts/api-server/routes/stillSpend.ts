@@ -22,6 +22,7 @@ import {
   type SpendOrderV1,
 } from '../lib/stillSpendOrders.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
+import { stillEntryGateV1 } from '../lib/stillRegion.js';
 
 // ---------------------------------------------------------------------------
 // Still Spend, stage 3: one Bitrefill invoice for the signed-in wallet.
@@ -36,6 +37,8 @@ import { publicStillRuntimeV1 } from './stillPublic.js';
 // ---------------------------------------------------------------------------
 
 export const stillSpendRuntimeV1 = {
+  // A purchase is not offered in the United States or to US persons (lib/stillRegion.ts).
+  entryGate: stillEntryGateV1,
   catalog: () => publicStillRuntimeV1.spend(),
   checkout: (): BitrefillGuestCheckoutV1 => stillSpendCheckoutV1(),
   orders: spendOrderStoreV1,
@@ -139,6 +142,12 @@ stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
     res.status(503).json({ error: 'spend_pay_off' });
     return;
   }
+  // Where the request comes from, before an invoice is opened; its payment's review asks the rest.
+  const region = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: false });
+  if (!region.ok) {
+    res.status(403).json({ error: region.refusal, detail: region.detail });
+    return;
+  }
   const parsed = SpendOrderRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'spend_request_invalid' });
@@ -228,6 +237,12 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
     return;
   }
   const refuse = (refusal: string, detail: string) => { res.json({ orderId, state: 'refused', refusal, detail }); };
+  // A payment already sent, or tried, is read above wherever the person is; a new one is asked here.
+  const gate = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
+  if (!gate.ok) {
+    refuse(gate.refusal, gate.detail);
+    return;
+  }
   const order = stillSpendRuntimeV1.orders.get(owner, orderId);
   if (!order) {
     refuse('spend_order_unread', 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Open a new one from Spend. Nothing was sent.');
@@ -274,6 +289,11 @@ stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Respon
   }
   if (!stillSpendRuntimeV1.orders.get(owner, orderId)) {
     res.status(409).json({ error: 'spend_order_unread' });
+    return;
+  }
+  const gate = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
+  if (!gate.ok) {
+    res.status(403).json({ error: gate.refusal, detail: gate.detail });
     return;
   }
   const store = await stillSpendRuntimeV1.walletPayments();
