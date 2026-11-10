@@ -28,9 +28,10 @@ const globalLimiter = new InMemoryRateLimiter({
   windowMs: 60 * 1000, // 1 minute
   max: 100, // 100 requests per window
 });
+const addressLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 600 });
 
 // Apply rate limiting early
-app.use(rateLimit(globalLimiter));
+app.use(rateLimit(globalLimiter, addressLimiter));
 
 // Security middleware
 app.use(helmet({
