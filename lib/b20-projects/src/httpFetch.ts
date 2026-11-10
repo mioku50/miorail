@@ -45,20 +45,55 @@ function assertFetchableV1(url: string): URL {
   return parsed;
 }
 
+/** Reads at most `limit` bytes of a body, on the request's own clock. Past the limit the rest is
+ * never read: the connection is closed instead of drained. A body that has not ended by the deadline
+ * fails the request, even when its server ignores the abort. */
+async function readBoundedV1(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const deadline = new Promise<never>((_, reject) => {
+    const stop = () => reject(new B20ProbeRefusedError('the answer did not finish in time'));
+    if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true });
+  });
+  deadline.catch(() => undefined);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < limit) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done || !value) break;
+      const kept = value.length > limit - size ? value.subarray(0, limit - size) : value;
+      chunks.push(kept);
+      size += kept.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) { out.set(chunk, at); at += chunk.length; }
+  return out;
+}
+
 /** The production fetcher. `fetchImpl` is injectable only so a test can drive
- * the redirect and size rules without a server. */
+ * the redirect and size rules without a server; so are the clock and the limit. */
 export function createB20HttpFetchV1(
   fetchImpl: typeof fetch = fetch,
+  options: { timeoutMs?: number; bodyLimitBytes?: number } = {},
 ): B20HttpFetchV1 {
+  const timeoutMs = options.timeoutMs ?? B20_PROBE_TIMEOUT_MS_V1;
+  const limit = options.bodyLimitBytes ?? B20_PROBE_BODY_LIMIT_BYTES_V1;
   return async ({ url, accept, postJson }): Promise<B20HttpResponseV1> => {
     let target = assertFetchableV1(url);
-
-    for (let hop = 0; ; hop += 1) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), B20_PROBE_TIMEOUT_MS_V1);
-      let response: Response;
-      try {
-        response = await fetchImpl(target.toString(), {
+    // One clock for the whole request, every hop and every byte of the body (audit MCP-4,
+    // 2026-11-10): the timer used to stop at the headers, and a body was read whole before it
+    // was cut to the limit, so an anonymous /mcp call could make this process read 24 MB in
+    // 12.6 seconds, and a few at once could exhaust its memory.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      for (let hop = 0; ; hop += 1) {
+        const response = await fetchImpl(target.toString(), {
           method: postJson === undefined ? 'GET' : 'POST',
           // Manual, so every hop is re-checked against the rules above rather
           // than trusted to the platform's own follower.
@@ -71,29 +106,29 @@ export function createB20HttpFetchV1(
           },
           ...(postJson === undefined ? {} : { body: JSON.stringify(postJson) }),
         });
-      } finally {
-        clearTimeout(timer);
-      }
 
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location || hop >= B20_PROBE_MAX_REDIRECTS_V1) {
-          return { ok: false, status: response.status, contentType: null, bodyText: '' };
+        if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel().catch(() => undefined);
+          const location = response.headers.get('location');
+          if (!location || hop >= B20_PROBE_MAX_REDIRECTS_V1) {
+            return { ok: false, status: response.status, contentType: null, bodyText: '' };
+          }
+          target = assertFetchableV1(new URL(location, target).toString());
+          continue;
         }
-        target = assertFetchableV1(new URL(location, target).toString());
-        continue;
-      }
 
-      // Bounded read. A third-party server deciding how much memory this
-      // process uses is not a decision it gets to make.
-      const raw = await response.arrayBuffer();
-      const bodyText = new TextDecoder().decode(raw.slice(0, B20_PROBE_BODY_LIMIT_BYTES_V1));
-      return {
-        ok: response.ok,
-        status: response.status,
-        contentType: response.headers.get('content-type'),
-        bodyText,
-      };
+        // Bounded read. A third-party server deciding how much memory this
+        // process uses is not a decision it gets to make.
+        const raw = await readBoundedV1(response, limit, controller.signal);
+        return {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get('content-type'),
+          bodyText: new TextDecoder().decode(raw),
+        };
+      }
+    } finally {
+      clearTimeout(timer);
     }
   };
 }
