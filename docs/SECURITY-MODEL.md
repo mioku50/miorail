@@ -18,8 +18,8 @@ never broadcasts.
 | --- | --- |
 | Holds, requests or derives a user private key | No key material in any schema, store or env read by the request path |
 | Calls `signTransaction` | Absent from the codebase; a regression test asserts it stays absent |
-| Broadcasts a signed transaction | Submission is `wallet_sendCalls` from the user's Base Account |
-| Creates a second execution path | One submission hook, `useSubmitApprovedBlueprint` |
+| Broadcasts a signed transaction | The person's own wallet sends: `wallet_sendCalls`, or one transaction per step for a wallet without batches |
+| Sends calls the server did not review | Every path that sends (a swap's `useSubmitApprovedBlueprint`, the lending review, a Spend payment) sends only the calls the server reviewed, and their hash is checked when they are armed |
 
 The server's own wallet exists only as an x402 *spender* for metered reads it
 pays for. It cannot touch a user's funds.
@@ -49,6 +49,25 @@ Simulation outcomes are mutually exclusive and named: `simulation_passed`,
 `simulation_reverted`, `insufficient_funds`, `simulation_method_unsupported`,
 `simulation_provider_unavailable`. The screen can never show two of them.
 
+### Still's loans
+
+The server enforces Still's limit: a loan above it is refused whatever the
+screen sent. A review is sent once; a second attempt at the same review, or at
+another review of the same invoice, is refused while the first is unresolved,
+and the outcome is read from the receipt, bound to the exact calls. A Spend
+payment goes only to the address in Bitrefill's own invoice, for exactly its
+price.
+
+### Where Still is offered
+
+Still is not offered to US persons or in the United States. Before the server
+hands out the calls of a new loan, a Spend purchase or a stock buy, it places
+the connection in a country by its IP address and refuses the United States
+and its territories, and a connection it cannot place; a sign-in confirms once
+that the person is not a US person. Repaying, taking collateral back and
+selling are never gated. A VPN gets around an IP check, as at every interface
+that has one; the confirmation is the person's own word.
+
 ### Outbound network
 
 Every outbound request goes through a host allowlist owned by code, generated
@@ -73,6 +92,9 @@ Stating this plainly is part of the model.
   or audit them, and neither does Miorail.
 - **Market risk.** A measured exit is a measurement of the past. Liquidity can
   leave between the measurement and your transaction.
+- **Liquidation.** Still's limit keeps a new loan far from liquidation, not out
+  of reach. A fall in price, interest over time or more borrowing can bring a
+  loan to it, and Still cannot stop a liquidator.
 - **Your own approval.** Miorail shows you what a transaction does. If you
   approve it, it happens.
 - **A compromised wallet or device.** Nothing here can help if the signer is

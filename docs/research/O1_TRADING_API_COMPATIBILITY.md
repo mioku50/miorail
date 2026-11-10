@@ -29,7 +29,7 @@ someone who does not trust this document.
 | --- | --- |
 | `https://docs.o1.exchange/llms.txt` | Documentation index, fetched 2026-08-01 |
 | `https://docs.o1.exchange/api/trading` | Trading API specification, fetched 2026-08-01 |
-| `https://docs.o1.exchange/api/dex-aggregator` | DEX Aggregator API — a **different product**, fetched 2026-08-01 |
+| `https://docs.o1.exchange/api/dex-aggregator` | DEX Aggregator API — a **different product**, fetched 2026-08-01 (404 on 2026-11-10) |
 | `github.com/CohumanSpace/o1-api` | Official sample repository |
 | — commit | `09c575bea35e160408192e28f42626e29b480290` (2026-03-06T05:54:06Z, "Solana in SKILL.md (#3)") |
 | — sample file | `sampleScripts/execute-trade-interactive.js`, sha256 `b67e3be2c8d32c98cd886a7de6d9fccdcfae4aa808a9f37498b8417451823eb3` |

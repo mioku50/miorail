@@ -31,6 +31,11 @@ In scope, in rough order of severity:
 - credential exposure: a key in a log line, an evidence field, a hash, or an
   API response
 - x402 payment handling: double settlement, wrong recipient, wrong amount
+- a Still loan or repayment that reaches a wallet above Still's limit, for a
+  different amount or collateral than reviewed, or for another wallet
+- a Spend payment to an address other than the invoice's, or for another
+  amount than the invoice's
+- anything that lets one signed-in wallet read or prepare for another
 
 Out of scope:
 
@@ -47,7 +52,7 @@ with tests. A report that breaks one of them is a valid finding by definition:
 
 - The server never holds, requests, derives or transmits a private key.
 - The server never calls `signTransaction` and never broadcasts a signed
-  transaction. Every state change is submitted by the user's own Base Account.
+  transaction. Every state change is sent by the user's own wallet.
 - The client cannot choose calldata, router, recipient, deadline or minimum
   output. Those come from the server, and what the user approves is what is
   submitted — the approved calls are hashed and the hash is checked again at

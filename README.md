@@ -1,793 +1,186 @@
-# Miorail · Still
+# Still · Miorail
 
-> **Still: spend without selling.** Borrow USDC against tokenized stocks, bitcoin and ether on Base, keep them, and sign every step in your own wallet.
->
-> **Miorail** is the evidence engine underneath: the reality behind tokenized assets, measured at an exact size.
+> **Still: spend without selling.** Borrow USDC against your tokenized stocks, bitcoin, ether and gold on Base, keep them, and sign every step in your own wallet.
 
-Still is the front door for people. It reads a Base wallet from the chain, models what it could borrow against its reviewed stocks and crypto at half of each protocol's own limit, and prepares the loan, the repayment and every what-if for the wallet's owner to review and sign. Nothing is ever signed by the server.
+![Still: spend without selling](artifacts/interface/public/og-still.png)
 
-Miorail is a self-hostable, non-custodial market-reality and execution-verification product for Base. Its subject is **tokenized stocks**: one security can be represented on Base by several contracts — Coinbase's B20 tokenized stocks, Backed bTokens, Dinari dShares — and they are not economically the same thing. Miorail measures each exact address separately, at one exact size and one exact direction, and reports what a cash exit actually costs there.
+- **Try it:** [miorail.xyz](https://miorail.xyz). Check any Base wallet without signing in: `https://miorail.xyz/w/<address or name>`.
+- **Live on Base mainnet** (`8453`). Loans live in Aave V4 and Morpho Blue, under your own wallet. Still deploys no contracts and never holds your collateral or your USDC.
+- **Read the rules first:** [Loan safety](https://miorail.xyz/safety) · the terms as JSON: [`/api/public/still/terms`](https://miorail.xyz/api/public/still/terms)
+- **For assistants:** `https://miorail.xyz/mcp/still`, read-only, no sign-in
+- **Licence:** AGPL-3.0-only · **Security bugs:** report them privately, as [SECURITY.md](SECURITY.md) says, never as a public issue
 
-Under that sits the original route layer: a user describes an outcome in ordinary language, Miorail turns it into a typed intent, evaluates curated routes, preserves evidence and provenance, prepares one reviewable execution plan, validates the exact calls, and leaves final approval to the user's wallet. After execution, Miorail reconciles expected and actual results into a durable Route Proof.
+Not offered to US persons or in the United States. A loan creates debt, and its collateral can be liquidated.
 
-The governing rule is simple:
+## What Still does
 
-> **No data — no score.** A measurement that did not happen is never rendered as zero, success, safety, or a recommendation.
+Still turns what a Base wallet holds into a USDC credit line, without selling it.
 
-- Network: Base mainnet (`8453`)
-- For people: [miorail.xyz](https://miorail.xyz); [stills.lat](https://stills.lat) leads there
-- For machines: API, OAuth, the Base App and Farcaster mini app stay on `miorail.xyz`
-- Public read-only MCP: `https://miorail.xyz/mcp` · signed-in MCP: `https://miorail.xyz/mcp/private`
-- Public product metrics: [miorail.xyz/metrics](https://miorail.xyz/metrics)
-- Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
-- Architecture: [ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Execution boundary: [SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
-
-## Where to go next
-
-| If you want to | Read |
+| Collateral | Where the loan lives |
 | --- | --- |
-| understand Still | [Still: spend without selling](#still-spend-without-selling) |
-| decide between Still and Aave or Morpho directly | [Why borrow through Still](#why-borrow-through-still-and-not-from-aave-or-morpho-directly) |
-| run it locally | [Running it yourself](#running-it-yourself) |
-| understand the subject | [Tokenized stocks on Base](#tokenized-stocks-on-base) |
-| connect an AI to the evidence | [Public Miorail MCP](#public-miorail-mcp) |
-| let an assistant prepare an action you sign | [Connected Miorail MCP](#connected-miorail-mcp) |
-| ship on the Base App surface | [Base App](#base-app) |
-| know what may never be signed | [Execution boundary](#execution-boundary) |
-| read the Discover evidence layers | [B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md) |
+| Coinbase tokenized stocks: AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc | Aave V4, the Coinbase Stocks spoke |
+| cbBTC | Morpho Blue, cbBTC/USDC |
+| WETH, or native ETH wrapped in the same transaction | Morpho Blue, WETH/USDC |
+| PAXG, Paxos's gold token | Morpho Blue, PAXG/USDC, priced by Chainlink XAU/USD |
 
-## Running it yourself
-
-```bash
-pnpm install
-cp .env.example .env     # every credential is optional; see below
-pnpm test:unit           # the gate
-# Start these in separate terminals:
-PORT=8080 pnpm exec tsx artifacts/api-server/index.ts
-pnpm --filter @mioagent/interface dev
+```text
+your wallet ── signs ──▶ Aave V4 / Morpho Blue on Base      the loan, recorded under your wallet
+     ▲
+     │  exact calls: decoded, simulated on a fresh block, Still's limit checked
+Still server ── reads Base at one block, prepares and reviews; holds no key and no funds
 ```
 
-Node 22+, pnpm 10+.
+- **Home** reads the wallet at one Base block and says, in dollars, how much it could borrow and how safe its loans are. A read that failed is called unread, never shown as zero.
+- **Get money** (`/borrow`) takes the collateral and the amount you choose, prepares the exact calls, simulates them, and enforces Still's limit on the server before your wallet opens.
+- **Repay** (`/repay`) pays an exact amount or all of it, and can take the collateral back in the same review.
+- **Spend** (`/spend`) shows what a loan could pay for at Bitrefill (eSIMs, phone top-ups, gift cards), priced in USDC, and pays one invoice of up to 100 USDC: with a loan in the same transaction, or from USDC already in the wallet.
+- **Agent** (`/agent`) answers questions about your own wallet. A what-if ("what if NVDA falls 30%?") is the engine's arithmetic, not a model's guess. It never signs or sends.
+- **Alerts:** a connected Telegram chat is told when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
 
-**Nothing in `.env` is required to start.** Measured on a checkout with no
-`.env` file at all: the API boots, `/health` returns 200, `CHAIN_ENV` defaults
-to `sepolia`, and batch transaction simulation is already available — it falls
-back to Base's own public RPC, which serves `eth_simulateV1`, so no paid key is
-a precondition for anything.
+Your own wallet signs every step: Base Account, Coinbase Wallet, MetaMask, Rabby, or any wallet through WalletConnect. A wallet that cannot send a batch gets the same loan in steps, one transaction each, and the server reads each landed step from Base before it asks for the next. Still adds no fee to a loan or a repayment, and every Still loan transaction carries its ERC-8021 Builder Code.
 
-Miorail treats a missing credential as an absent capability and says so on
-screen rather than failing or pretending, so each surface tells you what it
-would need in order to do more.
+A shared link previews as its own card: `/w/<wallet>` as that wallet's check, and a confirmed purchase as the product, its price, the collateral and the protocol, never the wallet.
 
-Postgres is needed only for the B20 Discover feed, the durable receipt store
-and `pnpm test:db`; `pnpm test:unit` runs without it. When you do want it:
+## How Still sets a limit
 
-```bash
-pnpm db:up          # Postgres 17 in Docker, on 127.0.0.1 only
-pnpm db:migrate     # applies the checked-in migration history
-pnpm test:db
-```
+1. It reads each asset's collateral factor from the protocol itself, at one Base block.
+2. It lends at **50%** of that factor. At Still's full limit, a new loan's collateral can lose about half its value before liquidation can start; interest narrows that over time.
+3. For a stock it lends at **40%** while Wall Street is closed (weekends and market holidays, by a reviewed calendar) and from the day before a company's earnings report to the evening after it, when a price can gap. An earnings calendar that cannot be read counts every stock at 40%.
+4. It leaves 0.0005 ETH in the wallet for network fees and never counts it.
+5. The server refuses a loan above that limit, whatever the screen sent.
 
-`db:up` creates two databases — `miorail` and `miorail_test`. They have to be
-separate: `pnpm test:db` refuses to run against the same database as
-`DATABASE_URL`, so that a test run can never truncate real data. The
-`DATABASE_URL` and `TEST_DATABASE_URL` in `.env.example` already point at both.
+The terms are versioned and live in [`lib/still-engine/src/policy.ts`](lib/still-engine/src/policy.ts). Still's limit is not a recommendation to borrow.
 
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security policy: [SECURITY.md](SECURITY.md) — **do not file security bugs as public issues**
-- What Miorail guarantees, and what it does not: [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
+## Who Still is for
 
-Miorail composes transactions; it never signs them. It holds no private key,
-never calls `signTransaction`, and never broadcasts. Every state change is
-submitted by your own Base Account, from calls you approved.
+Coinbase's tokenized stocks are offered only outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase or a stock buy, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories. Everyone else confirms once per sign-in: "I am not a U.S. person and I am not currently located in the United States." A link an assistant prepares is checked when the person opens it in their own browser.
 
-## Still: spend without selling
+What closes a position is never blocked: from anywhere, a wallet can repay its loan, take its collateral back and sell.
 
-Still turns a Base wallet into a credit line it never has to sell. It is one app with Miorail, in this repository, under the same licence.
+## See it for yourself
 
-**What it models.** Coinbase tokenized stocks (AAPL, AMZN, GOOGL, META, MSFT, NVDA, SPCX, TSLA) on the Aave V4 "Coinbase Stocks" spoke, and cbBTC, ETH and PAXG (Paxos gold) on Morpho Blue. Still counts **50% of each protocol's own collateral factor**, so a fresh draw starts half way from liquidation, and **40% for stocks while Wall Street is closed** (weekends and market holidays alike, by a reviewed calendar) **and around each company's earnings report**. 0.0005 ETH stays in the wallet for gas and never counts. Every figure is read from Base at one block by the Mirror engine (`lib/still-engine`), with its Morpho arithmetic mirroring the contract's.
+Nothing here needs an account or a key:
 
-**What it prepares.** *Get money* (`/borrow`) takes an explicit collateral choice, reads the live limit for it, and prepares the exact calls; the review (`/lending/:draft`) simulates them on a fresh block and enforces Still's share on the server before anything reaches the wallet. *Repay* (`/repay`) pays an exact amount or all of it; Repay all can also take the collateral back to the wallet in the same review (a stock from Aave V4, cbBTC, WETH or PAXG from Morpho), and with nothing owed it takes the collateral back alone. The person's own wallet signs; a repeat submission is refused, and the outcome is reconciled from the receipt. A loan or repayment on Morpho is the wallet's own calls to Morpho Blue, written by Still from the verified ABI: no bundle, and no contract is given the right to act for the wallet. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) gets any Still loan or repayment in steps, one transaction each, native ETH included (the wallet wraps it first): the server reads each landed step from the chain and reviews the rest again before the wallet is asked for the next. Every lending batch carries the ERC-8021 Builder Code (checked onchain on real Aave V4 borrow and repay transactions), and each step carries it in its own calldata. Not offered to US persons.
+- Still's terms in force now, with the windows open now and each stock's next earnings date: [miorail.xyz/api/public/still/terms](https://miorail.xyz/api/public/still/terms)
+- The public check of any Base wallet: `https://miorail.xyz/w/<address or name>`
+- How Still keeps a loan safe, for people: [miorail.xyz/safety](https://miorail.xyz/safety)
+- The same reads from an assistant: add `https://miorail.xyz/mcp/still` as a connector in Claude, ChatGPT, Grok or Cursor
 
-**Spend.** `/spend` shows what a loan could pay for: Bitrefill's eSIMs, phone top-ups and gift cards in a chosen country, each priced in USDC as Bitrefill quotes it, and, for a signed-in wallet, whether the price fits its Still room now. The server reads the catalogue as a guest of Bitrefill's MCP, with no account: the client is registered at Bitrefill's own registration endpoint, its id and secret held in the server's environment (`STILL_BITREFILL_CLIENT_ID`, `STILL_BITREFILL_CLIENT_SECRET`), and without them it is the Client ID Metadata Document at `https://stills.lat/clients/bitrefill-mcp.json`. Its TOON answers are parsed strictly. Where the operator switches paying on (`STILL_SPEND_PAY_V1`), a price opens one Bitrefill invoice for the signed-in wallet (up to 100 USDC; a top-up's number is checked against the operator's calling code), and *Get money* borrows exactly that price: the review adds an exact USDC transfer to the invoice's address to the loan's own batch, so the loan and the payment land in one transaction. Still proves the payment onchain; Bitrefill delivers and emails the receipt.
+Every answer names the Base block it was read at, so anyone can read the same contracts at that block and compare.
 
-**The Agent** (`/agent`) answers about the signed-in wallet only, in three modes:
-
-- **direct reads** (room, loan safety, market hours, dividends, holdings) answered by the page without a model;
-- **calculations**: a price move by a share or to a price, more borrowing, a repayment, more collateral, interest over a period, and why the room changed (compared with the wallet's own earlier readings, kept 60 days). Fixed rules read the usual phrasings and a model reads the rest, but every number, asset and loan it proposes must be in the question's own words. The Mirror engine then recomputes the report with the change, so a what-if is the page's own arithmetic. A model may re-say the result; it is shown only if every figure is the calculation's and nothing advises;
-- **a request to act** ("borrow $500 and send it to a friend") gets the boundary in words and a link to the review screen. The agent never signs or sends. A transfer of a stock ("send all my NVDAc to name.base.eth") is prepared, and read by fixed rules only: the recipient is a 0x address or a Basename the question wrote, resolved on Base, and never the wallet itself. It opens in the stock page's own send review, carried in history state and never in the address bar, which checks it again on the server and simulates the one transfer; the person signs. A stock that is all pledged gets the way back first: Repay, then Take back.
-
-Each answer carries its Base block and what it holds fixed, and the page shows the stages as they happen. `scripts/bench_still_agent.ts` asks a fixed set of questions about a frozen wallet with the production model lanes.
-
-**Shared links.** `/w/<address or name>` is the public check any visitor can run on Home, with a head of its own: a link shared on X or Farcaster previews as that wallet's card (`/api/public/still/card.png`, 1200×630 and 3:2), drawn with the same mobile as Home. After a loan that paid Bitrefill is confirmed onchain, its owner can share the purchase: `/spend/p/<token>` previews as a card naming the product, its USDC price, the collateral and the protocol (`/api/public/still/spend-card.png`). The server signs that claim in the link itself, so it needs no table and cannot be forged, and it names no wallet, transaction or block: with the price, any of them would lead to the wallet. Every other page previews as Still's own card.
-
-**For assistants.** Still has its own MCP server, `https://miorail.xyz/mcp/still`: read-only, no sign-in, five tools. `get_still_terms` gives the shares and windows in force now. `still_check_wallet` reads any Base wallet by address or name, the same public check as `/w/<wallet>`. `still_what_if` applies a price move, a draw, a repayment or a deposit and answers with the Agent's own engine. `still_find_spend` and `still_spend_product` read what a loan could pay for at Bitrefill, the same catalogue and prices as Spend. It prepares and signs nothing, under the public check's limit of thirty calls a minute per client:
-
-```bash
-claude mcp add --transport http still https://miorail.xyz/mcp/still
-```
-
-In Grok, add the same address at grok.com/connectors as a custom connector.
-
-To prepare a loan, a purchase or a repayment from an assistant, the signed-in Miorail server (`https://miorail.xyz/mcp/private`, OAuth with the wallet) has `miorail_get_my_still` for the owner's own wallet and three tools that each return the same five-minute, wallet-bound review link the page opens, never a call. `miorail_prepare_still_loan` takes the collateral and amount the person named, for stocks on Aave V4 as well as cbBTC, WETH, ETH and PAXG on Morpho. `miorail_prepare_still_purchase` opens the Bitrefill invoice they chose, exactly as Spend does, and links the review of the loan that pays it; the email and a top-up's number go to Bitrefill only. `miorail_prepare_still_repay` links an exact repayment, or all of it up to a bound the person named, and with `returnCollateral` the loan's collateral comes back to the wallet in the same review. Afterwards `miorail_get_still_review_status` reads what happened, from Base, with Bitrefill's own reading of a purchase's invoice and the link that shares it. A chat that draws MCP Apps, as Claude does, shows these four results as Still's review card (`ui://still/review.html`): what was prepared, a button that opens the review on miorail.xyz, and where it stands until Base confirms it. A phone wallet can also pair with the card through WalletConnect and sign the same review in the chat: the card shows the review the page shows, through the same controller, asked through the host as the grant's wallet (`still_card_lending`, hidden from the model), and a ready review is audited as released before it leaves. The card holds no key, and a client that does not say it draws apps gets the same results as text. The Spend reads are on this server too. The Wallet MCP plugin is `https://miorail.xyz/wallet-mcp/miorail.md`.
-
-The same server writes a swap for Swap AI, as the Still Agent does on the page: `miorail_prepare_swap` takes what the person gives, what they receive and how much (an exact amount, or all or half of the wallet's own, read at one block), and returns a link to Swap AI with that swap filled in by exact addresses. Nothing runs from the link: Swap AI waits for the person to press Compare, then compares the routes and simulates the swap, and the person's wallet signs. The reply carries no price, route or calldata.
-
-Dividends stay first-class: Stocks › Dividends, the holder lines in Assets and Home's "coming up". A dividend reaches whoever holds the token when it converts, and an estimate is called an estimate.
-
-### Why borrow through Still, and not from Aave or Morpho directly
+## Why borrow through Still, and not from Aave or Morpho directly
 
 Still is not a lender. It never holds collateral or USDC, and it adds no fee to a loan or a repayment. A Still loan *is* an Aave V4 or Morpho loan: the wallet supplies its collateral and borrows directly from the protocol, and the position is recorded there, under that wallet, where the protocol's own app can manage it as well.
-
-| Collateral | Protocol | Market |
-| --- | --- | --- |
-| Coinbase tokenized stocks: AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc | Aave V4 | the Coinbase Stocks spoke |
-| cbBTC | Morpho | cbBTC/USDC |
-| WETH, or native ETH wrapped in the same transaction | Morpho | WETH/USDC |
-| PAXG, Paxos's gold token | Morpho | PAXG/USDC, the market Morpho lists: priced by Chainlink XAU/USD, which stands still while the gold market is closed |
 
 So the real question is what the layer on top adds, because it has to earn the risk it brings. Today it adds four things.
 
 1. **A limit that knows it is lending against stocks.** A protocol's collateral factor is the same at every hour of the week; a stock's risk is not. While Wall Street is closed, on weekends and market holidays, the token keeps trading on Base but its reference price stands still, and the next session can open with a gap. Around a company's earnings report the price can jump either way. Still lends at 50% of the protocol's own factor, and at 40% for a stock while the market is closed and around that company's report. Borrowing the protocol's full maximum, the smallest fall in price can start liquidation. Borrowing Still's full limit, the collateral can fall 50% before it can, or 60% in those windows. That margin is protection the protocol itself does not give.
 2. **One answer to "how much can I borrow?"** Every stock and crypto asset in the wallet is counted together, in dollars and plain words, read at one Base block. A read that failed is said to be unread, never shown as zero.
 3. **A check before anything is signed.** Every loan is simulated on a fresh block before the wallet opens, every call is decoded, and the amounts are exact. The server enforces Still's share, and on Morpho the wallet calls Morpho Blue itself, so nothing is authorized to act for it.
-4. **Company after the loan.** The Agent answers what-ifs ("what if NVDA falls 30%?") with the engine's arithmetic, not a model's guess. Still also shows which dividends reach the token and keeps track of the stock market's hours. A connected Telegram chat is told, once per step, when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
+4. **Company after the loan.** The Agent answers what-ifs with the engine's arithmetic. Still also shows which dividends reach the token and keeps track of the stock market's hours, and a connected Telegram chat is told, once per step, when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
 
 Get money shows the first point as numbers before the amount is chosen: the protocol's own limit beside Still's, how far the collateral could fall at each, and, when a stock counts lower, why and until when.
 
 Someone at home in Aave or Morpho gains little from this. Still is for people who hold tokenized stocks, are not DeFi specialists, and want to borrow against their shares without selling them.
 
-## Product loop
+## What Still does not protect you from
 
-```text
-Natural-language request
-  → Intent Engine
-  → curated route candidates
-  → evidence and provenance
-  → deterministic comparison
-  → Route Card
-  → Execution Blueprint
-  → Safety Kernel and simulation
-  → explicit Base Account approval
-  → receipt reconciliation
-  → Route Proof
-```
+- **Liquidation.** Still's limit keeps a new loan far from it, not out of reach. A fall in price, interest over time or more borrowing can bring a loan to liquidation; liquidators act through the protocol, and Still cannot stop them.
+- **The protocols.** A Still loan is an Aave V4 or Morpho Blue position. Their contracts, oracles and rates apply; a loan that SPCXc covers also pays Aave's risk premium, up to 10% of the rate.
+- **Prices that stand still.** Stock reference prices hold while Wall Street is closed, and PAXG is priced by Chainlink XAU/USD, which holds while the gold market is closed. The next open can gap.
+- **Your own approval.** Still shows you what a transaction does. If you sign it, it happens.
+- **A compromised wallet or device.** Nothing here helps if someone else controls the signer.
 
-Miorail is not a thin chat wrapper around Base MCP, a provider directory, or a first-matching-tool router. Base MCP is a wallet and capability rail; Miorail owns the comparison, evidence, transaction composition, validation, and proof layer.
+## Still for assistants
 
-Natural-language processing is role-routed as well: a structured lane handles
-closed-schema classification and extraction, while the primary lane handles
-evidence-bound explanations, each with spares on other hosts. TypeScript/Zod
-contracts, not either model, decide which reads and actions are allowed.
-
-## Product surfaces
-
-The web app is Still's shell: **Home · Assets · Agent · Stocks · More**.
-
-| Surface | Web path | What it owns |
+| Server | Sign-in | What it can do |
 | --- | --- | --- |
-| **Home** | `/` | The wallet's sky and mobile; what the wallet holds (USDC, ETH, cbBTC and PAXG, then the stocks by value, with what is pledged said apart, and other Coinbase stocks it holds); its modelled borrowing room, Spend, and what is coming up. Signed out, a check of any Base wallet by address or name. Quiet doors to Still in an assistant and to alerts in Telegram sit in the left rail on a desktop and at the foot of Home on a phone. |
-| **Wallet check** | `/w/:subject` | The same public check as a link, with a card of its own for X and Farcaster. |
-| **Purchase card** | `/spend/p/:token` | A Still Spend purchase its owner shared: the signed claim, its card for X and Farcaster, and a door to Spend. |
-| **Assets** | `/assets` | What the wallet holds, what is pledged and what hangs on it; *Get money* (`/borrow`), *Repay* (`/repay`) and the lending review (`/lending/:draft`). |
-| **Agent** | `/agent` | Questions about the wallet's own money: direct reads, calculations by the Mirror engine, and the action boundary. |
-| **Stocks** | `/market`, `/stocks` | One security, every reviewed way to hold it on Base, at one exact size: market reality, use & access, the Chainlink reference, dividends, and `Ask Miorail` over that page's own evidence. |
-| **Watch** | `/watch` | Any Base address read in full (identity, four trust roots stated apart, controls, topology and exit), what each issuer can do to the B20 tokens you hold, and the exact markets you watch with what changed. `/investigate`, `/portfolio` and `/radar` redirect to its sections. |
-| **Discover** | `/opportunities` | B20 launch measurements, market rails, Fundamental Intelligence, global `Ask Miorail`, evidence gaps, and focused measurement views. |
-| **Swap AI** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, wallet approval, and Route Proof. Swaps also open from a stock card. |
-| **Today** | `/today` | The classic first screen: balances, stock updates and cash-out. |
-| **Activity** | `/plan/history` | Route runs and proofs, Wallet MCP Action Receipts, and intelligence/x402 charge history. |
-| **Wallet MCP** | `/extensions` | Live Wallet MCP reads, capability truth, deterministic Swap AI handoff, and released typed direct actions. |
-| **Still for assistants** | `/assistants` | Connecting Claude, ChatGPT, Cursor or Codex to the same numbers. |
-| **Settings** | `/settings` | Connected apps, adapter health, providers, network state, and — under Advanced — the agent spending budget. |
-| **Public Metrics** | `/metrics` | Sessionless Base telemetry with exact definitions, caveats, and a deterministic snapshot hash. |
+| `https://miorail.xyz/mcp/still` | none | Still's terms, the public check of any Base wallet, what-ifs by Still's own engine, and what a loan could buy at Bitrefill. Read-only. |
+| `https://miorail.xyz/mcp` | none | Tokenized-stock evidence, B20 measurements and Still's terms. Read-only. |
+| `https://miorail.xyz/mcp/private` | OAuth 2.1 with your wallet | Everything above, plus tools bound to the wallet that signed in: its own Still report, and review links for a loan, a repayment, a purchase or a swap. |
 
-Everything except the five main places sits under **More**.
+No server signs or sends anything. A tool that prepares an action returns a five-minute link to the same review page Get money opens, bound to your wallet; you check it and sign it there. A loan, a repayment and a purchase it links are reviewed by the same server checks as Get money and Repay, Still's limit included. A chat that draws MCP Apps, as Claude does, shows that review as Still's card. Tool names, inputs and what each answer guarantees: [docs/MCP.md](docs/MCP.md).
 
-Stocks reads Aave V3 membership separately from the Base **Aave V4 Equities
-market**, using Aave's official API and exact token addresses. V4 cards show
-collateral factors, reserve restrictions, supply/borrow caps, shared USDC
-availability and variable rates. Today offers an explicit, session-bound
-position read for that MAG7 market: collateral, debt, net accrued interest,
-net borrow APY and health factor. Other Aave markets are outside that personal
-read. API conditions and borrowing power on those cards are informational; Aave V4
-borrowing and repayment are prepared by Still's *Get money* and *Repay* for the
-person's own wallet to review and sign (see [Still](#still-spend-without-selling)).
+## Miorail underneath
 
-### Editorial drafts
+Still is built on Miorail, which measures tokenized assets on Base before anyone acts on them.
 
-An operator can generate a daily draft pack from recorded public stock signals
-and settled weekend rounds:
+- **Stocks** (`/stocks`): one company can be held on Base through several contracts (Coinbase's B20 tokens, Backed bTokens, Dinari dShares), and they do not trade alike. Miorail measures each exact address at one exact size: what a sale into USDC would return now, and its dividends.
+- **Swap AI** (`/routes`): describe a swap in words; Miorail compares the routes it supports, simulates the chosen one, and your wallet signs it. Afterwards it reconciles what you expected with what landed.
+- **Discover** (`/opportunities`): measurements of new B20 launches. It is not a screener and predicts nothing. [docs/B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md)
 
-```bash
-node --import tsx scripts/editorial_draft.ts --out work/editorial/review-pack
-```
+One rule runs through all of it: **no data, no score.** A measurement that did not happen is never shown as zero, safe, or a recommendation.
 
-The generator only reads the configured database. Each pack contains text, source facts and
-1200×630 cards for human review. It never publishes or sends a notification,
-does not overwrite a previous pack, and produces no news when no fresh verified
-facts are available. Use `--snapshot <snapshot.json>` for an offline review.
+On a stock's card the two questions are kept apart: *is there an answer right now* (a router quote is open for about twenty seconds, and past that the card says `Price expired`) and *what that answer costs*, graded against the reviewed slippage policy, so a round trip that returns $0.94 on $1,000 is never drawn in the colour of a good market. Every absence says whose it is: `No cash route found` is the market, `This route source does not cover this token` is Miorail's coverage, `Venue declined to quote` is the venue's own rule, and `Our read failed` is ours. On 2026-09-04, measured at a $1,000 sale into USDC, 10 of the then 13 Coinbase representations held a cash route, against 2 of 21 Backed and 0 of 96 Dinari: the same company, different contracts, a different market.
 
-Web and Base App share the same typed product contracts so financial copy and capability state cannot silently diverge between clients.
-
-## Capability truth
-
-A Markdown plugin specification is documentation, not a connected capability. Every integration follows this lifecycle:
-
-```text
-documented → manifested → adapter → scored → proven
-```
-
-Feature flags and credentials may still block a capability. Enabling a flag never promotes a provider above its registry stage.
-
-The current registry includes provider-neutral Swap and Earn routes, typed Base MCP actions, x402 paid intelligence, and documented/manifested extensions. Promotion to `proven` requires a real reconciled production path, not just working code.
-
-The full provider constraints and promotion gates live in [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
-
-## Tokenized stocks on Base
-
-Coinbase issues tokenized stocks on Base under the **B20** standard the Base
-documents describe. Two other issuers put representations of the same companies
-on the same chain — Backed bTokens (Swiss-law tracker certificates that rebase)
-and Dinari dShares — and they are separate systems, not versions of one thing.
-Measured on 2026-09-04 at a $1,000 sell into USDC, 10 of 13 Coinbase
-representations held a cash route, against 2 of 21 Backed and 0 of 96 Dinari.
-
-So the Stocks surface opens on Coinbase B20 and keeps the rest one press away
-under **Other representations of this security on Base**. Nothing is removed:
-the claim this product exists to make — *same underlying, different
-representations, different market reality* — needs the alternatives visible.
-
-```text
-reviewed issuer sources (Base docs, Coinbase, Backed API, Dinari factory)
-  → underlying_asset / representation_underlying     one company, many exact addresses
-  → supply read at an anchored block
-  → cash-exit measurement through reviewed route sources, per exact size
-  → market-reality comparison + Chainlink total-return reference
-  → Stocks card / Radar / MCP / Ask Miorail
-```
-
-**What a card answers, and what it refuses to.** Two questions, kept apart on
-purpose:
-
-- *Is there an answer right now* — one chip, in Base blue. A router quote is
-  open for about twenty seconds; past that the same card says `Price expired`,
-  because the clock decides that and not a status stamped when the response was
-  assembled.
-- *What the answer costs* — a second chip, graded. Inside the reviewed slippage
-  policy (200 bps, derived: two legs of the 100 bps every cash-exit intent is
-  planned under), above it, or an order of magnitude above it. A round trip that
-  returns $0.94 on $1,000 is a priced market and a total loss, and one colour
-  must not say both.
-
-Every absence is attributed. `No cash route found` is the market, `This route
-source does not cover this token` is Miorail's coverage, `Venue declined to
-quote` is the venue's own rule, and `Our read failed` is ours. They were once
-one word.
-
-**Onchain B20 reads**, at an anchored block: the redemption `multiplier`, the
-ISIN published at the lowercase `extraMetadata("isin")` key, the four transfer
-policies, the supply cap and the paused-feature set. The multiplier is a
-disclosure, never applied to a total-return feed — B20 publishes one, Backed
-rebases instead, and Centrifuge has none.
-
-**A second, independent reading of the price.** Every `full` observation on this
-corpus comes from one router. That is a structural weakness of the evidence, and
-until now it had no cross-check. There is no verifiable quoter to build one
-from: Aerodrome runs two concentrated-liquidity factories on Base, every
-tokenized-stock pool lives in the one whose deployer shipped a seven-contract
-core with **no QuoterV2 and no SwapRouter** (measured by scanning each
-contract's bytecode for `quoteExactInputSingle` and `exactInputSingle` — false
-on all of them), and the published quoter is bound to the other factory through
-a different `poolImplementation()`. Hand-rolled tick math would produce a number
-nobody could check.
-
-What can be had is the pool's own `slot0().sqrtPriceX96`, squared: the marginal
-price at the current tick, from one onchain word, reproducible by anyone at the
-same block. It is **not a quote** — no size, no slippage, no route, no claim
-that a trade would succeed — and the payload says so in every state. Verified
-live on 2026-09-04 against the exact pool the router named for NVDAc
-(`0x853f5f1b…7ab9`): the pool's own state said **$231.878101** and a $1,000
-KyberSwap quote said **$231.948403**, the quote worse by 3.0 bps, which is what
-walking a little way up the curve costs. The decimals are read, never assumed —
-NVDAc is 8, not 18.
-
-**Coverage boundaries, stated rather than hidden.** Nine of the thirteen
-Coinbase representations hold zero supply; a contract with nothing outstanding
-keeps its exact address and all of its evidence and leaves the comparison.
-Where no route source can price a token, that is usually the market: all 79
-uncovered contracts were equally unquotable by Odos, ParaSwap and LiFi at the
-same size on the same day. A reference price exists only where the issuer
-publishes a feed — 13 of 13 Coinbase, 0 of 21 Backed — because Backed's oracle
-path is Chainlink Data Streams, which has nothing to call.
-
-## B20 and Fundamental Intelligence
-
-Two evidence layers behind Discover, kept apart on purpose.
-
-**B20 Intelligence** measures tokens created by the B20 factory and their Base
-liquidity: a launch is ingested, its venue found, its exit measured at exact
-sizes, and every rejection is typed. It is not a screener and predicts nothing.
-
-**Fundamental Intelligence** is the second axis: a project claims a token from a
-domain it controls, and what survives four locks on that gate becomes verified
-evidence with a 24-hour life. `unknown` is the absence of a row, never a
-verdict, and no score is ever computed from the two together.
-
-Both in full, including the standing verdicts and the identity chain:
-**[docs/B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md)**.
-
-## Ask Miorail
-
-On a Stocks page the model is given that page's own evidence bundle and nothing
-else: no planner, no extra reads, and a verifier that rejects any number the
-bundle does not contain. The deterministic answer carries the assertions the
-narration must preserve, so "not measured" cannot be said over three thousand
-measured launches. Every failure falls back to the deterministic text.
-
-The B20 console has three scopes:
-
-- **Explore** — deterministic universe/fundamental queries;
-- **Investigate** — one to five named tokens side by side;
-- **Changes** — comparable stored observations over time.
-
-The model is not a source of facts. Deterministic code builds an evidence bundle first; narration is allowed only over that bundle, and the verifier rejects unsupported numbers or claims.
-
-Requests to act are handed to Routes for fresh quotes and explicit approval.
-
-## Public Miorail MCP
-
-Miorail MCP `1.8.0` exposes eighteen read-only tools at `https://miorail.xyz/mcp`
-— nine over tokenized stocks, eight over stored B20 evidence, and Still's terms:
-
-```text
-list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
-get_representations         every exact address that claims one security
-compare_market_reality      one size, one direction, every representation
-get_market_changes          what moved since a stored observation
-get_use_access              what one exact address can be used for, and what gates it
-check_address_identity      compare an exact address with the reviewed contract
-get_dividend_calendar       declarations, measured reinvestments and estimates
-get_recorded_changes        recorded changes across the reviewed market
-get_reopen_round            Call the reopen: the weekend round, Base's call, results
-get_still_terms             versioned limits and reviewed market/earnings windows
-
-miorail_discover_status
-miorail_list_b20_opportunities
-miorail_summarise_b20_universe
-miorail_get_b20_opportunity
-miorail_explain_b20_rejection
-miorail_compare_b20_tokens
-miorail_find_b20_projects
-miorail_b20_market_rails
-```
-
-`get_representations` never chooses one: different issuers publish different
-contracts for the same company, and that choice is not Miorail's to make. A
-company name reaches a security through a small ISIN-bound alias table, and
-every row says whether the issuer's own naming or a Miorail alias found it.
-
-`get_still_terms` reads the same earnings service and cache as
-`GET /api/public/still/terms`. Its answer is the terms themselves, without an
-`evidencePackage`: 50% of the protocol's collateral factor, reduced to 40% for
-stocks in Still's reviewed closed-market or earnings window, or while their
-earnings calendar is unread. Returned windows and `calendarRead` are part of
-the answer. These are terms, not a personal borrowing quote or advice to borrow.
-Still is not offered to US persons.
-
-The nine stock tools and `miorail_discover_status` include a free
-`evidencePackage` (`miorail-evidence-package/v1`). Each claim names JSON Pointers
-into the original answer, its exact address, size and time scope where
-applicable, and its source, block, observation time and existing evidence hash.
-Supply, quotes, reference feeds, venue catalogues and historical observations
-keep separate provenance. `generatedAt` is packaging time. A missing block,
-time or hash is explicitly `null` and listed in `missing`; it never means zero,
-safe, absent or freshly checked. Source-content, measurement and snapshot
-hashes retain their different meanings. A transaction hash is a lookup reference,
-not an evidence hash. Counts and estimates remain derived facts. No extra RPC
-read or new hash of the answer is performed to produce this package.
-
-The package indexes the evidence exposed by that tool. Service counts,
-identity-check projections, dividend effects and frozen game stages do not
-retain every primary block or hash; their missing metadata stays explicit.
-Recorded event time, company declaration date, feed publication time and a
-multiplier's effective date do not replace observation time. Existing summary,
-pagination, coverage and quote-expiry semantics still apply.
-
-For a weekly usage review, `scripts/mcpUsageReport.mjs` aggregates rotated nginx
-logs and successful evidence-read events from the API journal. Run on the host
-with permission to read both sources:
-
-```sh
-journalctl -u miorail-api --since '7 days ago' -o cat --no-pager |
-  node scripts/mcpUsageReport.mjs --journal-stdin \
-    --exclude-file /path/to/private-mcp-usage-exclusions.json
-```
-
-The private exclusion file has `public` (operator IPs) and `connected`
-(operator tenant identities) string arrays. Keep it outside the public repo.
-BrickBlueBot, Taifoon, B20 verifier, Miorail smokes and curl are excluded by
-their reported client family. The report outputs aggregates only; fingerprint
-counts are candidate client groups, never verified people. Nginx POSTs also
-include initialization and tool discovery, so they cannot establish tool usage.
-Successful-read instrumentation starts with this release and cannot reconstruct
-earlier free calls. Review `mcp_execution_audit` separately for authenticated
-actions; its counts cannot be added to free-read client counts.
-
-`get_use_access` exists because of a measured failure. Until it shipped, no MCP
-surface carried a single DeFi field, so an assistant asked whether a tokenized
-stock could be posted as collateral had nothing to read and answered from the
-announcement it could reach — Base published one on 24 August 2026, and Aave's
-reserve list on Base does not name those addresses. Both sentences are true.
-The tool carries the announcement and the reading joined and separate, in four
-states, where `unchecked` — a venue nobody read — is never `not_listed`. It is
-public and holds no wallet, so it can never say whether a particular address
-may transfer; and its `blockTag` names the fields it governs, because two of
-the four venues answer from catalogues that publish no block at all.
-
-The public MCP surface has no wallet, signing, payment, approval, or execution
-tool. Its Discover projection is parity-tested against the product truth layer,
-and `ops/deploy.sh` asserts the tool names and the version by literal, so a
-renamed tool fails the deploy rather than a caller.
-
-**Connect it.** No key, no account, no allowlist:
-
-```jsonc
-// Claude Code, Claude Desktop, Cursor, or any MCP client
-{ "mcpServers": { "miorail": { "type": "http", "url": "https://miorail.xyz/mcp" } } }
-```
-
-```bash
-# or by hand
-curl -s -X POST https://miorail.xyz/mcp \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-06-18","capabilities":{},
-        "clientInfo":{"name":"demo","version":"1"}}}'
-```
-
-## Connected Miorail MCP
-
-`https://miorail.xyz/mcp/private` is the same eighteen read tools **plus sixteen bound to
-one wallet** — the one that authorised the connection. It cannot read, prepare
-or execute for any other wallet, and no argument would let it try.
-
-`miorail_get_my_still` reads only the connection owner's Still Mirror through
-the same service and cache as `GET /api/still/mine`. It takes no wallet argument.
-Preserve `reading.block`, `reading.blockTime`, `cached` and failed coverage. If
-`headline.complete` is false, a known available amount means **at least** that
-amount; null remains unknown. `chain_unavailable` is a failed read, never an
-empty wallet. This tool prepares no transaction. The existing Morpho borrow
-review remains a separate flow; server enforcement of Still's additional cap
-and the new Get money / Repay actions are pending.
-
-Two of the sixteen play Call the reopen, the weekend game on the Stocks Weekend
-tab: `miorail_get_my_reopen` reads the wallet's picks, score and record, and
-`miorail_call_the_reopen` makes or changes picks for the stocks the user named,
-until the Sunday 17:00 ET lock. A stock not named keeps its pick. The public
-`get_reopen_round` reads the same round with nobody's picks in it.
-
-One of the sixteen is the verb the read tools were missing.
-`compare_market_reality` reads stored evidence, so it could truthfully report
-"no fresh answer at this size" and had no way to get one — only the web button
-could measure. `miorail_measure_market_reality` is that button, calling the same
-coordinator, so a measurement taken from an assistant and one taken from the
-screen are the same run. It declares `readOnlyHint: false` because it spends
-router calls and writes evidence; it is budgeted per wallet; and a repeat of an
-identical question joins the run already in flight rather than starting a
-second, with the reply saying which. A timeout is not a failure — the run
-continues, and the refusal says to read the answer rather than press again.
-
-```jsonc
-{ "mcpServers": { "miorail": { "type": "http", "url": "https://miorail.xyz/mcp/private" } } }
-```
-
-Authorisation is OAuth 2.1 with PKCE: the client opens `/authorize`, you approve
-in your own browser under scope `miorail:connected`, and the tools appear. There
-is no `sign` scope and no `execute` scope, because the server cannot sign or
-execute. `ops/deploy.sh` checks the discovery document and that a bare request
-is refused, on every deploy.
-
-**What a connected assistant can do with a tokenized stock**, and where it
-stops:
-
-```text
-miorail_prepare_stock_action      → actionDraftId + review link; no executable calls
-   you, on the review page          read current terms, confirm and sign in your wallet
-miorail_get_execution_status      → ask with that actionDraftId; read the reconciled outcome
-```
-
-Before the clearance is minted the token's own onchain transfer policy is asked
-about that exact wallet. A **measured** denial of the scope that governs the
-direction refuses, and so does a contract-wide pause; an unread policy, a
-throttled endpoint and a non-B20 contract all proceed. It is the issuer's rule
-enforced where the issuer publishes it — not a jurisdiction check, and not a
-geo-gate.
-
-An assistant cannot confirm on your behalf, and it never holds a key. Since
-2026-09-05 you do not need Base MCP either: the review page signs from the
-browser, and the clearance is still offered for an assistant that prefers to.
-
-New stock drafts record ownership and release references separately from the
-hashed intent, blueprint and proof. Drafts issued before this tracking was
-deployed do not gain a historical link automatically.
-
-The status tool accepts **exactly one** of `actionDraftId` or the existing
-`planId`. The draft lookup is bound to the authenticated tenant and wallet,
-and follows its latest released blueprint to the existing Route Proof. An
-owned draft without a released action returns `not_released`; an unknown or
-foreign draft gives the same not-found refusal. An unavailable store is an
-unavailable read, never an invented pending or successful outcome.
-
-For an already submitted stock batch, status resolves its stored batch ID
-through Base Account's public wallet RPC, then has the existing reconciler
-read the transaction receipts from Base. Wallet receipts provide lookup
-hashes only. A successful approval without the expected wallet movements
-requires reconciliation; it is not a completed purchase. This check still
-works after the review quote expires and never prepares or resends a trade.
-
-Status returns no calls, clearance or signature. `submitted` is not success,
-and `submitted_unknown` is not a reason to prepare or send again. The assistant
-reports `entry_succeeded` only when the existing onchain reconciler does.
-For the alternative Wallet MCP path, confirmation still precedes
-`miorail_get_stock_base_mcp_action`, and the user approves the returned batch.
-
-## Base App
-
-Miorail runs as a Base App Mini App at `artifacts/miniapp`, and it is not a
-reduced copy of the web console. Both surfaces mount the **same** projections
-from `lib/ui` — the Stocks board, the review screen, the Discover rails — so a
-measurement, a refusal or a verdict cannot be worded one way in a browser and
-another way in the wallet.
-
-```text
-shared    every read, every measurement, every sentence a reader is told
-per-surface   the shell, the navigation, and the wallet itself
-```
-
-The wallet is genuinely per-surface: Base App supplies an injected provider, a
-desktop browser announces one through EIP-6963, and a plain mobile browser has
-neither — which is what `baseAccount()` is for. `lib/ui` has no wagmi
-dependency, so no projection can quietly acquire a wallet.
-
-What Base App has that the web does not is proximity: the wallet is already in
-the reader's hand, so the review tab (`/action/<draft>`) confirms and signs in
-place rather than sending anybody to a browser.
-
-## My stocks today
-
-A signed-in holder opens Stocks on their own balances, upcoming dividends and
-recorded changes relevant to the contracts they hold or watch. Balances and
-Cobalt multiplier getters use the same pinned Base block. A scheduled multiplier
-is shown separately from the effective value; maturity is read from the getter
-because it emits no event. Reference values carry publication times, include the
-feed's multiplier once, and are never presented as sale proceeds or profit/loss.
-
-The web uses `GET /api/stocks/today`; Connected MCP `1.8.0` exposes the same
-calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
-argument. The shared inbox establishes a fixed 24-hour baseline at first use;
-opening it acknowledges no event. Unread entries persist past seven days and
-are paged with up to fifty source IDs, keeping each issuer transaction whole.
-`view: "history"` also shows reviewed entries for
-currently held/watched contracts. `nextCursor` pages through one dated snapshot;
-refresh without it to see later findings. Occurrence and recording dates remain
-separate. An optional `since` still requests an ad hoc window capped at seven
-days; it never advances the inbox or imports an old browser cursor.
-
-**Mark as read** calls `POST /api/stocks/inbox/read` with an opaque, wallet-bound
-proof for only the returned page. It expires after fifteen minutes and cannot
-acknowledge unseen pages, forged IDs or another wallet. A failed feed returns no
-proof; a failed receipt leaves events unread. Per-event receipts live in
-PostgreSQL and are shared by web, Base App and Connected MCP for the same wallet.
-`miorail_mark_stock_updates_read` accepts that unchanged proof only after the
-user explicitly asks to mark the shown updates as read. Fetching, explaining
-or sending a notification never grants that authorization. Connected MCP has
-34 tools: 18 public reads plus 16 wallet-bound tools. The receipt tool changes
-only inbox receipts, never holdings, notification subscriptions or actions.
-The personal inbox groups issuer logs by chain, exact contract and transaction.
-Compatibility multiplier logs and a corporate-action announcement from one
-transaction form one news item. Its expanded evidence retains every source;
-equal values in different transactions or contracts remain separate updates.
-`inbox.items` is the news feed and `changes.cards` contains its raw evidence,
-which assistants must not repeat as additional news. Counts refer to news items.
-Group anchors use the latest recording time and signal ID; pages and review
-proofs include whole groups. A later log remains unread even if an earlier proof
-was used, and existing per-event receipts require no migration.
-Each entry labels holding/watch relevance and opens an exact-contract inspection.
-Balance/reference reads retain their original dates inside the short cache;
-the bounded change window is read anew on every overview request.
-Coverage names the exact
-Coinbase contracts currently listed by the issuer API or Base documentation; other issuers and
-contracts are outside this balance read. A full change page and failed reads
-remain explicit gaps. This tool creates no watch, action or transaction.
-
-Coinbase's [Tokenized Stocks API](https://api.coinbase.com/v1/tokenized-stocks)
-is checked hourly as an independent official source. Each address is bound to
-the issuer's checksum-validated ISIN; symbols remain display metadata. The
-first successful check of a source establishes a baseline without announcing
-old listings as new. Failed or malformed responses preserve the previous
-catalog. Optional NAV, supply and multiplier fields do not become chain
-evidence: supply and shares per token are read independently at a pinned block.
-Stocks without NAV remain discoverable and can be quoted by reviewed routers;
-their reference comparison stays unavailable until a reviewed feed exists.
-
-**Check cash out** asks for a fresh router quote into USDC for the owner's entire
-current raw balance of one covered contract. The authenticated
-`POST /api/stocks/cash-out` and `miorail_measure_my_stock_cash_out` use the same
-SELL measurement engine. The only input is the exact token address; the wallet,
-balance, decimals and pinned block come from authenticated chain reads. This is
-an explicit request, never an overview poll. Concurrent checks join one run;
-web, MCP and the SELL terms review share a ten-per-minute wallet budget. Evidence
-is stored under `tenant_position`, outside the public ladder.
-
-The result names each provider and distinguishes a quoted amount, an expired
-quote, no route at this exact size, an incomplete measurement and a zero balance.
-An expired quote stays dated as **Last quoted** and is not refreshed automatically.
-USDC output excludes network fees; transfer policy and simulation are not checked
-here. Nothing is sold or approved. The existing stock review still obtains a
-user-chosen exact amount, fresh terms and a separate wallet approval.
-
-A verified, delivered gift offers its recipient a route into this overview and
-the existing optional Telegram alerts. Opening a gift link never subscribes
-anybody and needs no claim transaction.
-
-## Base MCP Extensions
-
-Miorail reads the live Wallet MCP registry at the configured endpoint and classifies tools as `READ`, `ACTION`, `ROUTABLE`, or blocked before an LLM can select them.
-
-For new connections the canonical endpoint is `https://wallet-mcp.coinbase.com`.
-Base's [October 1 endpoint update](https://github.com/base/skills/commit/4f3d8f3787311edf15e2c4e4ba8160dea524683f)
-also moves the setup guide to [Coinbase Wallet MCP documentation](https://docs.cdp.coinbase.com/ai-agents/coinbase-for-agents/wallet-mcp)
-and updates ChatGPT, Claude, Claude Code, Codex, Cursor and Hermes instructions.
-Existing `https://mcp.base.org` connections remain supported. Keep their configured
-endpoint until an explicit OAuth reconnect; do not transfer an old grant to the
-new OAuth issuer by editing the server URL. This upstream change adds no tools
-or plugin capabilities. `.env.example` uses the new endpoint for fresh setups.
-
-- `READ` tools may answer scoped Base questions.
-- `ROUTABLE` swap/yield requests are handed to Routes; they cannot bypass provider comparison or Route Proof.
-- An `ACTION` is released only through a typed input policy, wallet binding, safety checks, explicit approval, idempotency, persistence, and reconciliation.
-- Reviewed HTTP recipes bypass generic prompting: Moonwell market/health reads use pinned hosts and exact paths.
-- Virtuals has a standalone `Sign in to Virtuals` action: Miorail requests an exact SIWE challenge, pauses for `Approve Sign-In` and keeps the authenticated provider session encrypted. Signing in does not create an agent; explicit agent creation remains a separate typed intent. Both record provider-confirmed Action Receipts.
-- Virtuals email OTP reads require an agent ID and message ID from the signed-in account. `Check my Virtuals email OTP status for agent agent-123 message message-456` hides the code. Only an explicit `Show Virtuals OTP code for agent agent-123 message message-456` reveals bounded candidates. Account ownership is checked first; email bodies, links, tokens and codes are excluded from traces. Unsupported result shapes and provider failures never become “no code”. Code validity/expiry is not verified, and no code is submitted or used. Generic signing, email sending and card actions remain unavailable.
-- Unknown tools, arbitrary calls, and documentation-only plugins remain blocked. Dynamic discovery never grants execution.
-
-Action Receipts are deliberately separate from Route Proofs.
-
-## Paid intelligence and x402
-
-x402 funds allowlisted evidence, simulation, inference, or compute. It does not fund portfolio asset movement.
-
-Miorail also implements the seller side:
-
-```text
-external agent
-  → x402 payment in Base USDC
-  → stored B20 intelligence / published proof verification
-  → versioned response + request hash + deterministic data hash
-```
-
-The free catalog is at `/api/x402/intelligence/v1/catalog`. Paid resources are bound to stored evidence; missing/invalid inputs are rejected before payment middleware, and no seller endpoint prepares wallet calls.
-
-### x402 settlement vs Builder Code attribution
-
-The seller and app-transaction paths are intentionally different.
-
-In a facilitated x402 seller payment, the external payer signs an authorization and the facilitator may build/broadcast the settlement transaction. Receiving x402 revenue therefore does not by itself mean Miorail originated an onchain transaction carrying Miorail's ERC-8021 Builder Code.
-
-For app-originated user execution, Miorail's wallet-action layer attaches the public Builder Code as an optional `dataSuffix` capability to `wallet_sendCalls` when the connected wallet reports support. Attribution never changes the server-approved calls and never blocks execution when the wallet lacks that capability.
+In the Base App and in Farcaster, the mini app is Still itself: the manifest at `https://miorail.xyz/.well-known/farcaster.json` opens `https://miorail.xyz/`, and the wallet the app already holds signs in place.
 
 ## Execution boundary
 
-- Miorail never stores a user private key, signs for the user, or broadcasts a raw transaction from the server.
-- The server builds exact unsigned calls; the connected Base Account is the signer and submits approved calls client-side.
+- Miorail never stores a user's private key, signs for the user, or broadcasts a raw transaction from the server.
+- The server builds exact unsigned calls; the person's own wallet signs them and sends them itself.
 - The client never supplies route calldata, router, recipient, spender, deadline, or minimum output.
 - Blueprint hashes bind intent, candidate, evidence, approved calls, wallet, chain, and expiry.
 - Provider output is independently decoded and checked before wallet approval.
-- Receipt success alone is insufficient. Route Proof reconciles expected and actual asset/position changes and gas.
-- Native Base ETH swap legs are reconstructed only from canonical WETH9 evidence for the approved router target.
-- RPC URLs, secrets, approval URLs, paid response bodies, and delivery secrets do not enter public evidence or rendered traces.
-- Before a tokenized-stock clearance is minted, the token's own onchain transfer policy is asked about that exact wallet. A **measured** denial of the scope that governs the direction — receiving on a buy, sending on a sell — refuses, as does a contract-wide transfer pause. Nothing else does: an unread policy, a throttled endpoint and a non-B20 contract are all `not_established` and all proceed, because a false denial is indistinguishable from a real one. It is the issuer's own per-address rule, enforced where the issuer publishes it, and it is not a jurisdiction check or a geo-gate.
-- An assistant can prepare a review and can never confirm one. The clearance that authorises asking for an unsigned request is minted only in a person's own session, against terms this server re-established at that moment, and it expires in minutes.
+- Receipt success alone is insufficient. A Route Proof reconciles expected and actual asset and position changes, and gas.
+- RPC URLs, secrets, approval URLs, paid response bodies and delivery secrets do not enter public evidence or rendered traces.
+- Before a tokenized-stock clearance is minted, the token's own onchain transfer policy is asked about that exact wallet, and a measured denial refuses. It is the issuer's own per-address rule; where Still is offered is a separate check, above.
+- An assistant can prepare a review and can never confirm one. The clearance that authorises asking for an unsigned request is minted only in a person's own session, against terms the server re-established at that moment, and it expires in minutes.
+- The public Builder Code travels as an optional `dataSuffix` capability on `wallet_sendCalls`. A wallet that does not name that capability gets the same ERC-8021 suffix appended to each call's data, which the contracts ignore; a call that already carries the code is never suffixed twice. Attribution never changes what a call does and never blocks a transaction.
 
-## Production acceptance
+More in [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
 
-The shared swap Route Proof lifecycle has completed owner-verified production journeys in both directions:
+## Proven on Base mainnet
+
+Swaps have completed owner-verified journeys in both directions, each reconciled into a Route Proof:
 
 ```text
 USDC → ETH → Route Proof reconciled
 ETH  → USDC → Route Proof reconciled
 ```
 
-The tokenized-stock path has also settled on mainnet, owner-verified, through the
-surface it was designed for — an assistant prepared it and could not sign it:
+A tokenized-stock buy settled through the surface it was designed for: an assistant prepared it and could not sign it.
 
 ```text
-ChatGPT → private MCP → prepare → the owner's Base Account signed it
+ChatGPT → private MCP → prepare → the owner's own wallet signed it
 tx    0xfa730a78719cad081ffe2b0690498858eef4efa5a61a74f05ff0166ff3e7f6fb
 block 50,884,282
 in    100,000 atoms USDC  ($0.100000)
 out    43,417 atoms NVDAc (expected 43,435, minimum 43,217)
 ```
 
-One buy, of the primary representation, at ten cents. What it establishes is the
-chain of custody over the request — the assistant never held a key, never wrote
-calldata, and never broadcast — not that every direction or every representation
-has been exercised.
-
-Production acceptance also includes canonical Base MCP reads/actions and real x402 intelligence purchases. Provider-specific proof promotion remains stricter than “the shared path worked once”; the acceptance ledger keeps those claims separate.
-
-The detailed rollout ledger that backs these claims is kept outside this repository.
+One buy, of the primary representation, at ten cents. What it establishes is the chain of custody over the request: the assistant never held a key, never wrote calldata, and never broadcast. Public product metrics, with exact definitions: [miorail.xyz/metrics](https://miorail.xyz/metrics).
 
 ## Repository map
 
-This is a pnpm monorepo. The product name is Miorail; the repository name `mioagent` and the `@mioagent/*` package namespace remain for compatibility.
+The product name is Miorail; the `@mioagent/*` package namespace remains for compatibility.
 
 | Path | Responsibility |
 | --- | --- |
-| `artifacts/api-server` | Express API, authenticated product routes, public/private MCP, workers, and reconciliation orchestration. |
-| `artifacts/interface` | Vite/React web console. |
-| `artifacts/miniapp` | Next.js Base App. |
+| `artifacts/api-server` | Express API, authenticated product routes, the three MCP servers, workers, and reconciliation. |
+| `artifacts/interface` | The Still web app at miorail.xyz, also the Base App and Farcaster mini app. |
+| `artifacts/miniapp` | The earlier Next.js surface, served at `/app`. |
+| `lib/still-engine` | Still's terms, the Mirror engine and its Morpho and Aave arithmetic. |
 | `lib/route-domain`, `lib/route-storage` | Versioned contracts, stable hashes, additive persistence, and append-only proof history. |
 | `lib/intent-engine`, `lib/route-engine`, `lib/route-card` | Typed intent, deterministic comparison, and Route Card projection. |
 | `lib/swap-adapters`, `lib/earn-engine` | Provider-neutral swap adapters and Earn comparison. |
 | `lib/security`, `lib/transaction-composer` | Safety Kernel and exact unsigned Blueprint construction. |
 | `lib/route-proof`, `lib/proof-verifier` | Expected-versus-actual reconciliation and independent integrity verification. |
-| `lib/opportunity-rail`, `lib/b20-control` | B20 measurement, controls, consumer projection, project claims, and Fundamental Intelligence. |
+| `lib/opportunity-rail`, `lib/b20-control` | B20 measurement, controls, project claims, and Fundamental Intelligence. |
 | `lib/rwa-market-reality`, `lib/rwa-issuer`, `lib/rwa-dossier` | Tokenized-stock identity, per-issuer adapters, market-reality comparison, use-and-access evidence, and the address dossier. |
-| `lib/mcp`, `lib/tools` | Base MCP transport, classification, and constrained execution. |
+| `lib/commerce-engine` | Bitrefill's catalogue and invoices, for Spend. |
+| `lib/mcp`, `lib/tools` | Wallet MCP transport, classification, and constrained execution. |
 | `lib/x402-gateway`, `lib/paid-intelligence`, `lib/intelligence-budget` | Paid evidence, reservations, charging, and reconciliation. |
-| `lib/wallet-actions` | Base Account approval/submission and ERC-8021 attribution handling. |
-| `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared web/Base App UI and runtime-validated contracts. |
-| `contracts/legacy` | Historical custom Sepolia Spend Permission experiment; production uses the official Base Account Spend Permission flow. |
+| `lib/wallet-actions` | Wallet approval and submission, and ERC-8021 attribution. |
+| `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared screens and runtime-validated contracts. |
 
-## Development
+Which integrations are live, and how far each is proven: [docs/PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
 
-Requirements:
+## Contributing and security
 
-- Node.js 22.x;
-- pnpm 11.x through Corepack;
-- PostgreSQL 17 — `pnpm db:up` runs it in Docker, pinned to the major version
-  production runs.
-
-```bash
-pnpm install --frozen-lockfile
-cp .env.example .env
-
-pnpm exec tsx artifacts/api-server/index.ts
-pnpm --filter @mioagent/interface dev
-pnpm --filter @mioagent/miniapp dev
-```
-
-Primary checks:
-
-```bash
-pnpm test:unit
-pnpm test:db
-pnpm typecheck
-pnpm --filter @mioagent/interface build
-pnpm -r build
-git diff --check
-```
-
-Dependencies use `minimumReleaseAge: 7d` in `pnpm-workspace.yaml`. Pin a mature version when pnpm cannot resolve one; do not relax the supply-chain policy. Never commit `.env` files, RPC URLs, private keys, approval URLs, OAuth tokens, or provider credentials.
-
-### Deployment
-
-Production deployment is managed by `ops/deploy.sh`, which builds the deployables, validates nginx/systemd configuration, publishes the exact served bundle, restarts services, and smoke-tests the Base App and public MCP.
-
-The build injects only the public `BASE_BUILDER_CODE` into the client surfaces. It never needs a user signing key.
-
-Production services include:
-
-```text
-miorail-api
-miorail-miniapp
-miorail-b20-discover
-miorail-b20-measure
-```
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md). **Do not file security bugs as public issues.**
+- What Miorail guarantees, and what it does not: [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
 
 ## Safety notice
 
@@ -814,11 +207,11 @@ Fork it freely; call your fork something else.
 ## Authorship
 
 Miorail is maintainer-directed and developed with extensive AI-assisted
-engineering. Commits carry a single canonical identity, `Miorail Development`,
-because the alternative — a contributor graph of the tools that held the
-keyboard — describes the workflow rather than who is answerable for the code.
-One person directs the work and is accountable for it; the assistants are
-instruments, not contributors.
+engineering. The commit history says so as it happened: most commits carry the
+identity of the AI coding assistant that wrote them, beside the maintainer's
+own, `Miorail Development` for an earlier agent's work, and CI's. One person
+directs the work and is accountable for it; the assistants are instruments, not
+contributors.
 
 Every claim this repository makes about what Miorail measured is expected to be
 reproducible from the code and the evidence it stores, whoever or whatever

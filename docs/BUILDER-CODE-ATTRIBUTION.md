@@ -1,69 +1,53 @@
-# Agent README — Builder Code Attribution
+# Builder Code attribution
 
-This project sends onchain transactions on Base via the **user-confirmed flow**
-(Task T19). Every transaction MUST carry a Base Builder Code as an ERC-8021
-attribution suffix. Without it, Base cannot attribute the activity to this app
-— there is **no error and no warning**, just silent, permanent data loss.
+Every transaction a person sends from Miorail or Still carries Miorail's Base
+Builder Code as an ERC-8021 attribution suffix. Without it, Base cannot
+attribute the activity to the app, and there is no error and no warning: the
+data is lost silently and for good.
 
 ## What the Builder Code is
 
-The `builder_code` value returned by the Base API during registration at
-[base.dev](https://base.dev) > Settings > Builder Codes (e.g. `bc_a1b2c3d4`).
-It is a **public** value — not a secret — and is embedded in every
-`wallet_sendCalls` batch as a `dataSuffix` capability (ERC-8021). This is how
-Base tracks which builder originated which onchain activity.
+The `bc_…` value registered at [base.dev](https://base.dev) > Settings >
+Builder Codes. It is a **public** value, not a secret. The production build
+gets it from `BASE_BUILDER_CODE` in the server's environment, as
+`VITE_BASE_BUILDER_CODE` for the web app and `NEXT_PUBLIC_BASE_BUILDER_CODE`
+for the Next.js surface (`ops/deploy.sh`); a build without a valid code is
+refused. The older names `VITE_BUILDER_CODE` and `NEXT_PUBLIC_BUILDER_CODE`
+are still read, and a build where the two disagree is refused too.
 
-## How attribution is attached in this project
+## How a transaction carries it
 
-**Framework:** wagmi v3 (`useSendCalls`) targeting Base Account (ERC-4337 smart
-wallet). There is no server-side signer on Base Mainnet — the server only
-prepares unsigned EIP-5792 payloads (`POST /api/actions/:id/prepare`) and
-records results (`POST /api/actions/:id/confirm`). The user signs every
-transaction in their Base Account.
+The server prepares unsigned calls only; the person's own wallet signs and
+sends them. `lib/wallet-actions/src/attribution.ts` turns the code into the
+ERC-8021 suffix (`builderCodeToDataSuffix`, through `ox/erc8021`) and
+attaches it in one of two ways:
 
-**Attribution path:** per-`sendCalls` via the `capabilities.dataSuffix` field
-(wagmi v3 has no config-level `dataSuffix`). The suffix is computed from a
-public frontend env var:
+- **As a capability.** Each `wallet_sendCalls` batch carries
+  `capabilities.dataSuffix` with `optional: true`. A wallet that supports it
+  appends the code to the transaction itself, so the calls go exactly as
+  approved.
+- **In each call's data** (`attributedCallsV1`). A wallet that does not name
+  the capability, such as MetaMask, drops it, so each call gets the code
+  appended to its own data instead: the approved bytes, zero bytes up to the
+  next 32-byte word, then the code. Contracts ignore what follows their
+  arguments, and the server's checks accept exactly this shape. A call sent as
+  its own transaction, by a wallet without batches, ends with the code too.
 
-| Surface | Env var | Consumer |
-| ------- | ------- | -------- |
-| Web interface (Vite) | `VITE_BUILDER_CODE` | `artifacts/interface/src/features/inbox/ActionCard.tsx` |
-| Miniapp (Next.js) | `NEXT_PUBLIC_BUILDER_CODE` | `artifacts/miniapp/app/inbox/[actionId]/page.tsx` |
+A call never carries the code twice. While the wallet has not answered
+`wallet_getCapabilities`, and for a batch whose network fee Still's sponsor
+pays, the calls go exactly as approved, because the wallet appends the code to
+the user operation itself and the sponsor checks the calls byte for byte.
+Attribution never changes what a call does and never blocks a transaction.
 
-Both call `builderCodeToDataSuffix(code)` from
-`lib/wallet-actions/src/attribution.ts`, which uses
-`Attribution.toDataSuffix({ codes: [code] })` from `ox/erc8021`. When the env
-var is unset, the suffix is omitted and a one-time console warning is emitted;
-transactions still proceed but are **unattributed**.
+## Checking it
 
-The shared hook `useWalletConfirmAction` (`lib/wallet-actions/src/useWalletConfirmAction.ts`)
-passes the suffix into `useSendCalls` as:
-
-```ts
-capabilities: dataSuffix
-  ? { dataSuffix: { value: dataSuffix, optional: true } }
-  : undefined,
-```
-
-## Setup
-
-1. Register at <https://base.dev> > Settings > Builder Codes to obtain a `bc_…` code.
-2. Set the env var for each surface:
-   - `artifacts/interface/.env` → `VITE_BUILDER_CODE=bc_yourcode`
-   - `artifacts/miniapp/.env` → `NEXT_PUBLIC_BUILDER_CODE=bc_yourcode`
-3. Rebuild the frontend so the value is embedded at build time.
-
-## Verification
-
-- On [base.dev](https://base.dev) > Onchain > Total Transactions, attribution
-  counts appear after confirmed transactions.
-- On Basescan, inspect a confirmed tx's input data: the last 16 bytes are
-  `8021` repeating when attribution is attached.
+- On [base.dev](https://base.dev) > Onchain > Total Transactions, attributed
+  transactions are counted after they confirm.
+- On Basescan, a confirmed transaction's input ends with the ERC-8021 marker,
+  `8021` repeated, when the code is attached.
 - Validator: <https://builder-code-checker.vercel.app/>
 
 ## Rule
 
-> From this point forward, every `wallet_sendCalls` batch this app submits MUST
-> include the Builder Code attribution via the ERC-8021 `dataSuffix` capability.
-> Never submit a batch without it. Without it, transactions are untracked
-> silently and permanently.
+Every transaction this app asks a wallet to send carries the Builder Code, by
+the capability or in its calls. A path that sends without it is a bug.
