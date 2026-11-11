@@ -410,6 +410,20 @@ describe('§8 — tool discovery', () => {
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /expired quote is history/i);
   });
 
+  test('Aave is named by version: V3 does not list Coinbase stocks, V4’s stocks spoke takes them', async () => {
+    // Audit BASE-1 (2026-11-10): both texts said posting this collateral on Aave "now is wrong",
+    // while Aave V4 has taken it since 2026-09-25 and Still itself lends through that spoke.
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    const useAccess = tools.find((tool) => tool.name === 'get_use_access')!;
+    for (const text of [MIORAIL_MCP_INSTRUCTIONS_V1, useAccess.description ?? '']) {
+      assert.match(text, /Aave V3[’']s reserve list on Base does not name th(?:ose|ese) addresses/);
+      assert.match(text, /Aave V4[’']s Coinbase Stocks spoke has taken them as collateral since 2026-09-25/);
+      assert.match(text, /Say which one a claim is about/);
+      assert.doesNotMatch(text, /post th(?:at|is) collateral now is wrong/);
+    }
+  });
+
   test('the market-rails tool refuses to present itself as a ranking', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
