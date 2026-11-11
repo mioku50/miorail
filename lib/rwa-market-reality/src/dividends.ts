@@ -513,7 +513,8 @@ export const DIVIDEND_DECLARATIONS_V1: readonly DividendDeclarationV1[] = [
     symbol: 'WING',
     company: 'Wingstop',
     amountPerShare: '0.33',
-    declaredOn: '2026-07-29',
+    // The day the Board declared it, as the sentence says; the release went out on July 29.
+    declaredOn: '2026-07-28',
     exDate: null,
     recordDate: '2026-08-15',
     payDate: '2026-09-05',
@@ -529,7 +530,8 @@ export const DIVIDEND_DECLARATIONS_V1: readonly DividendDeclarationV1[] = [
     symbol: 'CAKE',
     company: 'The Cheesecake Factory',
     amountPerShare: '0.30',
-    declaredOn: '2026-07-28',
+    // The day the Board declared it, as the 8-K's own sentence says; the 8-K went out on July 28.
+    declaredOn: '2026-07-23',
     exDate: null,
     recordDate: '2026-08-11',
     payDate: '2026-08-25',

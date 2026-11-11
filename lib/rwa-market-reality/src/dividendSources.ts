@@ -453,12 +453,35 @@ export interface DividendReadingV1 {
   refused: string[];
 }
 
+/** How long before its release a board's decision may be dated and still be taken from the sentence. */
+const STATED_DECLARATION_MAX_DAYS_V1 = 45;
+
+/**
+ * The day the sentence itself gives for the decision, when it stands right
+ * before the matched words: "on July 23, 2026, the Board of Directors …
+ * declared". Null when the sentence gives none there.
+ *
+ * A results 8-K is filed days after the board met. Until 2026-11-11 the day
+ * the filing went out was shown as "declared on": Cheesecake Factory's
+ * dividend read October 27 where its own 8-K says the Board declared it on
+ * October 21 (audit DATA-4).
+ */
+function statedDeclarationDateV1(text: string, matchIndex: number): string | null {
+  const before = text.slice(Math.max(0, matchIndex - 280), matchIndex);
+  // "on July 23, 2026, the Board of Directors of the Company (the “Board”)", "On July 28, 2026, the
+  // Company’s Board of Directors", "On June 24, 2026, Micron’s Board of Directors": a date, then the
+  // board, with no sentence ending between them or before the matched words.
+  const found = new RegExp(`\\b[Oo]n (${DATE_V1}),? [^.;]{0,80}?\\b[Bb]oard\\b[^.;]{0,220}$`).exec(before);
+  return found ? usDateV1(found[1]!) : null;
+}
+
 /**
  * Every declaration one release makes, in the company's own sentence.
  *
- * `publishedAt` is when the release went out; its New York date is the
- * declaration date the calendar shows, and nothing may be declared after its
- * own record date.
+ * `publishedAt` is when the release went out. The declaration date the
+ * calendar shows is the day the sentence gives for the board's decision, when
+ * it gives one no later than the release and not long before it; otherwise the
+ * release's New York date. Nothing may be declared after its own record date.
  */
 export function readDividendReleaseV1(input: {
   issuer: DividendIssuerV1;
@@ -467,12 +490,15 @@ export function readDividendReleaseV1(input: {
   url: string;
   publisher: string;
 }): DividendReadingV1 {
-  const declaredOn = newYorkDateV1(input.publishedAt);
+  const publishedOn = newYorkDateV1(input.publishedAt);
   const found = new Map<string, DividendDeclarationV1>();
   const refused: string[] = [];
   for (const pattern of input.issuer.patterns) {
     for (const match of input.text.matchAll(new RegExp(pattern.source, 'g'))) {
       const groups = match.groups ?? {};
+      const stated = statedDeclarationDateV1(input.text, match.index ?? 0);
+      const early = stated === null ? -1 : daysBetweenV1(stated, publishedOn);
+      const declaredOn = stated !== null && early >= 0 && early <= STATED_DECLARATION_MAX_DAYS_V1 ? stated : publishedOn;
       const amount = (groups.amount ?? '').replace(/^\./, '0.');
       const payDate = usDateV1(groups.pay ?? '');
       const recordDate = usDateV1(groups.record ?? '');

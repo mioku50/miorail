@@ -169,6 +169,26 @@ describe('a declaration is the company’s own sentence, in full', () => {
     for (const [symbol, title, matches] of titles) assert.equal(issuer(symbol).feed!.title.test(title), matches, title);
   });
 
+  test('"declared on" is the day the sentence gives for the board’s decision, not the day the filing went out', () => {
+    // Audit DATA-4: Cheesecake Factory's dividend read "declared on October 27", the day its results 8-K
+    // was filed; the 8-K's own sentence says the Board declared it on October 21.
+    const cake = (sentence: string) =>
+      `<p>ITEM 8.01 OTHER EVENTS</p><p>${sentence} declared a quarterly cash dividend of $0.30 per share which will be paid on November 24, 2026 to the stockholders of record of each share of the Company&#8217;s common stock at the close of business on November 10, 2026.</p>`;
+    const declared = (sentence: string, publishedAt = '2026-10-27T20:10:00Z') => read('CAKE', cake(sentence), publishedAt).declarations[0]?.declaredOn;
+    assert.equal(declared('Additionally, on October 21, 2026, the Board of Directors of the Company (the &#8220;Board&#8221;)'), '2026-10-21');
+    assert.equal(declared('On October 21, 2026, the Company&#8217;s Board of Directors'), '2026-10-21');
+    // No day in the sentence: the day the filing went out, in New York, as before.
+    assert.equal(declared('The Board of Directors of the Company'), '2026-10-27');
+    assert.equal(declared('The Board of Directors of the Company', '2026-10-28T02:30:00Z'), '2026-10-27');
+    // A day after the filing, or long before it, is not this decision's day.
+    assert.equal(declared('Additionally, on October 29, 2026, the Board of Directors of the Company'), '2026-10-27');
+    assert.equal(declared('Additionally, on July 23, 2026, the Board of Directors of the Company'), '2026-10-27');
+    // A day that belongs to another sentence is not taken.
+    assert.equal(declared('The quarter ended on September 30, 2026. The Board of Directors of the Company'), '2026-10-27');
+    // And the day stated must still not be after the record date: that release is refused, not corrected.
+    assert.deepEqual(read('CAKE', cake('On October 21, 2026, the Board of Directors'), '2026-10-27T20:10:00Z').refused, []);
+  });
+
   test('a reworded release is nothing, and an impossible one is refused', () => {
     // A sentence the pattern was not written for: no guess at all.
     assert.deepEqual(read('AAPL', '<p>Apple declared a dividend of $0.28 per share, paid in November.</p>'), {
