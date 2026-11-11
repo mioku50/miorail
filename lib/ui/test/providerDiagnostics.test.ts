@@ -14,7 +14,9 @@ import {
   providerFailureViewV1,
   providerFailuresFromProjectionV1,
   shortfallNoticeFromProjectionV1,
+  swapDiagnosticMessageV1,
   swapDiagnosticReasonV1,
+  swapDiagnosticRetryableV1,
   swapProviderDisplayNameV1,
   type RoutePlanProjectionV1,
 } from '../src/console';
@@ -249,6 +251,42 @@ describe('§3.4 — what a comparison may claim', () => {
       }) as RoutePlanProjectionV1,
     );
     assert.match(rows.find((row) => row.state === 'chosen')!.why, /Best net result/);
+  });
+});
+
+describe('a refusal with a reason is never shown as one without', () => {
+  test('every provider code the adapters can write maps to words of its own', () => {
+    // The list above is kept by hand and had fallen behind: on 2026-11-11 Aerodrome's
+    // `provider_venue_not_covered` read "did not answer and reported no reason" for a provider that had
+    // answered, with a reason. This reads the codes from the adapters' own source, so a new one fails here.
+    const dir = path.join(here, '..', '..', 'swap-adapters', 'src');
+    const codes = new Set<string>();
+    for (const file of readdirSync(dir)) {
+      for (const match of readFileSync(path.join(dir, file), 'utf8').matchAll(/'(provider_[a-z0-9_]+)'/g)) codes.add(match[1]!);
+    }
+    assert.ok(codes.size >= 20, `read ${codes.size} codes`);
+    for (const code of codes) assert.notEqual(swapDiagnosticReasonV1(code), 'unknown', `${code} reads as "reported no reason"`);
+  });
+
+  test('Aerodrome’s concentrated pools and a route with no stated price are said as what they are', () => {
+    assert.equal(swapDiagnosticReasonV1('provider_venue_not_covered'), 'venue_not_covered');
+    const venue = swapDiagnosticMessageV1({ providerName: 'Aerodrome', reason: 'venue_not_covered', answered: ['KyberSwap', 'Uniswap'] });
+    assert.equal(venue, 'Aerodrome has a market for this pair in a kind of pool Miorail does not route through yet, so no quote was taken from it. KyberSwap and Uniswap still answered. This is Miorail\'s coverage, not missing liquidity.');
+    assert.doesNotMatch(venue, /reported no reason/);
+    assert.equal(swapDiagnosticReasonV1('provider_token_unpriced'), 'token_unpriced');
+    assert.match(swapDiagnosticMessageV1({ providerName: 'KyberSwap', reason: 'token_unpriced', answered: [] }), /^KyberSwap found a route and stated no dollar value for one side of it/);
+    assert.equal(swapDiagnosticRetryableV1('venue_not_covered'), false);
+  });
+
+  test('a provider that quoted is not also listed as never asked, whatever its id is', () => {
+    // o1's id is `o1-exchange` and its name `o1.exchange`: the first day it quoted, the table had it twice.
+    const o1 = { ...route('o1.exchange', '0.30'), provider: { id: 'o1-exchange', displayName: 'o1.exchange' } };
+    const rows = candidatesFromProjectionV1(
+      projection({ availableRoutes: [o1, route('Uniswap', '0.31')] as never, recommendedRoute: route('Uniswap', '0.31') as never }),
+      ['uniswap', 'kyberswap', 'o1-exchange'],
+    );
+    assert.equal(rows.filter((row) => row.name === 'o1.exchange').length, 1);
+    assert.deepEqual(rows.filter((row) => row.state === 'unavailable').map((row) => row.name), ['KyberSwap']);
   });
 });
 

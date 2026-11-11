@@ -64,6 +64,14 @@ export type SwapDiagnosticReasonV1 =
   // Its own reason precisely because the three it would otherwise fall into
   // each name the wrong party: the market, our coverage, or our transport.
   | 'provider_policy_refused'
+  // The pair trades at the provider, in a kind of pool this build does not
+  // route through. Ours, said as ours: until 2026-11-11 it fell to `unknown`
+  // and the row read "did not answer and reported no reason" for a provider
+  // that had answered, with a reason.
+  | 'venue_not_covered'
+  // The router found a route and stated no dollar value for one side, so the
+  // quote's price impact could not be checked and it was not used.
+  | 'token_unpriced'
   | 'amount_too_small'
   | 'unsupported_pair'
   | 'unsupported_chain'
@@ -111,6 +119,8 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
   // blame the market for a question nobody asked it.
   provider_unsupported_token: 'unsupported_token',
   provider_policy_refused: 'provider_policy_refused',
+  provider_venue_not_covered: 'venue_not_covered',
+  provider_token_unpriced: 'token_unpriced',
   provider_unsupported_intent: 'unsupported_pair',
   provider_chain_mismatch: 'unsupported_chain',
   provider_expired_quote: 'stale_quote',
@@ -154,6 +164,8 @@ export const SWAP_DIAGNOSTIC_LABEL_V1: Record<SwapDiagnosticReasonV1, string> = 
   no_route: 'no route',
   unsupported_token: 'token not covered',
   provider_policy_refused: 'declined to quote',
+  venue_not_covered: 'pool type not covered',
+  token_unpriced: 'no price stated',
   amount_too_small: 'amount too small',
   unsupported_pair: 'unsupported pair',
   unsupported_chain: 'unsupported chain',
@@ -223,6 +235,11 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
       // about the token, or about whether the refusal is lawful, correct or
       // permanent — none of which this build measured or could measure.
       return `${name} declined to quote this token under its trading policy.${stillWorks} That is this venue's own rule; it is not a finding about the token or about you.`;
+    case 'venue_not_covered':
+      // Ours as well: the market is there, and this build cannot route through it.
+      return `${name} has a market for this pair in a kind of pool Miorail does not route through yet, so no quote was taken from it.${stillWorks} This is Miorail's coverage, not missing liquidity.`;
+    case 'token_unpriced':
+      return `${name} found a route and stated no dollar value for one side of it, so its price impact could not be checked and the quote was not used.${stillWorks} This says nothing about whether the token trades.`;
     case 'unsupported_token':
       // Ours, not the market's: another router might cover it, and the token
       // itself may trade perfectly well somewhere this set does not reach.

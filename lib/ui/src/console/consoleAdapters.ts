@@ -354,6 +354,10 @@ export function candidatesFromProjectionV1(
 
   const accounted = new Set([
     ...quoted.map((row) => row.name.toLowerCase()),
+    // By id as well: o1's id is `o1-exchange` and its name `o1.exchange`, so a
+    // quoted o1 was also listed as "not asked for a quote" (2026-11-11, the
+    // first day it quoted since the registered set was passed in).
+    ...projection.availableRoutes.flatMap((route) => (route.provider.id ? [route.provider.id.toLowerCase()] : [])),
     ...failures.map((failure) => failure.providerName.toLowerCase()),
     ...failures.map((failure) => failure.providerId.toLowerCase()),
   ]);
