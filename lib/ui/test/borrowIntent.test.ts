@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { borrowAssetFromQueryV1, borrowCollateralDecimalsV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
-import { repayAllBoundAtomicV1, repayMaxV1 } from '../src/console/repayEntry.js';
+import { repayAllBoundAtomicV1, repayIntentAmountsV1, repayMaxV1, repayShortTextV1, repayTopUpAtomicV1 } from '../src/console/repayEntry.js';
+import { lendingExecutionCopyV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
   for (const [text, decimals, atomic] of [['.00000001', 8, '1'], ['0001.20', 6, '1200000'], ['.000000000000000001', 18, '1'], ['0', 18, '0']] as const) {
@@ -165,6 +166,41 @@ describe('Max fills the amount from the server’s own read', () => {
     assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'return'), { mode: 'return', atomic: '10010000' });
     // Short of the debt, Repay all keeps the wallet's USDC, and the page says how much to send.
     assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'all'), { mode: 'all', atomic: '4000000' });
+  });
+  // Audit LEND-2 (2026-11-10): Aave takes the smaller of the debt and the bound when a repayment lands, so a
+  // bound at the debt itself leaves the interest since the read owing, and the whole spoke was then held.
+  it('Repay all on Aave V4 is asked with room above the debt, and on Morpho, which repays by shares, with the debt', () => {
+    const ask = (venue: 'aave-v4' | 'morpho', maximum: string, wallet = '5000000') =>
+      repayIntentAmountsV1({ mode: 'all', amount: '', maximum, walletUsdcAtomic: wallet, debtAtomic: '2000003', blockNumber: 53_000_000, venue });
+    assert.equal(ask('aave-v4', '2.000003').intent, null);
+    assert.equal(ask('aave-v4', '2.000003').error,
+      'The debt is 2.000003 USDC now and this maximum is 2.000003 USDC: interest adds to the debt every second, and with so little room a part of it would be left owing. Set the maximum to at least 2.02 USDC; what is not needed stays in your wallet.');
+    assert.match(ask('aave-v4', '1.5').error ?? '', /more than this maximum of 1\.5 USDC: interest adds to it every second\. Set the maximum to at least 2\.02 USDC;/);
+    assert.deepEqual(ask('aave-v4', '2.02').intent, { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '2020000' });
+    assert.deepEqual(ask('morpho', '2.000003').intent, { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '2000003' });
+    assert.match(ask('morpho', '1.5').error ?? '', /Set the maximum a little above the debt; what is not needed stays in your wallet\.$/);
+    for (const venue of ['aave-v4', 'morpho'] as const) assert.doesNotMatch(ask(venue, '1.5').error ?? '', /at least the debt/);
+    // A wallet that covers the debt and not that room is told how much more to send; on Morpho it is not short.
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'aave-v4' }), BigInt(20_000));
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2020000', venue: 'aave-v4' }), null);
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'morpho' }), null);
+    assert.equal(repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'aave-v4' }),
+      'This wallet holds 2.00006 USDC and the debt is 2.000003 USDC now. Repay all on Aave V4 is asked with room for the interest that adds to the debt until it lands: at least 2.02 USDC, 0.01994 USDC more than the wallet holds. '
+      + 'Send this wallet a little more USDC, for example 0.02 USDC, then read the position again. What is not needed stays in your wallet.');
+    assert.equal(ask('aave-v4', '2.00006', '2000060').error, repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'aave-v4' }));
+    // Short of the debt itself, the words are the ones already known, and the example reaches the bound.
+    assert.match(repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000000', venue: 'aave-v4' }) ?? '', /0\.000003 USDC short\..*for example 0\.02 USDC, then read the position again\.$/);
+    assert.match(repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000000', venue: 'morpho' }) ?? '', /for example 0\.02 USDC, then read the position again\.$/);
+  });
+  it('a Repay all that landed and left interest owing says how much, and is not called closed', () => {
+    assert.equal(lendingExecutionCopyV1('confirmed', null, '23'),
+      'Confirmed onchain: the repayment landed. Interest that added to the debt until it landed left 0.000023 USDC owing: repay it to close the loan.');
+    assert.equal(lendingExecutionCopyV1('confirmed', null, null), 'Confirmed onchain: the approved calls and the resulting position were verified.');
+    assert.equal(lendingExecutionCopyV1('confirmed', null, '0'), 'Confirmed onchain: the approved calls and the resulting position were verified.');
+    const row = { executionId: 'execution_1', state: 'confirmed', transactionHash: `0x${'9'.repeat(64)}`, errorCode: null };
+    assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: '23' }, 'execution_1')?.remainingDebtAtomic, '23');
+    assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: null }, 'execution_1')?.remainingDebtAtomic, null);
+    for (const bad of ['0', '-1', '1.5', 23]) assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: bad }, 'execution_1'), null);
   });
   it('Max for Repay all is the debt read, rounded up to the cent, plus one cent or 0.1% of it, whichever is more', () => {
     // 2026-11-10, the operator: Max put all 171.8 USDC of the wallet in for a debt of 0.850328 USDC.

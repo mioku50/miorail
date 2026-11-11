@@ -18,6 +18,7 @@
     "./scenario": "./src/scenario.ts",
     "./terms": "./src/terms.ts",
     "./eligibility": "./src/eligibility.ts",
+    "./repay": "./src/repay.ts",
     "./rpc": "./src/rpc.ts"
   },
   "scripts": {

@@ -1,3 +1,4 @@
+import { repayAllBoundAtomicV1 as engineRepayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { parseBorrowDecimalV1 } from '../still/borrowIntent';
 import { tokenDecimalV1 } from './stockSellAmount';
@@ -67,12 +68,19 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
   if (input.mode === 'assets' && input.debtAtomic !== undefined && repayExactCoversDebtV1(input.amount, input.debtAtomic)) {
     return { intent: null, error: repayExactWholeDebtTextV1({ debtAtomic: input.debtAtomic, blockNumber: input.blockNumber ?? 0, venue: input.venue ?? 'morpho' }) };
   }
-  // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for.
+  // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for. On Aave V4 it
+  // must also leave room: Aave takes the smaller of the debt and the bound when the repayment lands, so a
+  // bound at the debt itself leaves the interest since the read owing (audit LEND-2, 2026-11-10).
   if (input.mode !== 'assets' && input.debtAtomic !== undefined && atomic(input.debtAtomic) && BigInt(input.debtAtomic) > BigInt(0)) {
-    const short = repayShortTextV1({ debtAtomic: input.debtAtomic, walletUsdcAtomic: input.walletUsdcAtomic });
+    const short = repayShortTextV1({ debtAtomic: input.debtAtomic, walletUsdcAtomic: input.walletUsdcAtomic, venue: input.venue });
     if (short) return { intent: null, error: short };
     if (BigInt(exact.atomic) < BigInt(input.debtAtomic)) {
-      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now, more than this maximum of ${usdcTextV1(exact.atomic)}: interest adds to it every second. Set the maximum to at least the debt; what is not needed stays in your wallet.` };
+      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now, more than this maximum of ${usdcTextV1(exact.atomic)}: interest adds to it every second. `
+        + `Set the maximum ${input.venue === 'aave-v4' ? `to at least ${usdcTextV1(repayAllBoundAtomicV1(input.debtAtomic))}` : 'a little above the debt'}; what is not needed stays in your wallet.` };
+    }
+    if (input.venue === 'aave-v4' && BigInt(exact.atomic) < repayAllBoundAtomicV1(input.debtAtomic)) {
+      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now and this maximum is ${usdcTextV1(exact.atomic)}: interest adds to the debt every second, and with so little room a part of it would be left owing. `
+        + `Set the maximum to at least ${usdcTextV1(repayAllBoundAtomicV1(input.debtAtomic))}; what is not needed stays in your wallet.` };
     }
   }
   if (BigInt(exact.atomic) > BigInt(input.walletUsdcAtomic)) return { intent: null, error: 'The chosen USDC funding exceeds the balance read for this wallet.' };
@@ -87,12 +95,12 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
  * contract takes what is owed when it lands and the rest stays in the wallet,
  * so a bound only has to be enough, and one near the debt leaves a small
  * allowance behind (2026-11-10, the operator: Max put all 171.8 USDC of the
- * wallet in as the bound for a debt of 0.850328 USDC). */
+ * wallet in as the bound for a debt of 0.850328 USDC).
+ *
+ * The formula is still-engine's, so the server refuses an Aave Repay all below
+ * the same bound (audit LEND-2, 2026-11-10). */
 export function repayAllBoundAtomicV1(debtAtomic: string): bigint {
-  const debt = BigInt(debtAtomic), cent = BigInt(10_000);
-  const upToCent = (value: bigint) => ((value + cent - BigInt(1)) / cent) * cent;
-  const perMille = upToCent((debt + BigInt(999)) / BigInt(1_000));
-  return upToCent(debt) + (perMille > cent ? perMille : cent);
+  return engineRepayAllBoundAtomicV1(debtAtomic);
 }
 
 /** What Max does on Repay, from the position just read. For Repay all, the
@@ -114,20 +122,34 @@ export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walle
 const usdcTextV1 = (atomicUsdc: string | bigint) => `${tokenDecimalV1(atomicUsdc.toString(), 6)} USDC`;
 
 /** What a wallet short of its debt adds before Repay all: the shortfall rounded up to the
- * cent, and one cent more for the interest that keeps accruing until it is signed. */
-export function repayTopUpAtomicV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>): bigint | null {
-  const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic), cent = BigInt(10_000);
-  return short > BigInt(0) ? ((short + cent - BigInt(1)) / cent) * cent + cent : null;
+ * cent, and one cent more for the interest that keeps accruing until it is signed. On Aave V4
+ * the wallet has to hold the bound Repay all is asked with, which already has that room: there
+ * it is what the wallet is short of the bound, rounded up to the cent. */
+export function repayTopUpAtomicV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'> & { venue?: RepayCapacityWireV1['venue'] }): bigint | null {
+  const cent = BigInt(10_000), upToCent = (value: bigint) => ((value + cent - BigInt(1)) / cent) * cent;
+  if (read.venue === 'aave-v4' && BigInt(read.debtAtomic) > BigInt(0)) {
+    const below = repayAllBoundAtomicV1(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+    return below > BigInt(0) ? upToCent(below) : null;
+  }
+  const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+  return short > BigInt(0) ? upToCent(short) + cent : null;
 }
 
 /** Why Repay all cannot be prepared from this wallet yet, in its own numbers (2026-11-03: a
  * wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later). It says where the
  * USDC goes: on 2026-11-07 a wallet holding the 0.85 USDC it had just borrowed owed 0.850001,
  * and "add a little more" read as an error, not as USDC to send to the wallet. */
-export function repayShortTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>): string | null {
+export function repayShortTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'> & { venue?: RepayCapacityWireV1['venue'] }): string | null {
   const add = repayTopUpAtomicV1(read);
   if (add === null) return null;
   const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+  // The wallet covers the debt, and not the room an Aave Repay all is asked with above it.
+  if (short <= BigInt(0)) {
+    const least = repayAllBoundAtomicV1(read.debtAtomic);
+    return `This wallet holds ${usdcTextV1(read.walletUsdcAtomic)} and the debt is ${usdcTextV1(read.debtAtomic)} now. Repay all on Aave V4 is asked with room for the interest that adds to the debt `
+      + `until it lands: at least ${usdcTextV1(least)}, ${usdcTextV1(least - BigInt(read.walletUsdcAtomic))} more than the wallet holds. Send this wallet a little more USDC, for example ${usdcTextV1(add)}, `
+      + 'then read the position again. What is not needed stays in your wallet.';
+  }
   // Under a cent short, the wallet holds about what it borrowed: the debt passed it by rounding and interest alone.
   const send = short < BigInt(10_000)
     ? 'A debt is counted rounded up and grows every second, so the USDC a loan paid out never quite covers it. Send this wallet a little more USDC'

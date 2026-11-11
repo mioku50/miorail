@@ -151,11 +151,25 @@ describe('protocol lending receipt effects and pinned positions', () => {
       assert.notEqual((await check(execution('aave-v4'), [outAave(), event])).result.state, 'matched');
     }
   });
-  it('Aave full repayment does not close while any debt or drawn shares remain', async () => {
+  it('Aave Repay all that landed and left interest owing is a repayment with a tail, never an unknown (audit LEND-2)', async () => {
     const record = execution('aave-v4'); Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
     const logs = [outAave(3_000_000n), aaveEvent('repay', { assets: 3_000_000n, shares: 300n })];
-    assert.equal((await check(record, logs, { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n })).result.state, 'matched');
-    for (const p of [{ debtAssets: 1n, debtShares: 0n, collateralAssets: 100n }, { debtAssets: 0n, debtShares: 1n, collateralAssets: 100n }]) assert.notEqual((await check(record, logs, p)).result.state, 'matched');
+    const closed = (await check(record, logs, { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n })).result;
+    assert.equal(closed.state, 'matched');
+    if (closed.state === 'matched') assert.equal(closed.proof.remainingDebtAssets, '0');
+    // The bound was reached before the debt: Aave restored the bound, and what the own event did not restore is left.
+    const tight = [outAave(3_000_000n), aaveEvent('repay', { assets: 3_000_000n, shares: 299n })];
+    const tail = (await check(record, tight, { debtAssets: 23n, debtShares: 1n, collateralAssets: 100n })).result;
+    assert.equal(tail.state, 'matched');
+    if (tail.state === 'matched') assert.deepEqual([tail.proof.remainingDebtAssets, tail.proof.remainingDebtShares, tail.proof.appliedShares], ['23', '1', '299']);
+    // Premium owing with every drawn share restored is a tail too.
+    const premium = (await check(record, logs, { debtAssets: 1n, debtShares: 0n, collateralAssets: 100n })).result;
+    assert.equal(premium.state, 'matched');
+    if (premium.state === 'matched') assert.equal(premium.proof.remainingDebtAssets, '1');
+    // Shares that do not follow from the own event are another hand in the position: still unknown.
+    for (const p of [{ debtAssets: 0n, debtShares: 1n, collateralAssets: 100n }, { debtAssets: 23n, debtShares: 2n, collateralAssets: 100n }]) {
+      assert.notEqual((await check(record, p.debtShares === 2n ? tight : logs, p)).result.state, 'matched');
+    }
   });
   it('Aave borrow requires the selected stock supply event, destination and resulting pledge', async () => {
     const record = execution('aave-v4', 'borrow'); record.run.facts.collateralSupplyAssets = '10';

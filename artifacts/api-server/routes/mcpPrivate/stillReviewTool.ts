@@ -128,6 +128,9 @@ export async function stillReviewStatusV1(
     ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares the purchase without naming the wallet.`
     : '';
   const returned = facts.collateralReturnAssets === undefined ? null : unitsTextV1(BigInt(facts.collateralReturnAssets), facts.collateralDecimals);
+  // What a confirmed Repay all left owing, as the review page reads it from the same record.
+  const left = (record.verification?.effect as { remainingDebtAssets?: unknown } | undefined)?.remainingDebtAssets;
+  const tail = record.state === 'confirmed' && facts.operation === 'repay' && facts.amountMode === 'all' && typeof left === 'string' && /^[1-9][0-9]{0,38}$/.test(left) ? left : null;
   return {
     reviewId, state: record.state, operation: facts.operation, venue: facts.venue, collateral: facts.collateralSymbol,
     ...(returned === null ? {} : { collateralReturned: returned }),
@@ -135,7 +138,9 @@ export async function stillReviewStatusV1(
     ...(purchase ? { purchase } : {}),
     next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1
       : record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1 ? RELEASED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
-      record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}`,
+      record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}${
+      // A Repay all on Aave that landed and left interest owing (audit LEND-2): the loan is not closed yet.
+      tail === null ? '' : ` Interest that added to the debt until the repayment landed left ${usdcTextV1(tail)} USDC owing: the loan is not closed until that is repaid too.`}`,
   };
 }
 

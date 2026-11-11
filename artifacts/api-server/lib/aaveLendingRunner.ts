@@ -7,6 +7,7 @@ import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4B
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
+import { repayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
 import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
 
 export interface AaveLendingDepsV1 {
@@ -68,13 +69,18 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   const ask = q.operation === 'borrow' ? BigInt(q.borrowAssets) : q.amountMode === 'assets' ? BigInt(q.repayAssets!) : BigInt(q.maximumAssets);
   if ((ask <= 0n && !returning) || ask < 0n || ask >= (1n << 128n)) return fail('aave_amount_invalid', 'Choose an exact positive USDC amount.');
   if (q.operation === 'borrow' && (!s.capacity || ask > s.capacity.availableAssets)) return fail('aave_over_still_limit', 'The requested loan exceeds the measured Still allowance for this exact collateral choice.');
+  // Aave takes the smaller of the debt and the bound when a repayment lands. A bound with no room above the
+  // debt read leaves the interest since owing, so Repay all is asked with room (audit LEND-2, 2026-11-10).
+  const repayAllMinimum = q.operation === 'repay' && q.amountMode === 'all' && s.debtAssets > 0n ? repayAllBoundAtomicV1(s.debtAssets) : null;
   if (q.operation === 'repay') {
     if (returning && s.existingSuppliedAssets === 0n) return fail('nothing_to_return', `No ${s.selectedStock.id} is deposited in this Aave Spoke at the reading block, so there is nothing to take back.`);
     if (returning && s.snapshot.aave?.reserves.some(r => r.info.role.kind !== 'usdc' && (!r.status.ok || r.status.value.borrowing))) {
       return fail('aave_other_debt_open', 'Another asset is borrowed in this Aave account, so a stock is not taken back here. Only a USDC loan is repaid and closed by Still.');
     }
     if (s.debtAssets === 0n && !returning) return fail('nothing_to_repay', 'No USDC debt was recorded in this Aave Spoke at the reading block.');
-    if (q.amountMode === 'all' && s.debtAssets > ask) return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt: s.debtAssets, maximum: ask, wallet: s.walletUsdcAssets }));
+    if (repayAllMinimum !== null && ask < repayAllMinimum) {
+      return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt: s.debtAssets, maximum: ask, wallet: s.walletUsdcAssets, minimum: repayAllMinimum }));
+    }
     if (q.amountMode === 'assets' && ask > s.debtAssets) return fail('repay_exceeds_debt', 'The exact partial repayment exceeds the recorded debt. Choose full repayment with an explicit maximum instead.');
     if (ask > BigInt(q.maximumAssets)) return fail('repay_maximum_exceeded', 'The chosen repayment exceeds the explicit USDC budget.');
   }
@@ -84,7 +90,8 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   const repayAssets = back && !back.repay ? 0n : ask;
   // Said here in numbers; the plan below refuses the same thing in a sentence.
   if (q.operation === 'repay' && repayAssets > s.walletUsdcAssets) {
-    return fail('aave_funding_insufficient', repayWalletBelowMaximumWordsV1({ debt: s.debtAssets, maximum: repayAssets, wallet: s.walletUsdcAssets }));
+    return fail('aave_funding_insufficient', repayWalletBelowMaximumWordsV1({ debt: s.debtAssets, maximum: repayAssets, wallet: s.walletUsdcAssets,
+      ...(repayAllMinimum === null ? {} : { minimum: repayAllMinimum }) }));
   }
   let allowanceAssets = 0n;
   if (sequential && ((q.operation === 'repay' && repayAssets > 0n) || supply > 0n)) {

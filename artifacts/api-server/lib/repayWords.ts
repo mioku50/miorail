@@ -19,18 +19,36 @@ function shortWordsV1(debt: bigint, wallet: bigint): string {
     : '';
 }
 
-/** Repay all with a maximum below the debt as it is now. */
-export function repayMaximumBelowDebtWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint }): string {
-  return `The debt is ${usdcWordsV1(input.debt)} now, more than your maximum of ${usdcWordsV1(input.maximum)}: interest adds to it every second. `
-    + `Set the maximum to at least the debt; what is not needed stays in your wallet.${shortWordsV1(input.debt, input.wallet)}`;
+/** Repay all with a maximum below the debt as it is now, or below the least Aave is asked with.
+ *
+ * On Aave a maximum at the debt itself is not enough: Aave takes the smaller of the two when the
+ * repayment lands, so the interest since the read would be left owing, and "at least the debt" was the
+ * advice that produced exactly that (audit LEND-2, 2026-11-10). `minimum` is the bound Repay all needs
+ * there (still-engine's repayAllBoundAtomicV1); on Morpho, which repays by shares, none is named. */
+export function repayMaximumBelowDebtWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint; minimum?: bigint }): string {
+  const lead = input.maximum < input.debt
+    ? `The debt is ${usdcWordsV1(input.debt)} now, more than your maximum of ${usdcWordsV1(input.maximum)}: interest adds to it every second. `
+    : `The debt is ${usdcWordsV1(input.debt)} now and your maximum is ${usdcWordsV1(input.maximum)}: interest adds to the debt every second, and with so little room a part of it would be left owing. `;
+  if (input.minimum === undefined) {
+    return `${lead}Set the maximum a little above the debt; what is not needed stays in your wallet.${shortWordsV1(input.debt, input.wallet)}`;
+  }
+  const short = input.wallet < input.minimum
+    ? ` This wallet holds ${usdcWordsV1(input.wallet)}, ${usdcWordsV1(input.minimum - input.wallet)} short of that: send it at least that much more USDC, then read the position again.`
+    : '';
+  return `${lead}Set the maximum to at least ${usdcWordsV1(input.minimum)}; what is not needed stays in your wallet.${short}`;
 }
 
-/** A maximum the wallet's USDC does not cover. */
-export function repayWalletBelowMaximumWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint }): string {
-  return `This wallet holds ${usdcWordsV1(input.wallet)}, less than your maximum of ${usdcWordsV1(input.maximum)}.`
-    + (input.wallet >= input.debt
-      ? ` The debt is ${usdcWordsV1(input.debt)}, so a maximum between that and what the wallet holds covers it.`
-      : ` The debt is ${usdcWordsV1(input.debt)}, ${usdcWordsV1(input.debt - input.wallet)} more than the wallet holds: send it a little more USDC than that, then read the position again.`);
+/** A maximum the wallet's USDC does not cover. `minimum` is the least an Aave Repay all is asked with:
+ * a maximum between the debt and the wallet's USDC is not enough there (audit LEND-2). */
+export function repayWalletBelowMaximumWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint; minimum?: bigint }): string {
+  const lead = `This wallet holds ${usdcWordsV1(input.wallet)}, less than your maximum of ${usdcWordsV1(input.maximum)}.`;
+  if (input.wallet < input.debt) {
+    return `${lead} The debt is ${usdcWordsV1(input.debt)}, ${usdcWordsV1(input.debt - input.wallet)} more than the wallet holds: send it a little more USDC than that, then read the position again.`;
+  }
+  if (input.minimum === undefined) return `${lead} The debt is ${usdcWordsV1(input.debt)}, so a maximum between that and what the wallet holds covers it.`;
+  return input.wallet >= input.minimum
+    ? `${lead} The debt is ${usdcWordsV1(input.debt)} and Repay all is asked with at least ${usdcWordsV1(input.minimum)}, so a maximum between that and what the wallet holds covers it.`
+    : `${lead} The debt is ${usdcWordsV1(input.debt)} and Repay all is asked with at least ${usdcWordsV1(input.minimum)}, ${usdcWordsV1(input.minimum - input.wallet)} more than the wallet holds: send it at least that much more USDC, then read the position again.`;
 }
 
 /** An exact repayment at or above a Morpho debt. Morpho keeps a debt as shares, and the debt shown

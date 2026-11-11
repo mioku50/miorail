@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { repayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
 import { usdcWordsV1 } from './repayWords.js';
 import { describe, it } from 'node:test';
 import { stableHashV1 } from '@mioagent/route-domain';
@@ -291,6 +292,22 @@ describe('Aave runner: repay all, then take the stock back', () => {
       assert.equal(below.refusal, 'repay_maximum_exceeded');
       assert.ok(below.detail.startsWith(`The debt is ${usdcWordsV1(h.s.debtAssets)} now, more than your maximum of ${usdcWordsV1(h.s.debtAssets - 1n)}: interest adds to it every second.`), below.detail);
     }
+    // Audit LEND-2 (2026-11-10): Aave takes the smaller of the debt and the bound when the repayment lands, so
+    // a maximum at the debt itself leaves the interest since the read owing. The least bound is named.
+    const least = repayAllBoundAtomicV1(h.s.debtAssets);
+    for (const maximum of [h.s.debtAssets, least - 1n]) {
+      const tight = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: maximum.toString() } }, h.deps);
+      assert.equal(tight.state, 'refused');
+      if (tight.state === 'refused') {
+        assert.equal(tight.refusal, 'repay_maximum_exceeded');
+        assert.ok(tight.detail.includes(`Set the maximum to at least ${usdcWordsV1(least)}; what is not needed stays in your wallet.`), tight.detail);
+        assert.doesNotMatch(tight.detail, /at least the debt/);
+      }
+    }
+    // At the least bound the maximum is no longer what refuses: the review goes on to be simulated.
+    const roomy = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: least.toString() } }, h.deps);
+    assert.notEqual(roomy.state === 'refused' ? roomy.refusal : null, 'repay_maximum_exceeded');
+    assert.equal(h.simulations(), 1);
     const short = { ...h.s, walletUsdcAssets: h.s.debtAssets - 3n };
     const funding = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, { ...h.deps, read: async () => ({ state: 'read' as const, standing: short }) });
     assert.equal(funding.state, 'refused');
@@ -298,7 +315,7 @@ describe('Aave runner: repay all, then take the stock back', () => {
       assert.equal(funding.refusal, 'aave_funding_insufficient');
       assert.match(funding.detail, /^This wallet holds [\d.]+ USDC, less than your maximum of 20 USDC\. The debt is [\d.]+ USDC, 0\.000003 USDC more than the wallet holds/);
     }
-    assert.equal(h.simulations(), 0);
+    assert.equal(h.simulations(), 1);
   });
   async function returning(debt = true, change?: (body: SimulationProviderResponseV1) => void, delivery?: 'sequential') {
     const s = await aaveStandingFixture('repay', debt ? aaveReadFixture() : aaveRepaidReadFixture());

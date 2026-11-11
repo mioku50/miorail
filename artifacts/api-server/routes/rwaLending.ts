@@ -230,10 +230,19 @@ function lendingStatusDepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV
 async function settleStoppedStepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>, owner: LoanOwnerV1, executionId: string) {
   return refreshLoanExecutionV1({ owner, executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
 }
+/** What a confirmed Repay all left owing, in USDC base units; null when it closed the loan, or for anything else. */
+export function repayAllTailAtomicV1(record: Pick<LoanExecutionV1, 'state' | 'run' | 'verification'>): string | null {
+  const facts = record.run.facts, effect = record.verification?.effect as { remainingDebtAssets?: unknown } | undefined;
+  if (record.state !== 'confirmed' || facts.operation !== 'repay' || facts.amountMode !== 'all') return null;
+  const left = effect?.remainingDebtAssets;
+  return typeof left === 'string' && /^[1-9][0-9]{0,38}$/.test(left) ? left : null;
+}
 /** A loan's result as its owner reads it. A loan in steps says how many landed, and whether it can be stopped there. */
 function executionAnswerV1(record: LoanExecutionV1) {
   return { ...loanExecutionWireV1(record), facts: record.run.facts,
     transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode, steps: loanStepsStandingV1(record),
+    // A Repay all on Aave that landed and left interest owing (audit LEND-2): how much, for the page to say.
+    remainingDebtAtomic: repayAllTailAtomicV1(record),
     // One sent as a single batch that its wallet may never have sent: whether its owner can ask to release it, and from when.
     release: loanReleaseStandingV1(record, rwaLendingRuntimeV1.now()),
     // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.

@@ -4,7 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import { STOCKS, ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
-import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
+import { repayAllTailAtomicV1, rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { issueLendingDraftV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
@@ -173,6 +173,19 @@ describe('session-owned lending HTTP boundary', () => {
     assert.deepEqual(await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId }), []);
     assert.equal((await request(app()).get(path)).body.state, 'failed');
     assert.equal(simulations, 2);
+  });
+  it('a confirmed Repay all that left interest owing says how much, and nothing else does (audit LEND-2)', () => {
+    const run = (operation: string, amountMode: string) => ({ facts: { operation, amountMode } }) as never;
+    const left = (remainingDebtAssets: unknown) => ({ effect: { remainingDebtAssets } });
+    assert.equal(repayAllTailAtomicV1({ state: 'confirmed', run: run('repay', 'all'), verification: left('23') }), '23');
+    for (const none of [
+      { state: 'confirmed', run: run('repay', 'all'), verification: left('0') },
+      { state: 'confirmed', run: run('repay', 'all'), verification: null },
+      { state: 'confirmed', run: run('repay', 'all'), verification: left(23) },
+      { state: 'confirmed', run: run('repay', 'assets'), verification: left('23') },
+      { state: 'confirmed', run: run('borrow', 'assets'), verification: left('23') },
+      { state: 'unknown', run: run('repay', 'all'), verification: left('23') },
+    ]) assert.equal(repayAllTailAtomicV1(none as never), null, JSON.stringify(none));
   });
   it('a released review takes back only a transaction that is its own, and never a wrong paste', async () => {
     let clock = now;

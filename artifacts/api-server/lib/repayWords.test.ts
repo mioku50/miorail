@@ -11,7 +11,28 @@ test('a repayment that cannot be prepared is said in the wallet’s own numbers'
   assert.equal(usdcWordsV1(3n), '0.000003 USDC');
   assert.equal(
     repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_000n, wallet: 2_000_000n }),
-    'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second. Set the maximum to at least the debt; what is not needed stays in your wallet. This wallet holds 2 USDC, 0.000003 USDC short of the debt: send it a little more USDC than that, then read the position again.',
+    'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second. Set the maximum a little above the debt; what is not needed stays in your wallet. This wallet holds 2 USDC, 0.000003 USDC short of the debt: send it a little more USDC than that, then read the position again.',
+  );
+  // Audit LEND-2 (2026-11-10): "at least the debt" was the advice that left a tail on Aave. There the least
+  // bound is named, and what the wallet is short of it.
+  assert.equal(
+    repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_003n, wallet: 2_000_060n, minimum: 2_020_000n }),
+    'The debt is 2.000003 USDC now and your maximum is 2.000003 USDC: interest adds to the debt every second, and with so little room a part of it would be left owing. Set the maximum to at least 2.02 USDC; what is not needed stays in your wallet. This wallet holds 2.00006 USDC, 0.01994 USDC short of that: send it at least that much more USDC, then read the position again.',
+  );
+  assert.equal(
+    repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_000n, wallet: 5_000_000n, minimum: 2_020_000n }),
+    'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second. Set the maximum to at least 2.02 USDC; what is not needed stays in your wallet.',
+  );
+  for (const words of [repayMaximumBelowDebtWordsV1({ debt: 5n, maximum: 4n, wallet: 9n }), repayMaximumBelowDebtWordsV1({ debt: 5n, maximum: 5n, wallet: 9n, minimum: 20_000n })]) {
+    assert.doesNotMatch(words, /at least the debt/);
+  }
+  assert.equal(
+    repayWalletBelowMaximumWordsV1({ debt: 1_000_000n, maximum: 3_000_000n, wallet: 2_000_000n, minimum: 1_010_000n }),
+    'This wallet holds 2 USDC, less than your maximum of 3 USDC. The debt is 1 USDC and Repay all is asked with at least 1.01 USDC, so a maximum between that and what the wallet holds covers it.',
+  );
+  assert.equal(
+    repayWalletBelowMaximumWordsV1({ debt: 1_000_000n, maximum: 1_010_000n, wallet: 1_004_000n, minimum: 1_010_000n }),
+    'This wallet holds 1.004 USDC, less than your maximum of 1.01 USDC. The debt is 1 USDC and Repay all is asked with at least 1.01 USDC, 0.006 USDC more than the wallet holds: send it at least that much more USDC, then read the position again.',
   );
   assert.doesNotMatch(repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_000n, wallet: 5_000_000n }), /short/);
   assert.equal(

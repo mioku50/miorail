@@ -232,8 +232,12 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
           p.collateralAssets !== (returned === null ? BigInt(f.collateralBeforeAssets) + BigInt(f.collateralSupplyAssets) : 0n)) return unknown('loan_position_changed_outside_receipt');
     } else {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
+      // The principal shares the own event moved are the invariant. Repay all on Aave restores the smaller of
+      // the debt and the bound when it lands, so with interest past the bound a tail of shares stays: that is
+      // a repayment that landed and left something owing, said below, never an unknown that holds the whole
+      // spoke for ever (audit LEND-2). With the stock taken back in the same review nothing may be left.
       const expectedDebtShares = f.operation === 'borrow' ? BigInt(f.debtBeforeShares) + shares :
-        f.amountMode === 'all' ? 0n : BigInt(f.debtBeforeShares) - shares;
+        f.amountMode === 'all' && returned !== null ? 0n : BigInt(f.debtBeforeShares) - shares;
       if (expectedDebtShares < 0n || p.debtShares !== expectedDebtShares) return unknown('loan_debt_shares_changed');
       if (f.collateralBeforeShares === undefined || f.collateralBeforeShares === null || p.collateralShares === undefined) return unknown('loan_collateral_shares_unread');
       let suppliedShares = 0n;
@@ -255,7 +259,9 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
       if (p.debtAssets < 0n || (returned === null ? p.collateralAssets < BigInt(f.collateralBeforeAssets) : p.collateralAssets !== 0n) ||
           (f.operation === 'borrow' && p.debtAssets < assets)) return unknown('loan_position_changed_outside_receipt');
     }
-    if (f.operation === 'repay' && f.amountMode === 'all' && (p.debtAssets !== 0n || p.debtShares !== 0n)) return unknown('loan_full_repayment_not_closed');
+    // Morpho repays all by shares, and a stock is taken back only from a closed loan: there nothing is left.
+    // On Aave alone what is left after a Repay all is carried as remainingDebtAssets, for its owner to repay.
+    if (f.operation === 'repay' && f.amountMode === 'all' && (f.venue === 'morpho' || returned !== null) && (p.debtAssets !== 0n || p.debtShares !== 0n)) return unknown('loan_full_repayment_not_closed');
     return { state: 'matched', proof: { operation: f.operation, venue: f.venue, appliedAssets: assets.toString(), appliedShares: shares.toString(),
       remainingDebtAssets: p.debtAssets.toString(), remainingDebtShares: p.debtShares.toString(), collateralAssets: p.collateralAssets.toString(), blockNumber: receipt.blockNumber.toString(),
       ...(returned !== null ? { collateralReturnedAssets: returned.toString() } : {}),

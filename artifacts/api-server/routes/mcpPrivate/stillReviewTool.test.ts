@@ -138,6 +138,20 @@ test('a review its owner released as never sent is not called a failed transacti
   assert.doesNotMatch(status.next, /Base shows the transaction failed/);
 });
 
+test('a Repay all that landed and left interest owing is not told as a closed loan', async () => {
+  const { deps } = await fixture({ payment: null });
+  const base = deps.refresh;
+  deps.refresh = async (input) => {
+    const record = await base(input);
+    return record && { ...record, state: 'confirmed' as const, transactionHash: TX,
+      run: { ...record.run, facts: { ...record.run.facts, operation: 'repay' as const, amountMode: 'all' as const } },
+      verification: { effect: { remainingDebtAssets: '23' } } };
+  };
+  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.equal(status.state, 'confirmed');
+  assert.match(status.next, /Interest that added to the debt until the repayment landed left 0\.000023 USDC owing: the loan is not closed until that is repaid too\.$/);
+});
+
 test('a reading Bitrefill could not give again stays, named as its last word and with the reason', async () => {
   const { deps, invoiceReads } = await fixture({ state: 'confirmed', allowRead: false, lastRead: 'payment_confirmed' });
   const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
