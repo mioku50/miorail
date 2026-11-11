@@ -59,7 +59,7 @@ export function loanReleaseStandingV1(record: LoanExecutionV1, now: Date): { off
 }
 
 /** What Base says the wallet has sent since the review's block: nothing (with the count that shows it), or why that cannot be said. */
-async function sentNothingSinceV1(record: LoanExecutionV1, reader: BaseChainReaderV1):
+export async function sentNothingSinceV1(record: LoanExecutionV1, reader: BaseChainReaderV1):
   Promise<{ ok: true; proof: Record<string, unknown> } | { ok: false; refusal: LoanReleaseRefusalV1 }> {
   const unread = { ok: false as const, refusal: 'loan_release_wallet_unread' as const };
   const wallet = record.walletAddress, block = BigInt(record.run.measured.blockNumber);
@@ -126,6 +126,32 @@ export async function releasedLoanLandedV1(record: LoanExecutionV1, hash: HashV1
     const [receipt, transaction] = await Promise.all([reader.getTransactionReceipt(hash), reader.getTransaction(hash)]);
     if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== hash) return false;
     return bindLoanTransactionV1({ execution: record, receipt, transaction }).state !== 'unknown';
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A new loan is not sent on a review the wallet has since moved past
+// (audit WAL-6 and LEND-3, 2026-11-10).
+//
+// Base Account answers "declined" (4001) however its window closed, even after
+// the person confirmed in it; Still then makes the review ready again, and a
+// second press could send the same loan beside the first, which was on its way
+// all along. And any transaction of the wallet after the block a review was
+// read at may have changed what that review says.
+//
+// So before a new loan is armed, Base is asked once whether the wallet has
+// sent anything since the review's block. Yes, or one still waiting: the loan
+// is not armed, the wallet is not asked, and the page prepares the review
+// again. Base not answering is not a yes: the arm goes on, as before. A
+// repayment is never asked this.
+// ---------------------------------------------------------------------------
+export async function walletMovedSinceReviewV1(record: LoanExecutionV1, reader: BaseChainReaderV1): Promise<boolean> {
+  if (record.run.facts.operation !== 'borrow') return false;
+  try {
+    const sent = await sentNothingSinceV1(record, reader);
+    return !sent.ok && sent.refusal !== 'loan_release_wallet_unread';
   } catch {
     return false;
   }

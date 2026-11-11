@@ -358,8 +358,9 @@ export function useLendingReviewConsoleV1(input: {
           // The page's connection was not live, or the wallet answers as another account: it was never
           // asked, the review is ready again, and "the result is unknown" would be false both ways (audit WAL-3).
           ?? (walletConnectionNotReadyV1(error) ? WALLET_CONNECTION_NOT_READY_V1 : null) ?? walletNotAskedSentenceV1(error)
-          // Another attempt holds the market: the server says which, before the wallet was ever asked.
-          ?? (!handedToWallet ? serverDetailV1(error, /^execution_active$/) : null)
+          // Another attempt holds the market, or landed after this review was read (audit LEND-3): the
+          // server says which, before the wallet was ever asked.
+          ?? (!handedToWallet ? serverDetailV1(error, /^(?:execution_active|lending_position_changed|lending_wallet_moved)$/) : null)
           ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
             : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
@@ -388,11 +389,13 @@ export function useLendingReviewConsoleV1(input: {
   const releasedUnsent = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_wallet_sent_nothing';
   // A loan in steps stopped part way still takes a step its wallet sent after all, by that step's hash.
   const stoppedInSteps = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_steps_stopped' && Boolean(active.execution.steps);
-  // A Spend loan in steps that stopped before its payment because Bitrefill could not be read just then:
-  // the invoice is still open, and the wallet's own USDC may pay it on that invoice's page. Any other stop
-  // (an invoice Bitrefill denied, a step declined) offers no such thing.
+  // A Spend loan in steps that stopped before its payment: while Bitrefill holds the invoice, the wallet's own
+  // USDC may pay it on that invoice's page. The server says so with the attempt (and with the review, when
+  // the page is opened again); a stop this page just saw because Bitrefill could not be read says it at once.
   const payingOrder = active.body?.facts?.payment?.orderId ?? null;
-  const walletPayPath = payingOrder && /^[0-9a-f-]{36}$/.test(payingOrder) && active.stepsRefusal === 'spend_invoice_unread' ? `/spend/pay/${payingOrder}` : null;
+  const offeredOrder = active.execution?.walletPay?.orderId ?? (active.body?.state === 'refused' ? active.body.walletPay?.orderId : null)
+    ?? (active.stepsRefusal === 'spend_invoice_unread' ? payingOrder : null);
+  const walletPayPath = offeredOrder && /^[0-9a-f-]{36}$/.test(offeredOrder) ? `/spend/pay/${offeredOrder}` : null;
   return { body: eligible ? active.body : null, model: {
     loading: eligible && active.loading, error: !eligible ? 'Sign in and connect the same wallet to read this private review.' : active.error,
     body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy,

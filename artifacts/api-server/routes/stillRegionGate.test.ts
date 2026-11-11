@@ -188,11 +188,12 @@ describe('a new loan', () => {
     assert.match(card.body.detail, /in your own browser/);
   });
 
-  it('is not reviewed through the old Morpho routes from the United States', async () => {
-    ip = USA;
-    const old = await request(app()).post('/api/route-intelligence/rwa/borrow/review').send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '5000000' });
-    assert.equal(old.status, 403);
-    assert.equal(old.body.code, 'region_restricted');
+  it('has no other way to a loan’s calls: the old Morpho review routes are gone for everyone (audit LEND-6)', async () => {
+    for (const from of [USA, GERMANY]) {
+      ip = from;
+      const old = await request(app()).post('/api/route-intelligence/rwa/borrow/review').send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '5000000' });
+      assert.equal(old.status, 404);
+    }
   });
 });
 

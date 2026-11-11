@@ -42,6 +42,13 @@ let asked: Array<{ question: LendingQuestionV1; delivery?: string; atLeastBlock?
 // What Base says the wallet has sent, mined and with what the node holds pending.
 let count: { latest: number; pending: number };
 
+/** The block a review is read at: the chain's head, which is past every step that has landed (a review is
+ * true of its own block, and a later one is not made stale by what landed before it: audit LEND-3). */
+function headV1(): number {
+  let head = 53_000_000;
+  for (const { receipt } of sent.values()) if (Number(receipt.blockNumber) >= head) head = Number(receipt.blockNumber) + 1;
+  return head;
+}
 /** The runner as the chain stands: in steps, what already landed is not asked again. */
 function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }): LendingRunV1 {
   asked.push({ question: input.question, ...(input.delivery ? { delivery: input.delivery } : {}), ...(input.atLeastBlock !== undefined ? { atLeastBlock: input.atLeastBlock } : {}) });
@@ -53,10 +60,10 @@ function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'seq
   const calls = planned.map((call, index) => ({ ...call, index }));
   return { state: 'ready', calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${(sequential ? '22' : '11').repeat(32)}`,
     expiresAt: new Date(NOW.getTime() + 30_000).toISOString(), ...(sequential ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }),
-    steps: calls.map(call => ({ index: call.index, to: call.to, reading: 'Synthetic fixture only' })), measured: { blockNumber: 53_000_000, provider: 'fixture', loanDeltaAssets: '180000' },
+    steps: calls.map(call => ({ index: call.index, to: call.to, reading: 'Synthetic fixture only' })), measured: { blockNumber: headV1(), provider: 'fixture', loanDeltaAssets: '180000' },
     facts: { operation: 'borrow', venue: 'aave-v4', collateralTokenAddress: q.collateralTokenAddress, collateralSymbol: 'AAPLc', collateralDecimals: 18, marketId: SPOKE,
       amountMode: 'assets', requestedAssets: q.borrowAssets, maximumDebitAssets: '0', collateralSupplyAssets: q.collateralSupplyAssets, debtBeforeAssets: '0', debtAfterAssets: q.borrowAssets,
-      collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: 53_000_000, warnings: [] } };
+      collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: headV1(), warnings: [] } };
 }
 
 /** The Morpho runner as the chain stands, for a cbBTC loan: in steps, what already landed is not asked again. */
@@ -69,10 +76,10 @@ function morphoReview(input: { collateralSupplyAssets?: bigint; borrowAssets: bi
   return { state: 'ready', marketId: CRYPTO[0]!.morphoMarket, calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${(sequential ? '44' : '33').repeat(32)}`,
     expiresAt: new Date(NOW.getTime() + 30_000).toISOString(), atomicRequired: !sequential, ...(sequential ? { delivery: 'sequential' } : {}),
     plan: { steps: calls.map(call => ({ index: call.index, to: call.to, reading: 'Synthetic fixture only' })) },
-    measured: { blockNumber: 53_000_000, providerId: 'fixture', arrivedAssets: '180000' },
+    measured: { blockNumber: headV1(), providerId: 'fixture', arrivedAssets: '180000' },
     lendingFacts: { operation: 'borrow', venue: 'morpho', collateralTokenAddress: CBBTC, collateralSymbol: 'cbBTC', collateralDecimals: 8, marketId: CRYPTO[0]!.morphoMarket,
       amountMode: 'assets', requestedAssets: input.borrowAssets.toString(), maximumDebitAssets: '0', collateralSupplyAssets: supply.toString(), debtBeforeAssets: '0',
-      debtAfterAssets: '180000', collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: 53_000_000, warnings: [] } } as never;
+      debtAfterAssets: '180000', collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: headV1(), warnings: [] } } as never;
 }
 /** The wallet sends call `call` as transaction `n`, and it lands. */
 function land(n: number, call: ExecutionCallV1, patch: Partial<BaseTransactionSourceV1> = {}) {
@@ -316,13 +323,14 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     const r = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
       .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '180000', collateralSupplyAtomic: '1000000', spendOrderId: ORDER_ID });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    const ready = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(r.body.reviewUrl).slice('/lending/'.length)}`).query({ delivery: 'sequential' })).body;
+    const link = String(r.body.reviewUrl).slice('/lending/'.length);
+    const ready = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' })).body;
     assert.equal(ready.state, 'ready', JSON.stringify(ready));
     assert.deepEqual([ready.atomicRequired, ready.delivery, ready.calls.length, ready.facts.payment.payTo], [false, 'sequential', 4, PAY_TO]);
     const armed = await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${ready.executionId}/arm`)
       .send({ callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
     assert.equal(armed.status, 200);
-    return { id: ready.executionId as string, attemptId: armed.body.attemptId as string };
+    return { id: ready.executionId as string, attemptId: armed.body.attemptId as string, link };
   }
 
   it('reviews the loan steps with the payment attached, reads the invoice before paying, and submits after the payment', async () => {
@@ -381,6 +389,25 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     const record = await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: first.id });
     assert.deepEqual([record!.state, record!.errorCode, record!.verification?.stoppedAt, record!.run.calls.length], ['failed', 'loan_steps_stopped', 3, 4]);
     assert.equal(loanStoppedBeforePaymentV1(record!), true);
+    // The server says where the wallet can pay it, with the attempt and with the review opened again
+    // (2026-11-11: the page offered it only until it was reloaded).
+    const answer = (await request(app()).get(`/api/route-intelligence/rwa/lending/executions/${first.id}`)).body;
+    assert.deepEqual([answer.state, answer.errorCode, answer.walletPay], ['failed', 'loan_steps_stopped', { orderId: ORDER_ID }]);
+    const reopened = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${first.link}`).query({ delivery: 'sequential' })).body;
+    assert.deepEqual([reopened.state, reopened.refusal, reopened.executionId, reopened.walletPay], ['refused', 'lending_submission_pending', first.id, { orderId: ORDER_ID }]);
+    // Only while Still holds the invoice: once it is gone, nothing is offered, and nothing else changes.
+    Object.assign(rwaLendingRuntimeV1, { spendOrders: createSpendOrderStoreV1({ now: () => NOW }) });
+    const later = (await request(app()).get(`/api/route-intelligence/rwa/lending/executions/${first.id}`)).body;
+    assert.deepEqual([later.state, later.errorCode, later.walletPay], ['failed', 'loan_steps_stopped', null]);
+    assert.equal((await request(app()).get(`/api/route-intelligence/rwa/lending/review/${first.link}`).query({ delivery: 'sequential' })).body.walletPay, null);
+  });
+
+  it('offers no wallet payment for a loan that paid, or one still on its way', async () => {
+    const { id, attemptId } = await start();
+    land(1, APPROVE);
+    await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
+    // Part way, not stopped: the loan may still pay.
+    assert.equal((await request(app()).get(`/api/route-intelligence/rwa/lending/executions/${id}`)).body.walletPay, null);
   });
 
   it('takes no loan for an invoice that stopped waiting before the borrow', async () => {

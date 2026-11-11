@@ -129,14 +129,34 @@ describe('lending completion is chain evidence, not SDK status', () => {
     const result = await refreshLoanExecutionV1(input(record), dependencies(store, { reader: { getTransaction: async () => transaction(), getTransactionReceipt: async () => receipt([BEFORE, event({ success: false })]) } }));
     assert.equal(result!.state, 'failed'); assert.equal(result!.errorCode, 'loan_operation_reverted');
   });
-  it('removes confirmed from the response after a missing or changed receipt', async () => {
-    for (const missing of [true, false]) {
-      const { store, record } = await setup(); const deps = dependencies(store);
-      assert.equal((await refreshLoanExecutionV1(input(record), deps))!.state, 'confirmed');
-      deps.reader = { getTransaction: async () => transaction(), getTransactionReceipt: async () => missing ? null : { ...receipt(), blockNumber: 53000002n } };
-      const result = await refreshLoanExecutionV1(input(record), deps);
-      assert.equal(result!.state, 'unknown'); assert.match(result!.errorCode!, missing ? /not_matched/ : /receipt_changed/);
+  it('removes confirmed from the response after a changed receipt', async () => {
+    const { store, record } = await setup(); const deps = dependencies(store);
+    assert.equal((await refreshLoanExecutionV1(input(record), deps))!.state, 'confirmed');
+    deps.reader = { getTransaction: async () => transaction(), getTransactionReceipt: async () => ({ ...receipt(), blockNumber: 53000002n }) };
+    const result = await refreshLoanExecutionV1(input(record), deps);
+    assert.equal(result!.state, 'unknown'); assert.match(result!.errorCode!, /receipt_changed/);
+  });
+  // Audit LEND-4 (2026-11-10): every view read a confirmed loan again from nothing, and one answer the RPC
+  // did not give turned it back into "unknown", which holds its market against the repayment.
+  it('keeps a confirmed result that cannot be read again, and reads nothing else for it', async () => {
+    const { store, record } = await setup(); const deps = dependencies(store);
+    const confirmed = await refreshLoanExecutionV1(input(record), deps);
+    assert.equal(confirmed!.state, 'confirmed');
+    let effects = 0, batches = 0;
+    const silent = { ...deps, readBatchHashes: async () => { batches++; return null; },
+      verifyEffectPosition: async () => { effects++; return { state: 'unavailable' as const, errorCode: 'loan_position_at_receipt_unread' }; } };
+    for (const reader of [
+      { getTransaction: async () => transaction(), getTransactionReceipt: async () => null },
+      { getTransaction: async () => null, getTransactionReceipt: async () => { throw new Error('rpc down'); } },
+      // Read again and the same: nothing is written, so its version and time do not move either.
+      { getTransaction: async () => transaction(), getTransactionReceipt: async () => receipt() },
+    ]) {
+      const result = await refreshLoanExecutionV1(input(record), { ...silent, reader });
+      assert.deepEqual([result!.state, result!.errorCode, result!.version, result!.updatedAt], ['confirmed', null, confirmed!.version, confirmed!.updatedAt]);
     }
+    assert.deepEqual([effects, batches], [0, 0]);
+    // Its market is free: nothing holds it.
+    assert.deepEqual(await store.listActiveInScope({ owner: input(record).owner, executionId: 'none' }), []);
   });
   it('does not pass another tenant through to any chain reader', async () => {
     const { store, record } = await setup(); let reads = 0;

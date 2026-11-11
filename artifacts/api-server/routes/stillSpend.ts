@@ -4,8 +4,8 @@ import { SPEND_EMAIL_V1, spendInvoiceSettledV1, spendPhoneV1, type BitrefillGues
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
-import { LOAN_STEPS_STOPPED_V1 } from '../lib/lendingSteps.js';
-import { loanExecutionRuntimeV1, type LoanExecutionV1 } from '../lib/loanExecutionStore.js';
+import { loanStoppedBeforePaymentV1 } from '../lib/lendingSteps.js';
+import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { spendInvoiceReadsV1, type SpendInvoiceDisplayV1 } from '../lib/stillSpendInvoiceReads.js';
@@ -232,14 +232,7 @@ function walletOrderV1(req: Request, res: Response): { wallet: string; owner: Sp
   return { wallet, owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, orderId };
 }
 
-/** A loan in steps that was stopped before its last step, the payment, and read as such from Base: the
- * rest is never asked of the wallet again, so this loan did not pay the invoice and never will. The
- * person may hold the loan's USDC with nothing bought; their wallet may pay the same invoice (audit SPEND-2). */
-export function loanStoppedBeforePaymentV1(row: Pick<LoanExecutionV1, 'state' | 'errorCode' | 'run' | 'verification'>): boolean {
-  const stoppedAt = row.verification?.stoppedAt;
-  return row.run.delivery === 'sequential' && row.state === 'failed' && row.errorCode === LOAN_STEPS_STOPPED_V1 &&
-    typeof stoppedAt === 'number' && Number.isInteger(stoppedAt) && stoppedAt >= 0 && stoppedAt < row.run.calls.length;
-}
+export { loanStoppedBeforePaymentV1 };
 
 /** A loan that paid this invoice, or tried to: one invoice is paid once. */
 async function loanHoldsInvoiceV1(owner: SpendOrderOwnerV1, orderId: string): Promise<boolean> {

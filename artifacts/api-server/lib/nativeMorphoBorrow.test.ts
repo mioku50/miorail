@@ -60,6 +60,8 @@ describe('explicit native ETH collateral',()=>{
     assert.equal(r.atomicRequired,false);assert.equal(r.delivery,'sequential');
     assert.deepEqual(r.calls.map(c=>c.callType),['other','approval','deposit','other']);
     assert.match(r.facts.warnings.join(' '),/Your wallet sends this as 4 steps, one transaction each/);
+    // Audit LEND-5: stopped after the wrap, the wallet holds WETH where it held ETH, and the review says so.
+    assert.match(r.facts.warnings.at(-1)!,/The first step wraps your ETH: stopping after it leaves that amount in your wallet as WETH, not ETH, and not pledged\.$/);
     const unread=nativeMorphoHarness();unread.reading.markets[0]!.collateralAllowanceToMorphoAssets=null;
     const refused=await runNativeMorphoBorrowV1({...unread.q,delivery:'sequential'},unread.deps);
     assert.equal(refused.state,'refused');assert.equal(unread.simulations(),0);

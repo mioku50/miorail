@@ -12,16 +12,16 @@ import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
 import { loanExecutionRuntimeV1, type LoanExecutionV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
-import { refreshLoanExecutionV1, loanExecutionWireV1 } from '../lib/loanExecutionStatus.js';
+import { refreshLoanExecutionV1, loanExecutionWireV1, positionMovedSinceReviewV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1, readBaseWalletBatchStatusV1 } from '../lib/stockExecutionStatus.js';
-import { LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1 } from '../lib/loanRelease.js';
+import { LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1, walletMovedSinceReviewV1 } from '../lib/loanRelease.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { spendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDeliveryV1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1, type SpendDeliveryV1 } from '../lib/stillSpendOrders.js';
-import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
+import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, loanStoppedBeforePaymentV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
@@ -148,7 +148,9 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
     res.json({ state: 'refused', refusal: expired ? 'lending_preparation_expired' : 'lending_submission_pending',
       detail: expired ? 'The preparation expired. Your existing submission can still be checked; nothing can be sent from this link.'
         : 'This review has an existing wallet attempt. Check its recorded result before preparing another.',
-      executionId: prior.executionId, executionState: prior.state, facts: prior.run.facts }); return;
+      executionId: prior.executionId, executionState: prior.state, facts: prior.run.facts,
+      // Said here too, so a page opened again offers it without a press (2026-11-11).
+      walletPay: spendWalletPayOfferV1(prior) }); return;
   }
   // Expiration ends preparation, not the owner's access to an already armed
   // submission. This branch can return status/facts, never executable calls.
@@ -242,6 +244,15 @@ export function repayAllTailAtomicV1(record: Pick<LoanExecutionV1, 'state' | 'ru
   return typeof left === 'string' && /^[1-9][0-9]{0,38}$/.test(left) ? left : null;
 }
 /** A loan's result as its owner reads it. A loan in steps says how many landed, and whether it can be stopped there. */
+/** A Still Spend loan in steps that stopped before its payment, while Still still holds the invoice: its
+ * wallet may pay that invoice from its own USDC on the invoice's page (routes/stillSpend.ts takes it there,
+ * and reads Bitrefill again). Said by the server, so a page opened again says it too; null for anything else. */
+function spendWalletPayOfferV1(record: LoanExecutionV1): { orderId: string } | null {
+  const payment = record.run.facts.payment;
+  if (!payment || !loanStoppedBeforePaymentV1(record) || !rwaLendingRuntimeV1.spendEnabled()) return null;
+  const order = rwaLendingRuntimeV1.spendOrders.get({ tenantId: record.tenantId, walletAddress: record.walletAddress }, payment.orderId);
+  return order && Date.parse(order.expiresAt) > rwaLendingRuntimeV1.now().getTime() ? { orderId: order.orderId } : null;
+}
 function executionAnswerV1(record: LoanExecutionV1) {
   return { ...loanExecutionWireV1(record), facts: record.run.facts,
     transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode, steps: loanStepsStandingV1(record),
@@ -249,6 +260,8 @@ function executionAnswerV1(record: LoanExecutionV1) {
     remainingDebtAtomic: repayAllTailAtomicV1(record),
     // One sent as a single batch that its wallet may never have sent: whether its owner can ask to release it, and from when.
     release: loanReleaseStandingV1(record, rwaLendingRuntimeV1.now()),
+    // Still Spend: a loan in steps stopped before it paid, whose invoice the wallet can still pay itself.
+    walletPay: spendWalletPayOfferV1(record),
     // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
     share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) };
 }
@@ -274,6 +287,17 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
         return { ok: false as const, refusal: 'invoice_has_attempt' as const };
       }
     }
+    // A new loan's review is true of the block it was read at: another attempt of this wallet in the same
+    // market that landed after that block made its numbers untrue (audit LEND-3). Asked before the arm, and
+    // again after what held the market was read, which is exactly when the first of two reviews has landed.
+    const moved = async () => execution?.run.facts.operation === 'borrow' && execution.state === 'ready' &&
+      positionMovedSinceReviewV1(execution, await store.listLandedInScope({ owner, executionId }));
+    if (await moved()) return { ok: false as const, refusal: 'lending_position_changed' as const };
+    // And Base is asked once whether the wallet itself has sent anything since that block: a batch its window
+    // reported as declined may have been sent all the same (audit WAL-6). Not answered is not a yes.
+    if (execution?.state === 'ready' && await walletMovedSinceReviewV1(execution, rwaLendingRuntimeV1.reader())) {
+      return { ok: false as const, refusal: 'lending_wallet_moved' as const };
+    }
     let result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
     if (!result.ok && result.refusal === 'execution_active') {
       // A lock is only as current as its last reading: what holds this market is read from the chain once
@@ -281,6 +305,7 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
       for (const held of await store.listActiveInScope({ owner, executionId })) {
         await refreshLoanExecutionV1({ owner, executionId: held.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
       }
+      if (await moved()) return { ok: false as const, refusal: 'lending_position_changed' as const };
       result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
     }
     return result;
@@ -288,10 +313,18 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const result = paying ? await withSpendInvoiceLockV1(paying.orderId, arm) : await arm();
   if (!result.ok) {
     const error = result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal;
-    res.status(409).json({ error, ...(error === 'execution_active' ? { detail: EXECUTION_ACTIVE_DETAIL_V1 } : {}) }); return;
+    res.status(409).json({ error, ...(error === 'execution_active' ? { detail: EXECUTION_ACTIVE_DETAIL_V1 }
+      : error === 'lending_position_changed' ? { detail: POSITION_CHANGED_DETAIL_V1 }
+      : error === 'lending_wallet_moved' ? { detail: WALLET_MOVED_DETAIL_V1 } : {}) }); return;
   }
   res.json({ attemptId: result.attemptId, sponsorship: loanSponsorshipV1(owner, result.execution) });
 });
+/** Why a new loan was not armed: its review was read before another one of this wallet landed. */
+const POSITION_CHANGED_DETAIL_V1 = 'Another loan or repayment of yours in this market landed after this review was prepared, so its numbers are no longer current. '
+  + 'Your wallet was not asked and nothing was sent. Open the review again: it is prepared on your position as it is now.';
+/** Why a new loan was not armed: the wallet sent something after its review was read. */
+const WALLET_MOVED_DETAIL_V1 = 'Your wallet sent a transaction after this review was prepared, or has one on its way, so the review’s numbers may no longer be current. '
+  + 'Your wallet was not asked and nothing more was sent. Check your wallet’s activity, then open the review again: it is prepared on your position as it is now.';
 /** Why an arm was refused while another attempt holds the market (2026-11-09: a repayment said only
  * "could not be armed" while the loan before it, landed, was still being read). */
 const EXECUTION_ACTIVE_DETAIL_V1 = 'Another loan or repayment in this market has not settled yet, so this one was not sent and your wallet was not asked. '

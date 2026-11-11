@@ -2,9 +2,9 @@ import { Router, type Request, type Response } from 'express';
 import { BORROW_REVIEW_REFUSALS_V1 } from '@mioagent/rwa-issuer/borrowReview';
 import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 
-import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
+import { issueBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1, stillBorrowComparisonWireV1 } from '../lib/stillBorrowStanding.js';
-import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
+import { runMorphoBorrowV1 } from '../lib/morphoBorrowRunner.js';
 import { nativeMorphoFundingRefusalV1 } from '../lib/nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
@@ -82,48 +82,6 @@ function atomicV1(value: unknown, allowZero: boolean): bigint | null {
 
 const objectV1 = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-
-/** The run, as JSON. Calls ride the ready branch and no other — the shape is
- * the gate, so a client cannot read them out of a refusal. */
-function runBodyV1(run: MorphoBorrowRunV1): Record<string, unknown> {
-  if (run.state === 'refused') {
-    return {
-      state: 'refused',
-      stage: run.stage,
-      refusal: run.refusal,
-      detail: run.detail,
-      marketId: run.marketId,
-      review: run.review,
-    };
-  }
-  return {
-    state: 'ready',
-    marketId: run.marketId,
-    review: run.review,
-    steps: run.plan.steps.map((step) => ({
-      index: step.index,
-      to: step.to,
-      selector: step.selector,
-      venueDescription: step.venueDescription,
-      readByMiorail: step.decodedByMiorail,
-      reading: step.reading,
-    })),
-    authorizations: run.plan.authorizations,
-    targets: run.plan.targets,
-    calls: run.calls.map((call) => ({ to: call.to, value: call.valueWei, data: call.data })),
-    callsHash: run.callsHash,
-    signingTermsHash: run.signingTermsHash,
-    expiresAt: run.expiresAt,
-    atomicRequired: run.atomicRequired,
-    ...(run.funding ? { funding: run.funding } : {}),
-    ...(run.stillPolicy ? { stillPolicy: run.stillPolicy } : {}),
-    measured: {
-      blockNumber: run.measured.blockNumber,
-      arrivedAtomic: run.measured.arrivedAssets,
-      provider: run.measured.providerId,
-    },
-  };
-}
 
 /**
  * What this wallet could borrow against one exact token, market by market.
@@ -299,75 +257,8 @@ rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
     reviewUrl: `/borrow/${encodeURIComponent(issued.draft)}`, expiresAt: issued.expiresAt });
 });
 
-/** The gate, run for an amount the person typed on this screen. */
-rwaBorrowRouter.post('/rwa/borrow/review', async (req, res) => {
-  const user = sessionUserV1(req);
-  if (!user) return unauthenticated(res);
-  // This answer carries a loan's calls.
-  if (refusedByRegionV1(req, res, true)) return;
-
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const token = String(body.collateralTokenAddress ?? '').trim().toLowerCase();
-  const amount = atomicV1(body.borrowAmountAtomic, false);
-  const supply = body.collateralSupplyAtomic === undefined ? 0n : atomicV1(body.collateralSupplyAtomic, true);
-  const marketId = body.marketId === undefined || body.marketId === null ? null : String(body.marketId).trim().toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(token) || amount === null || supply === null || (marketId !== null && !/^0x[0-9a-f]{64}$/.test(marketId))) {
-    res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
-    return;
-  }
-  if (supply > 0n && !stillBorrowAssetV1(token)) {
-    res.status(400).json({ error: 'borrow_collateral_not_supported', code: 'borrow_collateral_not_supported' });
-    return;
-  }
-
-  const run = await rwaBorrowRuntimeV1.run({
-    collateralTokenAddress: token,
-    walletAddress: user.address,
-    borrowAssets: amount,
-    marketId,
-    ...(supply > 0n ? { collateralSupplyAssets: supply } : {}),
-  });
-  res.json(runBodyV1(run));
-});
-
-/**
- * Opens a draft minted on the MCP surface, and measures everything again.
- *
- * The draft proves which wallet asked and what they asked for. It proves
- * nothing about the market, because it carries no number about the market — so
- * the figures on this screen are the ones from this request, not the ones from
- * the conversation that produced the link.
- */
-rwaBorrowRouter.get('/rwa/borrow/review/:draft', async (req, res) => {
-  const user = sessionUserV1(req);
-  if (!user) return unauthenticated(res);
-  if (refusedByRegionV1(req, res, true)) return;
-
-  const secret = rwaBorrowRuntimeV1.secret();
-  if (!secret) {
-    res.status(503).json({ error: 'borrow_secret_unavailable', code: 'borrow_secret_unavailable' });
-    return;
-  }
-
-  const verified = verifyBorrowDraftV1({
-    draft: String(req.params.draft ?? ''),
-    secret,
-    now: rwaBorrowRuntimeV1.now(),
-    walletAddress: user.address,
-  });
-  if (!verified.ok) {
-    // 403 rather than 404: the link exists and this session may not open it.
-    const status = verified.reason === 'borrow_draft_wrong_wallet' ? 403 : 400;
-    res.status(status).json({ error: verified.reason, code: verified.reason });
-    return;
-  }
-
-  const run = await rwaBorrowRuntimeV1.run({
-    collateralTokenAddress: verified.claims.collateralTokenAddress,
-    walletAddress: verified.claims.walletAddress,
-    borrowAssets: BigInt(verified.claims.borrowAssets),
-    marketId: verified.claims.marketId,
-    ...(verified.claims.collateralSupplyAssets !== undefined ? { collateralSupplyAssets: BigInt(verified.claims.collateralSupplyAssets) } : {}),
-  });
-  res.json({ ...runBodyV1(run), borrowDraftId: verified.claims.borrowDraftId });
-});
+// The two routes that answered a borrow review with its calls ('/rwa/borrow/review', by an amount and by an
+// assistant's draft) were removed on 2026-11-11 (audit LEND-6). They handed out executable calls with no
+// record in lending_executions: no arm, no market held, no receipt read afterwards. Nothing on Still's site
+// had called them since every review, an old assistant link among them, became the one owned lending review
+// (routes/rwaLending.ts), which is where a draft from '/rwa/borrow/intent' opens.

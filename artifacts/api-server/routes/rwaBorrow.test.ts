@@ -4,7 +4,6 @@ import express from 'express';
 import request from 'supertest';
 
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
-import { issueBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { verifyLendingDraftV1 } from '../lib/lendingDraft.js';
 import { morphoBorrowCapacityV1, morphoHealthV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import type { MorphoBorrowStandingV1 } from '@mioagent/rwa-issuer/morphoBorrowReading';
@@ -30,40 +29,6 @@ function app(user: typeof USER | null = USER) {
   server.use('/api/route-intelligence', rwaBorrowRouter);
   return server;
 }
-
-const READY_RUN = {
-  state: 'ready' as const,
-  marketId: MARKET,
-  review: {
-    title: 'Borrow 10 USDC',
-    market: { id: MARKET, shortId: '0xb4b42dd6', pair: 'NVDAc / USDC', standing: 'On the venue’s own list', lltv: '62.5%', rate: '6.2% variable' },
-    ask: '10 USDC',
-    before: { collateral: '64.41 NVDAc', debt: '7,163.51 USDC', health: '1.24', liquidationPrice: '$177.93' },
-    after: { collateral: '64.41 NVDAc', debt: '7,173.51 USDC', health: '1.24', liquidationPrice: '$178.17' },
-    warnings: ['A 14.3% fall in the NVDAc price liquidates this position.'],
-    notStated: ['The rate is variable.'],
-    measuredAt: 'Measured at block 51,521,606',
-    verdict: 'ready_for_your_approval' as const,
-    refusal: null,
-  },
-  calls: [
-    { index: 0, callType: 'other', to: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', valueWei: '0', data: '0xeecea000', asset: null, amountAtomic: null, recipient: null, spender: null },
-  ],
-  callsHash: `0x${'1'.repeat(64)}`,
-  signingTermsHash: `0x${'2'.repeat(64)}`,
-  expiresAt: '2026-09-19T16:00:30.000Z',
-  atomicRequired: true as const,
-  plan: {
-    calls: [],
-    steps: [
-      { index: 0, to: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', selector: '0xeecea000', venueDescription: 'Authorize Morpho GeneralAdapter1', decodedByMiorail: true, reading: 'Gives 0xb98c… the right to act for this wallet inside Morpho, until it is revoked.' },
-    ],
-    authorizations: [{ index: 0, authorized: '0xb98c948cfa24072e58935bc004a8a7b376ae746a', granted: true }],
-    targets: ['0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb'],
-    venueSimulation: null,
-  },
-  measured: { blockNumber: 51_521_606, arrivedAssets: '10000000', providerId: 'base-rpc-eth-simulate-v1' },
-};
 
 function cryptoReading(walletCollateralAssets: bigint | null = 2_000_000n) {
   const asset = CRYPTO[0]!;
@@ -371,168 +336,15 @@ describe('a selected borrow intent is only a wallet-bound question', () => {
   });
 });
 
-describe('the review, for a person looking at a screen', () => {
-  test('a ready verdict carries the measured calls and the block they were measured at', async () => {
-    rwaBorrowRuntimeV1.run = (async () => READY_RUN) as never;
-    const response = await request(app())
-      .post('/api/route-intelligence/rwa/borrow/review')
-      .send({ collateralTokenAddress: NVDAC, borrowAmountAtomic: '10000000', marketId: MARKET })
-      .expect(200);
-    assert.equal(response.body.state, 'ready');
-    assert.equal(response.body.calls.length, 1);
-    assert.equal(response.body.callsHash, `0x${'1'.repeat(64)}`);
-    assert.equal(response.body.measured.blockNumber, 51_521_606);
-    assert.equal(response.body.measured.arrivedAtomic, '10000000');
-    assert.equal(response.body.atomicRequired, true);
-    // The authorisation is on the screen, named, beside the calls it rides with.
-    assert.equal(response.body.authorizations[0].authorized, '0xb98c948cfa24072e58935bc004a8a7b376ae746a');
-  });
-
-  test('a refusal carries no field a client could read calls out of', async () => {
-    rwaBorrowRuntimeV1.run = (async () => ({
-      state: 'refused',
-      stage: 'simulation',
-      refusal: 'reverted',
-      detail: 'insufficient liquidity',
-      marketId: MARKET,
-      review: { ...READY_RUN.review, after: null, verdict: 'refused', refusal: 'These calls revert when executed against current state.' },
-    })) as never;
-    const response = await request(app())
-      .post('/api/route-intelligence/rwa/borrow/review')
-      .send({ collateralTokenAddress: NVDAC, borrowAmountAtomic: '10000000' })
-      .expect(200);
-    assert.equal(response.body.state, 'refused');
-    assert.equal(response.body.refusal, 'reverted');
-    assert.equal('calls' in response.body, false);
-    assert.equal('callsHash' in response.body, false);
-    assert.equal('measured' in response.body, false);
-    assert.equal('atomicRequired' in response.body, false);
-    assert.equal('funding' in response.body, false);
-  });
-
-  test('an amount that is not an exact positive integer never reaches the venue', async () => {
-    let called = false;
-    rwaBorrowRuntimeV1.run = (async () => {
-      called = true;
-      return READY_RUN;
-    }) as never;
-    for (const borrowAmountAtomic of ['0', '10.5', '-1', 'max', '', 10, (1n << 128n).toString()]) {
-      await request(app())
-        .post('/api/route-intelligence/rwa/borrow/review')
-        .send({ collateralTokenAddress: NVDAC, borrowAmountAtomic })
-        .expect(400);
+// Audit LEND-6 (2026-11-11): the two routes that answered a borrow review with its calls are gone. They
+// handed out executable calls with no record in lending_executions; every review is the owned lending one.
+describe('a borrow review with calls is answered by the lending review alone', () => {
+  test('the old review routes do not exist, by an amount or by a draft, signed in or not', async () => {
+    for (const session of [true, false]) {
+      const server = app(session ? undefined : null);
+      assert.equal((await request(server).post('/api/route-intelligence/rwa/borrow/review')
+        .send({ collateralTokenAddress: NVDAC, borrowAmountAtomic: '100000000' })).status, 404);
+      assert.equal((await request(server).get('/api/route-intelligence/rwa/borrow/review/miorail-borrow-v1.any.thing')).status, 404);
     }
-    assert.equal(called, false);
-  });
-
-  test('passes selected collateral and serializes the atomic funding review', async () => {
-    let asked: unknown = null;
-    const funding = { type: 'erc20' as const, token: CRYPTO[0]!.token.toLowerCase(), amountAtomic: '1000000' };
-    rwaBorrowRuntimeV1.run = (async input => { asked = input; return { ...READY_RUN, funding }; }) as typeof rwaBorrowRuntimeV1.run;
-    const response = await request(app()).post('/api/route-intelligence/rwa/borrow/review')
-      .send({ collateralTokenAddress: CRYPTO[0]!.token, borrowAmountAtomic: '10000000', collateralSupplyAtomic: '1000000', walletAddress: OTHER }).expect(200);
-    assert.deepEqual(asked, { collateralTokenAddress: CRYPTO[0]!.token.toLowerCase(), walletAddress: WALLET, borrowAssets: 10_000_000n, marketId: null, collateralSupplyAssets: 1_000_000n });
-    assert.equal(response.body.atomicRequired, true);
-    assert.deepEqual(response.body.funding, funding);
-  });
-
-  test('refuses unsupported or malformed selected supply before running a review', async () => {
-    let called = false;
-    rwaBorrowRuntimeV1.run = async () => { called = true; throw new Error('must not run'); };
-    await request(app()).post('/api/route-intelligence/rwa/borrow/review')
-      .send({ collateralTokenAddress: NVDAC, borrowAmountAtomic: '1', collateralSupplyAtomic: '1' }).expect(400);
-    for (const collateralSupplyAtomic of ['-1', '01', '0.1', (1n << 128n).toString()]) {
-      await request(app()).post('/api/route-intelligence/rwa/borrow/review')
-        .send({ collateralTokenAddress: CRYPTO[0]!.token, borrowAmountAtomic: '1', collateralSupplyAtomic }).expect(400);
-    }
-    assert.equal(called, false);
-  });
-});
-
-describe('opening a link an assistant produced', () => {
-  const draft = () =>
-    issueBorrowDraftV1({
-      tenantId: USER.id,
-      walletAddress: WALLET,
-      collateralTokenAddress: NVDAC,
-      marketId: MARKET,
-      borrowAssets: 10_000_000n,
-      secret: SECRET,
-      now: NOW,
-    }).draft;
-
-  test('the numbers on the screen come from THIS request, not from the conversation', async () => {
-    const asked: unknown[] = [];
-    rwaBorrowRuntimeV1.run = (async (input: unknown) => {
-      asked.push(input);
-      return READY_RUN;
-    }) as never;
-    const response = await request(app())
-      .get(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(draft())}`)
-      .expect(200);
-    assert.equal(response.body.state, 'ready');
-    assert.equal(response.body.borrowDraftId.length > 0, true);
-    // The whole gate ran again for this open: the draft is a question, not a
-    // cached answer.
-    assert.equal(asked.length, 1);
-    assert.deepEqual(asked[0], {
-      collateralTokenAddress: NVDAC,
-      walletAddress: WALLET,
-      borrowAssets: 10_000_000n,
-      marketId: MARKET,
-    });
-  });
-
-  test('another wallet cannot open it, and is told that rather than told it is broken', async () => {
-    let called = false;
-    rwaBorrowRuntimeV1.run = (async () => {
-      called = true;
-      return READY_RUN;
-    }) as never;
-    const other = { id: `eip155:8453:${OTHER}`, address: OTHER, chainId: 8453 as const };
-    const response = await request(app(other))
-      .get(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(draft())}`)
-      .expect(403);
-    assert.equal(response.body.code, 'borrow_draft_wrong_wallet');
-    assert.equal(called, false);
-  });
-
-  test('an expired link measures nothing', async () => {
-    let called = false;
-    rwaBorrowRuntimeV1.run = (async () => {
-      called = true;
-      return READY_RUN;
-    }) as never;
-    const link = draft();
-    rwaBorrowRuntimeV1.now = () => new Date(NOW.getTime() + 60 * 60 * 1000);
-    const response = await request(app())
-      .get(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(link)}`)
-      .expect(400);
-    assert.equal(response.body.code, 'borrow_draft_expired');
-    assert.equal(called, false);
-  });
-
-  test('a forged link measures nothing', async () => {
-    let called = false;
-    rwaBorrowRuntimeV1.run = (async () => {
-      called = true;
-      return READY_RUN;
-    }) as never;
-    const [prefix, body] = draft().split('.');
-    await request(app())
-      .get(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(`${prefix}.${body}.forged`)}`)
-      .expect(400);
-    assert.equal(called, false);
-  });
-
-  test('a selected question link re-runs its exact signed collateral amount for its owner', async () => {
-    const issued = issueBorrowDraftV1({ tenantId: USER.id, walletAddress: WALLET, collateralTokenAddress: CRYPTO[0]!.token,
-      marketId: CRYPTO[0]!.morphoMarket, borrowAssets: 10_000_000n, collateralSupplyAssets: 1_000_000n, secret: SECRET, now: NOW });
-    let asked: unknown = null;
-    rwaBorrowRuntimeV1.run = (async input => { asked = input; return READY_RUN; }) as typeof rwaBorrowRuntimeV1.run;
-    const response = await request(app()).get(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(issued.draft)}`).expect(200);
-    assert.equal(response.body.borrowDraftId, issued.borrowDraftId);
-    assert.deepEqual(asked, { collateralTokenAddress: CRYPTO[0]!.token.toLowerCase(), walletAddress: WALLET,
-      borrowAssets: 10_000_000n, marketId: CRYPTO[0]!.morphoMarket, collateralSupplyAssets: 1_000_000n });
   });
 });

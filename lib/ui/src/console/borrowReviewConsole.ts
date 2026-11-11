@@ -1,15 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-import { useBorrowReview } from '@mioagent/api-client-react';
-
-import type { BorrowReviewScreenModelV1, BorrowReviewStepV1 } from './BorrowReviewScreen';
+import type { BorrowReviewStepV1 } from './BorrowReviewScreen';
 import type { BorrowReviewV1 } from './borrowReviewView';
-import { handOffFreshBorrowV1, hasBorrowSigningTermsV1, type FreshBorrowReviewV1 } from './borrowReviewFreshness';
-import {
-  borrowSubmissionKeyV1, borrowSubmissionLockCopyV1, borrowSubmissionMarkerV1, borrowUserRejectedV1,
-  BorrowSubmissionLockedErrorV1, BorrowSubmissionStorageErrorV1, submitBorrowOnceV1,
-  type BorrowSubmissionMarkerV1,
-} from './borrowSubmissionGuard';
+import type { FreshBorrowReviewV1 } from './borrowReviewFreshness';
+import { borrowUserRejectedV1 } from './borrowSubmissionGuard';
 
 // ---------------------------------------------------------------------------
 // The borrow review's read and its refusals, shared by both consoles.
@@ -72,119 +64,7 @@ export function borrowWalletFailureCopyV1(error: unknown): string {
   return 'Your wallet did not return a submission result. Check its activity before trying again; Miorail cannot confirm whether anything was sent.';
 }
 
-export function useBorrowReviewConsoleV1(input: {
-  draft: string | null;
-  walletAddress?: string | null;
-  /** The host's wallet. Returns the batch id, or null without a submission
-   * handle. Throwing may mean a decline or an uncertain transport outcome. */
-  sendCalls: (batch: { calls: { to: string; value: string; data: string }[] }) => Promise<string | null>;
-}): { model: BorrowReviewScreenModelV1; body: BorrowReviewWireV1 | null } {
-  const review = useBorrowReview(input.draft);
-  const [walletError, setWalletError] = useState<string | null>(null);
-  const [batchId, setBatchId] = useState<string | null>(null);
-  const [walletBusy, setWalletBusy] = useState(false);
-  const [submission, setSubmission] = useState<{ identity: string; marker: BorrowSubmissionMarkerV1 | null }>({ identity: '', marker: null });
-  const opening = useRef(false);
-  const confirmedTermsHash = useRef<string | null>(null);
-  const identity = `${input.draft ?? ''}:${input.walletAddress?.toLowerCase() ?? ''}`;
-  const currentIdentity = useRef(identity);
-  currentIdentity.current = identity;
-  useEffect(() => {
-    let active = true;
-    confirmedTermsHash.current = null;
-    setWalletError(null);
-    setBatchId(null);
-    void borrowSubmissionKeyV1(input.draft ?? '', input.walletAddress).then(key => {
-      if (active) setSubmission({ identity, marker: key ? borrowSubmissionMarkerV1(window.sessionStorage, key) : null });
-    }).catch(() => {
-      // Storage is checked again before entering the wallet boundary. A failed
-      // read here never substitutes a successful acquisition there.
-      if (active) setSubmission({ identity, marker: null });
-    });
-    return () => { active = false; };
-  }, [identity, input.draft, input.walletAddress]);
-
-  const body = (review.data ?? null) as BorrowReviewWireV1 | null;
-  const signable = hasBorrowSigningTermsV1(body);
-
-  const onOpen = useCallback(async () => {
-    if (!signable || opening.current || batchId || (submission.identity === identity && submission.marker)) return;
-    opening.current = true;
-    setWalletBusy(true);
-    setWalletError(null);
-    let handedToWallet = false;
-    try {
-      const result = await handOffFreshBorrowV1({
-        seen: body,
-        confirmedTermsHash: confirmedTermsHash.current,
-        refresh: async () => {
-          const answer = await review.refetch({ throwOnError: true });
-          if (answer.error) throw answer.error;
-          return (answer.data ?? {}) as BorrowReviewWireV1;
-        },
-        send: async (calls) => {
-          let key: string | null;
-          try { key = await borrowSubmissionKeyV1(input.draft ?? '', input.walletAddress); }
-          catch { throw new BorrowSubmissionStorageErrorV1(); }
-          if (!key) throw new Error('Your wallet is not connected');
-          if (currentIdentity.current !== identity) throw new Error('The wallet or review changed');
-          let storage: Storage;
-          try { storage = window.sessionStorage; } catch { throw new BorrowSubmissionStorageErrorV1(); }
-          try {
-            return await submitBorrowOnceV1({ key, storage, send: () => {
-              handedToWallet = true;
-              return input.sendCalls({ calls });
-            } });
-          } finally {
-            if (currentIdentity.current === identity) {
-              try { setSubmission({ identity, marker: borrowSubmissionMarkerV1(storage, key) }); }
-              catch { setSubmission({ identity, marker: 'unknown' }); }
-            }
-          }
-        },
-        current: () => currentIdentity.current === identity,
-      });
-      if (currentIdentity.current !== identity) return;
-      if (result.state === 'review_changed') {
-        confirmedTermsHash.current = result.termsHash;
-        setWalletError(result.message);
-      } else {
-        confirmedTermsHash.current = null;
-        if (result.state === 'refused') setWalletError(result.message);
-        else if (result.batchId) setBatchId(result.batchId);
-        else setWalletError('Your wallet did not return a batch ID. The submission result is unknown. Check its activity; Miorail will not send this review again.');
-      }
-    } catch (error) {
-      if (currentIdentity.current !== identity) return;
-      confirmedTermsHash.current = null;
-      setWalletError(error instanceof BorrowSubmissionLockedErrorV1 || error instanceof BorrowSubmissionStorageErrorV1 ? error.message
-        : handedToWallet || /wallet is not connected/i.test(error instanceof Error ? error.message : '')
-          ? borrowWalletFailureCopyV1(error) : borrowReviewFailureCopyV1(error));
-    } finally {
-      opening.current = false;
-      setWalletBusy(false);
-    }
-  }, [batchId, body, identity, input, review, signable, submission]);
-
-  return {
-    body,
-    model: {
-      loading: review.isPending && typeof input.draft === 'string' && input.draft.length > 0,
-      readError: review.error ? borrowReviewFailureCopyV1(review.error)
-        : body?.state === 'ready' && !signable ? 'This review did not establish fresh signing terms. Measure again before opening your wallet.'
-          : body?.state === 'refused' && !body.review ? body.detail || 'The server refused this review. Nothing was prepared.' : null,
-      review: body?.review ?? null,
-      steps: body?.steps ?? [],
-      measured: body?.state === 'ready' ? body.measured ?? null : null,
-      wallet: {
-        // No calls means no button: a refusal with a disabled button beside it
-        // still reads as "nearly".
-        onOpen: signable && !(submission.identity === identity && submission.marker) ? onOpen : null,
-        pending: walletBusy,
-        error: walletError,
-        batchId,
-        submissionLock: submission.identity === identity && submission.marker ? borrowSubmissionLockCopyV1(submission.marker) : null,
-      },
-    },
-  };
-}
+// The hook that read a borrow review from '/rwa/borrow/review' and sent its calls was removed on 2026-11-11
+// with those routes (audit LEND-6): they handed out calls with no record of the attempt. Every review, an
+// old assistant link among them, is the owned lending review (useLendingReviewConsole.ts). What stays here
+// is the wire shape and the two sets of sentences, which the borrow screen's tests still read.

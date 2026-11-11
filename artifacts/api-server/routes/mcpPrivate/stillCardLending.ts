@@ -24,11 +24,17 @@ import { spendDeliveryMaskedV1 } from '../../lib/stillSpendOrders.js';
 // client that said it draws apps, and a ready review is recorded as
 // action_released before it leaves, like every release on this surface. No
 // row, no calls.
+//
+// Stopping a loan in steps where it stands, and releasing one its wallet never
+// sent (lib/loanRelease.ts), go the same way: each is the owner's own request,
+// checked against Base by the route, and sends nothing. Until 2026-11-11 the
+// card could ask for the first and not the second, so an attempt that held a
+// market could be released only on Still's site.
 // ---------------------------------------------------------------------------
 
 export const STILL_CARD_LENDING_TOOL_V1 = 'still_card_lending';
 const ROOT_V1 = '/api/route-intelligence';
-const PATH_V1 = /^\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps|stop))?)$/;
+const PATH_V1 = /^\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps|stop|release))?)$/;
 
 export const StillCardLendingInputV1Schema = z.object({
   method: z.enum(['GET', 'POST']),
@@ -80,7 +86,7 @@ export function cardReviewBodyV1(body: unknown): unknown {
 
 export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z.infer<typeof StillCardLendingInputV1Schema>): Promise<z.infer<typeof StillCardLendingOutputV1Schema>> {
   const wallet = identity.walletAddress.toLowerCase();
-  const writes = /\/(?:arm|submission|transaction|steps|stop)$/.test(args.path);
+  const writes = /\/(?:arm|submission|transaction|steps|stop|release)$/.test(args.path);
   if ((args.method === 'POST') !== writes) return { status: 400, body: { error: 'lending_request_invalid' }, wallet };
   const routed = await routeV1(identity, args.method, args.path, args.body ?? {});
   const answer = { status: routed.status, body: cardReviewBodyV1(routed.body) };

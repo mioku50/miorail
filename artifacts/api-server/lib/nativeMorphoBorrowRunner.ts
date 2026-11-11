@@ -103,7 +103,7 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
       'The ETH left in your wallet is measured before wallet/network fees. Those fees are not quoted here; your wallet calculates them before approval.',
       'Still’s limit for this loan was checked in the simulation above; Morpho enforces its own liquidation limit onchain. Collateral can still be liquidated.',
       MORPHO_DIRECT_CALLS_WARNING_V1,
-      ...(sequential ? [morphoStepsWarningV1(plan.calls.length,'borrow')] : [])]};
+      ...(sequential ? [morphoStepsWarningV1(plan.calls.length,'borrow',false,true)] : [])]};
   const expiry=now().getTime()+30_000;
   return {state:'ready',facts,calls:plan.calls,callsHash,signingTermsHash:stableHashV1('native-morpho-terms/v1',{wallet:identity.walletAddress,callsHash,facts:lendingSigningTermsFactsV1(facts)}),
     expiresAt:new Date(expiry).toISOString(),...(sequential ? {atomicRequired:false as const,delivery:'sequential' as const} : {atomicRequired:true as const}),steps:plan.steps,

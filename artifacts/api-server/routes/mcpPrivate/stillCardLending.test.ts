@@ -96,6 +96,17 @@ test('another wallet’s draft is refused by the same check, a write must be a P
   assert.equal(readStop.status, 400);
   const stop = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/stop`, body: {} });
   assert.deepEqual([stop.status, (stop.body as { error: string }).error], [404, 'lending_execution_not_found']);
+  // So is releasing one sent as a single batch that the wallet never sent (audit LEND-1): until 2026-11-11
+  // the card's path rule did not name it, and such an attempt could be released only on Still's site.
+  assert.equal(StillCardLendingInputV1Schema.safeParse({ method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/release`, body: {} }).success, true);
+  const readRelease = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/release` });
+  assert.equal(readRelease.status, 400);
+  const release = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/release`, body: {} });
+  assert.deepEqual([release.status, (release.body as { error: string }).error], [404, 'lending_execution_not_found']);
+  // And nothing else under an execution is reachable through the card.
+  for (const other of ['delete', 'release/', 'releases', 'arm/release']) {
+    assert.equal(StillCardLendingInputV1Schema.safeParse({ method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/${other}`, body: {} }).success, false, other);
+  }
   const withheld = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/review/${draft()}` });
   assert.equal(withheld.status, 503);
   assert.ok(!JSON.stringify(withheld.body).includes('0x12345678'), 'no calls leave without their audit row');

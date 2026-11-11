@@ -140,6 +140,96 @@ describe('session-owned lending HTTP boundary', () => {
     assert.match(refused.body.detail, /If your wallet never sent that one, its review lets you release it\.$/);
     assert.doesNotMatch(refused.body.detail, /still being read/);
   });
+  it('a new loan is not armed on a review read before another one of this wallet landed, and a repayment always is (audit LEND-3)', async () => {
+    // Two tabs, or the assistant's card beside the page: both reviews read at one block, each for all the room there was.
+    const borrowQuestion: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: token, borrowAssets: '1000000', collateralSupplyAssets: '0' };
+    Object.assign(rwaLendingRuntimeV1, { entryGate: () => ({ ok: true }) });
+    const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+    const first = await request(app()).get(`${base}/lending/review/${draft(borrowQuestion)}`);
+    const second = await request(app()).get(`${base}/lending/review/${draft(borrowQuestion)}`);
+    const repay = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    assert.deepEqual([first.body.state, second.body.state, repay.body.state], ['ready', 'ready', 'ready']);
+    const armOf = (review: typeof first) => request(app()).post(`${base}/lending/executions/${review.body.executionId}/arm`)
+      .send({ callsHash: review.body.callsHash, signingTermsHash: review.body.signingTermsHash });
+    const armed = await armOf(first).expect(200);
+    // While the first holds the market, the second is refused as before, and says so.
+    assert.equal((await armOf(second).expect(409)).body.error, 'execution_active');
+    // The first lands 50 blocks after both were read, and holds nothing any more.
+    await store.recordSubmission({ owner, executionId: first.body.executionId, attemptId: armed.body.attemptId, outcome: 'submitted', batchId: 'wallet-batch-1', now });
+    const sent = await store.get({ owner, executionId: first.body.executionId });
+    await store.recordVerification({ owner, executionId: first.body.executionId, expectedVersion: sent!.version, state: 'confirmed', transactionHash: `0x${'ab'.repeat(32)}`,
+      proof: { callsHash: first.body.callsHash, blockNumber: '53100050', receiptFingerprint: 'fixture' }, errorCode: null, now });
+    assert.deepEqual(await store.listActiveInScope({ owner, executionId: second.body.executionId }), []);
+    const refused = await armOf(second).expect(409);
+    assert.equal(refused.body.error, 'lending_position_changed');
+    assert.match(refused.body.detail, /^Another loan or repayment of yours in this market landed after this review was prepared, so its numbers are no longer current\. Your wallet was not asked and nothing was sent\./);
+    assert.equal((await store.get({ owner, executionId: second.body.executionId }))!.state, 'ready');
+    // Paying back is right whatever else landed: the repayment read at the same block is armed.
+    const repaying = await armOf(repay).expect(200);
+    await store.recordSubmission({ owner, executionId: repay.body.executionId, attemptId: repaying.body.attemptId, outcome: 'rejected', now });
+    // A review prepared after the first landed is read on the position as it is now, and is armed.
+    Object.assign(rwaLendingRuntimeV1, { runAave: async ({ question }: { question: LendingQuestionV1 }) => {
+      const run = ready(question); return { ...run, measured: { ...run.measured, blockNumber: 53100051 } };
+    } });
+    const third = await request(app()).get(`${base}/lending/review/${draft({ ...borrowQuestion, borrowAssets: '2000000' })}`);
+    await armOf(third).expect(200);
+  });
+  it('a new loan is not armed when Base shows the wallet sent something after its review, and a repayment is not asked (audit WAL-6)', async () => {
+    // Base Account reports "declined" however its window closed; the batch may be on its way all the same.
+    const borrowQuestion: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: token, borrowAssets: '1000000', collateralSupplyAssets: '0' };
+    let kind: 'eoa' | 'contract' | null = 'eoa', count = { then: 7, latest: 7, pending: 7 }, operations = { then: 68n, now: 68n }, reads = 0;
+    Object.assign(rwaLendingRuntimeV1, { entryGate: () => ({ ok: true }), reader: () => ({
+      getTransaction: async () => null, getTransactionReceipt: async () => null,
+      getAccountKind: async () => { reads++; return kind; },
+      getTransactionCountAt: async () => count.then, getTransactionCount: async (_wallet: string, tag: 'latest' | 'pending') => tag === 'latest' ? count.latest : count.pending,
+      getEntryPointNonce: async (_entryPoint: string, _sender: string, at: bigint | 'latest') => at === 'latest' ? operations.now : operations.then,
+    }) });
+    const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+    const armOf = (review: { body: { executionId: string; callsHash: string; signingTermsHash: string } }) => request(app()).post(`${base}/lending/executions/${review.body.executionId}/arm`)
+      .send({ callsHash: review.body.callsHash, signingTermsHash: review.body.signingTermsHash });
+    const review = await request(app()).get(`${base}/lending/review/${draft(borrowQuestion)}`);
+    // A plain account that sent a transaction since, one with a transaction waiting, a smart account with a later operation.
+    for (const moved of [() => { count = { then: 7, latest: 8, pending: 8 }; }, () => { count = { then: 7, latest: 7, pending: 8 }; },
+      () => { kind = 'contract'; operations = { then: 68n, now: 69n }; }]) {
+      kind = 'eoa'; count = { then: 7, latest: 7, pending: 7 }; operations = { then: 68n, now: 68n };
+      moved();
+      const refused = await armOf(review).expect(409);
+      assert.equal(refused.body.error, 'lending_wallet_moved');
+      assert.match(refused.body.detail, /^Your wallet sent a transaction after this review was prepared, or has one on its way/);
+      assert.equal((await store.get({ owner, executionId: review.body.executionId }))!.state, 'ready');
+    }
+    // A repayment is never asked: paying back is right whatever the wallet sent.
+    const before = reads;
+    const repay = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    const repaying = await armOf(repay).expect(200);
+    assert.equal(reads, before);
+    await store.recordSubmission({ owner, executionId: repay.body.executionId, attemptId: repaying.body.attemptId, outcome: 'rejected', now });
+    // Base not answering is not a yes, and a wallet that sent nothing is armed.
+    kind = null;
+    const unread = await request(app()).get(`${base}/lending/review/${draft({ ...borrowQuestion, borrowAssets: '2000000' })}`);
+    const armed = await armOf(unread).expect(200);
+    await store.recordSubmission({ owner, executionId: unread.body.executionId, attemptId: armed.body.attemptId, outcome: 'rejected', now });
+    kind = 'contract'; operations = { then: 69n, now: 69n };
+    await armOf(review).expect(200);
+  });
+  it('a loan that failed with nothing landed, and one that landed before the review, move nothing (audit LEND-3)', async () => {
+    const borrowQuestion: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: token, borrowAssets: '1000000', collateralSupplyAssets: '0' };
+    Object.assign(rwaLendingRuntimeV1, { entryGate: () => ({ ok: true }) });
+    const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+    const armOf = (review: { body: { executionId: string; callsHash: string; signingTermsHash: string } }) => request(app()).post(`${base}/lending/executions/${review.body.executionId}/arm`)
+      .send({ callsHash: review.body.callsHash, signingTermsHash: review.body.signingTermsHash });
+    for (const [landedAt, state, hash, amount] of [['53099999', 'confirmed', `0x${'cd'.repeat(32)}`, '3000000'], ['53100500', 'failed', null, '4000000']] as const) {
+      const earlier = await request(app()).get(`${base}/lending/review/${draft({ ...borrowQuestion, borrowAssets: amount })}`);
+      const armed = await armOf(earlier).expect(200);
+      await store.recordSubmission({ owner, executionId: earlier.body.executionId, attemptId: armed.body.attemptId, outcome: 'submitted', batchId: `wallet-batch-${landedAt}`, now });
+      const sent = await store.get({ owner, executionId: earlier.body.executionId });
+      await store.recordVerification({ owner, executionId: earlier.body.executionId, expectedVersion: sent!.version, state, transactionHash: hash,
+        proof: hash ? { callsHash: earlier.body.callsHash, blockNumber: landedAt } : { callsHash: earlier.body.callsHash, releasedBy: 'person' },
+        errorCode: hash ? null : 'loan_wallet_sent_nothing', now });
+    }
+    const next = await request(app()).get(`${base}/lending/review/${draft(borrowQuestion)}`);
+    await armOf(next).expect(200);
+  });
   it('an attempt its wallet never sent is released by its owner once Base bears that out (audit LEND-1)', async () => {
     let clock = now;
     const chain = { latest: 41, pending: 41 };

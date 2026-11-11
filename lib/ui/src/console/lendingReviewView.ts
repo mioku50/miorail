@@ -38,7 +38,9 @@ export function spendDeliveryWireV1(value: unknown): SpendDeliveryWireV1 | null 
   return { email: value.email, phone: value.phone };
 }
 export type LendingReviewWireV1 = LendingReadyWireV1 | { state: 'refused'; refusal: string; detail: string; facts?: LendingFactsWireV1;
-  executionId?: string; executionState?: LendingExecutionStateV1 };
+  executionId?: string; executionState?: LendingExecutionStateV1;
+  /** An earlier attempt of this review stopped before it paid its invoice, which the wallet can still pay. */
+  walletPay?: { orderId: string } };
 export type LendingExecutionStateV1 = 'ready' | 'awaiting_wallet' | 'submitted' | 'unknown' | 'confirmed' | 'failed';
 export interface LendingExecutionWireV1 {
   executionId: string; state: LendingExecutionStateV1;
@@ -52,6 +54,14 @@ export interface LendingExecutionWireV1 {
   release?: { offered: boolean; from: string } | null;
   /** A confirmed Repay all on Aave V4 that left interest owing: how much, in USDC base units. */
   remainingDebtAtomic?: string | null;
+  /** Still Spend: a loan in steps that stopped before its payment, whose Bitrefill invoice is still open
+   * for the wallet to pay from its own USDC. */
+  walletPay?: { orderId: string } | null;
+}
+const spendOrderId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
+/** The wallet-pay offer as the server sent it, or null: an order id that is not one is no offer. */
+export function spendWalletPayWireV1(value: unknown): { orderId: string } | null {
+  return value !== null && typeof value === 'object' && spendOrderId((value as { orderId?: unknown }).orderId) ? { orderId: (value as { orderId: string }).orderId } : null;
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2000;
@@ -95,7 +105,8 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
   if (!object(value)) return null;
   if (value.state === 'refused' && text(value.refusal) && text(value.detail)) return { state: 'refused', refusal: value.refusal, detail: value.detail,
     ...(isLendingFactsWireV1(value.facts) ? { facts: value.facts } : {}), ...(id(value.executionId) ? { executionId: value.executionId } : {}),
-    ...(['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.executionState)) ? { executionState: value.executionState as LendingExecutionStateV1 } : {}) };
+    ...(['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.executionState)) ? { executionState: value.executionState as LendingExecutionStateV1 } : {}),
+    ...(spendWalletPayWireV1(value.walletPay) ? { walletPay: spendWalletPayWireV1(value.walletPay)! } : {}) };
   if (value.state !== 'ready' || !hasBorrowSigningTermsV1(value as FreshBorrowReviewV1, 8) || !isLendingFactsWireV1(value.facts) ||
       !id(value.executionId) || !Array.isArray(value.calls) || !value.calls.every(c => object(c) && atomic(c.value)) ||
       !Array.isArray(value.steps) || value.steps.length !== value.calls.length || !value.steps.every((s, index) => object(s) && s.index === index && address(s.to) &&
@@ -134,7 +145,7 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
       (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps)) ||
       (value.release != null && !(object(value.release) && typeof value.release.offered === 'boolean' && text(value.release.from) && Number.isFinite(Date.parse(value.release.from)))) ||
       (value.remainingDebtAtomic != null && !(atomic(value.remainingDebtAtomic) && value.remainingDebtAtomic !== '0'))) return null;
-  return value as unknown as LendingExecutionWireV1;
+  return { ...(value as unknown as LendingExecutionWireV1), walletPay: spendWalletPayWireV1(value.walletPay) };
 }
 function stepsStanding(value: unknown): boolean {
   return object(value) && Number.isSafeInteger(value.landed) && Number.isSafeInteger(value.total) && typeof value.stoppable === 'boolean' &&

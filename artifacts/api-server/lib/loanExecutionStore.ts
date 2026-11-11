@@ -28,6 +28,9 @@ export interface LoanExecutionStoreV1 {
   listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]>;
   /** The other attempts holding this execution's market (Aave: its whole spoke). */
   listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
+  /** The other attempts in this execution's market that ended with a transaction on Base, newest first:
+   * what may have changed the position since this review was read (audit LEND-3). */
+  listLandedInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
   arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): Promise<
     { ok: true; execution: LoanExecutionV1; attemptId: string } | { ok: false; refusal: 'execution_not_ready' | 'execution_active' | 'invoice_has_attempt' }>;
   /** `stopped`: the steps in `batchId` landed and the rest was never sent (declined in the wallet, or refused
@@ -116,6 +119,13 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
     if (!row || !sameOwner(row, input.owner)) return [];
     return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) && active(other.state)).map(copy);
+  }
+  async listLandedInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner); const row = this.rows.get(input.executionId);
+    if (!row || !sameOwner(row, input.owner)) return [];
+    return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) &&
+      (other.state === 'confirmed' || other.state === 'failed') && other.transactionHash !== null)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50).map(copy);
   }
   async arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): ReturnType<LoanExecutionStoreV1['arm']> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
@@ -252,6 +262,16 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
           AND other.execution_id <> self.execution_id AND other.state IN ('awaiting_wallet', 'submitted', 'unknown')`;
       return rows.map(rowFromDb);
     },
+    async listLandedInScope({ owner, executionId }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT other.* FROM lending_executions AS self JOIN lending_executions AS other
+          ON other.tenant_id = self.tenant_id AND other.wallet_address = self.wallet_address AND other.venue = self.venue
+          AND (self.venue = 'aave-v4' OR other.market_id = self.market_id)
+        WHERE self.execution_id = ${executionId} AND self.tenant_id = ${owner.tenantId} AND self.wallet_address = ${owner.walletAddress}
+          AND other.execution_id <> self.execution_id AND other.state IN ('confirmed', 'failed') AND other.transaction_hash IS NOT NULL
+        ORDER BY other.updated_at DESC LIMIT 50`;
+      return rows.map(rowFromDb);
+    },
     async arm({ owner, executionId, callsHash, signingTermsHash, now }) {
       assertOwner(owner); const attemptId = crypto.randomUUID();
       try {
@@ -319,3 +339,11 @@ export const loanExecutionRuntimeV1 = {
     return runtimeStore;
   },
 };
+
+/** A final result with the evidence it was read from: the transaction and its receipt's fingerprint. Null for
+ * anything not final, or final with no receipt behind it (released as never sent, stopped before a read). */
+export function settledFingerprintV1(record: LoanExecutionV1): { hash: HashV1; fingerprint: string } | null {
+  const fingerprint = record.verification?.receiptFingerprint;
+  return (record.state === 'confirmed' || record.state === 'failed') && record.transactionHash && typeof fingerprint === 'string' && fingerprint.length > 0
+    ? { hash: record.transactionHash, fingerprint } : null;
+}

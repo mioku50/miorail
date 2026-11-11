@@ -5,7 +5,7 @@ import type { BaseChainReaderV1, BaseTransactionSourceV1 } from './baseReceiptRe
 import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { LendingRunV1 } from './lendingReview.js';
 import type { LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
-import type { LoanExecutionV1, LoanOwnerV1 } from './loanExecutionStore.js';
+import { settledFingerprintV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
 import { sameCallDataV1 } from './sponsoredGas.js';
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ export async function recheckLoanStepsV1(input: {
     }
     const read: LoanStepInvoiceReadV1 = input.invoice ? await input.invoice() : { ok: false, refusal: 'spend_invoice_unread' };
     // With only the payment left the loan has landed: an invoice Bitrefill could not show just now is still
-    // open, and the wallet's own USDC may pay it (routes/stillSpend.ts, loanStoppedBeforePaymentV1).
+    // open, and the wallet's own USDC may pay it (loanStoppedBeforePaymentV1 below).
     if (!read.ok) return { ok: false, refusal: read.refusal, detail: `${INVOICE_UNREAD_V1[read.refusal]}, ${tail}${
       last && read.refusal === 'spend_invoice_unread' ? ' Your wallet can still pay this invoice from its own USDC while Bitrefill holds the price.' : ''}` };
     if (read.status !== 'unpaid') return { ok: false, refusal: 'spend_invoice_not_unpaid', detail: `Bitrefill reports this invoice as ${read.status.replace(/_/g, ' ')}, ${tail}` };
@@ -178,6 +178,16 @@ async function readLandedStepsV1(record: LoanExecutionV1, reader: BaseChainReade
   return { state: 'read', hashes, steps, fingerprint: stepsFingerprintV1(steps.map((step) => step.receipt)) };
 }
 
+/** A loan in steps that was stopped before its last step and read as such from Base: the rest is never
+ * asked of the wallet again. For a Still Spend loan the last step is the payment, so this loan did not pay
+ * its invoice and never will; the person may hold the loan's USDC with nothing bought, and their wallet
+ * may pay the same invoice (audit SPEND-2). */
+export function loanStoppedBeforePaymentV1(row: Pick<LoanExecutionV1, 'state' | 'errorCode' | 'run' | 'verification'>): boolean {
+  const stoppedAt = row.verification?.stoppedAt;
+  return row.run.delivery === 'sequential' && row.state === 'failed' && row.errorCode === LOAN_STEPS_STOPPED_V1 &&
+    typeof stoppedAt === 'number' && Number.isInteger(stoppedAt) && stoppedAt >= 0 && stoppedAt < row.run.calls.length;
+}
+
 /** Reads a loan sent in steps from the chain. Steps still being sent are not judged. */
 export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string }, record: LoanExecutionV1, deps: LoanExecutionStatusDepsV1): Promise<LoanExecutionV1> {
   if (record.state === 'awaiting_wallet') return record;
@@ -188,6 +198,13 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
   // so what landed decides, and a reading that fails keeps the record as it is rather than losing that.
   const stopped = record.errorCode === LOAN_STEPS_STOPPED_V1;
   const read = await readLandedStepsV1(record, deps.reader);
+  // A result already read from Base is not read into doubt (audit LEND-4): with the steps' fingerprint on
+  // record, only steps that read differently now unsettle it, and steps that cannot be read change nothing.
+  const settled = settledFingerprintV1(record);
+  if (settled) {
+    const contradicted = (read.state === 'read' && read.fingerprint !== settled.fingerprint) || (read.state === 'failed' && record.state === 'confirmed');
+    return contradicted ? set('unknown', settled.hash, null, 'loan_receipt_changed') : record;
+  }
   if (read.state === 'unread') return set('unknown', record.transactionHash, null, 'loan_steps_unread');
   if (read.state === 'unavailable') return stopped ? record : set('unknown', record.transactionHash, null, 'loan_receipt_unavailable');
   if (read.state === 'unknown') return set('unknown', read.hash, null, read.errorCode);
@@ -199,7 +216,9 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
   // Stopped part way: what landed is kept, and no loan or repayment is claimed. Stopped on purpose, that is
   // final and holds nothing; otherwise a later step may still be on its way, and the market stays held.
   if (steps.length < record.run.calls.length) {
-    const landed = { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint };
+    // The block of the last step that landed says when the position last moved (positionMovedSinceReviewV1).
+    const landed = { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint,
+      blockNumber: steps.at(-1)!.receipt.blockNumber.toString() };
     // Stopped by its owner: that, and the transaction count the stop was checked at, stay with it.
     const byOwner = record.verification?.stoppedBy === 'person' ? { stoppedBy: 'person', nonceAfter: record.verification.nonceAfter } : {};
     return stopped ? set('failed', steps.at(-1)!.hash, { ...landed, stoppedAt: steps.length, ...byOwner }, LOAN_STEPS_STOPPED_V1)
@@ -294,7 +313,7 @@ export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1;
   const last = read.steps.at(-1)!;
   const stopped = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state: 'failed', transactionHash: last.hash,
     proof: { callsHash: record.run.callsHash, steps: read.hashes, stepsLanded: landed, receiptFingerprint: read.fingerprint, stoppedAt: landed,
-      stoppedBy: 'person', nonceAfter: latest }, errorCode: LOAN_STEPS_STOPPED_V1, batchId: sequentialBatchIdV1(read.hashes), now: deps.now() });
+      stoppedBy: 'person', nonceAfter: latest, blockNumber: last.receipt.blockNumber.toString() }, errorCode: LOAN_STEPS_STOPPED_V1, batchId: sequentialBatchIdV1(read.hashes), now: deps.now() });
   return stopped ? { ok: true, record: stopped } : refuse('lending_attempt_changed', landed);
 }
 

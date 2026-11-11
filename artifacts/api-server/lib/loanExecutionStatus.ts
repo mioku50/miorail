@@ -4,7 +4,7 @@ import { ENTRY_POINT_ADDRESSES_V1, USER_OPERATION_EVENT_TOPIC_V1, type VerifiedR
 import { sameCallDataV1, stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
 import { createViemBaseReceiptReader, type BaseChainReaderV1, type BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from './stockExecutionStatus.js';
-import { LOAN_WALLET_SENT_NOTHING_V1, loanExecutionRuntimeV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
+import { LOAN_WALLET_SENT_NOTHING_V1, loanExecutionRuntimeV1, settledFingerprintV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
 import { refreshSequentialLoanExecutionV1 } from './lendingSteps.js';
 
 const HANDLE_OPS_ABI = parseAbi([
@@ -148,6 +148,18 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   if (record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1) return record;
   // A loan in steps is read step by step, and not while its steps are still being sent.
   if (record.run.delivery === 'sequential') return refreshSequentialLoanExecutionV1(input, record, deps);
+  // A result already read from Base is not read into doubt (audit LEND-4, 2026-11-10). Every view read a
+  // confirmed loan again from nothing, and one answer the RPC did not give turned it back into "unknown",
+  // which holds its market against the repayment. The receipt is the evidence, and its fingerprint is kept:
+  // only a receipt that reads differently now unsettles the result. One that cannot be read changes nothing.
+  const settled = settledFingerprintV1(record);
+  if (settled) {
+    let receipt: VerifiedReceiptSourceV1 | null;
+    try { receipt = await deps.reader.getTransactionReceipt(settled.hash); } catch { return record; }
+    if (!receipt || receipt.transactionHash.toLowerCase() !== settled.hash || receiptFingerprintV1(receipt) === settled.fingerprint) return record;
+    return await deps.store.recordVerification({ ...input, expectedVersion: record.version, state: 'unknown', transactionHash: settled.hash, proof: null,
+      errorCode: 'loan_receipt_changed', now: deps.now() }) ?? record;
+  }
   if (record.state === 'awaiting_wallet' && !record.batchId) return record;
   const set = async (state: 'confirmed' | 'failed' | 'unknown', transactionHash: HashV1 | null, proof: Record<string, unknown> | null, errorCode: string | null) => {
     const next = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state, transactionHash, proof, errorCode, now: deps.now() });
@@ -202,3 +214,31 @@ export const loanExecutionStatusRuntimeV1 = {
       verifyEffectPosition, now: () => new Date() };
   },
 };
+
+// ---------------------------------------------------------------------------
+// A review is true of the block it was read at (audit LEND-3, 2026-11-10).
+//
+// Still's own limit is checked when a review is prepared. Two reviews prepared
+// together (two tabs, or the assistant's card beside the page), each for all
+// the room there was, could both be sent: the first landed, stopped holding
+// the market, and the second, still inside its thirty seconds, was armed on
+// numbers the first had just made untrue. The debt then stood at twice what
+// either review showed.
+//
+// So a new loan is not armed when another attempt of the same wallet in the
+// same market (on Aave V4, its whole spoke) landed a transaction after the
+// block this review was read at. The page prepares the review again, on the
+// position as it is now. A repayment is never refused this way: paying back
+// is right whatever else landed, and the chain bounds it.
+// ---------------------------------------------------------------------------
+export function positionMovedSinceReviewV1(review: LoanExecutionV1, landed: readonly LoanExecutionV1[]): boolean {
+  let reviewBlock: bigint;
+  try { reviewBlock = BigInt(review.run.measured.blockNumber); } catch { return true; }
+  return landed.some((other) => {
+    if (other.executionId === review.executionId || other.transactionHash === null || (other.state !== 'confirmed' && other.state !== 'failed')) return false;
+    const block = other.verification?.blockNumber;
+    if (typeof block === 'string' && /^[1-9][0-9]{0,18}$/.test(block)) return BigInt(block) > reviewBlock;
+    // An older record of a loan stopped part way names no block: by when it was last written instead.
+    return Date.parse(other.updatedAt) > Date.parse(review.createdAt);
+  });
+}

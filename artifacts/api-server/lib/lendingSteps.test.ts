@@ -126,6 +126,18 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     assert.deepEqual(seen.logs, [log(1), log(2), log(3)]);
     assert.equal(seen.block, 53_000_013n);
     assert.deepEqual((confirmed.verification as { steps: string[] }).steps, [hash(1), hash(2), hash(3)]);
+    // Audit LEND-4: once confirmed, steps that cannot be read again change nothing, and the effects are not
+    // judged a second time; only steps that read differently now unsettle it.
+    let judged = 0;
+    const again = (shown: Map<string, VerifiedReceiptSourceV1>) => refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: record.executionId }, confirmed,
+      { ...deps(store, shown, {}), verifyEffectPosition: async () => { judged++; return { state: 'unavailable', errorCode: 'loan_position_at_receipt_unread' }; } });
+    for (const shown of [new Map<string, VerifiedReceiptSourceV1>(), new Map([[hash(1), receipts.get(hash(1))!]]), receipts]) {
+      const kept = await again(shown);
+      assert.deepEqual([kept.state, kept.errorCode, kept.version], ['confirmed', null, confirmed.version]);
+    }
+    assert.equal(judged, 0);
+    const changed = await again(new Map([1, 2, 3].map((n) => [hash(n), receipt(n, {}, [log(n + 50)])] as const)));
+    assert.deepEqual([changed.state, changed.errorCode], ['unknown', 'loan_receipt_changed']);
   });
 
   it('says a stopped sequence landed part way, and a reverted step failed; steps still being sent are not judged', async () => {
