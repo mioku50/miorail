@@ -34,3 +34,15 @@ IP geolocation by DB-IP
   https://db-ip.com, licensed under the Creative Commons Attribution 4.0
   International License. The server downloads it each month; it is not part
   of this repository.
+
+WalletConnect
+  The web app bundles the WalletConnect SDK (@walletconnect/*), used under
+  the WalletConnect Community License Agreement; its text ships with each of
+  those packages as LICENSE.md.
+  Portions © 2025 Reown, Inc. All Rights Reserved
+
+Morpho Blue arithmetic
+  lib/rwa-issuer/src/morphoBorrowMath.ts and morphoRepayMath.ts restate the
+  arithmetic of Morpho Blue (https://github.com/morpho-org/morpho-blue) in
+  TypeScript, with its rounding: Morpho.sol is licensed GPL-2.0-or-later and
+  its libraries MIT.

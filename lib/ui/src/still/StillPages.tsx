@@ -210,6 +210,8 @@ export function StillMore({ model }: { model: StillMoreModelV1 }) {
       <p className="still-section still-note">
         <a href="/metrics">Public metrics</a> · <a href={MIORAIL_SOURCE_URL_V1} target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
       </p>
+      {/* The WalletConnect Community License asks for this line where the product is described. */}
+      <p className="still-section still-note">WalletConnect: Portions © 2025 Reown, Inc. All Rights Reserved</p>
     </div>
   );
 }

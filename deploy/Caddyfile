@@ -2,7 +2,7 @@
 	# Keep the global block intentionally small. Caddy manages TLS and HTTP/3.
 }
 
-miorail.xyz, www.miorail.xyz, {$MIORAIL_SITE_ADDRESS:98.86.240.34.sslip.io} {
+miorail.xyz, www.miorail.xyz, {$MIORAIL_SITE_ADDRESS:localhost} {
 	encode zstd gzip
 
 	# These headers apply to the frontend and proxied API. CSP remains

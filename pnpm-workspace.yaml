@@ -10,17 +10,25 @@ overrides:
   # GHSA-27r3-jxmh-p828: before 2.4.0 a decompressor stayed piped after the body
   # was read. Every parser in the API also refuses compressed bodies (inflate: false).
   body-parser: 2.4.0
+  # Audit SUP-4 (2026-11-10): the server-side packages with open advisories whose fix is inside the range
+  # their parent already asks for, and older than the seven days below. None was reachable as deployed
+  # (trust proxy is a hop count, no outgoing request follows a normalised URI), but the region gate and
+  # the limiters stand on req.ip, so the parser behind it is kept current. Exact versions, so that a
+  # lockfile update cannot move them without a line changing here.
+  proxy-addr: 2.0.8
+  follow-redirects: 1.16.2
+  fast-uri: 3.1.9
+  ip-address: 10.7.4
+  qs: 6.16.1
 
 # Supply-chain policy: refuse to resolve any package (incl. transitive)
 # published within the last 7 days. Guards against dependency-confusion and
-# typosquat injections riding on freshly published versions. Keep strict —
-# do not bypass via minimumReleaseAgeExclude without justification.
+# typosquat injections riding on freshly published versions. Keep strict:
+# there is no minimumReleaseAgeExclude. Three packages were excluded by name
+# in July 2026 because the lockfile then held versions of them under a week
+# old; an exclusion by name lasts for every later version too, so the next
+# lockfile update would have taken one published a minute before (audit SUP-5).
 minimumReleaseAge: 10080 # 7 days, in minutes
-# Justification: transitive linting and compat dependencies in existing lockfile published <7 days ago
-minimumReleaseAgeExclude:
-  - '@next/eslint-plugin-next'
-  - 'caniuse-lite'
-  - 'eslint-module-utils'
 
 # Build-script approval (pnpm 11 `allowBuilds` map). Only esbuild — the
 # repo's bundler (tsx/vite) — is allowed; everything else stays disallowed

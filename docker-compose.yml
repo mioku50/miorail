@@ -11,10 +11,11 @@ name: miorail
 
 services:
   postgres:
-    # Pinned to production's major version (17.x, measured on the deployment).
+    # Pinned to production's major version (18.x since the move of 2026-11-06; it was 17). A data volume
+    # made under 17 does not start under 18: dump it first, or remove the volume and migrate again.
     # `latest` silently moves a development database ahead of the server the
     # code actually runs against.
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       # Development credentials, deliberately trivial and deliberately not
