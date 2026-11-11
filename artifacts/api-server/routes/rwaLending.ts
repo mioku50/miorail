@@ -20,7 +20,7 @@ import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { spendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
-import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDeliveryV1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1, type SpendDeliveryV1 } from '../lib/stillSpendOrders.js';
 import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
@@ -166,6 +166,9 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   // wallet's, priced as the draft says, waiting for payment at Bitrefill, and
   // not already sent by another review of it.
   const payment = q.operation === 'borrow' ? q.payment ?? null : null;
+  // Where Bitrefill sends the purchase, as the open order holds it: shown on the review beside the payment
+  // (audit MCP-3, 2026-11-10: an assistant names the email, and the person signed without seeing it).
+  let deliverTo: SpendDeliveryV1 | null = null;
   if (payment) {
     const refuse = (refusal: string, detail: string) => { res.json({ state: 'refused', refusal, detail }); };
     if (!rwaLendingRuntimeV1.spendEnabled()) { refuse('spend_pay_off', 'Paying from Still is turned off on this server. Nothing can be signed.'); return; }
@@ -190,6 +193,7 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
     if (status.value.status !== 'unpaid') {
       refuse('spend_invoice_not_unpaid', `Bitrefill reports this invoice as ${status.value.status.replace(/_/g, ' ')}, not waiting for payment. Nothing can be paid to it.`); return;
     }
+    deliverTo = spendDeliveryV1(order);
   }
   let run: LendingRunV1;
   if (claims.venue === 'morpho' && q.operation === 'repay') {
@@ -208,7 +212,7 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (run.state === 'refused') { res.json(lendingWireV1(run)); return; }
   const record = await store.putReady({ owner, draftId: claims.draftId, run, now: rwaLendingRuntimeV1.now() });
   if (record.state !== 'ready') { res.json({ state: 'refused', refusal: 'lending_submission_pending', detail: 'This review has an existing wallet attempt. Check its recorded result before preparing another.', executionId: record.executionId, executionState: record.state, facts: record.run.facts }); return; }
-  res.json({ ...lendingWireV1(record.run), executionId: record.executionId });
+  res.json({ ...lendingWireV1(record.run), executionId: record.executionId, ...(deliverTo ? { deliverTo } : {}) });
 });
 
 /** What reads a loan's result from the chain: the same for every route that asks. */

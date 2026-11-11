@@ -14,6 +14,7 @@ import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import {
   STILL_SPEND_CAP_ATOMIC_V1,
   spendBuyableV1,
+  spendDeliveryV1,
   spendDraftPaymentV1,
   spendNeedsPhoneV1,
   spendOrderStoreV1,
@@ -33,9 +34,9 @@ import { stillEntryGateV1 } from '../lib/stillRegion.js';
 // is reviewed, simulated and signed on the lending page like any other loan,
 // or from the USDC already in the wallet: one exact transfer, reviewed and
 // simulated here and signed in the person's own wallet (2026-11-03).
-// The email goes to Bitrefill for its receipt and is not kept here. A top-up's
-// number goes to Bitrefill too, and is held with the open order only, for its
-// owner to see.
+// The email goes to Bitrefill for its receipt. It and a top-up's number are
+// held with the open order only (half an hour, in memory), for its owner to
+// see on the review before paying; neither is logged or stored.
 // ---------------------------------------------------------------------------
 
 export const stillSpendRuntimeV1 = {
@@ -83,7 +84,7 @@ function orderWireV1(order: SpendOrderV1) {
   return {
     orderId: order.orderId, productId: order.productId, productName: order.productName, packageValue: order.packageValue,
     faceCurrency: order.faceCurrency, priceAtomic: order.priceAtomic, payTo: order.payTo, refillTo: order.refillTo === null ? null : `+${order.refillTo}`, createdAt: order.createdAt,
-    expiresAt: order.expiresAt, paymentLink: order.paymentLink,
+    expiresAt: order.expiresAt, paymentLink: order.paymentLink, deliverTo: spendDeliveryV1(order),
   };
 }
 
@@ -154,7 +155,7 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   if (invoice.value.payTo === owner.walletAddress) return refuse(409, 'spend_payee_refused');
   const order: SpendOrderV1 = {
     orderId: invoice.value.invoiceId, ...owner, productId: product.value.id, productName: product.value.name,
-    packageValue: offered.value, faceCurrency: offered.faceCurrency, priceAtomic: quoted.toString(), payTo: invoice.value.payTo, refillTo,
+    packageValue: offered.value, faceCurrency: offered.faceCurrency, priceAtomic: quoted.toString(), payTo: invoice.value.payTo, email: request.email, refillTo,
     createdAt: now.toISOString(), expiresAt: invoice.value.expiresAt, accessToken: invoice.value.accessToken, paymentLink: invoice.value.paymentLink,
   };
   stillSpendRuntimeV1.orders.put(order);
@@ -263,8 +264,11 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
   const store = await stillSpendRuntimeV1.walletPayments();
   // Sent, or tried: from then on a payment is read, never prepared again.
   const prior = await store.get({ owner, orderId });
+  // Where the purchase goes, shown beside the payment while the order is held (audit MCP-3).
+  const held = stillSpendRuntimeV1.orders.get(owner, orderId);
+  const deliverTo = held ? { deliverTo: spendDeliveryV1(held) } : {};
   if (prior && prior.state !== 'ready') {
-    res.json(spendWalletWireV1(prior));
+    res.json({ ...spendWalletWireV1(prior), ...deliverTo });
     return;
   }
   const refuse = (refusal: string, detail: string) => { res.json({ orderId, state: 'refused', refusal, detail }); };
@@ -303,7 +307,7 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
     res.json({ orderId, ...run });
     return;
   }
-  res.json(spendWalletWireV1(await store.putReady({ owner, run, now: stillSpendRuntimeV1.now() })));
+  res.json({ ...spendWalletWireV1(await store.putReady({ owner, run, now: stillSpendRuntimeV1.now() })), ...deliverTo });
 });
 
 stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Response) => {

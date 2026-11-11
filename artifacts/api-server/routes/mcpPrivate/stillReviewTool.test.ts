@@ -53,7 +53,7 @@ async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: strin
   const orders = createSpendOrderStoreV1({ now: () => NOW });
   if (input.heldOrder ?? true) {
     orders.put({ orderId: INVOICE, ...IDENTITY, productId: 'bitrefill-esim-japan', productName: PAYMENT.productName, packageValue: PAYMENT.packageValue, faceCurrency: 'USD',
-      priceAtomic: PAYMENT.assets, payTo: PAYMENT.payTo, refillTo: null, createdAt: NOW.toISOString(), expiresAt: PAYMENT.expiresAt, accessToken: 'access-token-0123456789', paymentLink: null });
+      priceAtomic: PAYMENT.assets, payTo: PAYMENT.payTo, email: 'buyer@example.com', refillTo: null, createdAt: NOW.toISOString(), expiresAt: PAYMENT.expiresAt, accessToken: 'access-token-0123456789', paymentLink: null });
   }
   const invoiceReads: string[] = [];
   const deps: StillReviewStatusDepsV1 = {

@@ -25,6 +25,17 @@ export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
   atomicRequired: boolean; delivery?: 'sequential';
   steps: { index: number; to: string; reading: string }[];
   measured: { provider: string; blockNumber: number; loanDeltaAssets: string };
+  /** Still Spend: where Bitrefill sends what the loan pays for, as the open invoice holds it. */
+  deliverTo?: SpendDeliveryWireV1;
+}
+/** The email Bitrefill sends a purchase to, and the number a top-up goes to. Fixed when the invoice was opened. */
+export interface SpendDeliveryWireV1 { email: string; phone: string | null }
+/** Reads a delivery as the server gave it, or null: nothing is shown from a shape that is not one. */
+export function spendDeliveryWireV1(value: unknown): SpendDeliveryWireV1 | null {
+  if (!object(value) || typeof value.email !== 'string' || value.email.length > 254 || !/^[^\s@<>"']{1,64}@[A-Za-z0-9.-]{1,190}$/.test(value.email) ||
+      // In full on the owner's own page; inside an assistant's card the server shows only their ends.
+      !(value.phone === null || (typeof value.phone === 'string' && /^\+(?:\d{7,15}|…\d{4})$/.test(value.phone)))) return null;
+  return { email: value.email, phone: value.phone };
 }
 export type LendingReviewWireV1 = LendingReadyWireV1 | { state: 'refused'; refusal: string; detail: string; facts?: LendingFactsWireV1;
   executionId?: string; executionState?: LendingExecutionStateV1 };
@@ -110,7 +121,11 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
         funded[0]!.value !== native.maximumNativeAssets ||
         calls.some(c => c !== funded[0] && c.to.toLowerCase() !== WETH_BASE && c.to.toLowerCase() !== MORPHO_BLUE)) return null;
   }
-  return value as unknown as LendingReadyWireV1;
+  // Shown only as the server gave it, and only beside a payment.
+  const deliverTo = value.facts.payment ? spendDeliveryWireV1(value.deliverTo) : null;
+  const { deliverTo: _given, ...rest } = value as Record<string, unknown>;
+  void _given;
+  return { ...(rest as unknown as LendingReadyWireV1), ...(deliverTo ? { deliverTo } : {}) };
 }
 export function parseLendingExecutionWireV1(value: unknown, executionId: string): LendingExecutionWireV1 | null {
   if (!object(value) || value.executionId !== executionId || !id(value.executionId) ||

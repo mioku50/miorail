@@ -294,7 +294,7 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     invoiceStatus = 'unpaid'; reads = 0;
     const orders = createSpendOrderStoreV1({ now: () => NOW });
     orders.put({ orderId: ORDER_ID, tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET, productId: 'bitrefill-esim-germany', productName: 'Bitrefill eSIM Germany',
-      packageValue: '1GB, 7 Days', faceCurrency: 'USD', priceAtomic: '180000', payTo: PAY_TO, refillTo: null, createdAt: NOW.toISOString(),
+      packageValue: '1GB, 7 Days', faceCurrency: 'USD', priceAtomic: '180000', payTo: PAY_TO, email: 'buyer@example.com', refillTo: null, createdAt: NOW.toISOString(),
       expiresAt: new Date(NOW.getTime() + 15 * 60_000).toISOString(), accessToken: 'access-token-0123456789', paymentLink: null });
     const checkout = (): BitrefillGuestCheckoutV1 => ({
       async createInvoice() { throw new Error('no invoice is opened here'); },

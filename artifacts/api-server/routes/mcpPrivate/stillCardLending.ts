@@ -6,6 +6,7 @@ import { rwaLendingRouter } from '../rwaLending.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
+import { spendDeliveryMaskedV1 } from '../../lib/stillSpendOrders.js';
 
 // ---------------------------------------------------------------------------
 // The review card's own way to the lending review, as the grant's wallet.
@@ -65,11 +66,24 @@ function routeV1(identity: McpPrivateIdentityV1, method: 'GET' | 'POST', path: s
   });
 }
 
+/** A route's answer as the card may carry it. Where a purchase goes is shown on the card too, and never
+ * repeated in full through an assistant's tool result: only enough to know one's own email and number by
+ * (audit MCP-3, 2026-11-10). Anything else passes as it is. Exported for its test. */
+export function cardReviewBodyV1(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || Array.isArray(body) || !('deliverTo' in body)) return body;
+  const { deliverTo, ...rest } = body as Record<string, unknown>;
+  const given = deliverTo as { email?: unknown; phone?: unknown } | null;
+  // A shape that is not one is dropped, not passed on.
+  if (!given || typeof given !== 'object' || typeof given.email !== 'string' || !given.email.includes('@') || !(given.phone === null || typeof given.phone === 'string')) return rest;
+  return { ...rest, deliverTo: spendDeliveryMaskedV1({ email: given.email, phone: given.phone }) };
+}
+
 export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z.infer<typeof StillCardLendingInputV1Schema>): Promise<z.infer<typeof StillCardLendingOutputV1Schema>> {
   const wallet = identity.walletAddress.toLowerCase();
   const writes = /\/(?:arm|submission|transaction|steps|stop)$/.test(args.path);
   if ((args.method === 'POST') !== writes) return { status: 400, body: { error: 'lending_request_invalid' }, wallet };
-  const answer = await routeV1(identity, args.method, args.path, args.body ?? {});
+  const routed = await routeV1(identity, args.method, args.path, args.body ?? {});
+  const answer = { status: routed.status, body: cardReviewBodyV1(routed.body) };
   const review = answer.body as { state?: unknown; executionId?: unknown; callsHash?: unknown } | null;
   if (args.path.includes('/review/') && answer.status === 200 && review?.state === 'ready') {
     try {

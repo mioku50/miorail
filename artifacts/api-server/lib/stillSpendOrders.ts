@@ -63,6 +63,11 @@ export interface SpendOrderV1 {
   faceCurrency: string | null;
   priceAtomic: string;
   payTo: string;
+  /** The address Bitrefill sends the receipt and what was bought to, as it was given when the invoice
+   * was opened. Its owner sees it on the review before paying (audit MCP-3, 2026-11-10: an assistant
+   * names it, and the review showed nothing of it). Held with the open order only, half an hour, in
+   * memory: no log, database or loan carries it. */
+  email: string;
   /** The number a phone top-up goes to, in Bitrefill's digits; null for anything else.
    * Its owner sees it until the order is forgotten; no log, database or loan carries it. */
   refillTo: string | null;
@@ -73,6 +78,21 @@ export interface SpendOrderV1 {
 }
 
 export interface SpendOrderOwnerV1 { tenantId: string; walletAddress: string }
+
+/** Where Bitrefill sends what this order buys, as its owner reads it on a review: the email in full,
+ * and the number a top-up goes to. It was fixed when the invoice was opened; nothing here changes it. */
+export interface SpendDeliveryV1 { email: string; phone: string | null }
+export function spendDeliveryV1(order: Pick<SpendOrderV1, 'email' | 'refillTo'>): SpendDeliveryV1 {
+  return { email: order.email, phone: order.refillTo === null ? null : `+${order.refillTo}` };
+}
+
+/** The same, for a surface that is not the owner's own browser (the review card inside an assistant): enough
+ * for the person to know their own address and number by, and not the address or the number itself. */
+export function spendDeliveryMaskedV1(delivery: SpendDeliveryV1): SpendDeliveryV1 {
+  const at = delivery.email.lastIndexOf('@'), local = delivery.email.slice(0, at), domain = delivery.email.slice(at + 1);
+  const shown = local.length <= 2 ? `${local.slice(0, 1)}…` : `${local.slice(0, 1)}…${local.slice(-1)}`;
+  return { email: `${shown}@${domain}`, phone: delivery.phone === null ? null : `+…${delivery.phone.slice(-4)}` };
+}
 
 export interface SpendOrderStoreV1 {
   put(order: SpendOrderV1): void;

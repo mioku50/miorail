@@ -12,7 +12,7 @@ import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
-import { createSpendOrderStoreV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
@@ -133,6 +133,8 @@ describe('opening a Bitrefill invoice from Still', () => {
     assert.equal(r.body.order.orderId, INVOICE);
     assert.equal(r.body.order.priceAtomic, '13250000');
     assert.equal(r.body.order.payTo, PAY_TO);
+    // Where the purchase goes is the owner's to see, as the invoice was opened (audit MCP-3).
+    assert.deepEqual(r.body.order.deliverTo, { email: 'buyer@example.com', phone: null });
     assert.equal(JSON.stringify(r.body).includes('access-token-0123456789'), false);
     const read = await request(app()).get(`/api/still/spend/orders/${INVOICE}`);
     assert.equal(read.status, 200);
@@ -563,6 +565,44 @@ describe('Bitrefill’s two windows, with a part of each kept for buying', () =>
     for (const owner of [WALLET, OTHER]) mine[owner] = (await request(site(owner)).post('/api/still/spend/orders').send(ORDER)).body.order.orderId;
     for (let index = 0; index < 20; index++) for (const owner of [WALLET, OTHER]) assert.equal((await request(site(owner)).get(`/api/still/spend/orders/${mine[owner]}`)).body.statusError, null);
     assert.equal(mock.count('get-invoice-by-id'), 2);
+  });
+});
+
+// Audit MCP-3 (2026-11-10): an assistant names the email Bitrefill sends a gift card's code to, and the
+// number it tops up, and the person signed a review that showed neither.
+describe('where the purchase goes, shown before it is paid', () => {
+  const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
+    packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
+
+  it('the loan’s review and the wallet’s payment both carry the email and the number of the open invoice', async () => {
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: TOP_UP }) }) });
+    const opened = await request(app()).post('/api/still/spend/orders').send({ productId: TOP_UP.id, packageValue: '10', email: 'buyer@example.com', phone: '+91 98765 43210' });
+    assert.equal(opened.status, 200, JSON.stringify(opened.body));
+    const where = { email: 'buyer@example.com', phone: '+919876543210' };
+    assert.deepEqual(opened.body.order.deliverTo, where);
+    const paying = await request(app()).post(`/api/still/spend/orders/${INVOICE}/wallet`);
+    assert.deepEqual([paying.body.state, paying.body.deliverTo], ['ready', where]);
+    const intent = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '110000', collateralSupplyAtomic: '0', spendOrderId: INVOICE });
+    const review = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(intent.body.reviewUrl).slice('/lending/'.length)}`);
+    assert.deepEqual([review.body.state, review.body.deliverTo], ['ready', where]);
+    // It is not among the facts the review is bound by, nor in any stored record: only the open order holds it.
+    assert.equal(JSON.stringify(review.body.facts).includes('buyer@example.com'), false);
+    assert.equal(JSON.stringify(await loans.listByPaymentOrder({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, orderId: INVOICE })).includes('buyer@example.com'), false);
+    // Another wallet sees nothing of it.
+    assert.equal((await request(app(OTHER)).post(`/api/still/spend/orders/${INVOICE}/wallet`)).body.deliverTo, undefined);
+  });
+
+  it('a loan with no purchase carries none', async () => {
+    const intent = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '1000000', collateralSupplyAtomic: '0' });
+    const review = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(intent.body.reviewUrl).slice('/lending/'.length)}`);
+    assert.deepEqual([review.body.state, review.body.deliverTo], ['ready', undefined]);
+  });
+
+  it('inside an assistant’s card only the ends of each are shown', () => {
+    assert.deepEqual(spendDeliveryMaskedV1({ email: 'buyer@example.com', phone: '+919876543210' }), { email: 'b…r@example.com', phone: '+…3210' });
+    assert.deepEqual(spendDeliveryMaskedV1({ email: 'jo@example.com', phone: null }), { email: 'j…@example.com', phone: null });
+    assert.deepEqual(spendDeliveryMaskedV1({ email: 'x@example.com', phone: null }), { email: 'x…@example.com', phone: null });
   });
 });
 

@@ -365,9 +365,13 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
           <h2 id={`${id}-title`}>{paying.price} for {paying.productName} · {paying.packageLabel}</h2>
           <dl className="still-borrow-facts">
             <div><dt>Pays</dt><dd>Bitrefill’s invoice address <span className="mono">{paying.payTo}</span></dd></div>
+            {paying.deliverTo ? <div><dt>Bitrefill sends it to</dt><dd style={{ overflowWrap: 'anywhere' }}>{paying.deliverTo.email}{paying.deliverTo.phone
+              ? <>, and tops up <span className="mono">{paying.deliverTo.phone}</span></> : null}</dd></div> : null}
             {paying.before ? <div><dt>In your wallet</dt><dd className="mono">{paying.before}</dd></div> : null}
             {paying.after ? <div><dt>After paying</dt><dd className="mono">{paying.after}</dd></div> : null}
           </dl>
+          {paying.deliverTo ? <p className="still-note">Check that {paying.deliverTo.phone ? 'the email and the number are' : 'the email is'} yours: the invoice was opened
+            with {paying.deliverTo.phone ? 'them' : 'it'}, and Still cannot change {paying.deliverTo.phone ? 'them' : 'it'}.</p> : null}
           {paying.block !== null ? (
             <p className="still-note still-borrow-block">Read at Base block <span className="mono">{paying.block.toLocaleString('en-US')}</span>; the transfer was run on that same state, and only the invoice’s price left the wallet.</p>
           ) : null}

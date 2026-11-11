@@ -138,6 +138,8 @@ test('a purchase opens the invoice as Spend does, and the link is the review of 
   assert.equal(opened[0]!.email, EMAIL);
   const said = JSON.stringify(prepared);
   for (const secret of [EMAIL, 'access-token', 'bitrefill.com/invoice']) assert.ok(!said.includes(secret), `the answer repeats ${secret}`);
+  // Audit MCP-3 (2026-11-10): the assistant named the email, so the person is sent to check it on the page itself.
+  assert.match(prepared.next, /^The page this link opens shows the user where Bitrefill will send the purchase: tell them to check there, before they sign, that the email \(and for a top-up the number\) is their own/);
   assert.match(prepared.next, /Nothing has been borrowed or paid/);
   assert.match(prepared.next, /Rabby/);
 
@@ -247,6 +249,8 @@ test('a purchase from the wallet’s own USDC opens the same invoice and links S
   assert.equal(opened[0]!.email, EMAIL);
   const said = JSON.stringify(prepared);
   for (const secret of [EMAIL, 'access-token', 'bitrefill.com/invoice']) assert.ok(!said.includes(secret), `the answer repeats ${secret}`);
+  // Audit MCP-3 (2026-11-10): the assistant named the email, so the person is sent to check it on the page itself.
+  assert.match(prepared.next, /^The page this link opens shows the user where Bitrefill will send the purchase: tell them to check there, before they sign, that the email \(and for a top-up the number\) is their own/);
   assert.match(prepared.next, /No loan is taken\./);
   assert.match(prepared.next, /Nothing has been paid\./);
 });

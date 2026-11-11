@@ -11,7 +11,7 @@ import { MemoryLoanExecutionStoreV1 } from '../../lib/loanExecutionStore.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { StillCardLendingInputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
+import { StillCardLendingInputV1Schema, cardReviewBodyV1, stillCardLendingV1 } from './stillCardLending.js';
 
 // The card's way to the review it signs: the page's own lending routes, run as
 // the grant's wallet. Every loan, hash and wallet here is synthetic.
@@ -67,6 +67,21 @@ test('the card gets the page’s own review, armed and recorded by the page’s 
   assert.equal(sent.status, 200);
   const status = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/executions/${body.executionId}` });
   assert.equal((status.body as { state?: string }).state, 'unknown');
+});
+
+// Audit MCP-3 (2026-11-10): the review shows where Bitrefill sends a purchase. Through an assistant's tool
+// result it is never repeated in full.
+test('where a purchase goes reaches the card by its ends only, and nothing else is touched', () => {
+  const review = { state: 'ready', executionId: 'execution_1', calls: [{ to: '0x1', value: '0', data: '0x' }], deliverTo: { email: 'buyer@example.com', phone: '+919876543210' } };
+  const carried = cardReviewBodyV1(review) as typeof review;
+  assert.deepEqual(carried.deliverTo, { email: 'b…r@example.com', phone: '+…3210' });
+  assert.deepEqual({ ...carried, deliverTo: undefined }, { ...review, deliverTo: undefined });
+  assert.equal(JSON.stringify(carried).includes('buyer@'), false);
+  assert.equal(JSON.stringify(carried).includes('9876543210'), false);
+  // A shape that is not one is dropped; an answer without one passes as it is.
+  assert.deepEqual(cardReviewBodyV1({ state: 'ready', deliverTo: 'buyer@example.com' }), { state: 'ready' });
+  assert.deepEqual(cardReviewBodyV1({ state: 'ready', deliverTo: { email: 'nobody', phone: null } }), { state: 'ready' });
+  for (const plain of [{ state: 'refused', refusal: 'x', detail: 'y' }, null, 'text', [1]]) assert.deepEqual(cardReviewBodyV1(plain), plain);
 });
 
 test('another wallet’s draft is refused by the same check, a write must be a POST, and an unrecorded release is withheld', async (t) => {

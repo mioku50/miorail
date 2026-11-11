@@ -353,6 +353,23 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     const html = render({ body });
     assert.match(html, /Then pay Bitrefill 13\.25 USDC for Bitrefill eSIM Germany · 10GB, 30 Days, in the same transaction\./);
     assert.match(html, /0x3333333333333333333333333333333333333333/);
+    // Audit MCP-3 (2026-11-10): where Bitrefill sends the purchase is on the review, as the open invoice holds it.
+    assert.doesNotMatch(html, /Bitrefill sends what you buy to/);
+    const sent = parseLendingReviewWireV1({ ...body, deliverTo: { email: 'buyer@example.com', phone: null } })!;
+    assert.deepEqual(sent.state === 'ready' ? sent.deliverTo : null, { email: 'buyer@example.com', phone: null });
+    assert.match(render({ body: sent }), /Bitrefill sends what you buy to <strong[^>]*>buyer@example\.com<\/strong>\. Check that it is yours:\s+the invoice was opened with it, and Still cannot change it\./);
+    const topUp = parseLendingReviewWireV1({ ...body, deliverTo: { email: 'buyer@example.com', phone: '+919876543210' } })!;
+    assert.match(render({ body: topUp }), /buyer@example\.com<\/strong>, and tops up <strong class="mono">\+919876543210<\/strong>\. Check that they are yours:\s+the invoice was opened with them, and Still cannot change them\./);
+    // Inside an assistant's card the server gives only the ends of each, and they are shown as given.
+    const masked = parseLendingReviewWireV1({ ...body, deliverTo: { email: 'b…r@example.com', phone: '+…3210' } })!;
+    assert.deepEqual(masked.state === 'ready' ? masked.deliverTo : null, { email: 'b…r@example.com', phone: '+…3210' });
+    // Anything that is not one is not shown, and a loan with no purchase shows none.
+    for (const bad of [{ email: 'not an address', phone: null }, { email: 'a@b.c', phone: '12345' }, { email: '<b>x</b>@example.com', phone: null }, 'buyer@example.com', null]) {
+      const read = parseLendingReviewWireV1({ ...body, deliverTo: bad })!;
+      assert.equal(read.state === 'ready' ? read.deliverTo : 'x', undefined, JSON.stringify(bad));
+    }
+    const plain = parseLendingReviewWireV1({ ...ready(), deliverTo: { email: 'buyer@example.com', phone: null } })!;
+    assert.equal(plain.state === 'ready' ? plain.deliverTo : 'x', undefined);
     // A payment of another amount than the loan, or on a repayment, is not a review.
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, payment: { ...payment, assets: '13250001' } } }), null);
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, operation: 'repay', payment } }), null);

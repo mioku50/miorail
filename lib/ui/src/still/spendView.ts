@@ -1,3 +1,5 @@
+import { spendDeliveryWireV1, type SpendDeliveryWireV1 } from '../console/lendingReviewView';
+
 // Still Spend, stage 1: what a loan could pay for, in the page's words.
 //
 // The catalogue is Bitrefill's, read by Still's server as a guest; every price
@@ -365,6 +367,8 @@ export interface SpendWalletViewV1 {
   errorCode: string | null;
   /** Only while it can be armed: what the wallet is asked to send, exactly as the server prepared it. */
   ready: null | { calls: Array<{ to: string; value: string; data: string }>; callsHash: string; signingTermsHash: string };
+  /** Where Bitrefill sends what is bought, as the open invoice holds it; null once Still no longer holds the order. */
+  deliverTo: SpendDeliveryWireV1 | null;
 }
 
 const STATES_V1: readonly SpendWalletStateV1[] = ['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed', 'refused'];
@@ -378,7 +382,7 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
     return { orderId: payload.orderId, state, refusal: typeof payload.refusal === 'string' ? payload.refusal : null,
       detail: text(payload.detail, 400) ? payload.detail : 'Still could not prepare this payment. Nothing was sent.',
       price: null, productName: null, packageLabel: null, payTo: null, before: null, after: null, block: null, warnings: [], expiresAt: null, transactionHash: null,
-      attemptId: null, batchId: null, errorCode: null, ready: null };
+      attemptId: null, batchId: null, errorCode: null, ready: null, deliverTo: null };
   }
   const facts = object(payload.facts) ? payload.facts : null, payment = facts && object(facts.payment) ? facts.payment : null;
   if (!facts || !payment || payment.orderId !== payload.orderId || typeof payment.payTo !== 'string' || !/^0x[0-9a-f]{40}$/.test(payment.payTo) ||
@@ -405,5 +409,6 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
     batchId: typeof payload.batchId === 'string' && payload.batchId.length > 0 && payload.batchId.length <= 2000 ? payload.batchId : null,
     errorCode: typeof payload.errorCode === 'string' && /^[a-z0-9_]{1,80}$/.test(payload.errorCode) ? payload.errorCode : null,
     ready,
+    deliverTo: spendDeliveryWireV1(payload.deliverTo),
   };
 }

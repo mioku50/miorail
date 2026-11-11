@@ -392,6 +392,10 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.deepEqual({ state: view.state, price: view.price, payTo: view.payTo, before: view.before, after: view.after, block: view.block, label: view.packageLabel },
       { state: 'ready', price: '2.00 USDC', payTo: '0x3333…3333', before: '2.12 USDC', after: '0.12 USDC', block: 53_470_000, label: '60 UC' });
     assert.deepEqual(view.ready, { calls: ready.calls, callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
+    // Audit MCP-3 (2026-11-10): where Bitrefill sends the purchase, as the open invoice holds it; none once it is forgotten.
+    assert.equal(view.deliverTo, null);
+    assert.deepEqual(spendWalletViewV1({ ...ready, deliverTo: { email: 'buyer@example.com', phone: '+919876543210' } })!.deliverTo, { email: 'buyer@example.com', phone: '+919876543210' });
+    assert.equal(spendWalletViewV1({ ...ready, deliverTo: { email: 'nobody', phone: null } })!.deliverTo, null);
     const sent = spendWalletViewV1({ ...ready, state: 'submitted', calls: undefined, callsHash: undefined, signingTermsHash: undefined, transactionHash: `0x${'ab'.repeat(32)}` })!;
     assert.deepEqual([sent.state, sent.ready, sent.transactionHash], ['submitted', null, `0x${'ab'.repeat(32)}`]);
     const refused = spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_wallet_usdc_short', detail: 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.' })!;

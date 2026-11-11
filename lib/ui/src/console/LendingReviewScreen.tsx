@@ -81,6 +81,9 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
               <strong>Then pay Bitrefill {usdc(facts.payment.assets)} for {facts.payment.productName} · {facts.payment.packageValue}{facts.payment.faceCurrency && /^\d+(?:\.\d+)?$/.test(facts.payment.packageValue) ? ` ${facts.payment.faceCurrency}` : ''}, {inSteps ? 'as the last step' : 'in the same transaction'}.</strong>{' '}
               {inSteps ? 'Still reads the invoice again before your wallet is asked for that step; if Bitrefill no longer waits for it, nothing is paid. ' : null}
               It goes to Bitrefill’s invoice address <span className="mono" style={{ overflowWrap: 'anywhere' }}>{facts.payment.payTo}</span>, which Still read from Bitrefill.
+              {body.deliverTo ? <>{' '}Bitrefill sends what you buy to <strong style={{ overflowWrap: 'anywhere' }}>{body.deliverTo.email}</strong>{body.deliverTo.phone
+                ? <>, and tops up <strong className="mono">{body.deliverTo.phone}</strong></> : null}. Check that {body.deliverTo.phone ? 'they are' : 'it is'} yours:
+                the invoice was opened with {body.deliverTo.phone ? 'them' : 'it'}, and Still cannot change {body.deliverTo.phone ? 'them' : 'it'}.{' '}</> : null}
               Bitrefill holds this price until {new Date(facts.payment.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}. The loan stays yours to repay.
             </span></div> : null}
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>

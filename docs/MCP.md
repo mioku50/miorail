@@ -145,8 +145,10 @@ opens, never a call:
   bound the person named, and with `returnCollateral` the loan's collateral
   comes back to the wallet in the same review.
 
-The email and a top-up's number go to Bitrefill only. The reviews these links
-open are checked by the server exactly as Get money and Repay are, Still's
+The email and a top-up's number go to Bitrefill only, and no tool answer
+repeats them. The page a purchase link opens shows the person where Bitrefill
+will send the purchase before they sign, because an assistant named it. The
+reviews these links open are checked by the server exactly as Get money and Repay are, Still's
 limit included, and a new loan, purchase or stock buy is refused where Still
 is not offered: the check reads the browser that opens the link, never the
 assistant's own server. Afterwards `miorail_get_still_review_status` reads
