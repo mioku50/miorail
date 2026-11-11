@@ -174,7 +174,13 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   // separately configured server to do it. The import runs one way: this file
   // reaches into the public registry, never the reverse, so the public surface
   // keeps its physical inability to execute.
-  registerMiorailReadOnlyToolsV1(server, hooks);
+  registerMiorailReadOnlyToolsV1(server, {
+    ...hooks,
+    publicContext: {
+      ...hooks.publicContext,
+      clientKey: `private:${JSON.stringify([identity.tenantId, identity.tokenId])}`,
+    },
+  });
 
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],

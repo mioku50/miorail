@@ -496,6 +496,9 @@ printf '%s' "$mcp_tools" | jq -e '
     "miorail_summarise_b20_universe"
   ]
 ' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed read-only surface'; exit 1; }
+printf '%s' "$mcp_tools" | jq -e '
+  .result.tools | any(.name == "miorail_get_b20_opportunity" and .annotations.openWorldHint == true)
+' >/dev/null || { echo 'FAILED: public-context tool does not declare its external reads'; exit 1; }
 # Counted from the answer, not typed here. This line read '13 read-only tools'
 # while the same script's closing line printed the measured 15 — a verification
 # stating a number nobody measured, in the output an operator trusts.

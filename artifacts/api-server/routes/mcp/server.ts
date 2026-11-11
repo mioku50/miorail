@@ -64,6 +64,7 @@ import {
   miorailGetReopenRoundV1,
 } from './reopenTool.js';
 import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
+import type { B20McpPublicContextRequestV1 } from '../../lib/b20PublicContextBudget.js';
 
 // ---------------------------------------------------------------------------
 // T72/Phase 12B.1 — eight legacy B20 tools plus three read-only Market Reality
@@ -150,7 +151,10 @@ get_reopen_round reads Call the reopen, Miorail's weekend game: will five stocks
  * stays physically unable to execute even while it is also the connected one's
  * read half.
  */
-export interface EvidenceReadHooksV1 { onEvidenceRead?: (tool: EvidenceToolV1) => void }
+export interface EvidenceReadHooksV1 {
+  onEvidenceRead?: (tool: EvidenceToolV1) => void;
+  publicContext?: B20McpPublicContextRequestV1;
+}
 export function registerMiorailReadOnlyToolsV1(server: McpServer, hooks: EvidenceReadHooksV1 = {}): void {
   /** One shape for every reply: MCP content plus the structured payload. */
   const reply = (payload: Record<string, unknown>) => ({
@@ -356,12 +360,12 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
             'A bare hostname you already know, e.g. orbitlab.xyz — no scheme, no path, no port. When present NO SEARCH RUNS: Miorail fetches that domain and looks for this token address on it. It believes the domain no more than it believes a ranked search result.',
           ),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 
     },
     async (args) => {
       try {
-        return reply(await miorailGetOpportunityV1(args));
+        return reply(await miorailGetOpportunityV1(args, hooks.publicContext));
       } catch (error) {
         return refuse(error);
       }

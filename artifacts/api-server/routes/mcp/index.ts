@@ -50,7 +50,9 @@ async function limited(req: Request, res: Response): Promise<boolean> {
 mcpServerRouter.post('/', async (req: Request, res: Response) => {
   if (await limited(req, res)) return;
 
-  const server = createMiorailMcpServerV1({ onEvidenceRead: evidenceReadUsageV1({
+  const server = createMiorailMcpServerV1({
+    publicContext: { clientKey: `public-ip:${req.ip || req.socket.remoteAddress || 'unknown'}` },
+    onEvidenceRead: evidenceReadUsageV1({
     surface: 'public', actorKey: req.ip || req.socket.remoteAddress || 'unknown',
     userAgent: req.get('user-agent') ?? '',
   }) });

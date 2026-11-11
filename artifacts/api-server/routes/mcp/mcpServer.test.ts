@@ -14,6 +14,8 @@ import {
 import { b20RouteRuntime, readDiscoverFeedV1 } from '../b20Control.js';
 import { compareNothingToCompareReasonV1 } from './tools.js';
 import { EVIDENCE_TOOLS_V1, EvidencePackageV1Schema } from './evidencePackage.js';
+import { B20PublicContextBudgetV1 } from '../../lib/b20PublicContextBudget.js';
+import { clearB20PublicContextCacheV1 } from '../../lib/b20PublicContextRead.js';
 
 // ---------------------------------------------------------------------------
 // T72 §8 — driven through a REAL MCP client over a real transport.
@@ -248,7 +250,8 @@ describe('§8 — tool discovery', () => {
       // because it carried no annotations.
       assert.deepEqual(
         tool.annotations,
-        { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, idempotentHint: true,
+          openWorldHint: tool.name === 'miorail_get_b20_opportunity' },
         `${tool.name} does not declare itself read-only`,
       );
     }
@@ -1123,6 +1126,68 @@ describe('a fundamental predicate answers over the claims, not the chain', () =>
 });
 
 describe('public context is opt-in and never sits inside the verified layer', () => {
+  test('a spent daily budget refuses only public context, without calling the provider', async (t) => {
+    const saved = { url: process.env.B20_PUBLIC_SEARCH_BASE_URL, key: process.env.B20_PUBLIC_SEARCH_API_KEY };
+    process.env.B20_PUBLIC_SEARCH_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.B20_PUBLIC_SEARCH_API_KEY = 'unit-test-only-not-a-credential';
+    clearB20PublicContextCacheV1();
+    t.after(() => {
+      clearB20PublicContextCacheV1();
+      if (saved.url === undefined) delete process.env.B20_PUBLIC_SEARCH_BASE_URL;
+      else process.env.B20_PUBLIC_SEARCH_BASE_URL = saved.url;
+      if (saved.key === undefined) delete process.env.B20_PUBLIC_SEARCH_API_KEY;
+      else process.env.B20_PUBLIC_SEARCH_API_KEY = saved.key;
+    });
+    const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected network'); });
+    const budget = new B20PublicContextBudgetV1({ dailySearchMax: 1 });
+    budget.reserveSearch();
+    for (const clientKey of ['daily-budget-client-a', 'daily-budget-client-b']) {
+      const client = await connectedClient({ publicContext: { clientKey, budget } });
+      try {
+        const payload = payloadOf(await client.callTool({
+          name: 'miorail_get_b20_opportunity',
+          arguments: { tokenAddress: LAUNCH.tokenAddress, includePublicContext: true },
+        }));
+        assert.ok(payload.opportunity);
+        assert.ok(payload.pipeline);
+        assert.match((payload.possiblePublicContext as { unavailableReason: string }).unavailableReason, /daily budget/);
+      } finally { await client.close(); }
+    }
+    assert.equal(fetch.mock.callCount(), 0);
+  });
+
+  test('fresh stateless MCP instances share a client budget and preserve core evidence on refusal', async (t) => {
+    const previous = process.env.B20_PUBLIC_SEARCH_BASE_URL;
+    process.env.B20_PUBLIC_SEARCH_BASE_URL = 'https://unconfigured.example';
+    t.after(() => {
+      if (previous === undefined) delete process.env.B20_PUBLIC_SEARCH_BASE_URL;
+      else process.env.B20_PUBLIC_SEARCH_BASE_URL = previous;
+    });
+    for (let i = 0; i < 7; i++) {
+      const client = await connectedClient({ publicContext: { clientKey: 'stateless-budget-fixture' } });
+      try {
+        const payload = payloadOf(await client.callTool({
+          name: 'miorail_get_b20_opportunity',
+          arguments: { tokenAddress: LAUNCH.tokenAddress, includePublicContext: true },
+        }));
+        assert.ok(payload.opportunity);
+        assert.ok(payload.pipeline);
+        assert.ok(Array.isArray(payload.history));
+        const context = payload.possiblePublicContext as { unavailableReason: string };
+        assert.match(context.unavailableReason, i < 6 ? /no public search provider/ : /six requests per minute/);
+        assert.match(context.unavailableReason, /not a statement about the token/);
+      } finally { await client.close(); }
+    }
+    const client = await connectedClient({ publicContext: { clientKey: 'another-stateless-budget-fixture' } });
+    try {
+      const payload = payloadOf(await client.callTool({
+        name: 'miorail_get_b20_opportunity',
+        arguments: { tokenAddress: LAUNCH.tokenAddress, includePublicContext: true },
+      }));
+      assert.match((payload.possiblePublicContext as { unavailableReason: string }).unavailableReason, /no public search provider/);
+    } finally { await client.close(); }
+  });
+
   test('absent by default — not null, which would read as "looked and found nothing"', async () => {
     const client = await connectedClient();
     const payload = payloadOf(

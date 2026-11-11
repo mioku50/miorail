@@ -1023,6 +1023,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
         assert.equal(annotations!.readOnlyHint, true, `${tool.name} should be read-only`);
       }
     }
+    assert.equal(tools.find(tool => tool.name === 'miorail_get_b20_opportunity')?.annotations?.openWorldHint, true);
     assert.equal(
       tools.filter((tool) => (tool.annotations as { readOnlyHint?: boolean })?.readOnlyHint === false)
         .length,

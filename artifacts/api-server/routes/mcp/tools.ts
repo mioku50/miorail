@@ -28,6 +28,11 @@ import {
   b20PublicContextSearchFromEnv,
   readB20PublicContextV1,
 } from '../../lib/b20PublicContextRead.js';
+import {
+  B20PublicContextBudgetError,
+  b20McpPublicContextBudgetV1,
+  type B20McpPublicContextRequestV1,
+} from '../../lib/b20PublicContextBudget.js';
 
 // ---------------------------------------------------------------------------
 // T72 — the read-only tool layer.
@@ -446,7 +451,7 @@ export async function miorailGetOpportunityV1(input: {
   includePublicContext?: boolean;
   /** A bare hostname the caller already knows. When present NO SEARCH RUNS. */
   publicContextDomain?: string;
-}): Promise<Record<string, unknown>> {
+}, request: B20McpPublicContextRequestV1 = { clientKey: 'public:unknown' }): Promise<Record<string, unknown>> {
   const tokenAddress = String(input.tokenAddress ?? '').toLowerCase();
   if (!ADDRESS_V1.test(tokenAddress)) {
     // Malformed and unknown stay distinct: one is the caller's mistake and the
@@ -482,14 +487,16 @@ export async function miorailGetOpportunityV1(input: {
     const wantsPublicContext = input.includePublicContext === true || Boolean(input.publicContextDomain);
     let possiblePublicContext: Record<string, unknown> | undefined;
     if (wantsPublicContext) {
-      const search = b20PublicContextSearchFromEnv();
-      if (search === null && !input.publicContextDomain) {
-        possiblePublicContext = {
-          unavailableReason:
-            'This Miorail server has no public search provider configured, so it could not look. That is not a statement about the token, and it is not "nothing was found".',
-        };
-      } else {
-        try {
+      const budget = request.budget ?? b20McpPublicContextBudgetV1;
+      try {
+        await budget.consumeLookup(request.clientKey);
+        const search = b20PublicContextSearchFromEnv();
+        if (search === null && !input.publicContextDomain) {
+          possiblePublicContext = {
+            unavailableReason:
+              'This Miorail server has no public search provider configured, so it could not look. That is not a statement about the token, and it is not "nothing was found".',
+          };
+        } else {
           const context = await readB20PublicContextV1({
             chainId: 8453,
             tokenAddress,
@@ -499,6 +506,7 @@ export async function miorailGetOpportunityV1(input: {
             deps: {
               search: search ?? (async () => { throw new Error('no search provider'); }),
               now: () => b20RouteRuntime.now(),
+              beforeSearch: () => budget.reserveSearch(),
             },
           });
           possiblePublicContext = {
@@ -506,14 +514,16 @@ export async function miorailGetOpportunityV1(input: {
             boundary:
               'Candidates from a public search or from a domain you named. NOTHING here is verified: a matching name or symbol is not a link, and 61.7% of B20 launches share their symbol with another launch. This can never become the verified project layer above.',
           };
-        } catch (error) {
-          possiblePublicContext = {
-            unavailableReason:
-              error instanceof B20SuppliedDomainRefusedError
+        }
+      } catch (error) {
+        possiblePublicContext = {
+          unavailableReason:
+            error instanceof B20PublicContextBudgetError
+              ? error.message
+              : error instanceof B20SuppliedDomainRefusedError
                 ? `Miorail will not fetch that domain (${error.refusal}), so it read nothing.`
                 : 'The public lookup did not complete, so Miorail read nothing. That is about the lookup, not about the token.',
-          };
-        }
+        };
       }
     }
 

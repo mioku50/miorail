@@ -40,6 +40,8 @@ export const PUBLIC_CONTEXT_CACHE_MS_V1 = 30 * 60 * 1000;
 export interface B20PublicContextDepsV1 {
   search: B20PublicSearchV1;
   now: () => Date;
+  /** Called only for actual searches, outside their recoverable-error handler. */
+  beforeSearch?: () => void;
 }
 
 const cacheV1 = new Map<string, { at: number; value: B20PublicContextV1 }>();
@@ -165,6 +167,7 @@ export async function readB20PublicContextV1(input: {
     // Miorail's failure wearing a token's name.
     let results: Awaited<ReturnType<B20PublicSearchV1>> = [];
     let completed = true;
+    input.deps.beforeSearch?.();
     try {
       results = await input.deps.search(query);
     } catch {
@@ -185,6 +188,7 @@ export async function readB20PublicContextV1(input: {
       if (widened !== null) {
         let widenedResults: Awaited<ReturnType<B20PublicSearchV1>> = [];
         let widenedCompleted = true;
+        input.deps.beforeSearch?.();
         try {
           widenedResults = await input.deps.search(widened);
         } catch {

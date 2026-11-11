@@ -68,6 +68,9 @@ async function main(): Promise<void> {
   console.log(`  tools: ${names.join(', ')}`);
   const missing = EXPECTED_TOOLS_V1.filter((name) => !names.includes(name));
   if (missing.length > 0) throw new Error(`missing tools: ${missing.join(', ')}`);
+  if (tools.find(tool => tool.name === 'miorail_get_b20_opportunity')?.annotations?.openWorldHint !== true) {
+    throw new Error('the optional public-context lookup must declare openWorldHint');
+  }
 
   for (const tool of tools) {
     for (const property of Object.keys(
