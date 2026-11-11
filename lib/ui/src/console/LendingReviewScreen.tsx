@@ -147,8 +147,14 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       {/* A Spend loan in the wallet: the transfer carries no deadline of its own, so the invoice's is said here (audit SPEND-6). */}
       {body.state === 'ready' && model.walletBusy && facts?.payment
         ? <LendingInvoiceDeadlineV1 expiresAt={facts.payment.expiresAt} orderId={facts.payment.orderId} /> : null}
+      {/* The terms moved while the person read them. Nothing failed and nothing was sent: the page shows the
+          new terms, and this says so beside the button that accepts them. */}
+      {body.state === 'ready' && model.onOpen && !blocked && model.termsChanged && model.walletError
+        ? <p className="still-note" role="status"><strong>Nothing was sent.</strong> {model.walletError}</p> : null}
       {body.state === 'ready' && model.onOpen && !blocked ? <button type="button" className="still-btn" disabled={model.walletBusy} onClick={model.onOpen}>
-        {model.walletBusy ? 'Waiting for your wallet…' : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
+        {model.walletBusy ? 'Waiting for your wallet…'
+          : model.termsChanged ? (inSteps ? `Accept these terms and open step 1 of ${body.steps.length}` : 'Accept these terms and open your wallet')
+            : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
       </button> : null}
       {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onCheck}>
         {model.checking ? 'Checking the onchain result…' : 'Check onchain result'}
@@ -179,7 +185,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         </label>
         <button type="button" className="still-btn sec" onClick={model.onFindTransaction} disabled={model.checking || model.walletBusy}>Find this transaction</button>
       </details> : null}
-      {model.walletError && !(body.state === 'refused' && body.detail === model.walletError) ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
+      {model.walletError && !model.termsChanged && !(body.state === 'refused' && body.detail === model.walletError) ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
       {/* A Spend loan in steps that stopped before its payment only because Bitrefill could not be read: the invoice is still open. */}
       {model.walletPayPath ? <p className="still-note"><a href={model.walletPayPath}>Pay this invoice from your wallet</a></p> : null}
       <p className="still-note">Still prepares unsigned calls and verifies evidence. Only your wallet can approve and submit them. This page does not automatically open your wallet.</p>

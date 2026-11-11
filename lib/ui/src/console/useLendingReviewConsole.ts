@@ -59,9 +59,12 @@ interface StateV1 {
   transactionHint: string; step: LendingStepProgressV1 | null;
   /** Why the server stopped this loan's steps, by its own code. */
   stepsRefusal: string | null;
+  /** The last press found the terms changed and showed the new ones: the next press accepts them. */
+  termsChanged: boolean;
 }
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
-  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null, stepsRefusal: null });
+  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null, stepsRefusal: null,
+  termsChanged: false });
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
 /** The server's own sentence for a refusal it names (`code: detail`), or null for anything else. */
 function serverDetailV1(error: unknown, codes: RegExp): string | null {
@@ -81,6 +84,10 @@ export interface LendingReviewConsoleModelV1 {
   loading: boolean; error: string | null; body: LendingReviewWireV1 | null;
   walletBusy: boolean; walletError: string | null; submissionLock: string | null; batchId: string | null;
   execution: LendingExecutionWireV1 | null; checking: boolean;
+  /** The terms moved while the person read them, and the page now shows the new ones: nothing failed, and
+   * the same button accepts them. Said as that, by the button, not as an error under the page (2026-11-11:
+   * a red line after the first press, and no word that pressing again was the way on). */
+  termsChanged?: boolean;
   /** The page where the wallet's own USDC pays this loan's invoice, when its steps stopped before the payment. */
   walletPayPath?: string | null;
   onOpen: (() => void) | null; onCheck: (() => void) | null;
@@ -225,7 +232,7 @@ export function useLendingReviewConsoleV1(input: {
   const onOpen = useCallback(async () => {
     if (!eligible || active.body?.state !== 'ready' || opening.current || active.marker || active.batchId ||
         (active.execution && active.execution.state !== 'ready')) return;
-    opening.current = true; update({ walletBusy: true, walletError: null });
+    opening.current = true; update({ walletBusy: true, walletError: null, termsChanged: false });
     const previous = active.body;
     let approved = active.body;
     let handedToWallet = false;
@@ -342,7 +349,7 @@ export function useLendingReviewConsoleV1(input: {
       if (current.current !== identity) return;
       if (result.state === 'review_changed') {
         confirmed.current = { identity, hash: result.termsHash };
-        update({ walletError: previous !== approved ? describeLendingTermsChangesV1(previous, approved) : result.message });
+        update({ walletError: previous !== approved ? describeLendingTermsChangesV1(previous, approved) : result.message, termsChanged: true });
       }
       else {
         confirmed.current = null;
@@ -399,6 +406,7 @@ export function useLendingReviewConsoleV1(input: {
   return { body: eligible ? active.body : null, model: {
     loading: eligible && active.loading, error: !eligible ? 'Sign in and connect the same wallet to read this private review.' : active.error,
     body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy,
+    termsChanged: eligible && active.termsChanged && active.walletError !== null,
     // The wallet's own answer about itself is said before the button would be.
     walletError: eligible ? active.walletError ?? (active.body?.state === 'ready' && !locked ? input.walletBlocker ?? null : null) : null,
     batchId: eligible ? active.batchId : null, execution: eligible ? active.execution : null, checking: eligible && active.checking,

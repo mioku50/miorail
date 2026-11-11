@@ -219,34 +219,102 @@ export function labelLendingTargetV1(to: string, facts: LendingFactsWireV1): str
 
 /** What a person reads on a ready review, as one comparable value: every
  * figure, every limit, the health ratio as it is weighed (to the hundredth),
- * each risk note, the money that moves and each wallet step with its target.
+ * the money that moves and each wallet step with its target.
  * Left out: the clock, the block, debt shares, and the calls' own bytes. A
  * loan's calls carry a deadline and a share-price bound, so the bytes are new
  * on every read (2026-11-07: two Morpho preparations three seconds apart
  * differed in those two words only). The call count, targets and values stay
- * in. */
+ * in. The figures that move by themselves between two reads (a debt that
+ * accrues, a limit that follows a live price, a risk note that states a
+ * distance) are compared apart, each with its own measure of "the same". */
 function lendingReadingV1(body: LendingReadyWireV1): string {
   const f = body.facts;
   return JSON.stringify({
     operation: f.operation, venue: f.venue, token: f.collateralTokenAddress.toLowerCase(), symbol: f.collateralSymbol, decimals: f.collateralDecimals,
     market: f.marketId.toLowerCase(), mode: f.amountMode, requested: f.requestedAssets, maximum: f.maximumDebitAssets, supply: f.collateralSupplyAssets,
-    debt: [f.debtBeforeAssets, f.debtAfterAssets], collateral: [f.collateralBeforeAssets, f.collateralAfterAssets],
+    collateral: [f.collateralBeforeAssets, f.collateralAfterAssets],
     health: [materialLendingHealthBucketV1(f.healthBeforeWad, f.debtBeforeAssets), materialLendingHealthBucketV1(f.healthAfterWad, f.debtAfterAssets)],
-    limits: [f.policyLimitAssets ?? null, f.protocolLimitAssets ?? null], terms: f.termsVersion ?? null,
+    terms: f.termsVersion ?? null,
     native: f.nativeFunding ? [f.nativeFunding.maximumNativeAssets, f.nativeFunding.reserveAssets, f.nativeFunding.authorizedBefore, f.nativeFunding.feeQuoteState] : null,
     payment: f.payment ? [f.payment.orderId, f.payment.payTo.toLowerCase(), f.payment.assets] : null,
-    back: f.collateralReturnAssets ?? null, warnings: f.warnings, moved: body.measured?.loanDeltaAssets ?? null,
+    back: f.collateralReturnAssets ?? null,
     delivery: [body.atomicRequired, body.delivery ?? null],
     steps: body.steps.map(step => [step.index, step.to.toLowerCase(), step.reading]),
     calls: body.calls.map(call => [call.to.toLowerCase(), call.value]),
   });
 }
 
-/** Whether a fresh review reads exactly as the one the person pressed on, so
- * that its calls, prepared again for this moment, can go to the wallet with no
- * second press: the person has read every term these calls carry. */
+const BPS_SCALE_V1 = BigInt(10_000);
+/** A debt between two reads a few seconds apart: one part in a million, or a hundredth of a cent, whichever
+ * is more. A minute of interest at 10% a year is a fifth of that; a second loan or a repayment is far past it. */
+const DEBT_DRIFT_PER_MILLION_V1 = BigInt(1);
+const DEBT_DRIFT_FLOOR_ASSETS_V1 = BigInt(100);
+/** A debt ceiling that follows a live price: 1%. Wall Street moves a stock that far in seconds only when
+ * something happened, and then the person is asked again. */
+const LIMIT_DRIFT_BPS_V1 = BigInt(100);
+/** A distance a risk note states ("a 49.9% fall liquidates this"): half a point. */
+const NOTE_DRIFT_V1 = 0.5;
+
+function unitsV1(value: string | null | undefined): bigint | null {
+  if (value == null || !/^\d+$/.test(value)) return null;
+  return BigInt(value);
+}
+
+/** The same debt to a reader: equal, or apart by no more than interest accrues between two reads. */
+function sameDebtV1(a: string | null | undefined, b: string | null | undefined): boolean {
+  if ((a ?? null) === (b ?? null)) return true;
+  const x = unitsV1(a), y = unitsV1(b);
+  if (x === null || y === null) return false;
+  const apart = x > y ? x - y : y - x, larger = x > y ? x : y;
+  const allowed = (larger * DEBT_DRIFT_PER_MILLION_V1) / BigInt(1_000_000);
+  return apart <= (allowed > DEBT_DRIFT_FLOOR_ASSETS_V1 ? allowed : DEBT_DRIFT_FLOOR_ASSETS_V1);
+}
+
+/** The same ceiling to a reader: equal, or moved by a hair with the debt after this loan still on the same
+ * side of it. A ceiling the loan no longer fits under is never the same. */
+function sameLimitV1(a: string | null | undefined, b: string | null | undefined, debtAfter: string): boolean {
+  if ((a ?? null) === (b ?? null)) return true;
+  const x = unitsV1(a), y = unitsV1(b), needed = unitsV1(debtAfter);
+  if (x === null || y === null || needed === null) return false;
+  if ((x < needed) !== (y < needed)) return false;
+  const apart = x > y ? x - y : y - x, larger = x > y ? x : y;
+  return apart * BPS_SCALE_V1 <= larger * LIMIT_DRIFT_BPS_V1;
+}
+
+/** The same risk notes to a reader: the same sentences, in the same order, whose numbers are each within
+ * half a point. A note that appears, disappears or says something else is not the same. */
+function sameNotesV1(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const NUMBER = /\d+(?:\.\d+)?/g;
+  return a.every((note, index) => {
+    const other = b[index]!;
+    if (note === other) return true;
+    if (note.replace(NUMBER, '#') !== other.replace(NUMBER, '#')) return false;
+    const mine = note.match(NUMBER) ?? [], theirs = other.match(NUMBER) ?? [];
+    return mine.length === theirs.length && mine.every((value, at) => Math.abs(Number(value) - Number(theirs[at])) <= NOTE_DRIFT_V1);
+  });
+}
+
+/**
+ * Whether a fresh review reads as the one the person pressed on, so that its
+ * calls, prepared again for this moment, can go to the wallet with no second
+ * press: the person has read every term these calls carry.
+ *
+ * What the person chose and what the calls do must be exactly the same. What
+ * only moves with time is the same within its own measure. Until 2026-11-11
+ * every figure had to be equal to the unit, and during market hours a stock's
+ * debt ceiling moves with its price every few seconds: the first press of a
+ * loan against AAPL answered "The terms changed" in red, for a ceiling a
+ * fraction of a cent away, and the person had to think of pressing again.
+ */
 export function lendingReviewReadsTheSameV1(previous: LendingReadyWireV1, next: LendingReadyWireV1): boolean {
-  return previous.state === 'ready' && next.state === 'ready' && lendingReadingV1(previous) === lendingReadingV1(next);
+  if (previous.state !== 'ready' || next.state !== 'ready' || lendingReadingV1(previous) !== lendingReadingV1(next)) return false;
+  const p = previous.facts, n = next.facts;
+  return sameDebtV1(p.debtBeforeAssets, n.debtBeforeAssets) && sameDebtV1(p.debtAfterAssets, n.debtAfterAssets) &&
+    sameDebtV1(previous.measured?.loanDeltaAssets, next.measured?.loanDeltaAssets) &&
+    sameLimitV1(p.policyLimitAssets, n.policyLimitAssets, n.debtAfterAssets) &&
+    sameLimitV1(p.protocolLimitAssets, n.protocolLimitAssets, n.debtAfterAssets) &&
+    sameNotesV1(p.warnings, n.warnings);
 }
 
 export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next: LendingReadyWireV1): string {

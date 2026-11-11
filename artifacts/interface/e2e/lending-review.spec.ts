@@ -47,11 +47,34 @@ test('changed lending terms require another explicit click, which sends that exa
   const state = await install(page); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
   const fresh = ready();
-  state.response = { ...fresh, facts: { ...fresh.facts, debtBeforeAssets: '3125002' }, callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
-  await open.click(); await expect(page.getByText(/^The terms changed \(debt before \(3\.125001 USDC → 3\.125002 USDC\)/)).toBeVisible(); expect(await attempts(page)).toBe(0);
-  const reads = state.reviewReads; await open.click();
-  await expect.poll(() => attempts(page)).toBe(1); await expect(open).toHaveCount(0);
+  // A cent more debt than the review the person read: somebody borrowed in between. Interest alone is not this.
+  state.response = { ...fresh, facts: { ...fresh.facts, debtBeforeAssets: '3135001' }, callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
+  await open.click();
+  // Said by the button as what it is: nothing was sent, here is what changed. Not an error under the page.
+  const notice = page.getByRole('status').filter({ hasText: /^Nothing was sent\. The terms changed \(debt before \(3\.125001 USDC → 3\.135001 USDC\)/ });
+  await expect(notice).toBeVisible(); await expect(page.getByRole('alert')).toHaveCount(0); expect(await attempts(page)).toBe(0);
+  // And the button says what the next press does.
+  await expect(open).toHaveCount(0);
+  const accept = page.getByRole('button', { name: 'Accept these terms and open your wallet', exact: true }); await expect(accept).toBeVisible();
+  const reads = state.reviewReads; await accept.click();
+  await expect.poll(() => attempts(page)).toBe(1); await expect(accept).toHaveCount(0);
   expect(state.reviewReads).toBe(reads); expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+});
+// 2026-11-11, a loan against AAPL during the session: the first press answered "The terms changed" in red for a
+// debt ceiling that had followed the stock's price by a fraction of a cent, and the second press went through.
+test('figures that only moved with the clock or a live price go to the wallet at the first press', async ({ page }) => {
+  const state = await install(page);
+  const seen = ready();
+  state.response = { ...seen, facts: { ...seen.facts, operation: 'borrow', policyLimitAssets: '12500000', protocolLimitAssets: '25000000' } };
+  await page.goto('/lending/fixture-lending');
+  const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
+  // The fresh review: a second of interest on the debt, both ceilings a few cents lower, and new call bytes.
+  state.response = { ...seen, facts: { ...seen.facts, operation: 'borrow', policyLimitAssets: '12499310', protocolLimitAssets: '24998620',
+    debtBeforeAssets: '3125002', debtAfterAssets: '125002' }, callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
+  await open.click();
+  await expect.poll(() => attempts(page)).toBe(1);
+  await expect(page.getByText(/The terms changed|Accept these terms/)).toHaveCount(0);
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 test('a failed refresh cannot fall back to cached executable calls', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');

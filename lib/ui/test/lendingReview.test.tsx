@@ -260,15 +260,38 @@ describe('lending review presentation does not call a submission a repayment', (
     assert.equal(lendingReviewReadsTheSameV1(body, next), false);
     const changed = (edit: (copy: LendingReadyWireV1) => void) => { const copy = structuredClone(recalled); edit(copy); return copy; };
     for (const edit of [
-      (c: LendingReadyWireV1) => { c.facts.debtAfterAssets = '50002'; },
+      (c: LendingReadyWireV1) => { c.facts.debtAfterAssets = '50200'; },
       (c: LendingReadyWireV1) => { c.facts.requestedAssets = '50001'; },
       (c: LendingReadyWireV1) => { c.facts.collateralAfterAssets = '80001'; },
       (c: LendingReadyWireV1) => { c.facts.policyLimitAssets = '60000'; },
-      (c: LendingReadyWireV1) => { c.measured = { ...c.measured, loanDeltaAssets: '49999' }; },
+      (c: LendingReadyWireV1) => { c.measured = { ...c.measured, loanDeltaAssets: '49800' }; },
       (c: LendingReadyWireV1) => { c.calls = c.calls.map(call => ({ ...call, value: '1' })); },
       (c: LendingReadyWireV1) => { c.calls = [...c.calls, c.calls[0]!]; },
       (c: LendingReadyWireV1) => { c.atomicRequired = !c.atomicRequired; },
     ]) assert.equal(lendingReviewReadsTheSameV1(body, changed(edit)), false);
+    // 2026-11-11, a loan against AAPL at 15:18 in New York: the first press answered "The terms changed" in
+    // red, and the second went through. What had changed was a ceiling that follows the stock's live price.
+    // Figures that move by themselves between two reads read the same within a measure of their own.
+    const limited = (policy: string | null, protocol: string | null) => changed(c => { c.facts.policyLimitAssets = policy; c.facts.protocolLimitAssets = protocol; });
+    const ceilings = limited('12500000', '25000000');
+    assert.equal(lendingReviewReadsTheSameV1(ceilings, limited('12499310', '24998620')), true, 'a price a few cents lower');
+    assert.equal(lendingReviewReadsTheSameV1(ceilings, limited('12550000', '25100000')), true, 'under one percent');
+    assert.equal(lendingReviewReadsTheSameV1(ceilings, limited('12250000', '24500000')), false, 'two percent is a move');
+    assert.equal(lendingReviewReadsTheSameV1(ceilings, limited('12500000', null)), false, 'a ceiling that was not read');
+    // A ceiling the loan fits under on one read and not on the other is never the same, however close.
+    assert.equal(lendingReviewReadsTheSameV1(limited('50001', '25000000'), limited('50000', '25000000')), false);
+    // A debt that accrued between the reads, and the unit a share rounding moves: the same. A second loan is not.
+    assert.equal(lendingReviewReadsTheSameV1(body, changed(c => { c.facts.debtAfterAssets = '50002'; })), true);
+    assert.equal(lendingReviewReadsTheSameV1(body, changed(c => { c.measured = { ...c.measured, loanDeltaAssets: '49999' }; })), true);
+    const owing = (before: string, after: string) => changed(c => { c.facts.debtBeforeAssets = before; c.facts.debtAfterAssets = after; });
+    assert.equal(lendingReviewReadsTheSameV1(owing('1000000000', '1000050001'), owing('1000000019', '1000050020')), true, 'ten seconds of interest on $1,000');
+    assert.equal(lendingReviewReadsTheSameV1(owing('1000000000', '1000050001'), owing('1000010000', '1000060001')), false, 'a cent appeared: not interest');
+    // A risk note whose distance moved by a tenth reads the same; a note that says something else does not.
+    const noted = (text: string) => changed(c => { c.facts.warnings = [...c.facts.warnings, text]; });
+    const fall = noted('A 49.9% fall in the NVDAc price liquidates this position.');
+    assert.equal(lendingReviewReadsTheSameV1(fall, noted('A 49.7% fall in the NVDAc price liquidates this position.')), true);
+    assert.equal(lendingReviewReadsTheSameV1(fall, noted('A 49.3% fall in the NVDAc price liquidates this position.')), false);
+    assert.equal(lendingReviewReadsTheSameV1(fall, noted('A 49.9% fall in the AAPLc price liquidates this position.')), false);
     const step = changed(c => { c.steps = c.steps.map(s => ({ ...s, to: `0x${'7'.repeat(40)}` })); });
     assert.equal(lendingReviewReadsTheSameV1(body, step), false);
     assert.match(describeLendingTermsChangesV1(body, step), /^The terms changed \(wallet steps; approved calldata\)/);
