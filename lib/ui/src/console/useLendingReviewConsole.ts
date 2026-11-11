@@ -20,7 +20,9 @@ export interface LendingStepsWalletV1 {
 /** The steps stopped after some landed: what landed is recorded, and the person is told what it means. */
 export class LendingStepsStoppedV1 extends Error {
   readonly batchId: string | null;
-  constructor(message: string, batchId: string | null) { super(message); this.batchId = batchId; }
+  /** The server's own code for why it stopped them, when it did. */
+  readonly refusal: string | null;
+  constructor(message: string, batchId: string | null, refusal: string | null = null) { super(message); this.batchId = batchId; this.refusal = refusal; }
 }
 export function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false, returning = false): string {
   // A Spend loan pays last: with every step but the payment in place, the loan was taken and Bitrefill was not paid.
@@ -54,9 +56,11 @@ interface StateV1 {
   walletError: string | null; walletBusy: boolean; checking: boolean;
   marker: BorrowSubmissionMarkerV1 | null; batchId: string | null; execution: LendingExecutionWireV1 | null;
   transactionHint: string; step: LendingStepProgressV1 | null;
+  /** Why the server stopped this loan's steps, by its own code. */
+  stepsRefusal: string | null;
 }
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
-  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null });
+  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null, stepsRefusal: null });
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
 /** The server's own sentence for a refusal it names (`code: detail`), or null for anything else. */
 function serverDetailV1(error: unknown, codes: RegExp): string | null {
@@ -76,6 +80,8 @@ export interface LendingReviewConsoleModelV1 {
   loading: boolean; error: string | null; body: LendingReviewWireV1 | null;
   walletBusy: boolean; walletError: string | null; submissionLock: string | null; batchId: string | null;
   execution: LendingExecutionWireV1 | null; checking: boolean;
+  /** The page where the wallet's own USDC pays this loan's invoice, when its steps stopped before the payment. */
+  walletPayPath?: string | null;
   onOpen: (() => void) | null; onCheck: (() => void) | null;
   transactionHint?: string;
   onTransactionHint?: (value: string) => void;
@@ -300,7 +306,8 @@ export function useLendingReviewConsoleV1(input: {
                   if (answer.state === 'next') { landed = batch; continue; }
                   // A step that failed onchain is not in place; one that landed before a refused review is.
                   const inPlace = answer.refusal === 'loan_step_reverted' ? index : index + 1;
-                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null, paying, returning), batch);
+                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null, paying, returning), batch,
+                    typeof answer.refusal === 'string' ? answer.refusal : null);
                 }
                 throw new LendingStepsStoppedV1('The steps ended without a final answer. Check the onchain result before pressing again.', landed);
               }
@@ -341,7 +348,7 @@ export function useLendingReviewConsoleV1(input: {
       }
     } catch (error) {
       confirmed.current = null;
-      if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
+      if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, stepsRefusal: error.refusal, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName)
@@ -356,12 +363,18 @@ export function useLendingReviewConsoleV1(input: {
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
   // A loan in steps stopped part way still takes a step its wallet sent after all, by that step's hash.
   const stoppedInSteps = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_steps_stopped' && Boolean(active.execution.steps);
+  // A Spend loan in steps that stopped before its payment because Bitrefill could not be read just then:
+  // the invoice is still open, and the wallet's own USDC may pay it on that invoice's page. Any other stop
+  // (an invoice Bitrefill denied, a step declined) offers no such thing.
+  const payingOrder = active.body?.facts?.payment?.orderId ?? null;
+  const walletPayPath = payingOrder && /^[0-9a-f-]{36}$/.test(payingOrder) && active.stepsRefusal === 'spend_invoice_unread' ? `/spend/pay/${payingOrder}` : null;
   return { body: eligible ? active.body : null, model: {
     loading: eligible && active.loading, error: !eligible ? 'Sign in and connect the same wallet to read this private review.' : active.error,
     body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy,
     // The wallet's own answer about itself is said before the button would be.
     walletError: eligible ? active.walletError ?? (active.body?.state === 'ready' && !locked ? input.walletBlocker ?? null : null) : null,
     batchId: eligible ? active.batchId : null, execution: eligible ? active.execution : null, checking: eligible && active.checking,
+    walletPayPath: eligible ? walletPayPath : null,
     submissionLock: eligible && active.marker ? borrowSubmissionLockCopyV1(active.marker) : null,
     onOpen: eligible && active.body?.state === 'ready' && !locked && !input.walletBlocker ? () => void onOpen() : null,
     onCheck: eligible && executionId ? () => void onCheck() : null,

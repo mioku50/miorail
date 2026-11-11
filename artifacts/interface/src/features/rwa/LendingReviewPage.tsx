@@ -81,10 +81,9 @@ export function LendingReviewPage() {
   const confirmedLoan = review.model.execution?.state === 'confirmed' && review.model.body?.facts?.operation === 'borrow';
   // Still Spend: the loan paid a Bitrefill invoice; Bitrefill says where the order stands.
   const paidOrder = confirmedLoan ? review.model.body?.facts?.payment?.orderId ?? null : null;
-  const [delivered, setDelivered] = useState(false);
-  const order = useStillSpendOrderV1(paidOrder, { refetchInterval: delivered ? false : 15_000 });
+  // Asked again every fifteen seconds until Bitrefill settles it; the server says when that is.
+  const order = useStillSpendOrderV1(paidOrder, { refetchInterval: 15_000 });
   const orderView = order.data !== undefined ? spendOrderViewV1(order.data) : null;
-  useEffect(() => { if (orderView?.delivered) setDelivered(true); }, [orderView?.delivered]);
   // The card the server signed once it confirmed the loan; its link names the purchase, never the wallet.
   const sharePath = paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
   const facts = review.model.body?.facts;

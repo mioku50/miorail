@@ -79,6 +79,23 @@ test('an invoice that stopped waiting before the payment leaves the loan in plac
   await expect(page.getByText('Bitrefill reports this invoice as denied, so the payment was not sent. The loan is in place and the USDC is in your wallet. Repay it, or open Spend for a new invoice.')).toBeVisible();
   expect(await sends(page)).toHaveLength(3);
   await expect(page.getByRole('button', { name: /Open step/ })).toHaveCount(0);
+  // An invoice Bitrefill denied is not offered to the wallet either.
+  await expect(page.getByRole('link', { name: 'Pay this invoice from your wallet' })).toHaveCount(0);
+});
+
+// Audit SPEND-2, 2026-11-10: a read of the invoice that failed for a moment ended the loan with nothing
+// bought, and the same invoice could not be paid any other way.
+test('an invoice Bitrefill could not show before the payment can still be paid from the wallet, by its own page', async ({ page }) => {
+  const state = await install(page, 'steps');
+  state.stepsResponse = payingSteps();
+  state.stepAnswers[2] = { state: 'stopped', refusal: 'spend_invoice_unread', batchId: 'fixture-steps-3',
+    detail: 'Bitrefill’s invoice could not be read just now, so the payment was not sent. Your wallet can still pay this invoice from its own USDC while Bitrefill holds the price.' };
+  await page.goto('/lending/miorail-lending-v2.steps.fixture');
+  await expect(page.getByRole('link', { name: 'Pay this invoice from your wallet' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open step 1 of 4 in your wallet', exact: true }).click();
+  await expect(page.getByText(/^Bitrefill’s invoice could not be read just now, so the payment was not sent\. Your wallet can still pay this invoice from its own USDC while Bitrefill holds the price\. The loan is in place and the USDC is in your wallet\./)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Pay this invoice from your wallet' })).toHaveAttribute('href', '/spend/pay/6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34');
+  expect(await sends(page)).toHaveLength(3);
 });
 
 // Re-audit R3, 2026-11-04: step 2 landed, its answer never reached Still, and the loan held its market.

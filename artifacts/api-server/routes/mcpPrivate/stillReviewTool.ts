@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import type { BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 
 import type { LoanExecutionStoreV1, LoanExecutionV1, LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
+import type { SpendInvoiceDisplayV1 } from '../../lib/stillSpendInvoiceReads.js';
 import type { SpendOrderStoreV1, SpendOrderV1 } from '../../lib/stillSpendOrders.js';
 import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
 import type { SpendWalletPaymentV1 } from '../../lib/stillSpendWalletStore.js';
@@ -55,9 +55,8 @@ export interface StillReviewStatusDepsV1 {
   /** The review page's refresh: reads Base and records what it proves. */
   refresh: (input: { owner: LoanOwnerV1; executionId: string }) => Promise<LoanExecutionV1 | null>;
   orders: SpendOrderStoreV1;
-  checkout: () => BitrefillGuestCheckoutV1;
-  /** The Spend page's own limit on invoice reads, shared with it. */
-  allowInvoiceRead: (wallet: string) => Promise<boolean>;
+  /** Bitrefill's word for the invoice as the Spend page reads it: the same kept reading, under the same limit. */
+  invoice: (input: { wallet: string; order: SpendOrderV1 }) => Promise<SpendInvoiceDisplayV1>;
   /** A purchase paid from the wallet's own USDC, by its invoice, refreshed from Base as its page refreshes it. */
   walletPayment?: (input: { owner: LoanOwnerV1; orderId: string }) => Promise<SpendWalletPaymentV1 | null>;
   secret: string;
@@ -124,7 +123,7 @@ export async function stillReviewStatusV1(
     };
   }
   const paid = record.state === 'confirmed' && purchase
-    ? ` The loan paid Bitrefill’s invoice; ${purchase.invoiceStatus === null ? 'Bitrefill’s own reading of it was not available here, and its email to the user is the receipt' : `Bitrefill reads it as ${purchase.invoiceStatus}`}. shareUrl shares the purchase without naming the wallet.`
+    ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares the purchase without naming the wallet.`
     : '';
   const returned = facts.collateralReturnAssets === undefined ? null : unitsTextV1(BigInt(facts.collateralReturnAssets), facts.collateralDecimals);
   return {
@@ -147,9 +146,18 @@ async function invoiceReadV1(owner: LoanOwnerV1, orderId: string, state: string,
   if (state !== 'submitted' && state !== 'unknown' && state !== 'confirmed') return { invoiceStatus: null, invoiceStatusError: null };
   const order = deps.orders.get(owner, orderId);
   if (!order) return { invoiceStatus: null, invoiceStatusError: 'spend_order_forgotten' };
-  if (!(await deps.allowInvoiceRead(owner.walletAddress))) return { invoiceStatus: null, invoiceStatusError: 'bitrefill_rate_limited' };
-  const read = await deps.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
-  return read.ok ? { invoiceStatus: read.value.status, invoiceStatusError: null } : { invoiceStatus: null, invoiceStatusError: read.reason };
+  // A reading Bitrefill could not give again just now stays, with the reason beside it.
+  const read = await deps.invoice({ wallet: owner.walletAddress, order });
+  return { invoiceStatus: read.status?.status ?? null, invoiceStatusError: read.error };
+}
+
+/** What Bitrefill says of a paid invoice, in a sentence: its word now, its last word when it could not be asked again, or neither. */
+function invoiceWordsV1(invoice: { invoiceStatus: string | null; invoiceStatusError: string | null }, subject: 'it' | 'the invoice'): string {
+  if (invoice.invoiceStatus === null) {
+    return `Bitrefill’s own reading of ${subject} was not available here, and its email to the user is the receipt`;
+  }
+  return invoice.invoiceStatusError === null ? `Bitrefill reads ${subject} as ${invoice.invoiceStatus}`
+    : `Bitrefill last read ${subject} as ${invoice.invoiceStatus}, and could not be asked again just now`;
 }
 
 async function walletPurchaseStatusV1(reviewId: string, record: SpendWalletPaymentV1, owner: LoanOwnerV1, deps: StillReviewStatusDepsV1):
@@ -157,7 +165,7 @@ async function walletPurchaseStatusV1(reviewId: string, record: SpendWalletPayme
   const payment = record.run.facts.payment;
   const invoice = await invoiceReadV1(owner, payment.orderId, record.state, deps);
   const paid = record.state === 'confirmed'
-    ? ` ${invoice.invoiceStatus === null ? 'Bitrefill’s own reading of the invoice was not available here, and its email to the user is the receipt' : `Bitrefill reads the invoice as ${invoice.invoiceStatus}`}.`
+    ? ` ${invoiceWordsV1(invoice, 'the invoice')}.`
     : '';
   return {
     reviewId, state: record.state, paidFrom: 'wallet', transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,

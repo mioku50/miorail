@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { useRoute } from 'wouter';
 import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
@@ -58,10 +57,9 @@ export function StillSpendWalletPage() {
   });
   // Once Base shows the payment, Bitrefill says where the order stands.
   const paid = payment.view?.state === 'confirmed' ? orderId : null;
-  const [delivered, setDelivered] = useState(false);
-  const order = useStillSpendOrderV1(paid, { refetchInterval: delivered ? false : 15_000 });
+  // Asked again every fifteen seconds until Bitrefill settles it; the server says when that is.
+  const order = useStillSpendOrderV1(paid, { refetchInterval: 15_000 });
   const orderView = order.data !== undefined ? spendOrderViewV1(order.data) : null;
-  useEffect(() => { if (orderView?.delivered) setDelivered(true); }, [orderView?.delivered]);
   return (
     <StillFrame tab="more" sky={sky}>
       {session.booting

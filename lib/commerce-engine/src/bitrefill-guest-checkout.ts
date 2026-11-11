@@ -31,6 +31,11 @@ export const SPEND_INVOICE_STATUSES_V1 = [
 ] as const;
 export type SpendInvoiceStatusNameV1 = (typeof SPEND_INVOICE_STATUSES_V1)[number];
 
+/** The states an invoice does not leave by itself: delivered, or stopped by Bitrefill.
+ * A page waiting on one of them has nothing more to wait for, so it stops asking. */
+export const SPEND_INVOICE_SETTLED_STATUSES_V1: readonly SpendInvoiceStatusNameV1[] = ['complete', 'blocked', 'denied', 'payment_error'];
+export const spendInvoiceSettledV1 = (status: SpendInvoiceStatusNameV1): boolean => SPEND_INVOICE_SETTLED_STATUSES_V1.includes(status);
+
 /** USDC methods hold their price for fifteen minutes; Still never counts on more. */
 export const SPEND_PRICE_LOCK_MS_V1 = 15 * 60_000;
 
@@ -62,7 +67,8 @@ export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; rea
 export interface BitrefillGuestCheckoutV1 {
   /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */
   createInvoice(input: { productId: string; packageValue: string; email: string; refillInput?: string; quotedAtomic: bigint; now: Date }): Promise<SpendCheckoutResultV1<SpendInvoiceV1>>;
-  readInvoice(input: { invoiceId: string; accessToken: string }): Promise<SpendCheckoutResultV1<SpendInvoiceStatusV1>>;
+  /** Display polling uses ordinary slots. An omitted purpose is a fresh payment safety check. */
+  readInvoice(input: { invoiceId: string; accessToken: string }, options?: { purpose?: 'display' | 'payment' }): Promise<SpendCheckoutResultV1<SpendInvoiceStatusV1>>;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -211,8 +217,9 @@ export function spendInvoiceStatusFromAnswerV1(text: string): SpendCheckoutResul
 }
 
 export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCheckoutV1 {
-  // Bitrefill counts invoice creations per caller; Still keeps well under it.
-  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, ...options });
+  // The same ten slots, including OAuth: display polling cannot spend the four
+  // kept for opening invoices and checking them immediately before payment.
+  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, ...options });
   return {
     async createInvoice(input) {
       if (!SPEND_EMAIL_V1.test(input.email) || input.email.length > 254 || input.quotedAtomic <= 0n) return { ok: false, reason: 'bitrefill_refused' };
@@ -222,16 +229,17 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
         payment_method: 'usdc_base',
         return_payment_link: false,
         email: input.email,
-      });
+      }, { priority: true });
       if (!answer.ok) return answer;
       let json: unknown;
       // buy-products "returns plain JSON so payment details can be parsed exactly".
       try { json = JSON.parse(answer.value); } catch { return { ok: false, reason: 'bitrefill_invalid_response', shape: 'text' }; }
       return spendInvoiceFromAnswerV1(json, input.quotedAtomic, input.now);
     },
-    async readInvoice(input) {
+    async readInvoice(input, readOptions) {
       if (!UUID_V1.test(input.invoiceId) || !TOKEN_V1.test(input.accessToken)) return { ok: false, reason: 'bitrefill_refused' };
-      const answer = await transport.callTool('get-invoice-by-id', { invoice_id: input.invoiceId, invoice_access_token: input.accessToken });
+      const answer = await transport.callTool('get-invoice-by-id', { invoice_id: input.invoiceId, invoice_access_token: input.accessToken },
+        { priority: readOptions?.purpose !== 'display' });
       if (!answer.ok) return answer;
       return spendInvoiceStatusFromAnswerV1(answer.value);
     },

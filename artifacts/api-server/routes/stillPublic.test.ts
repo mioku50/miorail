@@ -170,18 +170,52 @@ test('Spend refuses what cannot be a product type, a country, a search or a prod
   assert.deepEqual(asked, []);
 });
 
+test('only Bitrefill’s own “not found” is remembered, and only so many of them', async (t) => {
+  const { resetStillCardCachesV1 } = await import('./stillPublic.js');
+  resetStillCardCachesV1();
+  t.after(() => resetStillCardCachesV1());
+  let answer: unknown = { ok: false, reason: 'bitrefill_rate_limited' };
+  const asked = fakeSpend({ product: async () => answer });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service, 10_000);
+  const read = (id: string) => request(server).get('/api/public/still/spend/product').query({ id });
+  // Our window being full, or Bitrefill failing, says nothing about a product: asked again the next time.
+  for (const reason of ['bitrefill_rate_limited', 'bitrefill_unreachable', 'bitrefill_guest_refused', 'bitrefill_invalid_response']) {
+    answer = { ok: false, reason };
+    assert.deepEqual([(await read('held-back')).status, (await read('held-back')).body.reason], [503, reason]);
+  }
+  assert.equal(asked.length, 8);
+  // Two thousand names at most: the oldest is forgotten first, and is then asked for again.
+  answer = { ok: false, reason: 'bitrefill_product_not_found' };
+  asked.length = 0;
+  for (let index = 0; index <= 2_000; index++) assert.equal((await read(`absent-${index}`)).status, 404);
+  assert.equal(asked.length, 2_001);
+  assert.equal((await read('absent-2000')).status, 404);
+  assert.equal(asked.length, 2_001);
+  assert.equal((await read('absent-0')).status, 404);
+  assert.equal(asked.length, 2_002);
+});
+
 test('a product is its USDC packages, and one Bitrefill does not have is a 404, not our failure', async (t) => {
   const { resetStillCardCachesV1 } = await import('./stillPublic.js');
   resetStillCardCachesV1();
   t.after(() => resetStillCardCachesV1());
   let answer: unknown = { ok: false, reason: 'bitrefill_product_not_found' };
-  fakeSpend({ product: async () => answer });
   const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  const asked = fakeSpend({ product: async () => answer });
+  let at = Date.parse('2026-11-11T12:00:00Z');
+  publicStillRuntimeV1.now = () => new Date(at);
   const missing = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
   assert.deepEqual([missing.status, missing.body.reason], [404, 'bitrefill_product_not_found']);
   answer = { ok: true, value: { id: 'amazon_de-germany', name: 'Amazon.de', country: 'DE', inStock: true, recipientType: null,
     packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }], url: null } };
+  // Bitrefill's "not found" stands for a quarter of an hour: the same name is not asked for again (audit SPEND-1).
+  at += 15 * 60_000 - 1;
+  const still = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
+  assert.deepEqual([still.status, still.body.reason], [404, 'bitrefill_product_not_found']);
+  assert.deepEqual(asked, ['product amazon_de-germany']);
+  at += 1;
   const found = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
+  assert.deepEqual(asked, ['product amazon_de-germany', 'product amazon_de-germany']);
   assert.equal(found.status, 200);
   assert.deepEqual(found.body.product.packages, [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }]);
   // Paying from Still is the operator's switch, read on every request and never cached with the catalogue.

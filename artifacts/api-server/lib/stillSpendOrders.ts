@@ -77,8 +77,10 @@ export interface SpendOrderOwnerV1 { tenantId: string; walletAddress: string }
 export interface SpendOrderStoreV1 {
   put(order: SpendOrderV1): void;
   get(owner: SpendOrderOwnerV1, orderId: string): SpendOrderV1 | null;
-  /** Orders this owner opened in the last hour, to refuse a script. */
+  /** Orders this owner opened in the last hour, and the ones being opened now, to refuse a script. */
   openedLastHour(owner: SpendOrderOwnerV1): number;
+  /** One invoice is being opened for this owner: it counts until `done`, whether or not it opens. */
+  opening(owner: SpendOrderOwnerV1): { done(): void };
 }
 
 export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: number } = {}): SpendOrderStoreV1 {
@@ -86,6 +88,7 @@ export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: numbe
   const ttlMs = input.ttlMs ?? 30 * 60_000;
   const rows = new Map<string, SpendOrderV1>();
   const opened = new Map<string, number[]>();
+  const underway = new Map<string, number>();
   const key = (owner: SpendOrderOwnerV1) => `${owner.tenantId}|${owner.walletAddress}`;
   const prune = () => {
     const at = now().getTime();
@@ -109,7 +112,20 @@ export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: numbe
     },
     openedLastHour(owner) {
       prune();
-      return opened.get(key(owner))?.length ?? 0;
+      return (opened.get(key(owner))?.length ?? 0) + (underway.get(key(owner)) ?? 0);
+    },
+    opening(owner) {
+      const who = key(owner);
+      underway.set(who, (underway.get(who) ?? 0) + 1);
+      let counted = true;
+      return {
+        done() {
+          if (!counted) return;
+          counted = false;
+          const left = (underway.get(who) ?? 1) - 1;
+          if (left > 0) underway.set(who, left); else underway.delete(who);
+        },
+      };
     },
   };
 }

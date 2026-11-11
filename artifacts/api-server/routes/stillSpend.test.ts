@@ -3,19 +3,22 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
-import type { BitrefillGuestCheckoutV1, SpendInvoiceStatusNameV1, SpendProductV1 } from '@mioagent/commerce-engine';
+import { BITREFILL_MCP_TOKEN_URL_V1, createBitrefillGuestCatalogV1, createBitrefillGuestCheckoutV1,
+  type BitrefillGuestCheckoutV1, type SpendInvoiceStatusNameV1, type SpendProductV1 } from '@mioagent/commerce-engine';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
+import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { createSpendOrderStoreV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
-import { stillSpendRouter, stillSpendRuntimeV1 } from './stillSpend.js';
+import { publicStillRouter, publicStillRuntimeV1, resetStillCardCachesV1 } from './stillPublic.js';
+import { loanStoppedBeforePaymentV1, stillSpendRouter, stillSpendRuntimeV1 } from './stillSpend.js';
 
 // Still Spend, stage 3, at the HTTP boundary: an invoice is opened for the
 // session's wallet only, a loan for it carries the invoice as the server read
@@ -29,9 +32,11 @@ const STOCK = STOCKS[0]!.token.toLowerCase();
 const ESIM: SpendProductV1 = { id: 'bitrefill-esim-germany', name: 'Bitrefill eSIM Germany', country: 'DE', inStock: true, recipientType: 'mixed', url: null,
   packages: [{ value: '10GB, 30 Days', faceCurrency: 'USD', priceUsdc: '13.25' }, { value: 'Unlimited', faceCurrency: 'USD', priceUsdc: '140.00' }] };
 
-const originals = { spend: { ...stillSpendRuntimeV1 }, borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 } };
+const originals = { spend: { ...stillSpendRuntimeV1 }, borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 }, publicStill: { ...publicStillRuntimeV1 } };
 let orders: SpendOrderStoreV1, loans: MemoryLoanExecutionStoreV1, wallets: MemorySpendWalletStoreV1, enabled: boolean, walletRuns: number;
 let invoiceStatus: SpendInvoiceStatusNameV1, opened: unknown[], attached: number, loanRuns: number;
+/** Every read of an invoice the stand-in for Bitrefill was asked for, by what it was for; and every quote, by how it was asked. */
+let statusReads: string[], quotes: unknown[];
 
 function checkout(): BitrefillGuestCheckoutV1 {
   return {
@@ -40,7 +45,8 @@ function checkout(): BitrefillGuestCheckoutV1 {
       return { ok: true, value: { invoiceId: INVOICE, accessToken: 'access-token-0123456789', payTo: PAY_TO, amountAtomic: input.quotedAtomic,
         expiresAt: new Date(input.now.getTime() + 15 * 60_000).toISOString(), paymentLink: `https://www.bitrefill.com/invoice/${INVOICE}?token=t` } };
     },
-    async readInvoice() {
+    async readInvoice(_input, options) {
+      statusReads.push(options?.purpose ?? 'payment');
       return { ok: true, value: { status: invoiceStatus, accessLink: null, esimInstallLink: null } };
     },
   };
@@ -81,16 +87,18 @@ beforeEach(() => {
   orders = createSpendOrderStoreV1({ now: () => NOW });
   loans = new MemoryLoanExecutionStoreV1();
   wallets = new MemorySpendWalletStoreV1();
-  enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0; walletRuns = 0;
+  enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0; walletRuns = 0; statusReads = []; quotes = [];
+  // Bitrefill's kept readings and the wallet's own limits on them, new for each test like the other budgets.
+  const invoiceReads = createSpendInvoiceReadsV1();
   // Each test its own budget: the server's limiters count across a minute, and these tests run in less.
-  Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => enabled, now: () => NOW, checkout,
+  Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => enabled, now: () => NOW, checkout, invoiceReads,
     walletLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }), walletStatusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
-    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: ESIM }) }),
+    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async (_id: string, options?: unknown) => { quotes.push(options); return { ok: true, value: ESIM }; } }),
     walletPayments: async () => wallets, loans: async () => loans,
     prepareWallet: async ({ payment }: { payment: LendingPaymentV1 }) => { walletRuns++; return walletRun(payment); } });
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW, spendOrders: orders, spendEnabled: () => enabled });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => loans, secret: () => SECRET, now: () => NOW,
-    spendOrders: orders, spendEnabled: () => enabled, spendCheckout: checkout, walletPayments: async () => wallets,
+    spendOrders: orders, spendEnabled: () => enabled, spendCheckout: checkout, spendInvoiceReads: invoiceReads, walletPayments: async () => wallets,
     runAave: async ({ question }: { question: LendingQuestionV1 }) => { loanRuns++; return loanRun(question); },
     attachPayment: async ({ run, payment }: { run: LendingRunV1; payment: LendingPaymentV1 }) => {
       attached++;
@@ -104,6 +112,7 @@ afterEach(() => {
   Object.assign(stillSpendRuntimeV1, originals.spend);
   Object.assign(rwaBorrowRuntimeV1, originals.borrow);
   Object.assign(rwaLendingRuntimeV1, originals.lending);
+  Object.assign(publicStillRuntimeV1, originals.publicStill);
 });
 
 const ORDER = { productId: 'bitrefill-esim-germany', packageValue: '10GB, 30 Days', email: 'buyer@example.com' };
@@ -351,8 +360,10 @@ describe('paying the invoice from the wallet’s own USDC', () => {
 
     // And the other way round, on a new invoice.
     loans = new MemoryLoanExecutionStoreV1(); wallets = new MemorySpendWalletStoreV1();
-    Object.assign(rwaLendingRuntimeV1, { store: async () => loans, walletPayments: async () => wallets });
-    Object.assign(stillSpendRuntimeV1, { loans: async () => loans, walletPayments: async () => wallets });
+    // Another invoice at another time: the wallet's three payment checks a minute are its own again.
+    const invoiceReads = createSpendInvoiceReadsV1();
+    Object.assign(rwaLendingRuntimeV1, { store: async () => loans, walletPayments: async () => wallets, spendInvoiceReads: invoiceReads });
+    Object.assign(stillSpendRuntimeV1, { loans: async () => loans, walletPayments: async () => wallets, invoiceReads });
     const paying = (await request(app()).post(wallet())).body;
     const second = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`)).body;
     assert.equal(second.state, 'ready');
@@ -380,6 +391,208 @@ describe('paying the invoice from the wallet’s own USDC', () => {
     ]);
     assert.deepEqual([byLoan.status, byWallet.status].sort(), [200, 409]);
     assert.equal([byLoan, byWallet].find((r) => r.status === 409)!.body.error, 'spend_invoice_has_attempt');
+  });
+});
+
+// Audit SPEND-1/2/3 (2026-11-10). Bitrefill gives Still twenty catalogue calls and ten checkout calls a
+// minute, for everyone: anyone reading the catalogue, or one wallet reading its own invoice, could spend
+// them and leave nobody able to buy.
+describe('what one wallet reads of its own invoice', () => {
+  const read = () => request(app()).get(`/api/still/spend/orders/${INVOICE}`);
+
+  it('asks Bitrefill once in fifteen seconds, from the ordinary part of the window, however often the page asks', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    invoiceStatus = 'payment_detected';
+    const answers = await Promise.all(Array.from({ length: 20 }, read));
+    assert.deepEqual(statusReads, ['display']);
+    for (const answer of answers) {
+      assert.deepEqual([answer.status, answer.body.status.status, answer.body.statusError, answer.body.settled], [200, 'payment_detected', null, false]);
+      assert.ok(Number.isFinite(Date.parse(answer.body.statusReadAt)));
+    }
+  });
+
+  it('says when the invoice is settled, so the page stops asking: delivered, or stopped by Bitrefill', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    const settled: Record<string, boolean> = {};
+    for (const name of ['unpaid', 'payment_detected', 'payment_confirmed', 'pending', 'complete', 'blocked', 'denied', 'payment_error'] as const) {
+      invoiceStatus = name;
+      // Each status read as Bitrefill's own answer, not a kept one.
+      Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1() });
+      settled[name] = (await read()).body.settled;
+    }
+    assert.deepEqual(settled, { unpaid: false, payment_detected: false, payment_confirmed: false, pending: false,
+      complete: true, blocked: true, denied: true, payment_error: true });
+  });
+
+  it('keeps Bitrefill’s last reading, with the reason, when it cannot be asked again', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    invoiceStatus = 'pending';
+    let at = NOW.getTime();
+    Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1({ now: () => at }) });
+    assert.equal((await read()).body.status.status, 'pending');
+    at += 16_000;
+    Object.assign(stillSpendRuntimeV1, { checkout: () => ({ ...checkout(), readInvoice: async () => ({ ok: false, reason: 'bitrefill_rate_limited' }) }) });
+    const held = (await read()).body;
+    assert.deepEqual([held.status.status, held.statusError, held.statusReadAt, held.settled], ['pending', 'bitrefill_rate_limited', NOW.toISOString(), false]);
+  });
+});
+
+describe('six invoices an hour for one wallet', () => {
+  it('asks the fresh quote from the part of the catalogue’s window kept for buying', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    assert.deepEqual(quotes, [{ freshForCheckout: true }]);
+  });
+
+  it('counts requests sent together together: eight at once open six', async () => {
+    const answers = await Promise.all(Array.from({ length: 8 }, () => request(app()).post('/api/still/spend/orders').send(ORDER)));
+    assert.deepEqual(answers.map((answer) => answer.status).sort(), [200, 200, 200, 200, 200, 200, 429, 429]);
+    assert.equal(opened.length, 6);
+    assert.equal(orders.openedLastHour({ tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }), 6);
+  });
+
+  it('does not count an invoice that did not open', async () => {
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason: 'bitrefill_unreachable' }) }) });
+    for (let index = 0; index < 8; index++) assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 503);
+    assert.equal(orders.openedLastHour({ tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }), 0);
+  });
+});
+
+describe('Bitrefill’s two windows, with a part of each kept for buying', () => {
+  const THIRD = '0x4444444444444444444444444444444444444444';
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const PRODUCT = ['id: bitrefill-esim-germany', 'name: Bitrefill eSIM Germany', 'country_code: DE', 'in_stock: true', 'recipient_type: mixed',
+    'packages[1]{package_value,package_currency,payment_price,payment_currency}:', '  "10GB, 30 Days",USD,"13.25",USDC'].join('\n');
+  const rpc = (text: string, isError = false) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError, content: [{ type: 'text', text }] } }),
+    { status: 200, headers: { 'content-type': 'application/json' } });
+
+  /** A synthetic Bitrefill behind the real transports: nothing here leaves the process. */
+  function bitrefill() {
+    const asked: string[] = [];
+    let invoices = 0;
+    const fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      if (String(input) === BITREFILL_MCP_TOKEN_URL_V1) {
+        asked.push('token');
+        return new Response(JSON.stringify({ access_token: 'synthetic-guest-token-0123456789', expires_in: 21_600 }), { status: 200 });
+      }
+      const call = (JSON.parse(String(init.body)) as { params: { name: string; arguments: Record<string, unknown> } }).params;
+      asked.push(call.name);
+      if (call.name === 'get-product-details') return call.arguments.product_id === 'bitrefill-esim-germany' ? rpc(PRODUCT) : rpc('product_not_found: no such product', true);
+      if (call.name === 'get-invoice-by-id') return rpc(JSON.stringify({ invoice_status: 'unpaid' }));
+      assert.equal(call.name, 'buy-products');
+      return rpc(JSON.stringify({ response: { invoice_id: `0000000${++invoices}-0df7-4f44-bc72-c1c6ad8b7b34`, invoice_access_token: 'access-token-0123456789', expiration_minutes: 15,
+        payment_info: { address: PAY_TO, altcoinPrice: '13.25', contractAddress: USDC } } }));
+    }) as typeof fetch;
+    return { asked, fetchImpl, count: (name: string) => asked.filter((entry) => entry === name).length };
+  }
+
+  function site(owner: string | null) {
+    const a = app(owner);
+    a.use('/api/public/still', publicStillRouter);
+    return a;
+  }
+
+  it('anyone naming products that do not exist cannot stop a wallet from opening an invoice', async () => {
+    const mock = bitrefill();
+    let at = NOW.getTime();
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    const guest = createBitrefillGuestCheckoutV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    resetStillCardCachesV1();
+    // This address's own limit is out of the way, so what is measured is Bitrefill's window.
+    Object.assign(publicStillRuntimeV1, { spend: () => catalog, limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 10_000 }), now: () => new Date(at) });
+    Object.assign(stillSpendRuntimeV1, { catalog: () => catalog, checkout: () => guest });
+    const probe = (index: number) => request(site(null)).get('/api/public/still/spend/product').query({ id: `x-${index}` });
+    const first = [];
+    for (let index = 0; index < 40; index++) first.push((await probe(index)).status);
+    // One token and thirteen names reached Bitrefill: the ordinary fourteen. The rest were refused here.
+    assert.equal(mock.count('get-product-details'), 13);
+    assert.deepEqual([first.filter((status) => status === 404).length, first.filter((status) => status === 503).length], [13, 27]);
+    // A name Bitrefill does not have is not asked for again.
+    for (let index = 0; index < 13; index++) assert.equal((await probe(index)).status, 404);
+    assert.equal(mock.count('get-product-details'), 13);
+    // In that same minute two wallets open invoices: their quotes come from the six kept for buying.
+    for (const owner of [WALLET, OTHER]) {
+      const answer = await request(site(owner)).post('/api/still/spend/orders').send(ORDER);
+      assert.deepEqual([answer.status, answer.body.order?.priceAtomic], [200, '13250000'], JSON.stringify(answer.body));
+    }
+    assert.deepEqual([mock.count('get-product-details'), mock.count('buy-products')], [15, 2]);
+    // A minute later the names forgotten by nobody are still not asked for, and new ones are.
+    at += 60_001;
+    assert.equal((await probe(0)).status, 404);
+    assert.equal((await probe(100)).status, 404);
+    assert.equal(mock.count('get-product-details'), 16);
+    resetStillCardCachesV1();
+  });
+
+  it('two wallets reading their invoices without pause cannot stop a third from buying and paying', async () => {
+    const mock = bitrefill();
+    let at = NOW.getTime();
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    const guest = createBitrefillGuestCheckoutV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    // The worst case: no reading kept and no limit of the wallet's own, so every read asks Bitrefill.
+    const flood = createSpendInvoiceReadsV1({ displayTtlMs: 0, displayPerMinute: 1_000 });
+    Object.assign(stillSpendRuntimeV1, { catalog: () => catalog, checkout: () => guest, invoiceReads: flood });
+    Object.assign(rwaLendingRuntimeV1, { spendCheckout: () => guest, spendInvoiceReads: flood });
+    const mine: Record<string, string> = {};
+    for (const owner of [WALLET, OTHER]) mine[owner] = (await request(site(owner)).post('/api/still/spend/orders').send(ORDER)).body.order.orderId;
+    at += 60_001;
+    const before = mock.asked.length;
+    const polls = [];
+    for (let index = 0; index < 20; index++) for (const owner of [WALLET, OTHER]) polls.push(await request(site(owner)).get(`/api/still/spend/orders/${mine[owner]}`));
+    // Six of the forty reached Bitrefill: the ordinary part of its ten. Every page still has an answer.
+    assert.equal(mock.asked.length - before, 6);
+    assert.ok(polls.every((poll) => poll.status === 200));
+    assert.equal(polls.filter((poll) => poll.body.statusError === 'bitrefill_rate_limited').length, 34);
+    assert.ok(polls.slice(12).every((poll) => poll.body.status?.status === 'unpaid'), 'a full window leaves the last reading standing');
+    // The third wallet, in that same minute: a new invoice, then the review that pays it from its own USDC.
+    const third = await request(site(THIRD)).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(third.status, 200, JSON.stringify(third.body));
+    const review = await request(site(THIRD)).post(`/api/still/spend/orders/${third.body.order.orderId}/wallet`);
+    assert.deepEqual([review.status, review.body.state], [200, 'ready'], JSON.stringify(review.body));
+    // And a loan already under way reads its invoice before its next step.
+    const order = orders.get({ tenantId: `eip155:8453:${THIRD}`, walletAddress: THIRD }, third.body.order.orderId)!;
+    assert.equal((await flood.step({ order, checkout: guest })).ok, true);
+    assert.equal(mock.asked.length - before, 10);
+  });
+
+  it('with the page as it is, the same two wallets ask Bitrefill twice', async () => {
+    const mock = bitrefill();
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl: mock.fetchImpl });
+    const guest = createBitrefillGuestCheckoutV1({ fetchImpl: mock.fetchImpl });
+    Object.assign(stillSpendRuntimeV1, { catalog: () => catalog, checkout: () => guest });
+    const mine: Record<string, string> = {};
+    for (const owner of [WALLET, OTHER]) mine[owner] = (await request(site(owner)).post('/api/still/spend/orders').send(ORDER)).body.order.orderId;
+    for (let index = 0; index < 20; index++) for (const owner of [WALLET, OTHER]) assert.equal((await request(site(owner)).get(`/api/still/spend/orders/${mine[owner]}`)).body.statusError, null);
+    assert.equal(mock.count('get-invoice-by-id'), 2);
+  });
+});
+
+describe('a loan in steps that stopped before it paid', () => {
+  const row = (over: Record<string, unknown>) => ({ state: 'failed', errorCode: 'loan_steps_stopped', verification: { stoppedAt: 3 },
+    run: { delivery: 'sequential', calls: [0, 1, 2, 3] }, ...over }) as never;
+
+  it('is the only loan that leaves its invoice to the wallet: stopped on record, read from Base, short of the last step', () => {
+    assert.equal(loanStoppedBeforePaymentV1(row({})), true);
+    assert.equal(loanStoppedBeforePaymentV1(row({ verification: { stoppedAt: 0 } })), true);
+    for (const held of [{ state: 'submitted' }, { state: 'unknown' }, { state: 'awaiting_wallet' }, { state: 'confirmed', errorCode: null },
+      { errorCode: 'loan_step_reverted' }, { verification: null }, { verification: {} }, { verification: { stoppedAt: 4 } }, { verification: { stoppedAt: '3' } },
+      { run: { calls: [0, 1, 2, 3] } }]) {
+      assert.equal(loanStoppedBeforePaymentV1(row(held)), false, JSON.stringify(held));
+    }
+  });
+
+  it('lets the wallet review and arm a payment of the same invoice, and no other loan state does', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    let rows: unknown[] = [row({})];
+    Object.assign(stillSpendRuntimeV1, { loans: async () => ({ listByPaymentOrder: async () => rows }) });
+    const path = `/api/still/spend/orders/${INVOICE}/wallet`;
+    const review = (await request(app()).post(path)).body;
+    assert.equal(review.state, 'ready');
+    assert.deepEqual(statusReads, ['payment']);
+    rows = [row({ state: 'unknown' })];
+    assert.deepEqual((await request(app()).post(`${path}/arm`).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash })).body,
+      { error: 'spend_invoice_has_attempt' });
+    rows = [row({})];
+    assert.equal((await request(app()).post(`${path}/arm`).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash })).status, 200);
   });
 });
 

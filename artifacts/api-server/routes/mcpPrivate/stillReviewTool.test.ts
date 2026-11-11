@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
+import type { SpendInvoiceStatusNameV1 } from '@mioagent/commerce-engine';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 
@@ -41,7 +41,8 @@ function run(payment: LendingPaymentV1 | null): Extract<LendingRunV1, { state: '
       ...(payment ? { payment } : {}) } };
 }
 
-async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: string; state?: LoanExecutionV1['state']; heldOrder?: boolean; allowRead?: boolean; returning?: boolean } = {}) {
+async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: string; state?: LoanExecutionV1['state']; heldOrder?: boolean; allowRead?: boolean; returning?: boolean;
+  lastRead?: SpendInvoiceStatusNameV1 } = {}) {
   const store = new MemoryLoanExecutionStoreV1();
   const owner = input.owner ?? WALLET;
   const review = run(input.payment === undefined ? PAYMENT : input.payment);
@@ -63,11 +64,14 @@ async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: strin
       return record && { ...record, state: input.state ?? record.state, transactionHash: input.state === 'confirmed' ? TX : null };
     },
     orders,
-    checkout: (): BitrefillGuestCheckoutV1 => ({
-      createInvoice: async () => assert.fail('a status read opens no invoice'),
-      readInvoice: async ({ invoiceId }) => { invoiceReads.push(invoiceId); return { ok: true, value: { status: 'complete', accessLink: null, esimInstallLink: null } }; },
-    }),
-    allowInvoiceRead: async () => input.allowRead ?? true,
+    // As the Spend page reads it: Bitrefill's kept reading, under the page's own limit.
+    invoice: async ({ wallet, order }) => {
+      assert.equal(wallet, WALLET);
+      if (!(input.allowRead ?? true)) return { status: input.lastRead ? { status: input.lastRead, accessLink: null, esimInstallLink: null } : null,
+        readAt: input.lastRead ? NOW.toISOString() : null, error: 'bitrefill_rate_limited' };
+      invoiceReads.push(order.orderId);
+      return { status: { status: 'complete', accessLink: null, esimInstallLink: null }, readAt: NOW.toISOString(), error: null };
+    },
     secret: SECRET,
   };
   return { deps, invoiceReads };
@@ -116,6 +120,14 @@ test('a forgotten order or a spent limit leaves Bitrefill unread, and says so', 
   const twice = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, limited.deps);
   assert.equal(twice.purchase?.invoiceStatusError, 'bitrefill_rate_limited');
   assert.deepEqual(limited.invoiceReads, []);
+});
+
+test('a reading Bitrefill could not give again stays, named as its last word and with the reason', async () => {
+  const { deps, invoiceReads } = await fixture({ state: 'confirmed', allowRead: false, lastRead: 'payment_confirmed' });
+  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.deepEqual([status.purchase?.invoiceStatus, status.purchase?.invoiceStatusError], ['payment_confirmed', 'bitrefill_rate_limited']);
+  assert.match(status.next, /Bitrefill last read it as payment_confirmed, and could not be asked again just now\./);
+  assert.deepEqual(invoiceReads, []);
 });
 
 test('a repayment that took the stock back names how much of it came back, once confirmed', async () => {

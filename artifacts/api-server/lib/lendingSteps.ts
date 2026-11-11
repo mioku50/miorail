@@ -125,7 +125,10 @@ export async function recheckLoanStepsV1(input: {
       }
     }
     const read: LoanStepInvoiceReadV1 = input.invoice ? await input.invoice() : { ok: false, refusal: 'spend_invoice_unread' };
-    if (!read.ok) return { ok: false, refusal: read.refusal, detail: `${INVOICE_UNREAD_V1[read.refusal]}, ${tail}` };
+    // With only the payment left the loan has landed: an invoice Bitrefill could not show just now is still
+    // open, and the wallet's own USDC may pay it (routes/stillSpend.ts, loanStoppedBeforePaymentV1).
+    if (!read.ok) return { ok: false, refusal: read.refusal, detail: `${INVOICE_UNREAD_V1[read.refusal]}, ${tail}${
+      last && read.refusal === 'spend_invoice_unread' ? ' Your wallet can still pay this invoice from its own USDC while Bitrefill holds the price.' : ''}` };
     if (read.status !== 'unpaid') return { ok: false, refusal: 'spend_invoice_not_unpaid', detail: `Bitrefill reports this invoice as ${read.status.replace(/_/g, ' ')}, ${tail}` };
     if (last) return { ok: true };
   }

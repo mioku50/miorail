@@ -347,8 +347,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
           verifyEffectPosition: rwaLendingRuntimeV1.verifyEffectPosition, now: rwaLendingRuntimeV1.now,
         }),
         orders: stillSpendRuntimeV1.orders,
-        checkout: stillSpendRuntimeV1.checkout,
-        allowInvoiceRead: async (wallet) => (await stillSpendRuntimeV1.statusLimiter.consume(wallet)).success,
+        invoice: ({ wallet, order }) => stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() }),
         // As its payment page reads it: from Base under the page's own limit, otherwise as last recorded.
         walletPayment: async (input) => {
           const store = await stillSpendRuntimeV1.walletPayments();

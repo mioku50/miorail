@@ -1,12 +1,14 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { SPEND_EMAIL_V1, spendPhoneV1, type BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
+import { SPEND_EMAIL_V1, spendInvoiceSettledV1, spendPhoneV1, type BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
-import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
+import { LOAN_STEPS_STOPPED_V1 } from '../lib/lendingSteps.js';
+import { loanExecutionRuntimeV1, type LoanExecutionV1 } from '../lib/loanExecutionStore.js';
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
+import { spendInvoiceReadsV1, type SpendInvoiceDisplayV1 } from '../lib/stillSpendInvoiceReads.js';
 import { prepareSpendWalletPaymentV1, refreshSpendWalletPaymentV1, spendWalletWireV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import {
@@ -44,8 +46,9 @@ export const stillSpendRuntimeV1 = {
   orders: spendOrderStoreV1,
   enabled: () => stillSpendPayEnabledV1(),
   now: () => new Date(),
-  // A person opens an invoice and reads it a few times; a script reads it in a loop.
-  statusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 20 }),
+  // Bitrefill's word for an invoice: kept fifteen seconds for a page, always asked before a payment
+  // (lib/stillSpendInvoiceReads.ts). A person reads an invoice a few times; a script reads it in a loop.
+  invoiceReads: spendInvoiceReadsV1,
   // Paying from the wallet's own USDC: its review and record, the loans that may already pay
   // the same invoice, and the chain that says what was paid.
   walletPayments: spendWalletStoreRuntimeV1.store,
@@ -84,6 +87,13 @@ function orderWireV1(order: SpendOrderV1) {
   };
 }
 
+/** Bitrefill's reading of the order, as its owner's page shows it. `statusReadAt` is when Bitrefill gave
+ * it: a reading it could not give again just now stays, with the reason beside it. `settled` says the
+ * invoice will not move again by itself, so the page stops asking. */
+export function orderStatusWireV1(read: SpendInvoiceDisplayV1) {
+  return { status: read.status, statusError: read.error, statusReadAt: read.readAt, settled: read.status !== null && spendInvoiceSettledV1(read.status.status) };
+}
+
 export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string; priceAtomic?: string };
 
 /** One invoice for this owner, as the page and the connected MCP open it:
@@ -101,9 +111,25 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
       ...(seen.detail ? { detail: seen.detail } : {}) });
     return { ok: false as const, status, error, ...(seen.detail ? { detail: seen.detail } : {}) };
   };
-  if (stillSpendRuntimeV1.orders.openedLastHour(owner) >= 6) return refuse(429, 'spend_rate_limited');
-  // A fresh quote, not the page's cached one: the invoice is checked against it.
-  const product = await stillSpendRuntimeV1.catalog().product(request.productId);
+  // Six an hour, counted with the ones being opened this moment: requests sent together are counted
+  // together, not each before any of them is on record (audit SPEND-3).
+  const orders = stillSpendRuntimeV1.orders;
+  if (orders.openedLastHour(owner) >= 6) return refuse(429, 'spend_rate_limited');
+  const opening = orders.opening(owner);
+  try {
+    return await openCountedSpendOrderV1(owner, request, options, refuse);
+  } finally {
+    opening.done();
+  }
+}
+
+type SpendRefuseV1 = (status: number, error: string, seen?: { shape?: unknown; field?: unknown; detail?: string }) => { ok: false; status: number; error: string; detail?: string };
+
+async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infer<typeof SpendOrderRequestV1Schema>,
+  options: { payableAtomic?: bigint }, refuse: SpendRefuseV1): Promise<SpendOrderOpenedV1> {
+  // A fresh quote, not the page's cached one: the invoice is checked against it. It is asked from the
+  // part of the catalogue's window kept for buying, which no public read can spend (audit SPEND-1).
+  const product = await stillSpendRuntimeV1.catalog().product(request.productId, { freshForCheckout: true });
   if (!product.ok) return refuse(product.reason === 'bitrefill_product_not_found' ? 404 : 503, product.reason, product.detail ? { detail: product.detail } : {});
   if (product.value.prepayment) return refuse(409, 'spend_product_prepayment');
   if (!product.value.inStock || !spendBuyableV1(product.value)) return refuse(409, 'spend_product_not_buyable');
@@ -175,12 +201,8 @@ stillSpendRouter.get('/orders/:id', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'spend_order_not_found' });
     return;
   }
-  const allowed = await stillSpendRuntimeV1.statusLimiter.consume(wallet);
-  const status = allowed.success
-    ? await stillSpendRuntimeV1.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken })
-    : { ok: false as const, reason: 'bitrefill_rate_limited' as const };
-  if (!status.ok && 'shape' in status && status.shape) logger.warn('Still Spend invoice status unread', { reason: status.reason, shape: status.shape });
-  res.json({ order: orderWireV1(order), status: status.ok ? status.value : null, statusError: status.ok ? null : status.reason });
+  const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
+  res.json({ order: orderWireV1(order), ...orderStatusWireV1(read) });
 });
 
 // ---------------------------------------------------------------------------
@@ -209,10 +231,19 @@ function walletOrderV1(req: Request, res: Response): { wallet: string; owner: Sp
   return { wallet, owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, orderId };
 }
 
+/** A loan in steps that was stopped before its last step, the payment, and read as such from Base: the
+ * rest is never asked of the wallet again, so this loan did not pay the invoice and never will. The
+ * person may hold the loan's USDC with nothing bought; their wallet may pay the same invoice (audit SPEND-2). */
+export function loanStoppedBeforePaymentV1(row: Pick<LoanExecutionV1, 'state' | 'errorCode' | 'run' | 'verification'>): boolean {
+  const stoppedAt = row.verification?.stoppedAt;
+  return row.run.delivery === 'sequential' && row.state === 'failed' && row.errorCode === LOAN_STEPS_STOPPED_V1 &&
+    typeof stoppedAt === 'number' && Number.isInteger(stoppedAt) && stoppedAt >= 0 && stoppedAt < row.run.calls.length;
+}
+
 /** A loan that paid this invoice, or tried to: one invoice is paid once. */
 async function loanHoldsInvoiceV1(owner: SpendOrderOwnerV1, orderId: string): Promise<boolean> {
   const loans = await stillSpendRuntimeV1.loans();
-  return (await loans.listByPaymentOrder({ owner, orderId })).some((row) => row.state !== 'ready');
+  return (await loans.listByPaymentOrder({ owner, orderId })).some((row) => row.state !== 'ready' && !loanStoppedBeforePaymentV1(row));
 }
 
 /** The review: the invoice must still be this wallet's, waiting at Bitrefill and not paid by a loan, and the wallet must hold its price. */
@@ -257,7 +288,8 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
     refuse('spend_invoice_has_attempt', 'A loan from Still already paid this invoice, or tried to. Check it on the loan’s page before paying again.');
     return;
   }
-  const status = await stillSpendRuntimeV1.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+  // Before a payment, Bitrefill's own answer and never a kept one.
+  const status = await stillSpendRuntimeV1.invoiceReads.payment({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
   if (!status.ok) {
     refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.');
     return;

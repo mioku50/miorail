@@ -11,6 +11,7 @@ import { InMemoryRateLimiter } from '@mioagent/utils';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import type { LendingPaymentV1, LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
+import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { createSpendOrderStoreV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
@@ -93,14 +94,14 @@ beforeEach(() => {
   wallets = new MemorySpendWalletStoreV1();
   const table = syntheticRegionTableV1();
   Object.assign(stillRegionRuntimeV1, { enabled: () => true, table: () => table, now: () => NOW.getTime() });
-  Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => true, now: () => NOW, checkout,
+  Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => true, now: () => NOW, checkout, invoiceReads: createSpendInvoiceReadsV1(),
     walletLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }), walletStatusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
     catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: ESIM }) }),
     walletPayments: async () => wallets, loans: async () => loans,
     prepareWallet: async ({ payment }: { payment: LendingPaymentV1 }) => { walletRuns++; return walletRun(payment); } });
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW, spendOrders: orders, spendEnabled: () => true });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => loans, secret: () => SECRET, now: () => NOW,
-    spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout, walletPayments: async () => wallets,
+    spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout, spendInvoiceReads: createSpendInvoiceReadsV1(), walletPayments: async () => wallets,
     runAave: async ({ question }: { question: LendingQuestionV1 }) => { runs.push(question.operation); return run(question); } });
 });
 afterEach(() => {

@@ -145,7 +145,8 @@ const DetailSchemaV1 = z.object({
 
 export interface BitrefillGuestCatalogV1 {
   search(input: { type: SpendProductTypeV1; country: string; query?: string }): Promise<SpendResultV1<SpendProductSummaryV1[]>>;
-  product(id: string): Promise<SpendResultV1<SpendProductV1>>;
+  /** Only the server's checkout asks for priority; public product reads use the ordinary budget. */
+  product(id: string, options?: { freshForCheckout?: true }): Promise<SpendResultV1<SpendProductV1>>;
 }
 
 export interface BitrefillGuestOptionsV1 {
@@ -159,12 +160,20 @@ export interface BitrefillGuestOptionsV1 {
   now?: () => number;
   /** Calls a minute, under Bitrefill's thirty per token. */
   perMinute?: number;
+  /** The ordinary part of that same window; the remainder is reserved for priority calls.
+   * OAuth and every retry count too. This never increases perMinute. */
+  normalPerMinute?: number;
+}
+
+/** Chosen by server code, never copied from a browser or an assistant's arguments. */
+export interface BitrefillGuestCallOptionsV1 {
+  priority?: boolean;
 }
 
 /** A guest's token and its own rate window, for the tools one caller may use.
  * A tool outside that list is refused here, before anything is sent. */
 export interface BitrefillGuestTransportV1 {
-  callTool(name: string, args: Record<string, unknown>): Promise<SpendResultV1<string>>;
+  callTool(name: string, args: Record<string, unknown>, options?: BitrefillGuestCallOptionsV1): Promise<SpendResultV1<string>>;
 }
 
 export function createBitrefillGuestTransportV1(tools: readonly string[], options: BitrefillGuestOptionsV1 = {}): BitrefillGuestTransportV1 {
@@ -172,21 +181,22 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
   const timeoutMs = options.timeoutMs ?? 10_000;
   const now = options.now ?? (() => Date.now());
   const perMinute = options.perMinute ?? 20;
+  const normalPerMinute = Math.min(perMinute, options.normalPerMinute ?? perMinute);
   let token: { value: string; expiresAt: number } | null = null;
-  let window: number[] = [];
+  let tokenRequest: Promise<SpendResultV1<string>> | null = null;
+  let window: Array<{ at: number; priority: boolean }> = [];
   let id = 0;
 
-  function spend(): boolean {
+  function spend(priority: boolean): boolean {
     const at = now();
-    window = window.filter((t) => at - t < 60_000);
-    if (window.length >= perMinute) return false;
-    window.push(at);
+    window = window.filter((entry) => at - entry.at < 60_000);
+    if (window.length >= perMinute || (!priority && window.filter((entry) => !entry.priority).length >= normalPerMinute)) return false;
+    window.push({ at, priority });
     return true;
   }
 
-  async function guestToken(): Promise<SpendResultV1<string>> {
-    if (token && token.expiresAt > now()) return { ok: true, value: token.value };
-    if (!spend()) return { ok: false, reason: 'bitrefill_rate_limited' };
+  /** The slot was acquired by guestToken, once for this actual OAuth request. */
+  async function requestToken(): Promise<SpendResultV1<string>> {
     let response: Response;
     try {
       response = await partnerFetch(BITREFILL_MCP_TOKEN_URL_V1, {
@@ -214,11 +224,25 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     return { ok: true, value: token.value };
   }
 
-  async function callTool(name: string, args: Record<string, unknown>, retried = false): Promise<SpendResultV1<string>> {
+  async function guestToken(priority: boolean): Promise<SpendResultV1<string>> {
+    if (token && token.expiresAt > now()) return { ok: true, value: token.value };
+    if (tokenRequest) return tokenRequest;
+    // A locally refused request is not a token flight: a priority caller may still have a slot.
+    if (!spend(priority)) return { ok: false, reason: 'bitrefill_rate_limited' };
+    const pending = requestToken();
+    tokenRequest = pending;
+    try {
+      return await pending;
+    } finally {
+      if (tokenRequest === pending) tokenRequest = null;
+    }
+  }
+
+  async function callTool(name: string, args: Record<string, unknown>, priority: boolean, retried = false): Promise<SpendResultV1<string>> {
     if (!tools.includes(name)) return { ok: false, reason: 'bitrefill_refused' };
-    const bearer = await guestToken();
+    const bearer = await guestToken(priority);
     if (!bearer.ok) return bearer;
-    if (!spend()) return { ok: false, reason: 'bitrefill_rate_limited' };
+    if (!spend(priority)) return { ok: false, reason: 'bitrefill_rate_limited' };
     let response: Response;
     try {
       response = await partnerFetch(BITREFILL_MCP_URL_V1, {
@@ -230,8 +254,9 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
       return { ok: false, reason: 'bitrefill_unreachable' };
     }
     if (response.status === 401 && !retried) {
-      token = null;
-      return callTool(name, args, true);
+      // A slower 401 for the previous token must not throw a newer token away.
+      if (token?.value === bearer.value) token = null;
+      return callTool(name, args, priority, true);
     }
     if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
     if (!response.ok) {
@@ -255,12 +280,13 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     return { ok: true, value: text };
   }
 
-  return { callTool: (name, args) => callTool(name, args) };
+  return { callTool: (name, args, callOptions) => callTool(name, args, callOptions?.priority === true) };
 }
 
 export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCatalogV1 {
-  const transport = createBitrefillGuestTransportV1(BITREFILL_GUEST_READ_TOOLS_V1, options);
-  const callTool = (name: (typeof BITREFILL_GUEST_READ_TOOLS_V1)[number], args: Record<string, unknown>) => transport.callTool(name, args);
+  // One token and one 20-request window; browsing cannot spend the six checkout slots.
+  const transport = createBitrefillGuestTransportV1(BITREFILL_GUEST_READ_TOOLS_V1, { perMinute: 20, normalPerMinute: 14, ...options });
+  const callTool = (name: (typeof BITREFILL_GUEST_READ_TOOLS_V1)[number], args: Record<string, unknown>, callOptions?: BitrefillGuestCallOptionsV1) => transport.callTool(name, args, callOptions);
 
   function decode<S extends z.ZodTypeAny>(text: string, schema: S): SpendResultV1<z.output<S>> {
     let value: unknown;
@@ -299,9 +325,10 @@ export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 =
       };
     },
 
-    async product(productId) {
+    async product(productId, readOptions) {
       if (!SLUG_V1.test(productId)) return { ok: false, reason: 'bitrefill_product_not_found' };
-      const answer = await callTool('get-product-details', { product_id: productId, currency: 'USDC' });
+      const answer = await callTool('get-product-details', { product_id: productId, currency: 'USDC' },
+        { priority: readOptions?.freshForCheckout === true });
       if (!answer.ok) return answer;
       const parsed = decode(answer.value, DetailSchemaV1);
       if (!parsed.ok) return parsed;

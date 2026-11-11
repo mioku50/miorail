@@ -414,3 +414,25 @@ test('useStatus is the query that carries that rule', () => {
   // Before the caller's options, so a caller can still choose otherwise.
   assert.ok(body.indexOf('retry: retryUnlessSignedOutV1') < body.indexOf('...options'));
 });
+
+// Audit SPEND-2 (2026-11-10): a page left open asked about an order every fifteen seconds for half an
+// hour after Bitrefill had denied it. The server now says when an invoice is settled.
+describe('how often a Still Spend order is asked for again', () => {
+  const order = (over: Record<string, unknown> = {}) => ({ order: { orderId: 'o' }, status: { status: 'pending' }, statusError: null, settled: false, ...over });
+
+  it('asks every interval while the invoice can still move, and never without an interval', () => {
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, {}), 15_000);
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { data: order() }), 15_000);
+    // A reading Bitrefill could not give again just now is not a settled invoice.
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { data: order({ statusError: 'bitrefill_rate_limited' }) }), 15_000);
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { error: new Error('API error: 502 Bad Gateway') }), 15_000);
+    for (const off of [false, undefined, 0] as const) assert.equal(apiClient.stillSpendOrderIntervalV1(off, { data: order() }), false);
+  });
+
+  it('stops once the server says the invoice is settled, or that it no longer holds the order', () => {
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { data: order({ status: { status: 'denied' }, settled: true }) }), false);
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { data: order({ settled: 'true' }) }), 15_000);
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { error: new Error('spend_order_not_found') }), false);
+    assert.equal(apiClient.stillSpendOrderIntervalV1(15_000, { data: order(), error: new Error('spend_order_not_found') }), false);
+  });
+});

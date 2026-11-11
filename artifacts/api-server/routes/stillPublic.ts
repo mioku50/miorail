@@ -55,6 +55,27 @@ const spendCardCacheV1 = createPublicReadCacheV1({ ttlMs: 24 * 60 * 60_000, max:
  * search is kept half an hour and a product's prices a quarter of one. */
 const spendSearchCacheV1 = createPublicReadCacheV1({ ttlMs: 30 * 60_000, max: 200 });
 const spendProductCacheV1 = createPublicReadCacheV1({ ttlMs: 15 * 60_000, max: 400 });
+/** A product Bitrefill says it does not have is not asked for again for a quarter of an hour. Anyone can
+ * name an id, and each name not kept was one more call out of Still's window at Bitrefill (audit SPEND-1).
+ * Only Bitrefill's own "not found" is kept: its failure, or a full window, says nothing about a product. */
+const SPEND_ABSENT_TTL_MS_V1 = 15 * 60_000, SPEND_ABSENT_MAX_V1 = 2_000;
+const spendAbsentV1 = new Map<string, number>();
+function spendAbsentKnownV1(id: string): boolean {
+  const at = spendAbsentV1.get(id);
+  if (at === undefined) return false;
+  if (publicStillRuntimeV1.now().getTime() - at < SPEND_ABSENT_TTL_MS_V1) return true;
+  spendAbsentV1.delete(id);
+  return false;
+}
+function spendAbsentRememberV1(id: string): void {
+  spendAbsentV1.delete(id);
+  spendAbsentV1.set(id, publicStillRuntimeV1.now().getTime());
+  while (spendAbsentV1.size > SPEND_ABSENT_MAX_V1) {
+    const oldest = spendAbsentV1.keys().next();
+    if (oldest.done) break;
+    spendAbsentV1.delete(oldest.value);
+  }
+}
 
 /** Testing seam. */
 export function resetStillCardCachesV1(): void {
@@ -63,6 +84,7 @@ export function resetStillCardCachesV1(): void {
   spendCardCacheV1.clear();
   spendSearchCacheV1.clear();
   spendProductCacheV1.clear();
+  spendAbsentV1.clear();
 }
 
 export class SpendReadFailedV1 extends Error {
@@ -231,8 +253,10 @@ export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: st
 
 /** One product's packages and prices, kept a quarter of an hour. Throws SpendReadFailedV1. */
 export function readSpendProductV1(id: string) {
+  if (spendAbsentKnownV1(id)) return Promise.reject(new SpendReadFailedV1('bitrefill_product_not_found'));
   return spendProductCacheV1.read(id, async () => {
     const found = await publicStillRuntimeV1.spend().product(id);
+    if (!found.ok && found.reason === 'bitrefill_product_not_found') spendAbsentRememberV1(id);
     if (!found.ok) throw spendReadFailedV1(found);
     return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
   });

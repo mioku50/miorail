@@ -153,6 +153,8 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         <button type="button" className="still-btn sec" onClick={model.onFindTransaction} disabled={model.checking || model.walletBusy}>Find this transaction</button>
       </details> : null}
       {model.walletError && !(body.state === 'refused' && body.detail === model.walletError) ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
+      {/* A Spend loan in steps that stopped before its payment only because Bitrefill could not be read: the invoice is still open. */}
+      {model.walletPayPath ? <p className="still-note"><a href={model.walletPayPath}>Pay this invoice from your wallet</a></p> : null}
       <p className="still-note">Still prepares unsigned calls and verifies evidence. Only your wallet can approve and submit them. This page does not automatically open your wallet.</p>
     </div>
   );

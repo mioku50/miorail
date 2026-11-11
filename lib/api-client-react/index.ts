@@ -2089,16 +2089,33 @@ export function useCreateStillSpendOrderV1() {
   });
 }
 
+/** How often an order is asked for again, from what it last said. Never, once the server says the
+ * invoice is settled (delivered, or stopped by Bitrefill), or that it no longer holds the order: a
+ * page left open asked every fifteen seconds for half an hour about an order that could not move
+ * (audit SPEND-2, 2026-11-10). Read from this order's own answer, so a new order asks again. */
+export function stillSpendOrderIntervalV1(interval: number | false | undefined, state: { data?: unknown; error?: unknown }): number | false {
+  if (!interval) return false;
+  const data = state.data;
+  if (typeof data === 'object' && data !== null && (data as { settled?: unknown }).settled === true) return false;
+  if (state.error instanceof Error && /^spend_order_not_found\b/.test(state.error.message)) return false;
+  return interval;
+}
+
+/** The order's query, as the hook below runs it. Exported for its test. */
+export function stillSpendOrderQueryV1(orderId: string | null, options?: { refetchInterval?: number | false }) {
+  return {
+    queryKey: ['still-spend-order', orderId] as const,
+    enabled: orderId !== null,
+    retry: false as const,
+    staleTime: 0,
+    refetchInterval: (query: { state: { data?: unknown; error?: unknown } }) => stillSpendOrderIntervalV1(options?.refetchInterval, query.state),
+    queryFn: async () => fetchApi<unknown>(`/api/still/spend/orders/${encodeURIComponent(orderId!)}`),
+  };
+}
+
 /** Still Spend: an invoice this wallet opened, with Bitrefill's reading of it. */
 export function useStillSpendOrderV1(orderId: string | null, options?: { refetchInterval?: number | false }) {
-  return useQuery({
-    queryKey: ['still-spend-order', orderId],
-    enabled: orderId !== null,
-    retry: false,
-    staleTime: 0,
-    refetchInterval: options?.refetchInterval ?? false,
-    queryFn: async () => fetchApi<unknown>(`/api/still/spend/orders/${encodeURIComponent(orderId!)}`),
-  });
+  return useQuery(stillSpendOrderQueryV1(orderId, options));
 }
 
 /** Where Still is offered, as the server sees this browser's connection, and whether this sign-in

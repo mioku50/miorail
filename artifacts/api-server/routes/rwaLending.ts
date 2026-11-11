@@ -17,6 +17,7 @@ import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
+import { spendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
@@ -34,7 +35,7 @@ export const rwaLendingRuntimeV1 = {
   secret: () => (process.env.SESSION_SECRET ?? '').trim(), now: () => new Date(),
   // Still Spend: the open invoices, Bitrefill's own reading of one, and the payment call.
   spendOrders: spendOrderStoreV1, spendEnabled: () => stillSpendPayEnabledV1(),
-  spendCheckout: stillSpendCheckoutV1, attachPayment: attachSpendPaymentV1,
+  spendCheckout: stillSpendCheckoutV1, spendInvoiceReads: spendInvoiceReadsV1, attachPayment: attachSpendPaymentV1,
   // An invoice the wallet paid from its own USDC, or tried to, is not paid again by a loan.
   walletPayments: spendWalletStoreRuntimeV1.store,
   // A loan in steps: how long to wait between reads of a step the read RPC has not seen yet.
@@ -182,7 +183,8 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
     if (fromWallet && fromWallet.state !== 'ready') {
       refuse('spend_invoice_has_attempt', 'Your wallet already paid this invoice from its own USDC, or tried to. Check it on Spend before paying again.'); return;
     }
-    const status = await rwaLendingRuntimeV1.spendCheckout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+    // Before a payment, Bitrefill's own answer and never a kept one (lib/stillSpendInvoiceReads.ts).
+    const status = await rwaLendingRuntimeV1.spendInvoiceReads.payment({ wallet: owner.walletAddress, order, checkout: rwaLendingRuntimeV1.spendCheckout() });
     if (!status.ok) { refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.'); return; }
     if (status.value.status !== 'unpaid') {
       refuse('spend_invoice_not_unpaid', `Bitrefill reports this invoice as ${status.value.status.replace(/_/g, ' ')}, not waiting for payment. Nothing can be paid to it.`); return;
@@ -391,7 +393,8 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
       if (!rwaLendingRuntimeV1.spendEnabled()) return { ok: false as const, refusal: 'spend_pay_off' as const };
       const order = rwaLendingRuntimeV1.spendOrders.get(owner, payment.orderId);
       if (!order || order.payTo !== payment.payTo || order.priceAtomic !== payment.assets) return { ok: false as const, refusal: 'spend_order_unread' as const };
-      const status = await rwaLendingRuntimeV1.spendCheckout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+      // A loan under way is never refused by the wallet's own limit: stopping here leaves a loan with nothing bought.
+      const status = await rwaLendingRuntimeV1.spendInvoiceReads.step({ order, checkout: rwaLendingRuntimeV1.spendCheckout() });
       return status.ok ? { ok: true as const, status: status.value.status } : { ok: false as const, refusal: 'spend_invoice_unread' as const };
     } } : {}) });
   if (!check.ok) {

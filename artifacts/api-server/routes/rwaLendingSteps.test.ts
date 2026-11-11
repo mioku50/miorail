@@ -12,11 +12,13 @@ import type { LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import type { LendingPaymentV1 } from '../lib/lendingDraft.js';
+import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { createSpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { sequentialHashesV1 } from '../lib/lendingSteps.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
+import { loanStoppedBeforePaymentV1 } from './stillSpend.js';
 
 // A stock loan from a wallet without batches, at the HTTP boundary: the review
 // grants steps, each landed step is read from the chain, and the review runs
@@ -299,7 +301,8 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
       async readInvoice() { reads++; return { ok: true, value: { status: invoiceStatus, accessLink: null, esimInstallLink: null } }; },
     });
     Object.assign(rwaBorrowRuntimeV1, { spendOrders: orders, spendEnabled: () => true });
-    Object.assign(rwaLendingRuntimeV1, { spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout, walletPayments: async () => new MemorySpendWalletStoreV1(),
+    Object.assign(rwaLendingRuntimeV1, { spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout, spendInvoiceReads: createSpendInvoiceReadsV1({ wait: async () => undefined }),
+      walletPayments: async () => new MemorySpendWalletStoreV1(),
       // The payment, appended as the real one does: last, and keeping the loan's delivery.
       attachPayment: async ({ run, payment }: { run: LendingRunV1; payment: LendingPaymentV1 }) => {
         if (run.state !== 'ready') return run;
@@ -354,6 +357,30 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     assert.deepEqual([record!.state, record!.errorCode, record!.transactionHash, sequentialHashesV1(record!.batchId!)],
       ['failed', 'loan_steps_stopped', hash(3), [hash(1), hash(2), hash(3)]]);
     assert.deepEqual(await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id }), []);
+  });
+
+  it('asks once more for an invoice Bitrefill did not show before the payment, and a second silence stops the loan with the wallet’s own way to pay', async () => {
+    // Audit SPEND-2: a read that failed for a moment ended the loan for good, with nothing bought.
+    let silent = 1, asked = 0;
+    const flaky = (): BitrefillGuestCheckoutV1 => ({
+      async createInvoice() { throw new Error('no invoice is opened here'); },
+      async readInvoice() { asked++; return silent-- > 0 ? { ok: false, reason: 'bitrefill_unreachable' } : { ok: true, value: { status: 'unpaid', accessLink: null, esimInstallLink: null } }; },
+    });
+    const first = await start();
+    Object.assign(rwaLendingRuntimeV1, { spendCheckout: flaky });
+    land(1, APPROVE);
+    assert.equal((await steps(first.id, { attemptId: first.attemptId, index: 0, transactionHash: hash(1) })).body.state, 'next');
+    assert.equal(asked, 2);
+    land(2, SUPPLY); await steps(first.id, { attemptId: first.attemptId, index: 1, transactionHash: hash(2) });
+    silent = 2;
+    land(3, BORROW);
+    const stopped = (await steps(first.id, { attemptId: first.attemptId, index: 2, transactionHash: hash(3) })).body;
+    assert.deepEqual([stopped.state, stopped.refusal], ['stopped', 'spend_invoice_unread']);
+    assert.equal(stopped.detail, 'Bitrefill’s invoice could not be read just now, so the payment was not sent. Your wallet can still pay this invoice from its own USDC while Bitrefill holds the price.');
+    // The loan landed and its payment never will: on record as stopped short of the last step, so the wallet may pay the invoice.
+    const record = await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: first.id });
+    assert.deepEqual([record!.state, record!.errorCode, record!.verification?.stoppedAt, record!.run.calls.length], ['failed', 'loan_steps_stopped', 3, 4]);
+    assert.equal(loanStoppedBeforePaymentV1(record!), true);
   });
 
   it('takes no loan for an invoice that stopped waiting before the borrow', async () => {
