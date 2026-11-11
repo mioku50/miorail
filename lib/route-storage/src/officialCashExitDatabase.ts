@@ -160,5 +160,28 @@ export function createDatabaseOfficialCashExitRepository(
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map(runFromRowV1);
     },
+
+    async pruneCompletedBefore(input) {
+      const keep = input.keep.filter((window) => Number.isFinite(Date.parse(window.since)) && Number.isFinite(Date.parse(window.until)));
+      if (!Number.isFinite(Date.parse(input.before)) || keep.length !== input.keep.length) throw new TypeError('prune window is not a time');
+      // One statement, so that a row is never chosen under one list of windows and removed under another.
+      // The windows travel as text and are parsed by the server (see the note on jsonb parameters above).
+      const rows = await sql`
+        WITH doomed AS (
+          SELECT r.run_id
+            FROM official_cash_exit_runs r
+           WHERE r.chain_id = ${input.chainId}
+             AND r.scope = 'public_ladder'
+             AND r.completed_at < ${input.before}::timestamptz
+             AND NOT EXISTS (
+               SELECT 1 FROM jsonb_array_elements(${JSON.stringify(keep)}::text::jsonb) AS k
+                WHERE r.completed_at >= (k->>'since')::timestamptz AND r.completed_at <= (k->>'until')::timestamptz)
+           ORDER BY r.completed_at ASC
+           LIMIT ${Math.max(1, Math.min(20_000, input.limit))}
+        )
+        DELETE FROM official_cash_exit_runs WHERE run_id IN (SELECT run_id FROM doomed)
+        RETURNING run_id`;
+      return rows.length;
+    },
   };
 }

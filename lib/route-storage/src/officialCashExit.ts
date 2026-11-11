@@ -529,4 +529,21 @@ export interface OfficialCashExitRepositoryV1 {
     since: string;
     limit: number;
   }): Promise<CashExitMeasurementRunV1[]>;
+
+  /**
+   * Removes public-ladder runs finished before `before`, oldest first and at most `limit` of them, and
+   * says how many (audit OPS-7, 2026-11-10).
+   *
+   * A run is some eight kilobytes of ladder, the pass writes several thousand a day, and nothing read
+   * one older than eight days: the chart, the history windows and the weekend card stop at a week. The
+   * one reader that looks further back is the dividend calendar, which prices a stock at the moment each
+   * multiplier change took effect. `keep` is those moments, each with a margin: a run finished inside
+   * any of them is never removed, however old. A tenant's own position runs are not touched at all.
+   */
+  pruneCompletedBefore(input: {
+    chainId: 8453;
+    before: string;
+    keep: ReadonlyArray<{ since: string; until: string }>;
+    limit: number;
+  }): Promise<number>;
 }

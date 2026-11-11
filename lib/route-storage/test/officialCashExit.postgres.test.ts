@@ -38,6 +38,11 @@ function runV1(
   const sizes = over.sizes ?? [over.size ?? '100000000'];
   const size = sizes[0]!;
   const completedAt = over.completedAt ?? NOW;
+  // A run's id is its identity without what it measured or when it ended, so two runs that started at
+  // the same instant are one run. Each fixture run starts when it ends, as two real passes never do
+  // at once; with a fixed start every case that records two runs collided (found 2026-11-11, when
+  // these cases were first run against Postgres again).
+  const startedAt = completedAt;
   const runId = hashCashExitRunV1({
     schemaVersion: 'official-cash-exit-run/v1',
     chainId: 8453,
@@ -46,7 +51,7 @@ function runV1(
     tenantId: null,
     approvedSources: ['kyberswap'],
     destinations: ['USDC'],
-    startedAt: NOW,
+    startedAt,
     completedAt,
     observations: [] as never,
   });
@@ -127,7 +132,7 @@ function runV1(
     tenantId: null,
     approvedSources: ['kyberswap'],
     destinations: ['USDC'],
-    startedAt: NOW,
+    startedAt,
     completedAt,
     observations,
   });
@@ -284,6 +289,8 @@ if (!throwaway) {
           ) => Promise<Record<string, unknown>[]>
         )(strings, ...values);
       const repository = createDatabaseOfficialCashExitRepository(executor);
+      // The cases before this one leave later runs behind, and a window has no upper end.
+      await sql!.unsafe('DELETE FROM official_cash_exit_runs');
       const run = runV1();
       await repository.recordCompletedRun(run);
 
@@ -340,6 +347,38 @@ if (!throwaway) {
           }),
         /tenant position read requires tenantId/,
       );
+    });
+
+    // Audit OPS-7 (2026-11-10): the table had no retention at all. This is the one place the rule is held
+    // against Postgres itself: which runs go, in what order, and which a kept window protects.
+    test('old public ladders are removed oldest first, and never one finished inside a kept window', async () => {
+      const executor: SqlTemplateExecutor = (strings, ...values) =>
+        (
+          sql as unknown as (
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<Record<string, unknown>[]>
+        )(strings, ...values);
+      const repository = createDatabaseOfficialCashExitRepository(executor);
+      await sql!`DELETE FROM official_cash_exit_runs`;
+      const at = (day: number, hour = 12) => new Date(Date.UTC(2026, 8, day, hour)).toISOString();
+      const runs = [1, 2, 3, 4, 5, 6, 7, 8].map((day) => runV1({ completedAt: at(day) }));
+      for (const run of runs) await repository.recordCompletedRun(run);
+      const left = async () => (await sql!`SELECT completed_at FROM official_cash_exit_runs ORDER BY completed_at`)
+        .map((row) => new Date(row.completed_at as string).toISOString());
+      // Before day 6, keeping what finished around day 3: at most two a call, oldest first.
+      const keep = [{ since: at(3, 0), until: at(3, 23) }];
+      assert.equal(await repository.pruneCompletedBefore({ chainId: 8453, before: at(6, 0), keep, limit: 2 }), 2);
+      assert.deepEqual(await left(), [at(3), at(4), at(5), at(6), at(7), at(8)]);
+      assert.equal(await repository.pruneCompletedBefore({ chainId: 8453, before: at(6, 0), keep, limit: 100 }), 2);
+      assert.deepEqual(await left(), [at(3), at(6), at(7), at(8)]);
+      // Nothing more to remove; with no windows the kept day goes too; a time that is not one removes nothing.
+      assert.equal(await repository.pruneCompletedBefore({ chainId: 8453, before: at(6, 0), keep, limit: 100 }), 0);
+      await assert.rejects(() => repository.pruneCompletedBefore({ chainId: 8453, before: 'soon', keep: [], limit: 100 }), /not a time/);
+      await assert.rejects(() => repository.pruneCompletedBefore({ chainId: 8453, before: at(6, 0), keep: [{ since: 'x', until: at(3) }], limit: 100 }), /not a time/);
+      assert.deepEqual(await left(), [at(3), at(6), at(7), at(8)]);
+      assert.equal(await repository.pruneCompletedBefore({ chainId: 8453, before: at(6, 0), keep: [], limit: 100 }), 1);
+      assert.deepEqual(await left(), [at(6), at(7), at(8)]);
     });
 
     test('database refuses public evidence carrying a tenant', async () => {

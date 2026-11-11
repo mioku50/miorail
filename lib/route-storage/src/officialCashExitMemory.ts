@@ -70,6 +70,21 @@ export function createMemoryOfficialCashExitRepository(): OfficialCashExitReposi
         .filter((run) => Date.parse(run.completedAt) >= since)
         .slice(0, Math.max(1, Math.min(500, input.limit)));
     },
+
+    async pruneCompletedBefore(input) {
+      const before = Date.parse(input.before);
+      const keep = input.keep.map((window) => [Date.parse(window.since), Date.parse(window.until)] as const);
+      if (!Number.isFinite(before) || keep.some(([since, until]) => !Number.isFinite(since) || !Number.isFinite(until))) throw new TypeError('prune window is not a time');
+      // The same rule and the same order as the database: public ladders only, oldest first, never one
+      // finished inside a kept window.
+      const doomed = runs
+        .filter((run) => run.chainId === input.chainId && run.scope === 'public_ladder' && Date.parse(run.completedAt) < before &&
+          !keep.some(([since, until]) => Date.parse(run.completedAt) >= since && Date.parse(run.completedAt) <= until))
+        .sort((a, b) => Date.parse(a.completedAt) - Date.parse(b.completedAt))
+        .slice(0, Math.max(1, Math.min(20_000, input.limit)));
+      for (const run of doomed) runs.splice(runs.indexOf(run), 1);
+      return doomed.length;
+    },
   };
 
   /** The same total order Postgres produces: newest completion first, then the
