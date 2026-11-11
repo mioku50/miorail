@@ -51,7 +51,7 @@ for (const width of [390, 1366]) {
     const state = await install(page);
     await page.goto(`/spend/p/${TOKEN}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Paid with a loan', exact: true })).toBeVisible();
-    await expect(page.getByText('PUBG Mobile UC International, 10 UC, for 0.18 USDC. Borrowed against NVDA through Aave and paid to Bitrefill with that loan on Base, without selling.')).toBeVisible();
+    await expect(page.getByText('PUBG Mobile UC International, 10 UC, for about 1 USDC. Borrowed against NVDA through Aave and paid to Bitrefill with that loan on Base, without selling.')).toBeVisible();
     const card = page.locator('img.still-spend-card');
     await expect(card).toBeVisible();
     await expect(card).toHaveAttribute('src', `/api/public/still/spend-card.png?t=${TOKEN}`);
@@ -79,7 +79,7 @@ for (const width of [390, 1366]) {
     const state = await install(page);
     await page.goto(`/spend/p/${LOAN}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Spent without selling', exact: true })).toBeVisible();
-    await expect(page.getByText('2.00 USDC borrowed against NVDA through Aave on Base. Nothing was sold: it is the loan’s collateral.')).toBeVisible();
+    await expect(page.getByText('About 2 USDC borrowed against NVDA through Aave on Base. Nothing was sold: it is the loan’s collateral.')).toBeVisible();
     await expect(page.locator('img.still-spend-card')).toHaveAttribute('src', `/api/public/still/spend-card.png?t=${LOAN}`);
     await expect(page.getByRole('link', { name: 'See what a wallet could borrow without selling', exact: true })).toHaveAttribute('href', '/');
     expect(state.walletMethods.filter(method => /sign|send|transaction/i.test(method))).toEqual([]);

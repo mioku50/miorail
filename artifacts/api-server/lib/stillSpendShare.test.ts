@@ -8,6 +8,7 @@ import {
   issueStillLoanShareV1,
   issueStillSpendShareV1,
   loanExecutionShareV1,
+  shareAmountAtomicV1,
   stillLoanShareOfV1,
   stillSpendShareOfV1,
   stillSpendShareWordsV1,
@@ -57,15 +58,24 @@ describe('a purchase card says what was bought, and nothing that leads to the wa
     const native = stillSpendShareOfV1(paidLoan({}, { venue: 'morpho', collateralTokenAddress: ADDRESSES.weth.toLowerCase(),
       nativeFunding: { maximumNativeAssets: '1', reserveAssets: '0', balanceBeforeAssets: '1', balanceAfterAssets: '0', authorizedBefore: false, feeQuoteState: 'wallet_quote_required' } }));
     assert.equal(native?.collateral, 'ETH');
-    assert.deepEqual(stillSpendShareWordsV1(PUBG), { priceUsdc: '0.18', collateralLabel: 'NVDA', collateralKind: 'stock', collateralName: 'NVIDIA stock', venueName: 'Aave' });
+    // Audit SPEND-4: the amount is said to the dollar, never less than one, whatever the claim holds.
+    assert.deepEqual(stillSpendShareWordsV1(PUBG), { priceUsdc: '1.00', priceDollars: '1', priceWords: 'about 1 USDC',
+      collateralLabel: 'NVDA', collateralKind: 'stock', collateralName: 'NVIDIA stock', venueName: 'Aave' });
     assert.equal(stillSpendShareWordsV1({ ...PUBG, priceAtomic: '100000000' }).priceUsdc, '100.00');
-    assert.equal(stillSpendShareWordsV1({ ...PUBG, priceAtomic: '13250001' }).priceUsdc, '13.250001');
+    for (const [atomic, said] of [['13250001', 'about 13 USDC'], ['13499999', 'about 13 USDC'], ['13500000', 'about 14 USDC'], ['499999', 'about 1 USDC'], ['99600000', 'about 100 USDC']] as const) {
+      assert.equal(stillSpendShareWordsV1({ ...PUBG, priceAtomic: atomic }).priceWords, said);
+    }
+    assert.deepEqual(['180000', '13250001', '13500000', '2000000'].map(shareAmountAtomicV1), ['1000000', '13000000', '14000000', '2000000']);
   });
 
   it('carries no wallet, invoice, payee, transaction or block, so the link is the same for every such purchase', () => {
     const token = issueStillSpendShareV1(PUBG, SECRET);
     const decoded = Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8');
-    assert.deepEqual(JSON.parse(decoded), { v: 1, n: 'PUBG Mobile UC International', p: '10 UC', a: '180000', c: 'NVDAc', m: 'aave-v4' });
+    // The exact price named the payment onchain, and through it the wallet (audit SPEND-4): the link holds a dollar amount.
+    assert.deepEqual(JSON.parse(decoded), { v: 1, n: 'PUBG Mobile UC International', p: '10 UC', a: '1000000', c: 'NVDAc', m: 'aave-v4' });
+    const exact = issueStillSpendShareV1({ ...PUBG, priceAtomic: '13254321' }, SECRET);
+    assert.equal(Buffer.from(exact.split('.')[1]!, 'base64url').toString('utf8').includes('13254321'), false);
+    assert.equal(JSON.parse(Buffer.from(exact.split('.')[1]!, 'base64url').toString('utf8')).a, '13000000');
     for (const secret of [LOAN_OWNER_FIXTURE.walletAddress, PAY_TO, INVOICE, LOAN_TX_FIXTURE, '53379248']) assert.equal(token.includes(secret), false, secret);
     assert.equal(issueStillSpendShareV1(PUBG, SECRET), token);
     assert.deepEqual(loanExecutionShareV1(paidLoan(), SECRET), { path: `/spend/p/${token}` });
@@ -75,7 +85,7 @@ describe('a purchase card says what was bought, and nothing that leads to the wa
 
   it('reads back only what this server signed, exactly', () => {
     const token = issueStillSpendShareV1(PUBG, SECRET);
-    assert.deepEqual(verifyStillSpendShareV1(token, SECRET), PUBG);
+    assert.deepEqual(verifyStillSpendShareV1(token, SECRET), { ...PUBG, priceAtomic: '1000000' });
     const [prefix, body, mac] = token.split('.') as [string, string, string];
     const forged = Buffer.from(JSON.stringify({ v: 1, n: 'A yacht', p: '1', a: '180000', c: 'NVDAc', m: 'aave-v4' })).toString('base64url');
     for (const bad of [

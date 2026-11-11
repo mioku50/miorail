@@ -2,9 +2,21 @@ import React from 'react';
 import { tokenDecimalV1 } from './stockSellAmount';
 import { formatLendingHealthRatioV1, labelLendingTargetV1, lendingExecutionCopyV1 } from './lendingReviewView';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
+import { spendConfirmByNoteV1 } from '../still/spendView';
 
 void React;
 export { formatLendingHealthRatioV1 };
+
+/** While the wallet has a loan that pays an invoice: by when to confirm, counted in minutes (audit SPEND-6). */
+function LendingInvoiceDeadlineV1({ expiresAt, orderId }: { expiresAt: string; orderId: string }) {
+  const [now, setNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  const note = spendConfirmByNoteV1({ expiresAt, orderId, now, withLoan: true });
+  return note ? <p className="still-note" role="status">{note}</p> : null;
+}
 
 /** One review for both web and Base App. Values and verdicts belong to the
  * server; the screen formats exact decimals and never recalculates risk. */
@@ -132,6 +144,9 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         : model.step.phase === 'confirming' ? `Step ${model.step.index} of ${model.step.total} sent. Waiting for it to land on Base…`
           : `Step ${model.step.index} of ${model.step.total} landed. Still checks the next step against the chain…`}</p> : null}
       {body.state === 'ready' && model.onOpen && !blocked && !inSteps && model.feeNote ? <p className="still-note">{model.feeNote}</p> : null}
+      {/* A Spend loan in the wallet: the transfer carries no deadline of its own, so the invoice's is said here (audit SPEND-6). */}
+      {body.state === 'ready' && model.walletBusy && facts?.payment
+        ? <LendingInvoiceDeadlineV1 expiresAt={facts.payment.expiresAt} orderId={facts.payment.orderId} /> : null}
       {body.state === 'ready' && model.onOpen && !blocked ? <button type="button" className="still-btn" disabled={model.walletBusy} onClick={model.onOpen}>
         {model.walletBusy ? 'Waiting for your wallet…' : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
       </button> : null}

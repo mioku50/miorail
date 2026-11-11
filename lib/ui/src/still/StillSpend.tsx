@@ -7,7 +7,11 @@ import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import {
+  SHARE_CARD_PRIVACY_NOTE_V1,
   SPEND_TYPES_V1,
+  shareAmountWordsV1,
+  spendConfirmByNoteV1,
+  spendLatePaymentNoteV1,
   spendCountryNameV1,
   spendCountryOptionsV1,
   spendPhoneDraftV1,
@@ -314,17 +318,32 @@ export function StillSpendPaid({ order, reading, share, paidWith = 'loan' }: { o
         {order?.orderLink ? <a className="still-extra-action" href={order.orderLink} target="_blank" rel="noreferrer">Open order</a> : null}
       </div>
       {links ? (
-        <div className="still-share">
-          <span className="still-note">Share this purchase:</span>
-          <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
-          <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
-        </div>
+        <>
+          <div className="still-share">
+            <span className="still-note">Share this purchase:</span>
+            <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
+            <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
+          </div>
+          <p className="still-note">{SHARE_CARD_PRIVACY_NOTE_V1}</p>
+        </>
       ) : null}
     </div>
   );
 }
 
 /** What a payment from the wallet's own USDC is doing now, in words. */
+/** The time now, read again every fifteen seconds while `ticking`: for a deadline counted in minutes. */
+function useNowV1(ticking: boolean): Date {
+  const [now, setNow] = React.useState(() => new Date());
+  useEffect(() => {
+    if (!ticking) return undefined;
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
 function walletStatusTextV1(state: string, hash: string | null): string {
   const tx = hash ? ` Transaction ${hash.slice(0, 10)}…${hash.slice(-6)}.` : '';
   switch (state) {
@@ -346,6 +365,12 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
   const id = useId();
   const view = model.view;
   const paying = view && view.state !== 'refused' ? view : null;
+  // While the wallet has the payment, and after it was sent: the invoice's own time decides what is said (audit SPEND-6).
+  const sent = paying !== null && ['submitted', 'unknown', 'confirmed'].includes(paying.state);
+  const now = useNowV1(Boolean(order) && (model.busy || sent));
+  const confirmBy = order && model.busy && paying?.state === 'ready' ? spendConfirmByNoteV1({ expiresAt: order.expiresAt, orderId: order.orderId, now }) : null;
+  const late = order && paying && sent
+    ? spendLatePaymentNoteV1({ expiresAt: order.expiresAt, orderId: order.orderId, now, paymentState: paying.state, status: order.status, delivered: order.delivered }) : null;
   return (
     <div className="still-borrow still-spend">
       <StillHeader title="Pay from your wallet" sky={sky}
@@ -388,6 +413,8 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
           ) : (
             <p className={paying.state === 'failed' ? 'still-warn' : 'still-note'} role="status">{walletStatusTextV1(paying.state, paying.transactionHash)}</p>
           )}
+          {confirmBy ? <p className="still-note" role="status">{confirmBy}</p> : null}
+          {late ? <p className="still-warn" role="alert">{late}</p> : null}
           {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking} onClick={() => model.onCheck?.()}>{model.checking ? 'Reading…' : 'Read the result again'}</button> : null}
           {model.onFindTransaction ? (
             <details className="still-lending-details">
@@ -420,12 +447,13 @@ export function StillLoanShare({ share, cardUrl }: { share: { url: string; text:
   return (
     <div className="still-section still-extras" aria-label="Your loan’s card">
       <img className="still-spend-card" src={cardUrl} width={1200} height={630}
-        alt="Your loan’s card: how much, against what and through which protocol. It names no wallet and no transaction." />
+        alt="Your loan’s card: about how much, against what and through which protocol. It names no wallet and no transaction." />
       <div className="still-share">
         <span className="still-note">Share this loan’s card:</span>
         <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
         <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
       </div>
+      <p className="still-note">{SHARE_CARD_PRIVACY_NOTE_V1}</p>
     </div>
   );
 }
@@ -437,12 +465,12 @@ export function StillLoanShared({ sky, view, cardUrl }: { sky: SkyStateV1; view:
       <StillHeader
         title="Spent without selling"
         sky={sky}
-        lede={`${view.borrowedUsdc} USDC borrowed against ${view.collateralLabel} through ${view.venueName} on Base. Nothing was sold: it is the loan’s collateral.`}
+        lede={`${shareAmountWordsV1(view.borrowedUsdc).replace(/^a/, 'A')} borrowed against ${view.collateralLabel} through ${view.venueName} on Base. Nothing was sold: it is the loan’s collateral.`}
       />
       {cardUrl ? (
         <div className="still-section">
           <img className="still-spend-card" src={cardUrl} width={1200} height={630}
-            alt={`A loan of ${view.borrowedUsdc} USDC against ${view.collateralLabel} through ${view.venueName}, on Still: nothing sold.`} />
+            alt={`A loan of ${shareAmountWordsV1(view.borrowedUsdc)} against ${view.collateralLabel} through ${view.venueName}, on Still: nothing sold.`} />
         </div>
       ) : null}
       <div className="still-section still-borrow-foot">
@@ -465,13 +493,13 @@ export function StillSpendShared({ sky, view, reading, cardUrl }: { sky: SkyStat
         title={view ? 'Paid with a loan' : 'Spend'}
         sky={sky}
         lede={view
-          ? `${view.productName}, ${view.packageLabel}, for ${view.priceUsdc} USDC. Borrowed against ${view.collateralLabel} through ${view.venueName} and paid to Bitrefill with that loan on Base, without selling.`
+          ? `${view.productName}, ${view.packageLabel}, for ${shareAmountWordsV1(view.priceUsdc)}. Borrowed against ${view.collateralLabel} through ${view.venueName} and paid to Bitrefill with that loan on Base, without selling.`
           : reading ? 'Reading this purchase…' : 'This purchase card could not be verified, so nothing about it is shown.'}
       />
       {view && cardUrl ? (
         <div className="still-section">
           <img className="still-spend-card" src={cardUrl} width={1200} height={630}
-            alt={`Paid for ${view.productName} (${view.packageLabel}, ${view.priceUsdc} USDC) with a loan against ${view.collateralLabel} through ${view.venueName}, on Still.`} />
+            alt={`Paid for ${view.productName} (${view.packageLabel}, ${shareAmountWordsV1(view.priceUsdc)}) with a loan against ${view.collateralLabel} through ${view.venueName}, on Still.`} />
         </div>
       ) : null}
       <div className="still-section still-borrow-foot">

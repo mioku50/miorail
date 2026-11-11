@@ -26,6 +26,10 @@ import {
   spendUsdcTextV1,
   spendWalletCoversV1,
   spendWalletViewV1,
+  spendConfirmByNoteV1,
+  spendLatePaymentNoteV1,
+  SHARE_CARD_PRIVACY_NOTE_V1,
+  shareAmountWordsV1,
 } from '../src/still/spendView';
 
 void React;
@@ -322,7 +326,7 @@ describe('a purchase, shared', () => {
     const sky = skyStateV1({ now: new Date('2026-11-01T15:00:00Z') });
     const html = renderToStaticMarkup(<StillSpendShared sky={sky} view={spendShareViewV1(SHARE)} reading={false} cardUrl="/api/public/still/spend-card.png?t=x" />);
     assert.match(html, /Paid with a loan/);
-    assert.match(html, /PUBG Mobile UC International, 10 UC, for 0\.18 USDC\. Borrowed against NVDA through Aave and paid to Bitrefill with that loan on Base, without selling\./);
+    assert.match(html, /PUBG Mobile UC International, 10 UC, for about 1 USDC\. Borrowed against NVDA through Aave and paid to Bitrefill with that loan on Base, without selling\./);
     assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=x"/);
     assert.match(html, /Not offered to US persons/);
     const unverified = renderToStaticMarkup(<StillSpendShared sky={sky} view={null} reading={false} cardUrl={null} />);
@@ -360,7 +364,7 @@ describe('a loan, shared', () => {
     const sky = skyStateV1({ now: new Date('2026-11-03T15:00:00Z') });
     const html = renderToStaticMarkup(<StillLoanShared sky={sky} view={loanShareViewV1(LOAN)!} cardUrl="/api/public/still/spend-card.png?t=x" />);
     assert.match(html, /Spent without selling/);
-    assert.match(html, /2\.00 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: it is the loan’s collateral\./);
+    assert.match(html, /About 2 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: it is the loan’s collateral\./);
     assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=x"/);
     assert.match(html, /Not offered to US persons/);
     assert.doesNotMatch(html, /0x[0-9a-fA-F]{6}/);
@@ -490,5 +494,50 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.match(waiting, /checks that transaction against this exact payment; it sends nothing\./);
     assert.match(waiting, /Find this transaction<\/button>/);
     assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={null} orderReading={false} />), /Find this transaction/);
+  });
+});
+
+// Audit SPEND-4 (2026-11-10): a card with the exact amount named the payment onchain, and through it the wallet.
+describe('a shared amount is said to the dollar, and the person is told what a posted card can still give away', () => {
+  it('rounds whatever the server sent, never below one dollar', () => {
+    assert.deepEqual(['0.18', '2.00', '13.25', '13.50', '13.499999', '99.6', '100.00'].map(shareAmountWordsV1),
+      ['about 1 USDC', 'about 2 USDC', 'about 13 USDC', 'about 14 USDC', 'about 13 USDC', 'about 100 USDC', 'about 100 USDC']);
+  });
+  it('says so beside the links that post a loan’s card', () => {
+    const html = renderToStaticMarkup(<StillLoanShare share={{ url: 'https://miorail.xyz/spend/p/sl1.a.b', text: 'Spent without selling.' }} cardUrl="/api/public/still/spend-card.png?t=sl1.a.b" />);
+    assert.match(html, /The card names no wallet and no transaction, and rounds the amount to the dollar\. Base is public all the same: someone who looks for a loan of about this size against this collateral may find it\./);
+    assert.equal(SHARE_CARD_PRIVACY_NOTE_V1.includes('nobody can'), false);
+  });
+});
+
+// Audit SPEND-6 (2026-11-10): a review is checked against the invoice's time once, at the arm; the transfer
+// itself has no deadline, and a request confirmed in the wallet ten minutes later pays an expired invoice.
+describe('while the wallet has the payment, the invoice’s own time is said', () => {
+  const expiresAt = '2026-11-11T12:15:00.000Z', orderId = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
+  const at = (iso: string) => new Date(iso);
+  it('counts the minutes left, and says what a late confirmation does', () => {
+    const nine = spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:05:30.000Z') })!;
+    assert.match(nine, /^Confirm in your wallet before \d\d:\d\d, within 9 minutes: that is when Bitrefill’s invoice expires\. Confirmed later, the payment still goes out; then Bitrefill may not deliver, and getting the money back goes through Bitrefill’s support, with invoice 6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34\.$/);
+    assert.match(spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:13:10.000Z') })!, /within 1 minute:/);
+    assert.match(spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:14:30.000Z') })!, /in less than a minute:/);
+    assert.match(spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:05:30.000Z'), withLoan: true })!, /Confirmed later, the loan is still taken and its payment still goes out;/);
+  });
+  it('once the time has passed, says to decline', () => {
+    assert.match(spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:15:00.000Z') })!, /^Bitrefill’s invoice expired at \d\d:\d\d\. Decline this request in your wallet: confirmed now, the payment arrives after the invoice expired\./);
+    assert.match(spendConfirmByNoteV1({ expiresAt, orderId, now: at('2026-11-11T12:20:00.000Z'), withLoan: true })!, /confirmed now, the loan is taken and its payment arrives after the invoice expired\./);
+    assert.equal(spendConfirmByNoteV1({ expiresAt: 'soon', orderId, now: at('2026-11-11T12:20:00.000Z') }), null);
+  });
+  it('a payment sent that Bitrefill does not show after its invoice expired is sent to Bitrefill’s support, and no other', () => {
+    const lateNow = at('2026-11-11T12:16:00.000Z');
+    const said = spendLatePaymentNoteV1({ expiresAt, orderId, now: lateNow, paymentState: 'confirmed', status: 'Waiting for payment', delivered: false })!;
+    assert.match(said, /^Bitrefill’s invoice expired at \d\d:\d\d, and Bitrefill still shows it waiting for payment\. If your transfer went out, it may have arrived too late\. Write to Bitrefill’s support and give them invoice 6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34: Still cannot take a payment back\.$/);
+    assert.match(spendLatePaymentNoteV1({ expiresAt, orderId, now: lateNow, paymentState: 'unknown', status: null, delivered: false })!, /Bitrefill has not said it was paid/);
+    for (const quiet of [
+      { now: at('2026-11-11T12:14:00.000Z'), paymentState: 'confirmed', status: 'Waiting for payment', delivered: false },
+      { now: lateNow, paymentState: 'ready', status: 'Waiting for payment', delivered: false },
+      { now: lateNow, paymentState: 'failed', status: 'Waiting for payment', delivered: false },
+      { now: lateNow, paymentState: 'confirmed', status: 'Payment seen, waiting for confirmation', delivered: false },
+      { now: lateNow, paymentState: 'confirmed', status: 'Delivered', delivered: true },
+    ]) assert.equal(spendLatePaymentNoteV1({ expiresAt, orderId, ...quiet }), null, JSON.stringify(quiet));
   });
 });

@@ -17,7 +17,21 @@ import type { LoanExecutionV1 } from './loanExecutionStore.js';
 // leads to the wallet and to everything in it, and a shared card is posted
 // beside the person's own name. So the link needs no table, nobody can forge
 // one, and it reads the same for as long as the secret does.
+//
+// The amount is rounded to a whole dollar, in the token as on the card (audit
+// SPEND-4, 2026-11-10). The loan borrows exactly the invoice's price, and a
+// protocol's Borrow event is public with its amount and its borrower: the
+// exact base units, which the token used to carry in plain base64, named one
+// transaction, and through it the wallet. A rounded amount names a range. It
+// is still not a promise that nobody can find the loan, and the page that
+// offers the card says so before it is posted.
 // ---------------------------------------------------------------------------
+
+/** A shared amount in USDC base units, to the nearest whole dollar and never less than one. */
+export function shareAmountAtomicV1(atomic: string): string {
+  const dollars = (BigInt(atomic) + BigInt(500_000)) / BigInt(1_000_000);
+  return ((dollars < BigInt(1) ? BigInt(1) : dollars) * BigInt(1_000_000)).toString();
+}
 
 const PREFIX_V1 = 'ss1';
 const CONTEXT_V1 = 'still-spend-share/v1';
@@ -77,7 +91,7 @@ export function stillSpendShareOfV1(execution: LoanExecutionV1): StillSpendShare
 export function issueStillSpendShareV1(share: StillSpendShareV1, secret: string): string {
   if (secret.length < 16 || !shareV1({ ...share })) throw new Error('still_spend_share_invalid');
   const body = Buffer.from(JSON.stringify({
-    v: 1, n: share.productName, p: share.packageLabel, a: share.priceAtomic, c: share.collateral, m: share.venue,
+    v: 1, n: share.productName, p: share.packageLabel, a: shareAmountAtomicV1(share.priceAtomic), c: share.collateral, m: share.venue,
   })).toString('base64url');
   return `${PREFIX_V1}.${body}.${signature(secret, body)}`;
 }
@@ -112,7 +126,7 @@ export function stillLoanShareOfV1(execution: LoanExecutionV1): StillLoanShareV1
 
 export function issueStillLoanShareV1(share: StillLoanShareV1, secret: string): string {
   if (secret.length < 16 || !loanShareV1({ ...share })) throw new Error('still_loan_share_invalid');
-  const body = Buffer.from(JSON.stringify({ v: 1, a: share.borrowedAtomic, c: share.collateral, m: share.venue })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ v: 1, a: shareAmountAtomicV1(share.borrowedAtomic), c: share.collateral, m: share.venue })).toString('base64url');
   return `${LOAN_PREFIX_V1}.${body}.${loanSignature(secret, body)}`;
 }
 
@@ -164,16 +178,23 @@ export function verifyStillSpendShareV1(token: unknown, secret: string): StillSp
   }
 }
 
-/** The words a card and its page say, from the claim alone. */
+/** The words a card and its page say, from the claim alone. The amount is said to the dollar, whatever
+ * the token holds: a link signed before 2026-11-11 carries the exact one, and is not repeated. */
 export function stillSpendShareWordsV1(share: Pick<StillSpendShareV1, 'priceAtomic' | 'collateral' | 'venue'>): {
-  priceUsdc: string; collateralLabel: string; collateralKind: 'stock' | 'crypto'; collateralName: string; venueName: string;
+  /** Whole dollars, as "13.00": the shape the pages read. */
+  priceUsdc: string;
+  /** "13". */
+  priceDollars: string;
+  /** "about 13 USDC": how a sentence says it. */
+  priceWords: string;
+  collateralLabel: string; collateralKind: 'stock' | 'crypto'; collateralName: string; venueName: string;
 } {
-  const atomic = BigInt(share.priceAtomic);
-  const micro = (atomic % 1_000_000n).toString().padStart(6, '0');
-  const trimmed = micro.replace(/0+$/, '');
+  const dollars = (BigInt(shareAmountAtomicV1(share.priceAtomic)) / BigInt(1_000_000)).toString();
   const stock = STOCKS.find((row) => row.id === share.collateral);
   return {
-    priceUsdc: `${(atomic / 1_000_000n).toString()}.${trimmed.length <= 2 ? micro.slice(0, 2) : trimmed}`,
+    priceUsdc: `${dollars}.00`,
+    priceDollars: dollars,
+    priceWords: `about ${dollars} USDC`,
     collateralLabel: stock ? stock.ticker : share.collateral,
     collateralKind: stock ? 'stock' : 'crypto',
     collateralName: stock ? `${stock.name} stock` : share.collateral === 'cbBTC' ? 'bitcoin' : share.collateral === 'PAXG' ? 'gold' : 'ether',

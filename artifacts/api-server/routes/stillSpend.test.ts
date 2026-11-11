@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import express from 'express';
 import request from 'supertest';
@@ -12,7 +14,7 @@ import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
-import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillClientKindV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
@@ -644,5 +646,16 @@ describe('Still’s registered Bitrefill client', () => {
     assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }), {});
     assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_ID: 'not an id' }), {});
     assert.deepEqual(stillBitrefillClientV1({}), {});
+  });
+  // Audit SPEND-5 (2026-11-10): a mistyped id fell back to the published document in silence.
+  it('is named by kind for the log, never by its id, and the variables are written down', () => {
+    assert.equal(stillBitrefillClientKindV1({ STILL_BITREFILL_CLIENT_ID: '00000000-0000-4000-8000-000000000001', STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }), 'registered');
+    assert.equal(stillBitrefillClientKindV1({ STILL_BITREFILL_CLIENT_ID: '00000000-0000-4000-8000-000000000001' }), 'registered_without_secret');
+    for (const env of [{}, { STILL_BITREFILL_CLIENT_ID: 'not an id', STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }]) assert.equal(stillBitrefillClientKindV1(env), 'published_document');
+    const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
+    const example = readFileSync(repo('.env.example'), 'utf8');
+    for (const name of ['STILL_SPEND_PAY_V1', 'STILL_BITREFILL_CLIENT_ID', 'STILL_BITREFILL_CLIENT_SECRET', 'STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT']) {
+      assert.match(example, new RegExp(`^${name}=$`, 'm'), `${name} is described, with no value`);
+    }
   });
 });

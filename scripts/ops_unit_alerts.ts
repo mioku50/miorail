@@ -25,9 +25,13 @@ import {
   deliveredOpsAlertsV1,
   opsAlertChatCacheStaleV1,
   opsAlertHtmlV1,
+  opsDeadlineHtmlV1,
+  opsDeadlinesV1,
   parseOpsAlertStateV1,
+  parseOpsDeadlineStateV1,
   parseSystemctlShowV1,
   planOpsAlertsV1,
+  planOpsDeadlinesV1,
   unheardOpsAlertsV1,
   type OpsAlertStateV1,
 } from './opsUnitAlerts.js';
@@ -80,10 +84,19 @@ async function main(): Promise<void> {
   );
   const nowMs = Date.now();
   const pass = planOpsAlertsV1({ units, state, nowMs });
-  const html = opsAlertHtmlV1(pass, nowMs);
+  // Dates that are coming (a secret that expires) are said by the same pass, in the same message; what was
+  // said of them lives in its own file, so that a month-long reminder does not start Node every two minutes.
+  const deadlinesPath = join(dir, 'deadlines.json');
+  const deadlines = planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(process.env), told: parseOpsDeadlineStateV1(readText(deadlinesPath)), nowMs });
+  const keepDeadlines = (delivered: boolean): void => {
+    const value = delivered ? deadlines.next : deadlines.kept;
+    writeJson(deadlinesPath, value, Object.keys(value).length > 0);
+  };
+  const html = [opsAlertHtmlV1(pass, nowMs), opsDeadlineHtmlV1(deadlines.due)].filter((section): section is string => section !== null).join('\n\n') || null;
   const summary = {
     event: 'ops_unit_alerts', units: units.length, failed: units.filter((unit) => unit.activeState === 'failed').length,
     open: pass.state.episodes.length, announce: pass.failed.length, remind: pass.stillFailing.length, recovered: pass.recovered.length,
+    dates: deadlines.due.length,
   };
   if (dry) {
     console.log(JSON.stringify({ ...summary, outcome: 'dry' }));
@@ -94,6 +107,7 @@ async function main(): Promise<void> {
   const subscriptions = createDatabaseOpsAlertChatRepositoryV1(client);
   if (html === null) {
     writeJson(statePath, pass.state, pass.state.episodes.length > 0);
+    keepDeadlines(false);
     // A quiet pass keeps the copy of the chats current too, so a chat is in it
     // before the first failure, which may be the database's own.
     let chatCache: 'fresh' | 'renewed' | 'unreadable' = 'fresh';
@@ -112,6 +126,7 @@ async function main(): Promise<void> {
   const telegram = telegramConfigV1(process.env);
   if (!telegram) {
     writeJson(statePath, pass.state, pass.state.episodes.length > 0);
+    keepDeadlines(false);
     console.log(JSON.stringify({ ...summary, outcome: 'telegram_off' }));
     return;
   }
@@ -128,6 +143,7 @@ async function main(): Promise<void> {
   }
   if (chats.length === 0) {
     writeJson(statePath, unheardOpsAlertsV1(pass), unheardOpsAlertsV1(pass).episodes.length > 0);
+    keepDeadlines(false);
     console.log(JSON.stringify({ ...summary, outcome: 'no_chat', chatsFrom }));
     return;
   }
@@ -150,6 +166,7 @@ async function main(): Promise<void> {
   // Not delivered anywhere: the same message is tried again next pass.
   const next: OpsAlertStateV1 = delivered > 0 ? deliveredOpsAlertsV1(pass, nowMs) : pass.state;
   writeJson(statePath, next, next.episodes.length > 0);
+  keepDeadlines(delivered > 0);
   console.log(JSON.stringify({ ...summary, outcome: delivered > 0 ? 'sent' : 'not_delivered', chats: chats.length, delivered, failures, chatsFrom }));
 }
 

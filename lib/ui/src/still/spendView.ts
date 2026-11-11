@@ -275,6 +275,55 @@ export interface SpendShareViewV1 {
   venueName: 'Aave' | 'Morpho';
 }
 
+// ---------------------------------------------------------------------------
+// While the wallet has the payment (audit SPEND-6, 2026-11-10).
+//
+// A review is checked against the invoice's time once, when it is armed. The
+// transfer itself carries no deadline: a request left open in a wallet and
+// confirmed ten minutes later pays an invoice Bitrefill has let expire, and
+// with a loan the debt is taken all the same. So while the wallet has it, the
+// page says by when to confirm, and counts the minutes; once the time has
+// passed it says to decline; and a payment sent that Bitrefill still does not
+// show after its invoice expired is sent to Bitrefill's support, with the
+// invoice's id.
+// ---------------------------------------------------------------------------
+const clockV1 = (at: Date): string => `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+
+/** What to say while the wallet is asked; null when the invoice's time is not readable. */
+export function spendConfirmByNoteV1(input: { expiresAt: string; orderId: string; now: Date; withLoan?: boolean }): string | null {
+  const expires = Date.parse(input.expiresAt);
+  if (!Number.isFinite(expires)) return null;
+  const until = clockV1(new Date(expires)), left = Math.floor((expires - input.now.getTime()) / 60_000);
+  const late = `Bitrefill may not deliver, and getting the money back goes through Bitrefill’s support, with invoice ${input.orderId}`;
+  if (expires <= input.now.getTime()) {
+    return `Bitrefill’s invoice expired at ${until}. Decline this request in your wallet: confirmed now, ${input.withLoan ? 'the loan is taken and its payment arrives' : 'the payment arrives'} after the invoice expired. ${late}.`;
+  }
+  return `Confirm in your wallet before ${until}, ${left < 1 ? 'in less than a minute' : `within ${left} ${left === 1 ? 'minute' : 'minutes'}`}: that is when Bitrefill’s invoice expires. `
+    + `Confirmed later, ${input.withLoan ? 'the loan is still taken and its payment still goes' : 'the payment still goes'} out; then ${late}.`;
+}
+
+/** A payment that was sent, for an invoice that expired and that Bitrefill still shows as unpaid, or does
+ * not show at all; null for anything else. `status` is the order's words, as the page shows them. */
+export function spendLatePaymentNoteV1(input: { expiresAt: string; orderId: string; now: Date; paymentState: string; status: string | null; delivered: boolean }): string | null {
+  const expires = Date.parse(input.expiresAt);
+  if (!Number.isFinite(expires) || input.now.getTime() <= expires || input.delivered) return null;
+  if (!['submitted', 'unknown', 'confirmed'].includes(input.paymentState)) return null;
+  if (input.status !== null && input.status !== STATUS_WORDS_V1.unpaid) return null;
+  return `Bitrefill’s invoice expired at ${clockV1(new Date(expires))}, and Bitrefill ${input.status === null ? 'has not said it was paid' : 'still shows it waiting for payment'}. `
+    + `If your transfer went out, it may have arrived too late. Write to Bitrefill’s support and give them invoice ${input.orderId}: Still cannot take a payment back.`;
+}
+
+/** A shared card's amount as a sentence says it: "about 13 USDC". The server rounds it to the dollar (audit
+ * SPEND-4: an exact amount names the payment onchain), and the words say that it is rounded. */
+export function shareAmountWordsV1(usdc: string): string {
+  const [whole = '0', fraction = ''] = usdc.split('.');
+  const dollars = Number(whole) + (Number(`0.${fraction || '0'}`) >= 0.5 ? 1 : 0);
+  return `about ${Math.max(1, dollars)} USDC`;
+}
+
+/** What a person is told before they post a card: its amount is rounded, and Base is public all the same. */
+export const SHARE_CARD_PRIVACY_NOTE_V1 = 'The card names no wallet and no transaction, and rounds the amount to the dollar. Base is public all the same: someone who looks for a loan of about this size against this collateral may find it.';
+
 /** A shared purchase as the server verified its link; null when it did not. */
 export function spendShareViewV1(payload: unknown): SpendShareViewV1 | null {
   if (!object(payload) || payload.outcome !== 'share' || !object(payload.share)) return null;

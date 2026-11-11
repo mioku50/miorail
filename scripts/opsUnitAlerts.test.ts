@@ -9,6 +9,10 @@ import {
   deliveredOpsAlertsV1,
   opsAlertChatCacheStaleV1,
   opsAlertHtmlV1,
+  opsDeadlineHtmlV1,
+  opsDeadlinesV1,
+  parseOpsDeadlineStateV1,
+  planOpsDeadlinesV1,
   parseOpsAlertStateV1,
   parseSystemctlShowV1,
   opsFailureReasonV1,
@@ -150,4 +154,50 @@ test('a pass that was rate limited out of its work is reported in words, not as 
   assert.equal(opsFailureReasonV1('exit-code', 1), 'exit code 1');
   const pass = planOpsAlertsV1({ units: [failed('miorail-rwa-cash-exit.service', T0, { exitStatus: 75 })], state: { episodes: [] }, nowMs: T0 });
   assert.match(opsAlertHtmlV1(pass, T0)!, /<code>miorail-rwa-cash-exit\.service<\/code> — exit code 75: the provider it works through was rate limiting it/);
+});
+
+// Audit SPEND-5 (2026-11-10): Still's client secret at Bitrefill expires on 2027-01-31, and the only record of
+// that date was a note. Six hours after it Spend is off for everyone, and no unit fails.
+test('a secret that expires is said at thirty days and five more times, each once, and starts over when renewed', () => {
+  const env = { STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret', STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT: '2027-01-31T09:21:00Z' } as NodeJS.ProcessEnv;
+  const expires = Date.parse('2027-01-31T09:21:00Z'), DAY = 24 * 60 * MIN;
+  const deadlines = opsDeadlinesV1(env);
+  assert.deepEqual(deadlines.map((row) => [row.key, row.expiresAtMs]), [['bitrefill-client-secret', expires]]);
+  // No date, a date that is not one, or no secret at all: nothing to say.
+  for (const other of [{}, { ...env, STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT: 'January' }, { STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT: '2027-01-31' }]) {
+    assert.deepEqual(opsDeadlinesV1(other as NodeJS.ProcessEnv), []);
+  }
+  let told: Record<string, number> = {};
+  const said: Array<[number, number]> = [];
+  // One pass every six hours from forty days before until three days after.
+  for (let at = expires - 40 * DAY; at <= expires + 3 * DAY; at += 6 * 60 * MIN) {
+    const plan = planOpsDeadlinesV1({ deadlines, told, nowMs: at });
+    for (const due of plan.due) said.push([due.stage, Math.floor(due.daysLeft)]);
+    told = plan.next;
+  }
+  // Each stage is said by the first pass that finds the date that near, and by no later one.
+  assert.deepEqual(said, [[30, 30], [14, 14], [7, 7], [3, 3], [1, 1], [0, 0]]);
+  // A message that reached no chat is said again by the next pass.
+  const first = planOpsDeadlinesV1({ deadlines, told: {}, nowMs: expires - 10 * DAY });
+  assert.deepEqual([first.due.length, first.kept, first.next], [1, {}, { 'bitrefill-client-secret': 14 }]);
+  assert.equal(planOpsDeadlinesV1({ deadlines, told: first.kept, nowMs: expires - 10 * DAY }).due.length, 1);
+  assert.equal(planOpsDeadlinesV1({ deadlines, told: first.next, nowMs: expires - 10 * DAY }).due.length, 0);
+  // Renewed for another year: nothing is said, and what was said before is forgotten.
+  const renewed = planOpsDeadlinesV1({ deadlines: opsDeadlinesV1({ ...env, STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT: '2028-01-31T09:21:00Z' } as NodeJS.ProcessEnv), told, nowMs: expires - DAY });
+  assert.deepEqual([renewed.due, renewed.next, renewed.kept], [[], {}, {}]);
+});
+
+test('the date is said in words that name what stops and what to do, and its file holds nothing else', () => {
+  const env = { STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret', STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT: '2027-01-31T09:21:00Z' } as NodeJS.ProcessEnv;
+  const expires = Date.parse('2027-01-31T09:21:00Z'), DAY = 24 * 60 * MIN;
+  const html = opsDeadlineHtmlV1(planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(env), told: {}, nowMs: expires - 29.5 * DAY }).due)!;
+  assert.match(html, /^<b>Miorail: a date is coming<\/b>\nStill’s client secret at Bitrefill expires on Jan 31, 2027, in 29 days\. After that Still Spend can no longer read Bitrefill’s catalogue or open an invoice\. Register the client again at Bitrefill/);
+  assert.equal(html.includes('fixture-secret'), false);
+  assert.match(opsDeadlineHtmlV1(planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(env), told: {}, nowMs: expires + DAY }).due)!, /expired on Jan 31, 2027\. Since then Still Spend/);
+  assert.match(opsDeadlineHtmlV1(planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(env), told: {}, nowMs: expires - 60 * MIN }).due)!, /in less than a day/);
+  assert.equal(opsDeadlineHtmlV1([]), null);
+  assert.deepEqual(parseOpsDeadlineStateV1(JSON.stringify({ 'bitrefill-client-secret': 14, '../etc': 1, other: 'soon', big: 9999 })), { 'bitrefill-client-secret': 14 });
+  assert.deepEqual([parseOpsDeadlineStateV1(null), parseOpsDeadlineStateV1('{not json'), parseOpsDeadlineStateV1('[1]')], [{}, {}, {}]);
+  // Kept apart from the episodes: the unit starts Node every two minutes while state.json exists.
+  assert.match(readFileSync(new URL('./ops_unit_alerts.ts', import.meta.url), 'utf8'), /join\(dir, 'deadlines\.json'\)/);
 });

@@ -1,4 +1,5 @@
 import { createBitrefillGuestCheckoutV1, spendCallingCodeV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
+import { logger } from '@mioagent/utils';
 
 import type { LendingPaymentV1 } from './lendingDraft.js';
 
@@ -169,6 +170,23 @@ export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { 
   return { clientId, ...(clientSecret ? { clientSecret } : {}) };
 }
 
+/** Which client Still presents to Bitrefill: its registered one, or the published document it falls back to,
+ * which Bitrefill has not trusted since 2026-11-02 (every read is then refused). Never the id itself. */
+export function stillBitrefillClientKindV1(env: NodeJS.ProcessEnv = process.env): 'registered' | 'registered_without_secret' | 'published_document' {
+  const client = stillBitrefillClientV1(env);
+  return !client.clientId ? 'published_document' : client.clientSecret ? 'registered' : 'registered_without_secret';
+}
+
 let checkoutV1: BitrefillGuestCheckoutV1 | null = null;
-/** One guest checkout for the process: one token and one rate window. */
-export const stillSpendCheckoutV1 = (): BitrefillGuestCheckoutV1 => (checkoutV1 ??= createBitrefillGuestCheckoutV1(stillBitrefillClientV1()));
+/** One guest checkout for the process: one token and one rate window. The first use says which client it is
+ * (audit SPEND-5: a mistyped id fell back to the published document in silence, and Spend was simply refused). */
+export const stillSpendCheckoutV1 = (): BitrefillGuestCheckoutV1 => {
+  if (!checkoutV1) {
+    const kind = stillBitrefillClientKindV1();
+    const said = { client: kind, pay: stillSpendPayEnabledV1() ? 'on' : 'off', secretExpiryKnown: Number.isFinite(Date.parse((process.env.STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT ?? '').trim())) };
+    if (kind === 'registered') logger.info('Still Spend presents its registered client to Bitrefill', said);
+    else logger.warn('Still Spend has no registered client with a secret: Bitrefill may refuse its catalogue and invoices', said);
+    checkoutV1 = createBitrefillGuestCheckoutV1(stillBitrefillClientV1());
+  }
+  return checkoutV1;
+};

@@ -106,7 +106,8 @@ test('a confirmed purchase carries Bitrefill’s own word for the invoice and a 
   const shareUrl = status.purchase?.shareUrl ?? '';
   assert.ok(shareUrl.startsWith(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/ss1.`), shareUrl);
   const claim = verifyStillSpendShareV1(shareUrl.replace(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/`, ''), SECRET);
-  assert.deepEqual(claim, { productName: PAYMENT.productName, packageLabel: '5GB, 30 Days', priceAtomic: '9800000', collateral: 'NVDAc', venue: 'aave-v4' });
+  // The link holds the price to the dollar: the exact 9.80 USDC would name the payment onchain (audit SPEND-4).
+  assert.deepEqual(claim, { productName: PAYMENT.productName, packageLabel: '5GB, 30 Days', priceAtomic: '10000000', collateral: 'NVDAc', venue: 'aave-v4' });
   assert.ok(!shareUrl.includes(WALLET.slice(2)) && !shareUrl.includes(TX.slice(2)));
 });
 

@@ -229,7 +229,7 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
   const mobile: MobileInputV1 = {
     holdings: [{ id: 'collateral', kind: words.collateralKind, label: words.collateralLabel, valueCents: 90_000 }],
     // The square is the loan and carries what it paid; its size claims nothing.
-    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: words.priceUsdc.replace(/\.00$/, '') },
+    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: `~${words.priceDollars}` },
     state: 'calm',
   };
   return frameV1(
@@ -243,7 +243,7 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
         brandV1(x, top + 18),
         `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">PAID WITH A LOAN · NOTHING SOLD</text>`,
         textLinesV1(product, x, productTop, 54, 62, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
-        `<text x="${x}" y="${last + 58}" font-family="${SANS}" font-size="34" fill="${INK}">${escapeXmlV1(share.packageLabel)}<tspan fill="${INK2}">\u00a0·\u00a0</tspan><tspan font-weight="600">${escapeXmlV1(words.priceUsdc)} USDC</tspan></text>`,
+        `<text x="${x}" y="${last + 58}" font-family="${SANS}" font-size="34" fill="${INK}">${escapeXmlV1(share.packageLabel)}<tspan fill="${INK2}">\u00a0·\u00a0</tspan><tspan font-weight="600">${escapeXmlV1(words.priceWords)}</tspan></text>`,
         textLinesV1(
           wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}, and paid Bitrefill with that loan.`, 24, width, 3),
           x, last + 112, 24, 34, `font-family="${SANS}" fill="${INK2}"`,
@@ -253,7 +253,7 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
         `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">MIORAIL.XYZ</text>`,
       ].join('');
     },
-    `Paid for ${share.productName} (${share.packageLabel}, ${words.priceUsdc} USDC) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
+    `Paid for ${share.productName} (${share.packageLabel}, ${words.priceWords}) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
   );
 }
 
@@ -263,19 +263,18 @@ export function stillLoanCardSvgV1(shape: StillCardShapeV1, share: StillLoanShar
   const mobile: MobileInputV1 = {
     holdings: [{ id: 'collateral', kind: words.collateralKind, label: words.collateralLabel, valueCents: 90_000 }],
     // The square is the loan and carries its amount; its size claims nothing.
-    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: words.priceUsdc.replace(/\.00$/, '') },
+    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: `~${words.priceDollars}` },
     state: 'calm',
   };
-  const [whole, cents] = words.priceUsdc.split('.');
   return frameV1(shape, mobile, ({ x, top, bottom, width }) => [
     brandV1(x, top + 18),
     `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">SPENT WITHOUT SELLING</text>`,
-    `<text x="${x}" y="${top + 250}" font-family="${SANS}" font-weight="300" fill="${INK}"><tspan font-size="112">${escapeXmlV1(whole!)}</tspan><tspan font-size="52" dy="-46">.${escapeXmlV1(cents!)}</tspan><tspan font-size="40" dy="46" font-weight="500"> USDC</tspan></text>`,
+    `<text x="${x}" y="${top + 250}" font-family="${SANS}" font-weight="300" fill="${INK}"><tspan font-size="40" font-weight="500">about </tspan><tspan font-size="112">${escapeXmlV1(words.priceDollars)}</tspan><tspan font-size="40" font-weight="500"> USDC</tspan></text>`,
     textLinesV1(wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}. Nothing was sold: the ${words.collateralKind === 'stock' ? 'stock' : words.collateralLabel === 'PAXG' ? 'gold' : 'coin'} is the loan’s collateral.`, 25, width, 3), x, top + 318, 25, 35, `font-family="${SANS}" fill="${INK2}"`),
     baseSquareV1(x, bottom - 26, 24),
     `<text x="${x + 38}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">CHECKED ONCHAIN ON BASE</text>`,
     `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">MIORAIL.XYZ</text>`,
-  ].join(''), `A loan of ${words.priceUsdc} USDC against ${words.collateralLabel} through ${words.venueName}, on Still: nothing sold.`);
+  ].join(''), `A loan of ${words.priceWords} against ${words.collateralLabel} through ${words.venueName}, on Still: nothing sold.`);
 }
 
 /** Stocks alone, in balance: the Stocks board's picture. No wallet, no loan. */

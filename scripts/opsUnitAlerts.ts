@@ -247,3 +247,90 @@ export function parseOpsAlertStateV1(text: string | null): OpsAlertStateV1 {
     return { episodes: [] };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Things that stop working on a known day (audit SPEND-5, 2026-11-10).
+//
+// Still's client secret at Bitrefill expires on 2027-01-31. Six hours after
+// that every catalogue read and every invoice is refused, Spend is off for
+// everyone, and no unit fails: the only record of the date was a note. A date
+// like that is given in the environment beside the secret it belongs to, and
+// the same pass that reports failed units says when it comes within thirty
+// days, again at fourteen, seven, three and one, and once it has passed.
+// Each of those once. A date moved further away (the secret was renewed)
+// starts over quietly.
+//
+// What was said is kept in its own file, deadlines.json: the unit's
+// ExecCondition starts Node every two minutes while state.json exists, and a
+// reminder that stands for a month must not do that.
+// ---------------------------------------------------------------------------
+
+export interface OpsDeadlineV1 {
+  key: string;
+  /** What expires, as a message names it. */
+  name: string;
+  expiresAtMs: number;
+  /** What stops working then. */
+  after: string;
+  /** What the operator does about it. */
+  renew: string;
+}
+
+export const OPS_DEADLINE_STAGES_DAYS_V1 = [30, 14, 7, 3, 1, 0] as const;
+
+/** The dated things this server's environment names. A date that is absent or unreadable is none. */
+export function opsDeadlinesV1(env: NodeJS.ProcessEnv): OpsDeadlineV1[] {
+  const deadlines: OpsDeadlineV1[] = [];
+  const bitrefill = Date.parse((env.STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT ?? '').trim());
+  if (Number.isFinite(bitrefill) && (env.STILL_BITREFILL_CLIENT_SECRET ?? '').trim() !== '') {
+    deadlines.push({
+      key: 'bitrefill-client-secret', name: 'Still’s client secret at Bitrefill', expiresAtMs: bitrefill,
+      after: 'Still Spend can no longer read Bitrefill’s catalogue or open an invoice',
+      renew: 'Register the client again at Bitrefill, then set STILL_BITREFILL_CLIENT_ID, STILL_BITREFILL_CLIENT_SECRET and STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT and restart miorail-api.',
+    });
+  }
+  return deadlines;
+}
+
+export interface OpsDeadlineDueV1 { deadline: OpsDeadlineV1; daysLeft: number; stage: number }
+
+/** Which dates are to be said now. `told` is the stage last said for each; `next` is what to keep once this
+ * pass's message reached a chat, `kept` what to keep when it reached none. */
+export function planOpsDeadlinesV1(input: { deadlines: readonly OpsDeadlineV1[]; told: Readonly<Record<string, number>>; nowMs: number }):
+  { due: OpsDeadlineDueV1[]; next: Record<string, number>; kept: Record<string, number> } {
+  const due: OpsDeadlineDueV1[] = [], next: Record<string, number> = {}, kept: Record<string, number> = {};
+  for (const deadline of input.deadlines) {
+    const daysLeft = (deadline.expiresAtMs - input.nowMs) / 86_400_000;
+    // Further away than the first stage: nothing is said, and anything said before is forgotten.
+    if (daysLeft > OPS_DEADLINE_STAGES_DAYS_V1[0]) continue;
+    const stage = [...OPS_DEADLINE_STAGES_DAYS_V1].reverse().find((days) => daysLeft <= days) ?? 0;
+    const before = input.told[deadline.key];
+    if (before !== undefined) kept[deadline.key] = before;
+    if (before === undefined || stage < before) { due.push({ deadline, daysLeft, stage }); next[deadline.key] = stage; }
+    else next[deadline.key] = before;
+  }
+  return { due, next, kept };
+}
+
+/** The dates to say, as one section of the pass's message; null when there are none. */
+export function opsDeadlineHtmlV1(due: readonly OpsDeadlineDueV1[]): string | null {
+  if (due.length === 0) return null;
+  const day = (ms: number) => { const at = new Date(ms); return `${MONTHS_V1[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`; };
+  return ['<b>Miorail: a date is coming</b>', ...due.map(({ deadline, daysLeft }) => {
+    const when = daysLeft <= 0 ? `expired on ${day(deadline.expiresAtMs)}` : `expires on ${day(deadline.expiresAtMs)}, in ${daysLeft < 1 ? 'less than a day' : `${Math.floor(daysLeft)} ${Math.floor(daysLeft) === 1 ? 'day' : 'days'}`}`;
+    return `${escapeTelegramHtmlV1(deadline.name)} ${when}. ${daysLeft <= 0 ? 'Since then' : 'After that'} ${escapeTelegramHtmlV1(deadline.after)}. ${escapeTelegramHtmlV1(deadline.renew)}`;
+  })].join('\n');
+}
+
+/** deadlines.json as read back; anything that is not one starts over empty. */
+export function parseOpsDeadlineStateV1(text: string | null): Record<string, number> {
+  if (text === null) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter((entry): entry is [string, number] => /^[a-z0-9-]{1,60}$/.test(entry[0]) && typeof entry[1] === 'number' && Number.isInteger(entry[1]) && entry[1] >= 0 && entry[1] <= 366));
+  } catch {
+    return {};
+  }
+}

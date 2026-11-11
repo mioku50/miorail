@@ -157,12 +157,12 @@ export function stillLoanShareMetaV1(input: { origin: string; canonical: string;
       noindex: true,
       siteName: 'Still',
       miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
-      title: `Spent without selling: ${words.priceUsdc} USDC · Still`,
-      description: `${words.priceUsdc} USDC borrowed against ${words.collateralLabel} through ${words.venueName} on Base. Nothing was sold: the ${kept} is the loan’s collateral.`,
+      title: `Spent without selling: ${words.priceWords} · Still`,
+      description: `${words.priceWords[0]!.toUpperCase()}${words.priceWords.slice(1)} borrowed against ${words.collateralLabel} through ${words.venueName} on Base. Nothing was sold: the ${kept} is the loan’s collateral.`,
       image: {
         width: 1200,
         height: 630,
-        alt: `A loan of ${words.priceUsdc} USDC against ${words.collateralLabel} through ${words.venueName}, on Still: nothing sold.`,
+        alt: `A loan of ${words.priceWords} against ${words.collateralLabel} through ${words.venueName}, on Still: nothing sold.`,
       },
     },
   };
@@ -198,11 +198,11 @@ export function stillSpendShareMetaV1(input: { origin: string; canonical: string
       siteName: 'Still',
       miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
       title: `Paid with a loan: ${share.productName} · Still`,
-      description: `${share.packageLabel} for ${words.priceUsdc} USDC, borrowed against ${words.collateralLabel} through ${words.venueName} and paid to Bitrefill with that loan on Base. Nothing was sold.`,
+      description: `${share.packageLabel} for ${words.priceWords}, borrowed against ${words.collateralLabel} through ${words.venueName} and paid to Bitrefill with that loan on Base. Nothing was sold.`,
       image: {
         width: 1200,
         height: 630,
-        alt: `Paid for ${share.productName} (${share.packageLabel}, ${words.priceUsdc} USDC) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
+        alt: `Paid for ${share.productName} (${share.packageLabel}, ${words.priceWords}) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
       },
     },
   };

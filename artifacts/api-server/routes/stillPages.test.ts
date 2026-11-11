@@ -162,7 +162,7 @@ test('a shared purchase previews with its own card, and reads and names no walle
   assert.deepEqual(metaContent(res.text, 'og:image'), [`https://stills.lat/api/public/still/spend-card.png?t=${token}`]);
   assert.deepEqual(metaContent(res.text, 'og:url'), [`https://stills.lat/spend/p/${token}`]);
   assert.deepEqual(metaContent(res.text, 'robots'), ['noindex']);
-  assert.match(metaContent(res.text, 'description')[0]!, /^10 UC for 0\.18 USDC, borrowed against NVDA through Aave and paid to Bitrefill/);
+  assert.match(metaContent(res.text, 'description')[0]!, /^10 UC for about 1 USDC, borrowed against NVDA through Aave and paid to Bitrefill/);
   const embed = JSON.parse(metaContent(res.text, 'fc:miniapp')[0]!);
   assert.equal(embed.imageUrl, `https://stills.lat/api/public/still/spend-card.png?t=${token}&shape=tall`);
   assert.equal(embed.button.action.url, `https://miorail.xyz/spend/p/${token}`);
@@ -175,7 +175,9 @@ test('a shared purchase previews with its own card, and reads and names no walle
   assert.match(svg, /width="1200" height="630"/);
   assert.match(svg, /PAID WITH A LOAN · NOTHING SOLD/);
   assert.match(svg, /PUBG Mobile UC/);
-  assert.match(svg, /0\.18 USDC/);
+  // The card says the amount to the dollar: the exact one names the payment onchain (audit SPEND-4).
+  assert.match(svg, /about 1 USDC/);
+  assert.doesNotMatch(svg, /0\.18/);
   assert.match(svg, /Borrowed against NVDA through Aave/);
   assert.doesNotMatch(svg, /0x[0-9a-fA-F]{6}/);
   const tall = await request(server).get('/api/public/still/spend-card.png').query({ t: token, shape: 'tall' });
@@ -184,7 +186,7 @@ test('a shared purchase previews with its own card, and reads and names no walle
 
   const words = await request(server).get('/api/public/still/spend-share').query({ t: token });
   assert.equal(words.status, 200);
-  assert.deepEqual(words.body, { outcome: 'share', share: { productName: 'PUBG Mobile UC International', packageLabel: '10 UC', priceUsdc: '0.18',
+  assert.deepEqual(words.body, { outcome: 'share', share: { productName: 'PUBG Mobile UC International', packageLabel: '10 UC', priceUsdc: '1.00',
     collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } });
 });
 
@@ -195,10 +197,10 @@ test('a shared loan previews with its own card at the purchase cards’ address,
   const token = issueStillLoanShareV1({ borrowedAtomic: '2000000', collateral: 'NVDAc', venue: 'aave-v4' }, SHARE_SECRET);
   const res = await request(server).get(`/spend/p/${token}`).set('Host', 'miorail.xyz');
   assert.equal(res.status, 200);
-  assert.match(res.text, /<title>Spent without selling: 2\.00 USDC · Still<\/title>/);
+  assert.match(res.text, /<title>Spent without selling: about 2 USDC · Still<\/title>/);
   assert.deepEqual(metaContent(res.text, 'og:image'), [`https://miorail.xyz/api/public/still/spend-card.png?t=${token}`]);
   assert.deepEqual(metaContent(res.text, 'robots'), ['noindex']);
-  assert.match(metaContent(res.text, 'description')[0]!, /^2\.00 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: the stock is the loan’s collateral\.$/);
+  assert.match(metaContent(res.text, 'description')[0]!, /^About 2 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: the stock is the loan’s collateral\.$/);
   const embed = JSON.parse(metaContent(res.text, 'fc:miniapp')[0]!);
   assert.equal(embed.imageUrl, `https://miorail.xyz/api/public/still/spend-card.png?t=${token}&shape=tall`);
   assert.equal(embed.button.title, 'Open on Still');
