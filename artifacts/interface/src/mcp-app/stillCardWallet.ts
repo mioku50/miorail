@@ -8,6 +8,8 @@
 // dataSuffix capability; any other gets the review in steps, each transaction
 // carrying the builder code in its own calldata, as on Still's site.
 
+import { attributedCallsV1 } from '@mioagent/wallet-actions/attribution';
+
 export interface StillCardCallV1 { to: string; data: string; value: string }
 
 /** The slice of WalletConnect's UniversalProvider the card uses; a test supplies its own. */
@@ -51,11 +53,15 @@ export async function connectStillCardWalletV1(provider: StillCardProviderV1, in
   const address = account.slice(BASE_CAIP2_V1.length + 1).toLowerCase();
   const allowed = new Set(namespace?.methods ?? []);
   let batches = false;
+  // What the wallet said it can do, kept: a wallet that does not name `dataSuffix` (MetaMask mobile) gets
+  // the builder code in each call's own data, as on Still's site (audit WAL-5).
+  let capabilities: unknown = null;
   if (allowed.has('wallet_sendCalls') && allowed.has('wallet_getCapabilities')) {
     try {
-      const capabilities = await provider.request<Record<string, { atomic?: { status?: string } }>>({ method: 'wallet_getCapabilities', params: [address, ['0x2105']] }, BASE_CAIP2_V1);
-      const atomic = capabilities?.['0x2105']?.atomic?.status;
+      const answer = await provider.request<Record<string, { atomic?: { status?: string } }>>({ method: 'wallet_getCapabilities', params: [address, ['0x2105']] }, BASE_CAIP2_V1);
+      const atomic = answer?.['0x2105']?.atomic?.status;
       batches = atomic === 'supported' || atomic === 'ready';
+      capabilities = answer ?? null;
     } catch { batches = false; }
   }
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -66,7 +72,7 @@ export async function connectStillCardWalletV1(provider: StillCardProviderV1, in
     async sendCalls(calls) {
       const answer = await provider.request<{ id?: string } | string>({ method: 'wallet_sendCalls', params: [{
         version: '2.0.0', chainId: '0x2105', from: address, atomicRequired: true,
-        calls: calls.map((call) => ({ to: call.to, data: call.data, value: `0x${BigInt(call.value).toString(16)}` })),
+        calls: attributedCallsV1({ calls, suffix, capabilities }).map((call) => ({ to: call.to, data: call.data, value: `0x${BigInt(call.value).toString(16)}` })),
         ...(suffix ? { capabilities: { dataSuffix: { value: suffix, optional: true } } } : {}),
       }] }, BASE_CAIP2_V1);
       return typeof answer === 'string' ? answer : answer?.id ?? null;

@@ -72,13 +72,15 @@ function routerApp() {
   return local;
 }
 
-function rpc(method: string, context: unknown, over: Partial<{ nonce: string; sender: string; calls: SponsoredCallV1[] }> = {}) {
+/** What a real wallet states: half a million gas for the calls at two hundredths of a gwei. */
+const GAS_V1 = { callGasLimit: '0x7a120', verificationGasLimit: '0x30d40', preVerificationGas: '0xc350', maxFeePerGas: '0x1312d00', maxPriorityFeePerGas: '0xf4240' };
+function rpc(method: string, context: unknown, over: Partial<{ nonce: string; sender: string; calls: SponsoredCallV1[]; gas: Record<string, unknown> }> = {}) {
   return {
     jsonrpc: '2.0',
     id: 7,
     method,
     params: [
-      { sender: over.sender ?? WALLET, nonce: over.nonce ?? '0x1', callData: callData(over.calls ?? CALLS), initCode: '0x' },
+      { sender: over.sender ?? WALLET, nonce: over.nonce ?? '0x1', callData: callData(over.calls ?? CALLS), initCode: '0x', ...GAS_V1, ...(over.gas ?? {}) },
       SPONSORED_GAS_ENTRY_POINT_V1,
       '0x2105',
       context,
@@ -253,6 +255,50 @@ test('an upstream refusal is not counted, and its words stay in our log', async 
   assert.equal(response.body.error.data.reason, 'upstream_declined');
   assert.doesNotMatch(JSON.stringify(response.body), /payment method/);
   assert.equal(sponsorshipLedgerV1.allows(WALLET, '0x9'), true, 'a refused operation spent nothing');
+});
+
+// Audit WAL-2 (2026-11-10): the day's count was read before the paymaster was asked and written after it
+// answered, so twelve operations sent at once, each with its own nonce, were all granted against a limit of three.
+test('operations asked for at once take the day’s three places and no more, and a refused one gives its place back', async (t) => {
+  let waiting: Array<() => void> = [], asked = 0, decline = false;
+  stubV1(t, { forward: async () => {
+    asked += 1;
+    await new Promise<void>((answer) => { waiting.push(answer); });
+    return decline ? { jsonrpc: '2.0', id: 1, error: { code: -32604, message: 'budget spent' } }
+      : { jsonrpc: '2.0', id: 1, result: { paymasterAndData: '0x2faeb0760d4230ef2ac21496bb4f0b47d634fd4c' } };
+  } });
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const send = (nonce: number) => request(routerApp()).post('/api/paymaster').send(rpc('pm_getPaymasterData', offer.context, { nonce: `0x${nonce.toString(16)}` })).then((r) => r.body);
+  const all = Array.from({ length: 12 }, (_, index) => send(index + 1));
+  // Every request has been decided before the paymaster answers any of them.
+  while (waiting.length < 3) await new Promise((tick) => { setTimeout(tick, 5); });
+  await new Promise((tick) => { setTimeout(tick, 30); });
+  assert.equal(asked, 3);
+  waiting.forEach((answer) => answer());
+  const answers = await Promise.all(all);
+  assert.equal(answers.filter((body) => body.result).length, 3);
+  assert.deepEqual([...new Set(answers.filter((body) => body.error).map((body) => body.error.data.reason))], ['daily_limit_reached']);
+  // A new day's first operation, refused by the paymaster, leaves all three places free.
+  sponsorshipLedgerV1.clear(); waiting = []; asked = 0; decline = true;
+  const refused = send(20);
+  while (waiting.length < 1) await new Promise((tick) => { setTimeout(tick, 5); });
+  waiting[0]!();
+  assert.equal((await refused).error.data.reason, 'upstream_declined');
+  decline = false;
+  const later = [send(21), send(22), send(23)];
+  while (waiting.length < 4) await new Promise((tick) => { setTimeout(tick, 5); });
+  waiting.slice(1).forEach((answer) => answer());
+  assert.equal((await Promise.all(later)).filter((body) => body.result).length, 3);
+});
+
+test('an operation with made-up gas fields is refused before the paymaster is asked', async (t) => {
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const wild = await request(routerApp()).post('/api/paymaster')
+    .send(rpc('pm_getPaymasterData', offer.context, { gas: { preVerificationGas: '0xffffffffff', maxFeePerGas: '0xffffffffffff' } })).expect(200);
+  assert.equal(wild.body.error.data.reason, 'gas_out_of_bounds');
+  assert.equal(forwarded.length, 0);
+  assert.equal(sponsorshipLedgerV1.allows(WALLET, '0x9'), true);
 });
 
 test('an upstream that does not answer is our failure, said plainly', async (t) => {

@@ -12,6 +12,7 @@ import {
   paymasterUpstreamUrlV1,
   sponsoredCallsDigestV1,
   sponsoredGasDailyLimitV1,
+  sponsoredGasMaxOperationWeiV1,
   sponsorshipAllowanceKeyV1,
   sponsorshipKeyV1,
   type SponsoredCallV1,
@@ -239,6 +240,7 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
     key,
     nowMs: sponsoredGasRuntime.now().getTime(),
     ledger: sponsorshipLedgerV1,
+    maxOperationWei: sponsoredGasMaxOperationWeiV1(process.env),
   });
   if (!decision.ok) {
     // Which method a wallet asked for is what showed Base Account opens with
@@ -263,6 +265,18 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
   // The user operation goes upstream unchanged; OUR context does not — the
   // token is Miorail's business, not the paymaster's.
   const [userOp, entryPoint, chainId] = body.params as [unknown, unknown, unknown];
+  // The final data is what sponsors: its place in today's count is taken here, in one step with the check
+  // and before the paymaster is asked, so requests sent at once cannot all pass a count none has written
+  // yet (audit WAL-2). An operation the paymaster then does not sponsor gives its place back.
+  const allowanceKey = sponsorshipAllowanceKeyV1(decision.claim);
+  const place = decision.method === 'pm_getPaymasterData' ? sponsorshipLedgerV1.reserve(allowanceKey, decision.nonce) : { fresh: false };
+  if (!place) {
+    logger.info('Sponsored gas refused', { reason: 'daily_limit_reached', method: loggableMethodV1(body.method), tokenUrl: urlToken !== null, bytes });
+    reply({ error: { code: SPONSORED_GAS_RPC_ERROR_CODE_V1.daily_limit_reached,
+      message: "Today's sponsored gas for this wallet is used up; the wallet can still pay it.", data: { reason: 'daily_limit_reached' } } });
+    return;
+  }
+  const giveBack = (): void => { if (place.fresh) sponsorshipLedgerV1.release(allowanceKey, decision.nonce); };
   let upstream: unknown;
   try {
     upstream = await sponsoredGasRuntime.forward(upstreamUrl, {
@@ -272,6 +286,7 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
       params: [userOp, entryPoint, chainId, {}],
     });
   } catch (cause) {
+    giveBack();
     logger.warn('Sponsored gas upstream did not answer', {
       errorName: cause instanceof Error ? cause.name : typeof cause,
     });
@@ -284,6 +299,7 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
     // The upstream's words are logged (bounded) for the operator — a spent
     // budget or a contract off the allowlist reads exactly like this — and
     // never passed to the wallet, which gets one plain sentence.
+    giveBack();
     logger.warn('Sponsored gas upstream declined', {
       upstreamCode: typeof answer?.error?.code === 'number' ? answer.error.code : null,
       upstreamMessage: typeof answer?.error?.message === 'string' ? answer.error.message.slice(0, 160) : null,
@@ -302,7 +318,7 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPON
   // estimate, and an operation the upstream refused was never sponsored.
   const kind = decision.claim.kind ?? 'swap';
   if (decision.method === 'pm_getPaymasterData') {
-    sponsorshipLedgerV1.record(sponsorshipAllowanceKeyV1(decision.claim), decision.nonce);
+    sponsorshipLedgerV1.record(allowanceKey, decision.nonce);
     logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, kind, tokenSource: decision.tokenSource, bytes });
   } else {
     // A stub sponsors nothing, but without this line "the wallet never asked"

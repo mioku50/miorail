@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState, useCallback, createElement, type ReactNode } from 'react';
 import { useAccount, useCapabilities, useConfig, useSendCalls, useCallsStatus } from 'wagmi';
+import { attributedCallsV1 } from './attribution';
 import { requireLiveWalletAccountV1 } from './liveWalletConnection';
 import { base } from 'wagmi/chains';
 import type { Address, Hex } from 'viem';
@@ -301,7 +302,9 @@ export function useWalletConfirmAction({
       setStatus('sending');
       const result = await sendCalls.mutateAsync({
         account: address,
-        calls: prepared.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
+        // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data; a plain ETH
+        // transfer, which has none, is left exactly as prepared (audit WAL-5).
+        calls: attributedCallsV1({ calls: prepared.calls.map(normalizeCall), suffix: dataSuffix, capabilities: capabilityData, chainId: base.id }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
         chainId: base.id,
         forceAtomic: true,
         capabilities: dataSuffix

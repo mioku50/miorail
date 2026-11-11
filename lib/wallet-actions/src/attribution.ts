@@ -185,6 +185,8 @@ export const BUILDER_ATTRIBUTION_LABELS_V1: Record<BuilderAttributionStatusV1, s
  * itself, and the sponsor checks the calls against the approved ones byte for byte. Only that: the
  * sponsor's capability is also attached, optionally, for a wallet that names nothing, and MetaMask
  * ignores it and pays (2026-11-09: a267483f sent its offered loan and stock swap without any code).
+ *
+ * A call with no data (a plain ETH transfer) is never touched.
  */
 export function attributedCallsV1<T extends { data?: string }>(input: {
   calls: readonly T[];
@@ -203,6 +205,9 @@ export function attributedCallsV1<T extends { data?: string }>(input: {
   const suffixBytes = suffix.length / 2;
   return input.calls.map((call) => {
     const data = (call.data ?? '0x').toLowerCase();
+    // A call with no data is a plain transfer of ETH, and stays one: with the code appended it would run
+    // the recipient's fallback, which a contract wallet may not have (audit WAL-5).
+    if (data === '0x' || data === '') return call;
     const dataBytes = (data.length - 2) / 2;
     const fill = (32 - ((dataBytes + suffixBytes) % 32)) % 32;
     return { ...call, data: `${data}${'00'.repeat(fill)}${suffix}` as T['data'] };

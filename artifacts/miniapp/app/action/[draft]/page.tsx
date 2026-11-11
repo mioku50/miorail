@@ -7,7 +7,7 @@ import {
   useStockActionReviewConsoleV1,
 } from "@mioagent/ui";
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
-import { builderCodeToDataSuffix, requireLiveWalletAccountV1 } from "@mioagent/wallet-actions";
+import { attributedCallsV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from "@mioagent/wallet-actions";
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review, in Base App.
@@ -37,6 +37,7 @@ export default function BaseAppStockActionReviewPage() {
   const { address } = useAccount();
   const sendCalls = useSendCalls();
   const config = useConfig();
+  const walletBatches = useWalletBatchSupportV1();
   const recordSubmission = useRecordBlueprintSubmission();
 
   const reviewConsole = useStockActionReviewConsoleV1({
@@ -46,12 +47,13 @@ export default function BaseAppStockActionReviewPage() {
       // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
       if (!address) throw new Error("Your wallet is not connected");
       await requireLiveWalletAccountV1(config, address);
+      // A wallet that drops `dataSuffix` gets the code in each call's own data, as on the web (audit WAL-5).
+      const { capabilities } = await walletBatches.readNow();
       const result = await sendCalls.mutateAsync({
         account: address,
-        calls: calls as never,
+        calls: attributedCallsV1({ calls: calls as { data?: string }[], suffix: BUILDER_SUFFIX_V1, capabilities }) as never,
         chainId: 8453,
         forceAtomic: atomicRequired,
-        // A batch with no dataSuffix loses Builder Code attribution silently.
         capabilities: BUILDER_SUFFIX_V1
           ? { dataSuffix: { value: BUILDER_SUFFIX_V1, optional: true } }
           : undefined,

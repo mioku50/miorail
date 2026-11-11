@@ -22,7 +22,7 @@ import {
   useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 /**
@@ -96,15 +96,17 @@ export function StockActionReviewPage() {
       // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
       // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
       if (!address) throw new Error('Your wallet is not connected');
-      await requireLiveWalletAccountV1(config, address);
+      const { restored } = await requireLiveWalletAccountV1(config, address);
+      const capabilities = restored ? (await batches.readNow()).capabilities : batches.capabilities;
       const result = await sendCalls.mutateAsync({
         account: address,
-        calls: calls as never,
+        // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data, as a swap
+        // and a loan do (audit WAL-5: this path sent only the capability, which MetaMask ignores).
+        calls: attributedCallsV1({ calls: calls as { data?: string }[], suffix: STOCK_ACTION_BUILDER_SUFFIX_V1, capabilities }) as never,
         chainId: 8453,
         forceAtomic: atomicRequired,
         // Optional, so a wallet that does not understand the capability still
-        // sends the batch rather than refusing it. A batch with no dataSuffix
-        // loses Builder Code attribution silently.
+        // sends the batch rather than refusing it.
         capabilities: STOCK_ACTION_BUILDER_SUFFIX_V1
           ? { dataSuffix: { value: STOCK_ACTION_BUILDER_SUFFIX_V1, optional: true } }
           : undefined,

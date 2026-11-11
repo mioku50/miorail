@@ -61,13 +61,16 @@ export function LendingReviewPage() {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09).
       if (!owner) throw new Error('lending_identity_changed');
-      await requireLiveWalletAccountV1(config, owner);
-      const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: batches.capabilities, declinedBefore: sponsorDeclined });
+      const { restored } = await requireLiveWalletAccountV1(config, owner);
+      // What the page read from the wallet through a restored record is no answer (2026-11-09: it read
+      // as "no capabilities", and the batch went without the Builder Code): it is asked again (audit WAL-5).
+      const walletCapabilities = restored ? (await batches.readNow()).capabilities : batches.capabilities;
+      const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: walletCapabilities, declinedBefore: sponsorDeclined });
       try {
         const result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
           calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
-            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: batches.capabilities, sponsored: gas.state === 'sponsored' }),
+            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: walletCapabilities, sponsored: gas.state === 'sponsored' }),
           capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
         });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, parseAbi, type Hex } from 'viem';
@@ -53,6 +53,15 @@ test('a wallet that does not report dataSuffix gets the code in each call: the a
   }
 });
 
+// Audit WAL-5: the Action Inbox sends ETH as a call with no data. With the code appended it would run the
+// recipient's fallback, which a contract wallet may not have.
+test('a plain transfer, with no data, is never given the code', () => {
+  const plain: Array<{ to: string; data?: string; value: string }> = [{ to: CALLS[0]!.to, value: '0x3e8' }, { to: CALLS[0]!.to, data: '0x', value: '0x3e8' }, CALLS[1]!];
+  const sent = attributedCallsV1({ calls: plain, suffix: SUFFIX, capabilities: METAMASK });
+  assert.deepEqual(sent.slice(0, 2), plain.slice(0, 2));
+  assert.ok(sent[2]!.data!.endsWith(SUFFIX.slice(2)));
+});
+
 test('in the ERC-7579 batch MetaMask’s delegate runs, the transaction’s input then ends with the code', () => {
   const sent = attributedCallsV1({ calls: CALLS, suffix: SUFFIX, capabilities: METAMASK });
   const executions = [{ type: 'tuple[]', components: [{ name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'callData', type: 'bytes' }] }] as const;
@@ -103,6 +112,23 @@ test('the swap, both loan pages and the Spend payment send their calls through t
   assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /calls: attributedCallsV1\(\{ calls: payload\.calls\.map\(normalizeCall\), suffix, capabilities, chainId: base\.id, sponsored: gas\.state === 'sponsored' \}\)/);
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx', 'artifacts/interface/src/features/still/StillSpendWalletPage.tsx']) {
     assert.match(readFileSync(path.join(root, page), 'utf8'), /calls: attributedCallsV1\(\{ calls: /, page);
+  }
+  // Audit WAL-5 (2026-11-10): four more ways to the wallet sent only the capability, which MetaMask drops:
+  // a stock action an assistant drafted, a B20 entry, the Action Inbox and the card in a chat.
+  for (const page of ['artifacts/interface/src/features/rwa/StockActionReviewPage.tsx', 'artifacts/interface/src/features/b20/B20WatchPage.tsx',
+    'lib/wallet-actions/src/useWalletConfirmAction.ts', 'artifacts/interface/src/mcp-app/stillCardWallet.ts']) {
+    assert.match(readFileSync(path.join(root, page), 'utf8'), /calls: attributedCallsV1\(\{ calls/, page);
+  }
+  // Every wallet_sendCalls in the product sends its calls through the helper: a new one cannot forget it.
+  const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory() ? (['node_modules', '.next', 'dist', 'e2e', 'test'].includes(entry.name) ? [] : sources(path.join(dir, entry.name)))
+      : /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path.join(dir, entry.name)] : []);
+  const senders = ['artifacts/interface/src', 'artifacts/miniapp/app', 'lib/wallet-actions/src'].flatMap((dir) => sources(path.join(root, dir)))
+    .filter((file) => /sendCalls\.mutateAsync\(|method: 'wallet_sendCalls'/.test(readFileSync(file, 'utf8')));
+  assert.ok(senders.length >= 9, `found ${senders.length} senders`);
+  // Found's claim is the one sender with no Builder Code at all: it collects a gift, and is not counted as Still's activity.
+  for (const file of senders.filter((file) => !file.endsWith('useFoundWalletClaim.ts'))) {
+    assert.match(readFileSync(file, 'utf8'), /attributedCallsV1\(\{ calls/, path.relative(root, file));
   }
   // Both loan pages send a sponsored batch as approved; Spend has no sponsor.
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx']) {

@@ -293,6 +293,15 @@ export interface SponsorshipLedgerV1 {
   allows(wallet: string, nonce: string | null): boolean;
   /** Counts a sponsored operation once, however often it is asked for. */
   record(wallet: string, nonce: string): void;
+  /**
+   * Takes this operation's place in today's count BEFORE the paymaster is asked, in one step with the
+   * check (audit WAL-2, 2026-11-10: the count was read before the upstream call and written after it, so
+   * twelve requests sent at once for twelve nonces were all granted against a limit of three). Null when
+   * the limit is reached; `fresh` says whether this call took the place, so that only it gives it back.
+   */
+  reserve(wallet: string, nonce: string): { fresh: boolean } | null;
+  /** Gives back a place taken by `reserve` for an operation the paymaster then did not sponsor. */
+  release(wallet: string, nonce: string): void;
   clear(): void;
 }
 
@@ -320,11 +329,68 @@ export function createSponsorshipLedgerV1(input: { limit: () => number; now: () 
       used.add(nonce.toLowerCase());
       seen.set(key, used);
     },
+    reserve(wallet, nonce) {
+      today();
+      const key = wallet.toLowerCase(), value = nonce.toLowerCase();
+      const used = seen.get(key) ?? new Set<string>();
+      if (used.has(value)) return { fresh: false };
+      if (used.size >= input.limit()) return null;
+      used.add(value);
+      seen.set(key, used);
+      return { fresh: true };
+    },
+    release(wallet, nonce) {
+      today();
+      seen.get(wallet.toLowerCase())?.delete(nonce.toLowerCase());
+    },
     clear() {
       seen.clear();
       day = '';
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// What one sponsored operation may cost at most (audit WAL-2).
+//
+// Only the sender, the nonce and the calls of a user operation were checked;
+// its gas fields went to the paymaster as they came. A person who builds their
+// own operations could ask for a signature over any gas limits and any price,
+// and, bundling it themselves, collect the difference from the sponsor. The
+// paymaster's own budget still bounded the loss; the offer to everyone else
+// ended with it.
+//
+// The most an EntryPoint v0.6 operation with a paymaster can charge is
+// (callGasLimit + 3 × verificationGasLimit + preVerificationGas) × maxFeePerGas.
+// A real Still batch asks for a few million gas at a few hundredths of a gwei:
+// about 0.0001 ETH. The ceiling is thirty times that, so no real wallet meets
+// it on an ordinary day and a made-up operation always does. Each field must
+// be a hex quantity, and no gas limit may pass a block's worth.
+// ---------------------------------------------------------------------------
+export const SPONSORED_GAS_MAX_OPERATION_WEI_DEFAULT_V1 = 3_000_000_000_000_000n;
+const GAS_FIELD_CEILING_V1 = 30_000_000n;
+const HEX_QUANTITY_V1 = /^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i;
+
+export function sponsoredGasMaxOperationWeiV1(env: NodeJS.ProcessEnv): bigint {
+  const raw = (env.SPONSORED_GAS_MAX_OPERATION_WEI ?? '').trim();
+  return /^[1-9][0-9]{0,30}$/.test(raw) ? BigInt(raw) : SPONSORED_GAS_MAX_OPERATION_WEI_DEFAULT_V1;
+}
+
+/** Whether a user operation's gas fields are ones a sponsor can sign for. A field that is absent counts as
+ * zero while `final` is false (a stub is asked for before the wallet has estimated anything); the final
+ * request must state every one of them. */
+export function sponsoredGasFieldsWithinV1(userOp: unknown, maxWei: bigint, final: boolean): boolean {
+  const op = (userOp ?? {}) as Record<string, unknown>;
+  const read = (name: string): bigint | null => {
+    const value = op[name];
+    if (value === undefined || value === null) return final ? null : BigInt(0);
+    return typeof value === 'string' && HEX_QUANTITY_V1.test(value) ? BigInt(value) : null;
+  };
+  const call = read('callGasLimit'), verification = read('verificationGasLimit'), pre = read('preVerificationGas');
+  const fee = read('maxFeePerGas'), tip = read('maxPriorityFeePerGas');
+  if (call === null || verification === null || pre === null || fee === null || tip === null) return false;
+  if (call > GAS_FIELD_CEILING_V1 || verification > GAS_FIELD_CEILING_V1 || pre > GAS_FIELD_CEILING_V1 || tip > fee) return false;
+  return (call + verification * BigInt(3) + pre) * fee <= maxWei;
 }
 
 export function sponsoredGasDailyLimitV1(env: NodeJS.ProcessEnv): number {
@@ -361,6 +427,7 @@ export type SponsoredGasRefusalCodeV1 =
   | 'sponsorship_expired'
   | 'wrong_sender'
   | 'calls_not_approved'
+  | 'gas_out_of_bounds'
   | 'daily_limit_reached';
 
 export type SponsoredGasDecisionV1 =
@@ -386,6 +453,7 @@ export const SPONSORED_GAS_RPC_ERROR_CODE_V1: Readonly<Record<SponsoredGasRefusa
   sponsorship_expired: -32602,
   wrong_sender: -32602,
   calls_not_approved: -32602,
+  gas_out_of_bounds: -32602,
   daily_limit_reached: -32602,
 };
 
@@ -397,6 +465,8 @@ export function decideSponsoredGasV1(input: {
   key: Buffer;
   nowMs: number;
   ledger: SponsorshipLedgerV1;
+  /** The most one sponsored operation may cost, in wei. Absent: the default. */
+  maxOperationWei?: bigint;
 }): SponsoredGasDecisionV1 {
   const refuse = (code: SponsoredGasRefusalCodeV1, message: string): SponsoredGasDecisionV1 => ({
     ok: false,
@@ -448,6 +518,9 @@ export function decideSponsoredGasV1(input: {
   const calls = userOperationCallsV1(op.callData);
   if (!calls || sponsoredCallsDigestV1(calls) !== claim.digest) {
     return refuse('calls_not_approved', 'These calls are not the ones that were approved.');
+  }
+  if (!sponsoredGasFieldsWithinV1(userOp, input.maxOperationWei ?? SPONSORED_GAS_MAX_OPERATION_WEI_DEFAULT_V1, input.method === 'pm_getPaymasterData')) {
+    return refuse('gas_out_of_bounds', 'This operation asks for more gas, or a higher gas price, than Miorail sponsors; the wallet can still pay it.');
   }
   if (!input.ledger.allows(sponsorshipAllowanceKeyV1(claim), op.nonce)) {
     return refuse('daily_limit_reached', "Today's sponsored gas for this wallet is used up; the wallet can still pay it.");

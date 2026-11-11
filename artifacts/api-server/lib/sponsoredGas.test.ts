@@ -4,6 +4,7 @@ import { encodeFunctionData, parseAbi, type Hex } from 'viem';
 
 import {
   SPONSORED_GAS_ENTRY_POINT_V1,
+  SPONSORED_GAS_MAX_OPERATION_WEI_DEFAULT_V1,
   acceptedPaymentTokensV1,
   createSponsorshipLedgerV1,
   decideSponsoredGasV1,
@@ -11,6 +12,8 @@ import {
   paymasterUpstreamUrlV1,
   sponsoredCallsDigestV1,
   sponsoredGasDailyLimitV1,
+  sponsoredGasFieldsWithinV1,
+  sponsoredGasMaxOperationWeiV1,
   sameCallDataV1,
   sponsorshipAllowanceKeyV1,
   sponsorshipKeyV1,
@@ -86,6 +89,8 @@ function ledger(limit = 3, now = () => new Date(NOW_MS)) {
   return createSponsorshipLedgerV1({ limit: () => limit, now });
 }
 
+/** What a real wallet states: half a million gas for the calls at two hundredths of a gwei. */
+const GAS_V1 = { callGasLimit: '0x7a120', verificationGasLimit: '0x30d40', preVerificationGas: '0xc350', maxFeePerGas: '0x1312d00', maxPriorityFeePerGas: '0xf4240' };
 function decide(
   over: Partial<{
     method: string;
@@ -97,13 +102,14 @@ function decide(
     context: unknown;
     urlToken: string;
     ledger: ReturnType<typeof ledger>;
+    gas: Record<string, unknown>;
   }> = {},
 ) {
   const calls = buyCalls();
   return decideSponsoredGasV1({
     method: over.method ?? 'pm_getPaymasterData',
     params: [
-      { sender: over.sender ?? WALLET, nonce: over.nonce ?? '0x1', callData: over.callData ?? batchCallData(calls) },
+      { sender: over.sender ?? WALLET, nonce: over.nonce ?? '0x1', callData: over.callData ?? batchCallData(calls), ...GAS_V1, ...(over.gas ?? {}) },
       over.entryPoint ?? SPONSORED_GAS_ENTRY_POINT_V1,
       over.chainId ?? '0x2105',
       over.context === undefined ? { sponsorship: tokenFor(calls) } : over.context,
@@ -377,4 +383,47 @@ test('a call is the approved one as sent, with a code after it, or with exactly 
     `${approved}${'00'.repeat(fill)}`, `${approved}00`, `${approved.slice(0, -2)}${code}`, `${approved}${'00'.repeat(fill)}${code}00`]) {
     assert.equal(sameCallDataV1(sent, approved), false, sent.slice(approved.length - 4));
   }
+});
+
+// Audit WAL-2 (2026-11-10): only the sender, the nonce and the calls were checked, and the count of the day
+// was read before the paymaster was asked and written after it.
+test('an operation that asks for more gas, or a higher price, than a real one is not sponsored', () => {
+  assert.equal(decide().ok, true);
+  for (const gas of [
+    { preVerificationGas: '0xffffffffff' }, { maxFeePerGas: '0xffffffffffff' }, { callGasLimit: '0x1c9c381' },
+    // Within each limit, and thirty times a real operation's cost together: 9M gas at 0.5 gwei.
+    { callGasLimit: '0x7a1200', maxFeePerGas: '0x1dcd6500' },
+    // A tip above the price it is part of, a field that is not a quantity, and one left out of the final request.
+    { maxPriorityFeePerGas: '0x1312d01' }, { callGasLimit: '500000' }, { verificationGasLimit: '0x' }, { maxFeePerGas: undefined },
+  ]) {
+    const decision = decide({ gas });
+    assert.equal(decision.ok, false, JSON.stringify(gas));
+    if (!decision.ok) assert.equal(decision.code, 'gas_out_of_bounds');
+  }
+  // A busy hour is still sponsored: three million gas for the calls at a tenth of a gwei.
+  assert.equal(decide({ gas: { callGasLimit: '0x2dc6c0', maxFeePerGas: '0x5f5e100' } }).ok, true);
+  // A stub is asked for before anything is estimated: fields left out there are not a refusal, wild ones are.
+  const bare = { callGasLimit: undefined, verificationGasLimit: undefined, preVerificationGas: undefined, maxFeePerGas: undefined, maxPriorityFeePerGas: undefined };
+  assert.equal(decide({ method: 'pm_getPaymasterStubData', gas: bare }).ok, true);
+  assert.equal(decide({ method: 'pm_getPaymasterStubData', gas: { preVerificationGas: '0xffffffffff' } }).ok, false);
+  assert.equal(sponsoredGasFieldsWithinV1({ ...GAS_V1 }, sponsoredGasMaxOperationWeiV1({}), true), true);
+  assert.equal(sponsoredGasMaxOperationWeiV1({ SPONSORED_GAS_MAX_OPERATION_WEI: '1000' }), 1000n);
+  assert.equal(sponsoredGasMaxOperationWeiV1({ SPONSORED_GAS_MAX_OPERATION_WEI: 'lots' }), SPONSORED_GAS_MAX_OPERATION_WEI_DEFAULT_V1);
+});
+
+test('a place in the day’s count is taken in one step with the check, and given back by the one that took it', () => {
+  const day = createSponsorshipLedgerV1({ limit: () => 3, now: () => new Date('2026-11-11T12:00:00Z') });
+  // Twelve operations asked for at once: three places, whatever order the answers come back in.
+  const taken = Array.from({ length: 12 }, (_, index) => day.reserve(WALLET, `0x${index.toString(16)}`));
+  assert.deepEqual(taken.map((place) => place?.fresh ?? null), [true, true, true, ...Array<null>(9).fill(null)]);
+  // The same operation asked for again holds its place and takes no other.
+  assert.deepEqual(day.reserve(WALLET.toUpperCase().replace('0X', '0x'), '0x1'), { fresh: false });
+  // One the paymaster did not sponsor gives its place back, and the next operation takes it.
+  day.release(WALLET, '0x2');
+  assert.deepEqual(day.reserve(WALLET, '0xa'), { fresh: true });
+  assert.equal(day.reserve(WALLET, '0xb'), null);
+  assert.equal(day.allows(WALLET, '0xb'), false);
+  assert.equal(day.allows(WALLET, '0xa'), true);
+  // Another wallet has its own three, and a new day starts from none.
+  assert.deepEqual(day.reserve(OTHER_WALLET, '0x1'), { fresh: true });
 });

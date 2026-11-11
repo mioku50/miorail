@@ -46,11 +46,13 @@ import { useCallsStatus, useConfig, useSendCalls } from 'wagmi';
  * rather than assumed. */
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 import {
+  attributedCallsV1,
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
   isWalletRejectionError,
   requireLiveWalletAccountV1,
   transactionHashesFromReceipts,
+  useWalletBatchSupportV1,
 } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
@@ -429,6 +431,7 @@ export function B20WatchSection() {
   const recordSubmission = useB20RecordEntrySubmission();
   const reconcileSubmission = useB20ReconcileEntrySubmission();
   const sendCalls = useSendCalls();
+  const walletBatches = useWalletBatchSupportV1();
   const config = useConfig();
   const entryStatus = useB20EntryStatus(planId, { enabled: Boolean(planId) });
 
@@ -528,9 +531,13 @@ export function B20WatchSection() {
       // the account this plan was made for: a wallet that answers as another is not asked (audit WAL-1).
       if (!address) throw new Error('Your wallet is not connected');
       await requireLiveWalletAccountV1(config, address);
+      // The wallet is asked now what it can carry: a wallet that drops `dataSuffix` (MetaMask) gets the
+      // code in each call's own data, as a swap and a loan do (audit WAL-5). The calls' own bytes are the
+      // server's, untouched; only the code follows them.
+      const { capabilities } = await walletBatches.readNow();
       const result = await sendCalls.mutateAsync({
         account: address,
-        calls: begun.payload.calls as never,
+        calls: attributedCallsV1({ calls: begun.payload.calls as { data?: string }[], suffix: B20_BUILDER_SUFFIX_V1, capabilities }) as never,
         chainId: 8453,
         forceAtomic: begun.payload.atomicRequired,
         capabilities: B20_BUILDER_SUFFIX_V1

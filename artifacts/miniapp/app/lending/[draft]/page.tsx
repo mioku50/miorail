@@ -40,13 +40,15 @@ export default function BaseAppLendingReviewPage() {
       // signed-in wallet, so a wallet that answers as another account is not asked (audit WAL-1).
       const owner = session.data?.user?.address as `0x${string}` | undefined;
       if (!owner) throw new Error('lending_identity_changed');
-      await requireLiveWalletAccountV1(config, owner);
-      const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: capabilities.data, declinedBefore: sponsorDeclined });
+      const { restored } = await requireLiveWalletAccountV1(config, owner);
+      // What was read through a restored record is no answer: it is asked again (audit WAL-5).
+      const walletCapabilities = restored ? (await capabilities.refetch()).data : capabilities.data;
+      const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: walletCapabilities, declinedBefore: sponsorDeclined });
       try {
         const result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
           calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
-            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: capabilities.data, sponsored: gas.state === 'sponsored' }),
+            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: walletCapabilities, sponsored: gas.state === 'sponsored' }),
           capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
         });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);

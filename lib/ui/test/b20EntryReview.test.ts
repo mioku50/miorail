@@ -173,7 +173,11 @@ describe('the two surfaces share one projection', () => {
   });
 
   test('the interface passes the server payload through untouched', () => {
-    assert.match(interfacePage, /calls: begun\.payload\.calls as never/);
+    // The server's calls go to the wallet as they came. The one thing that may follow a call's own bytes is
+    // the Builder Code, for a wallet that drops the dataSuffix capability (audit WAL-5): the shared helper
+    // appends it and changes nothing else, and no other expression touches the payload's calls.
+    assert.match(interfacePage, /calls: attributedCallsV1\(\{ calls: begun\.payload\.calls as \{ data\?: string \}\[\], suffix: B20_BUILDER_SUFFIX_V1, capabilities \}\) as never/);
+    assert.equal(interfacePage.split('begun.payload.calls').length - 1, 1);
     for (const forbidden of ['encodeFunctionData', 'new Interface(', '0x095ea7b3', 'router:']) {
       assert.ok(!interfacePage.includes(forbidden), `must not build ${forbidden} in the browser`);
     }

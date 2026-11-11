@@ -9,7 +9,7 @@ const WALLET = `0x${'1'.repeat(40)}`;
 const SUFFIX = '0xabcdef80218021802180218021';
 const CALL = { to: `0x${'2'.repeat(40)}`, data: '0x12345678', value: '0' };
 
-function provider(input: { methods?: string[]; atomic?: string | null; account?: string; answers?: Record<string, unknown> } = {}) {
+function provider(input: { methods?: string[]; atomic?: string | null; account?: string; answers?: Record<string, unknown>; addsCode?: boolean } = {}) {
   const asked: Array<{ method: string; params?: unknown[] }> = [];
   let disconnected = false;
   const fake: StillCardProviderV1 = {
@@ -22,7 +22,7 @@ function provider(input: { methods?: string[]; atomic?: string | null; account?:
       asked.push(args);
       if (args.method === 'wallet_getCapabilities') {
         if (input.atomic === null) throw Object.assign(new Error('Method not found'), { code: -32601 });
-        return { '0x2105': { atomic: { status: input.atomic ?? 'supported' } } } as T;
+        return { '0x2105': { atomic: { status: input.atomic ?? 'supported' }, ...(input.addsCode ? { dataSuffix: { supported: true } } : {}) } } as T;
       }
       return (input.answers?.[args.method] ?? null) as T;
     },
@@ -31,7 +31,7 @@ function provider(input: { methods?: string[]; atomic?: string | null; account?:
 }
 
 test('a wallet that sends an atomic batch on Base gets the loan as one, with the builder code as a capability', async () => {
-  const { fake, asked } = provider({ answers: { wallet_sendCalls: { id: 'batch-1' } } });
+  const { fake, asked } = provider({ addsCode: true, answers: { wallet_sendCalls: { id: 'batch-1' } } });
   const wallet = await connectStillCardWalletV1(fake, { builderSuffix: SUFFIX });
   assert.deepEqual([wallet.address, wallet.batches], [WALLET, true]);
   assert.equal(await wallet.sendCalls([CALL, { ...CALL, value: '1000' }]), 'batch-1');
@@ -39,6 +39,26 @@ test('a wallet that sends an atomic batch on Base gets the loan as one, with the
   assert.deepEqual(sent, { version: '2.0.0', chainId: '0x2105', from: WALLET, atomicRequired: true,
     calls: [{ to: CALL.to, data: CALL.data, value: '0x0' }, { to: CALL.to, data: CALL.data, value: '0x3e8' }],
     capabilities: { dataSuffix: { value: SUFFIX, optional: true } } });
+});
+
+// Audit WAL-5 (2026-11-10): MetaMask mobile sends the batch and drops the optional capability, so the loan
+// from the card carried no builder code at all.
+test('a wallet that does not say it adds the builder code gets it in each call’s own data, after the approved bytes', async () => {
+  const { fake, asked } = provider({ answers: { wallet_sendCalls: { id: 'batch-2' } } });
+  const wallet = await connectStillCardWalletV1(fake, { builderSuffix: SUFFIX });
+  assert.equal(await wallet.sendCalls([CALL, { ...CALL, data: '0x', value: '1000' }]), 'batch-2');
+  const sent = asked.find((row) => row.method === 'wallet_sendCalls')!.params![0] as { calls: Array<{ data: string; value: string }>; capabilities: unknown };
+  const [first, plain] = sent.calls;
+  assert.ok(first!.data.startsWith(CALL.data) && first!.data.endsWith(SUFFIX.slice(2)) && (first!.data.length - 2) % 64 === 0);
+  assert.match(first!.data.slice(CALL.data.length, first!.data.length - (SUFFIX.length - 2)), /^(?:00)*$/);
+  // A plain transfer stays plain, and the capability is still offered to a wallet that takes it.
+  assert.deepEqual([plain!.data, plain!.value], ['0x', '0x3e8']);
+  assert.deepEqual(sent.capabilities, { dataSuffix: { value: SUFFIX, optional: true } });
+  // With no builder code configured, nothing is added anywhere.
+  const bare = provider({ answers: { wallet_sendCalls: 'batch-3' } });
+  const without = await connectStillCardWalletV1(bare.fake, { builderSuffix: null });
+  assert.equal(await without.sendCalls([CALL]), 'batch-3');
+  assert.deepEqual((bare.asked.find((row) => row.method === 'wallet_sendCalls')!.params![0] as { calls: unknown[] }).calls, [{ to: CALL.to, data: CALL.data, value: '0x0' }]);
 });
 
 test('a wallet without batches goes in steps, each carrying the builder code in its own calldata', async () => {
