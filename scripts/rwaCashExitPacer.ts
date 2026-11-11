@@ -13,18 +13,27 @@ import type { CashExitQuotePacingV1 } from '@mioagent/rwa-cash-exit';
 // AI, which asks the same router from the same server, shared the throttle.
 // The journal printed only "measurement_failed", and nothing raised an alarm.
 //
-// So every quote of the pass now waits its turn: at most one every 400 ms,
-// which is two and a half a second with nothing else running and less in
-// practice. A 429 is waited out and the quote asked once more; the wait
-// doubles while the throttle lasts, with a random half either way so that
-// what comes back does not come back in step, and the pass spends at most
-// eight minutes waiting this way. A pass that still ends mostly throttled
-// says so with its exit code, and the service alerts carry that to Telegram.
+// So every quote of the pass now waits its turn. A 429 is waited out and the
+// quote asked once more; the wait doubles while the throttle lasts, with a
+// random half either way so that what comes back does not come back in step,
+// and the pass spends at most eight minutes waiting this way. A pass that
+// still ends mostly throttled says so with its exit code, and the service
+// alerts carry that to Telegram.
+//
+// The pace finds itself (2026-11-11). At one quote every 400 ms the first two
+// paced passes still ended 11% and 33% throttled: the limit is counted for the
+// server, and the watchlist sweep, the market tail and Swap AI ask the same
+// router from it. So the pass starts at one quote every 700 ms, lengthens that
+// by half at every 429, up to 1.5 s, and shortens it by a tenth after every
+// thirty quotes that got through. At its slowest a pass of 2,700 quotes still
+// ends inside the unit's ninety minutes.
 // ---------------------------------------------------------------------------
 
 export interface QuotePacerOptionsV1 {
-  /** Least time between two quotes being asked. */
+  /** Least time between two quotes being asked: where the pace starts, and what it returns to. */
   minGapMs: number;
+  /** The longest the time between two quotes grows to under throttling. Absent: the pace is fixed. */
+  maxGapMs?: number;
   /** The first wait after a 429; doubled for each one that follows without a quote getting through. */
   backoffMs: number;
   maxBackoffMs: number;
@@ -36,7 +45,11 @@ export interface QuotePacerOptionsV1 {
   random?: () => number;
 }
 
-export const QUOTE_PACER_DEFAULTS_V1 = { minGapMs: 400, backoffMs: 3_000, maxBackoffMs: 30_000, backoffBudgetMs: 8 * 60_000 } as const;
+export const QUOTE_PACER_DEFAULTS_V1 = { minGapMs: 700, maxGapMs: 1_500, backoffMs: 3_000, maxBackoffMs: 30_000, backoffBudgetMs: 8 * 60_000 } as const;
+/** A 429 lengthens the time between quotes by this much. */
+const GAP_GROWTH_V1 = 1.5;
+/** This many quotes in a row that got through shorten it by a tenth. */
+const GAP_EASE_AFTER_V1 = 30;
 
 export interface QuotePacerCountsV1 {
   /** Quotes that got a final answer. */
@@ -48,23 +61,32 @@ export interface QuotePacerCountsV1 {
   /** Quotes whose final answer was still a 429. */
   rateLimited: number;
   waitedMs: number;
+  /** The time between two quotes as the pass ended, and the longest it was. */
+  gapMs: number;
+  longestGapMs: number;
 }
 
 export function createQuotePacerV1(options: QuotePacerOptionsV1): { pacing: Required<CashExitQuotePacingV1>; counts: () => QuotePacerCountsV1 } {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => { setTimeout(done, ms); }));
   const random = options.random ?? Math.random;
-  let lastAskedAt = Number.NEGATIVE_INFINITY, backoff = options.backoffMs;
-  const counts: QuotePacerCountsV1 = { quotes: 0, throttled: 0, retried: 0, rateLimited: 0, waitedMs: 0 };
+  const maxGapMs = Math.max(options.minGapMs, options.maxGapMs ?? options.minGapMs);
+  let lastAskedAt = Number.NEGATIVE_INFINITY, backoff = options.backoffMs, gap = options.minGapMs, through = 0;
+  const counts: QuotePacerCountsV1 = { quotes: 0, throttled: 0, retried: 0, rateLimited: 0, waitedMs: 0, gapMs: gap, longestGapMs: gap };
   return {
     pacing: {
       async beforeQuote() {
-        const wait = lastAskedAt + options.minGapMs - now();
+        const wait = lastAskedAt + gap - now();
         if (wait > 0) await sleep(wait);
         lastAskedAt = now();
       },
       async rateLimited() {
         counts.throttled += 1;
+        // The router said "slower": every quote after this one waits longer, whatever becomes of this one.
+        gap = Math.min(Math.round(gap * GAP_GROWTH_V1), maxGapMs);
+        through = 0;
+        counts.gapMs = gap;
+        counts.longestGapMs = Math.max(counts.longestGapMs, gap);
         const left = options.backoffBudgetMs - counts.waitedMs;
         if (left <= 0) return false;
         const wait = Math.min(Math.round(backoff * (0.5 + random())), left);
@@ -77,8 +99,17 @@ export function createQuotePacerV1(options: QuotePacerOptionsV1): { pacing: Requ
       answered(rateLimited) {
         counts.quotes += 1;
         if (rateLimited) counts.rateLimited += 1;
-        // A quote got through: the next throttle starts from the first wait again.
-        else backoff = options.backoffMs;
+        // A quote got through: the next throttle starts from the first wait again, and enough of them
+        // in a row let the pace come back a little.
+        else {
+          backoff = options.backoffMs;
+          through += 1;
+          if (through >= GAP_EASE_AFTER_V1 && gap > options.minGapMs) {
+            gap = Math.max(options.minGapMs, Math.round(gap * 0.9));
+            through = 0;
+            counts.gapMs = gap;
+          }
+        }
       },
     },
     counts: () => ({ ...counts }),

@@ -106,13 +106,12 @@ const MEASUREMENT_TENANT_V1 = 'rwa-public-ladder';
  * and then reports the throttle as a market finding.
  *
  * Since 2026-11-11 every quote waits its own turn (./rwaCashExitPacer.ts), so
- * this gap no longer has to pace the aggregator. It was two and a half seconds;
- * with the quotes themselves paced a ladder takes five seconds or more, and the
- * first paced pass over 409 representations was on its way to some 75 minutes
- * of the unit's 90. One second keeps the chain reads further apart than they
- * were before and gives the pass its margin back.
+ * this gap no longer has to pace the aggregator: it only keeps one asset's
+ * chain reads from running into the next one's. It was two and a half seconds,
+ * then one; with the quotes at 700 ms or slower, a quarter of a second is what
+ * is left for it to do, and the pass keeps its ninety minutes for the quotes.
  */
-const DEFAULT_GAP_MS_V1 = 1_000;
+const DEFAULT_GAP_MS_V1 = 250;
 
 /** `decimals()`. A raw selector rather than an ABI encoder: this package has
  * no viem dependency, and one word in is one word out. */
@@ -171,7 +170,8 @@ async function main(): Promise<void> {
   const gapMs = numericArgV1('--gap-ms', DEFAULT_GAP_MS_V1);
   // Every quote of the pass waits its turn, and a 429 is waited out and asked once more
   // (./rwaCashExitPacer.ts, audit OPS-3).
-  const pacer = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, minGapMs: numericArgV1('--quote-gap-ms', QUOTE_PACER_DEFAULTS_V1.minGapMs) });
+  const quoteGapMs = numericArgV1('--quote-gap-ms', QUOTE_PACER_DEFAULTS_V1.minGapMs);
+  const pacer = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, minGapMs: quoteGapMs, maxGapMs: Math.max(quoteGapMs, QUOTE_PACER_DEFAULTS_V1.maxGapMs) });
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
   const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
@@ -390,7 +390,8 @@ async function main(): Promise<void> {
   console.log(`rungs not finished, by code: ${errorCodeSummaryV1(errorCodes) || 'none'}`);
   console.log(
     `quotes: ${quotes.quotes} answered, ${quotes.throttled} rate limited at first, ${quotes.retried} asked again after ` +
-      `${Math.round(quotes.waitedMs / 1000)}s of waiting, ${quotes.rateLimited} still rate limited (${share}%)`,
+      `${Math.round(quotes.waitedMs / 1000)}s of waiting, ${quotes.rateLimited} still rate limited (${share}%); ` +
+      `one quote every ${quotes.gapMs} ms at the end, ${quotes.longestGapMs} ms at the slowest`,
   );
   // A pass the router throttled out of most of its work did not do its work. The exit code says so, and
   // the service alerts carry a failed unit to Telegram and say when it recovers.

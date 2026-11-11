@@ -15,7 +15,7 @@ function clock() {
 
 test('quotes are asked at most one every 400 ms, however fast they are answered', async () => {
   const time = clock();
-  const { pacing } = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, now: time.now, sleep: time.sleep });
+  const { pacing } = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, minGapMs: 400, now: time.now, sleep: time.sleep });
   const asked: number[] = [];
   for (let quote = 0; quote < 6; quote++) {
     await pacing.beforeQuote();
@@ -42,7 +42,7 @@ test('a 429 is waited out and asked once more; the wait doubles while the thrott
   // The budget is spent: the next 429 is recorded as it came, with no wait.
   assert.equal(await pacing.rateLimited(), false);
   assert.equal(time.slept.length, 5);
-  assert.deepEqual(counts(), { quotes: 4, throttled: 6, retried: 5, rateLimited: 4, waitedMs: 60_000 });
+  assert.deepEqual(counts(), { quotes: 4, throttled: 6, retried: 5, rateLimited: 4, waitedMs: 60_000, gapMs: 400, longestGapMs: 400 });
 
   const fresh = createQuotePacerV1({ minGapMs: 400, backoffMs: 3_000, maxBackoffMs: 30_000, backoffBudgetMs: 600_000, now: time.now, sleep: time.sleep, random: () => 0.5 });
   await fresh.pacing.rateLimited();
@@ -50,6 +50,43 @@ test('a 429 is waited out and asked once more; the wait doubles while the thrott
   fresh.pacing.answered(false);
   await fresh.pacing.rateLimited();
   assert.deepEqual(time.slept.slice(-3), [3_000, 6_000, 3_000]);
+});
+
+// 2026-11-11: at a fixed 400 ms the first two paced passes still ended 11% and 33% throttled, because the
+// limit is the server's and other jobs ask the same router. The pace now finds itself.
+test('a 429 lengthens the time between quotes by half, up to its ceiling, and thirty quotes that got through shorten it by a tenth', async () => {
+  const time = clock();
+  const { pacing, counts } = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, backoffBudgetMs: 0, now: time.now, sleep: time.sleep });
+  const gapOfNext = async () => { await pacing.beforeQuote(); const first = time.now(); await pacing.beforeQuote(); return time.now() - first; };
+  assert.equal(QUOTE_PACER_DEFAULTS_V1.minGapMs, 700);
+  assert.equal(await gapOfNext(), 700);
+  await pacing.rateLimited();
+  assert.equal(await gapOfNext(), 1_050);
+  await pacing.rateLimited();
+  await pacing.rateLimited();
+  // 1,575 would be past the ceiling: at 1.5 s a pass of 2,700 quotes still ends inside the unit's 90 minutes.
+  assert.equal(await gapOfNext(), 1_500);
+  assert.ok(2_700 * QUOTE_PACER_DEFAULTS_V1.maxGapMs + QUOTE_PACER_DEFAULTS_V1.backoffBudgetMs + 409 * 250 < 90 * 60_000);
+  for (let quote = 0; quote < 29; quote++) pacing.answered(false);
+  assert.equal(await gapOfNext(), 1_500);
+  pacing.answered(false);
+  assert.equal(await gapOfNext(), 1_350);
+  // A quote that ended throttled is not one that got through, and a 429 starts the count again.
+  for (let quote = 0; quote < 29; quote++) pacing.answered(false);
+  await pacing.rateLimited();
+  assert.equal(await gapOfNext(), 1_500);
+  // It comes all the way back, and never below where it started.
+  for (let quote = 0; quote < 30 * 12; quote++) pacing.answered(false);
+  assert.equal(await gapOfNext(), 700);
+  assert.deepEqual({ gapMs: counts().gapMs, longestGapMs: counts().longestGapMs }, { gapMs: 700, longestGapMs: 1_500 });
+});
+
+test('a pace given no ceiling stays fixed', async () => {
+  const time = clock();
+  const { pacing } = createQuotePacerV1({ minGapMs: 400, backoffMs: 3_000, maxBackoffMs: 30_000, backoffBudgetMs: 0, now: time.now, sleep: time.sleep });
+  await pacing.rateLimited();
+  await pacing.beforeQuote(); const first = time.now(); await pacing.beforeQuote();
+  assert.equal(time.now() - first, 400);
 });
 
 test('the wait after a 429 is spread by half either way, so passes do not come back in step', async () => {
