@@ -23,6 +23,7 @@ import {
   storedGiftKernelInputV1,
   simulationRequirementV1,
   TransactionComposerBindingError,
+  o1SettlerFromCandidateV1,
 } from './coordinator.js';
 import { runSafetyKernel, swapTokenSecurityAddressesV1 } from './safetyKernel.js';
 import type {
@@ -305,9 +306,12 @@ export async function approveExecutionBlueprintV1(
     const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
       ? 'goplus'
       : (contractSecurityResults[0]?.provider ?? 'none');
+    // The Settler the stored calls run is the one the candidate names; the
+    // registry is asked again whether it still vouches for it.
+    const o1Settler = providerId === 'o1-exchange' ? o1SettlerFromCandidateV1(candidate) : null;
     const o1ContractPinVerified =
       providerId === 'o1-exchange'
-        ? ((await deps.providerContractPin?.(providerId)) ?? false)
+        ? Boolean(o1Settler) && ((await deps.providerContractPin?.(providerId, { o1Settler })) ?? false)
         : undefined;
     const hydrexUpstreamRouter = providerId === 'hydrex'
       ? candidate.liquiditySources[0]?.sourceKey.split(':').at(-1)
@@ -334,6 +338,7 @@ export async function approveExecutionBlueprintV1(
       intentHash: blueprint.intentHash,
       selectedCandidateHash: blueprint.selectedCandidateHash,
       o1ContractPinVerified,
+      o1Settlers: o1Settler ? [o1Settler] : undefined,
       hydrexContractPinVerified,
       hydrexUpstreamRouter,
       ...aerodromeKernelInputV1(providerId, candidate, blueprint),

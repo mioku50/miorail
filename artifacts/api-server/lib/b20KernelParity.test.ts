@@ -169,11 +169,11 @@ const PARITY_V1: Record<string, { enforcedBy: string[] | null; why: string }> = 
   },
   provider_contract_pin_o1: {
     enforcedBy: null,
-    why: 'o1 proxy, admin and implementation pins do not apply to the exact cleared Aerodrome-only B20 entry blueprint.',
+    why: 'o1’s AllowanceHolder pin and 0x registry read do not apply to the exact cleared Aerodrome-only B20 entry blueprint.',
   },
   provider_guard_o1: {
     enforcedBy: null,
-    why: 'o1 calldata and RLP routes are never accepted by the Aerodrome-only B20 entry blueprint.',
+    why: 'o1 calldata and its Settler call are never accepted by the Aerodrome-only B20 entry blueprint.',
   },
   gift_transfer_exact: {
     enforcedBy: null,

@@ -524,13 +524,20 @@ function baseFallbackRpcUrlV1(): string {
   return fallback && fallback !== baseMainnetRpcUrlV1() ? fallback : '';
 }
 
-/** Upgradeable provider boundaries are re-pinned before both review and
- * approval. A missing RPC or any changed proxy/admin/implementation fails
- * closed without exposing endpoint details. */
-async function providerContractPinVerifiedV1(provider: string): Promise<boolean> {
+/** Provider boundaries that can change are read again before both review and
+ * approval. A missing RPC, changed code, a changed proxy/admin/implementation
+ * or a Settler 0x's registry no longer names fails closed without exposing
+ * endpoint details. */
+async function providerContractPinVerifiedV1(
+  provider: string,
+  facts?: { o1Settler?: string | null },
+): Promise<boolean> {
   const rpcUrl = baseMainnetRpcUrlV1();
   if (provider === 'o1-exchange') {
-    return Boolean(rpcUrl) && (await createO1RouterPinReaderV1({ rpcUrl }).verify()).ok;
+    const settler = facts?.o1Settler?.toLowerCase();
+    if (!rpcUrl || !settler) return false;
+    const pin = await createO1RouterPinReaderV1({ rpcUrl }).verify();
+    return pin.ok && pin.settlers.includes(settler as `0x${string}`);
   }
   if (provider === 'hydrex') {
     return Boolean(rpcUrl) && (await createHydrexRouterPinReaderV1({ rpcUrl, fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1 }).verifyAll()).ok;

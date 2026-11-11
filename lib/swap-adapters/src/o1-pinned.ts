@@ -1,82 +1,153 @@
-import { createPublicClient, getAddress, http, keccak256, type Hex } from 'viem';
+import {
+  ContractFunctionExecutionError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  createPublicClient,
+  http,
+  keccak256,
+  type Hex,
+} from 'viem';
 import { base } from 'viem/chains';
 import { reusePassingCheckV1 } from './normalization.js';
 
 /**
- * o1.exchange standard-swap execution boundary on Base.
+ * o1.exchange's execution boundary on Base: 0x's AllowanceHolder, running the
+ * Settler that 0x's own registry names.
  *
- * The API currently returns an ERC-1967 proxy. Pinning only the proxy address
- * would let an upgrade silently change the code a Route Card authorises, so
- * both proxy and implementation bytecode are checked before quote/build. An
- * upgrade is a review event: the adapter becomes unavailable until these
- * constants are deliberately updated.
+ * Until 2026-10-20 an o1 order was a `swap` on o1's own upgradeable router
+ * (pinned 2026-08-12, re-pinned 2026-10-19 after its upgrade to
+ * `TerminalSwapX`). Since then every order o1 returns is an `exec` on 0x's
+ * AllowanceHolder, and the old pin refused all of them. The operator approved
+ * this boundary on 2026-11-11; o1's own router is no longer accepted, and an
+ * order that names it again is a review event, not a fallback.
  *
- * Observed at Base block 49,887,887 on 2026-08-12 and explicitly approved by
- * the operator for the first o1 Routes release.
+ * What is pinned, and what cannot be:
  *
- * Re-pinned at block 52,819,869 on 2026-10-19, at the operator's request,
- * after o1 upgraded the proxy to `TerminalSwapX` (deployed 2026-10-11). The pin
- * had refused every comparison since at least 2026-09-23. Proxy code and admin
- * are unchanged. The new implementation is an exact Sourcify match (solc
- * 0.8.28) and keeps every function of the reviewed one. It adds three: a
- * reverting quote helper, an owner-only share-vault registry, and an
- * admin-only reinitializer. `swap` still pays and is paid only by `msg.sender`,
- * the fee is inside `amountIn`, and `minReturn` is checked against the
- * caller's own balance change. An owner can raise `feeRate` or pause; neither
- * can deliver less than `minReturn`. The OKX leg calls an address from the
- * calldata, but only with OKX's own selectors, and approves only OKX's fixed
- * approval proxy.
+ * - AllowanceHolder is not a proxy. 0x publishes one address for every chain
+ *   with the Cancun hardfork and says it may be hardcoded. Address and code
+ *   hash are both checked; the hash was read at Base block 56,131,136 on
+ *   2026-11-11 and is the one the Hydrex boundary has pinned since August.
+ * - The Settler is redeployed often, and 0x says never to hardcode it and
+ *   always to ask its registry (an ERC-721 whose token 2 is the taker-submitted
+ *   Settler). `ownerOf(2)` is the current one; `prev(2)` is the one before,
+ *   which 0x's API keeps using for a while after a deployment. A reverting
+ *   `ownerOf` means 0x paused the Settler: nothing is quoted or built.
+ *
+ * What the bytes then guarantee, from 0x's source (0xProject/0x-settler,
+ * AllowanceHolderBase.sol and SettlerBase.sol, read 2026-11-11):
+ *
+ * - `exec(operator, token, amount, target, data)` lets `operator`, and nobody
+ *   else, move at most `amount` of `token` from the caller, and only until the
+ *   call returns. It forwards `data` to `target` with the caller appended.
+ * - `Settler.execute(slippage, actions, zid)` ends by sending its whole
+ *   balance of `slippage.buyToken` to `slippage.recipient` and reverts when
+ *   that is less than `slippage.minAmountOut`. What the actions do in between
+ *   is not decoded here: they can spend the allowance above and nothing else
+ *   of the caller's.
  */
-export const O1_BASE_ROUTER_PROXY_V1 = '0x7293d41c28e5fc2292e62d26fec60e22a145d1a5' as const;
-export const O1_BASE_ROUTER_PROXY_CODE_HASH_V1 =
-  '0xd06339b0d4fc20f56696572d97fb01fdb2f0db989deecdff9f4c88f5e7933a28' as const;
-export const O1_BASE_ROUTER_IMPLEMENTATION_V1 =
-  '0x59c7e94464e12a7c2429f8d87e52021107b9d217' as const;
-export const O1_BASE_ROUTER_IMPLEMENTATION_CODE_HASH_V1 =
-  '0x50edc8fda26478607e1d08a74e7d0a23e3bbee2da654198b49cdec4b249b6dc7' as const;
-export const O1_BASE_ROUTER_ADMIN_V1 = '0x48162129286c08daa34004dd6862880ff3a9ff8e' as const;
+export const O1_ZEROX_ALLOWANCE_HOLDER_V1 = '0x0000000000001ff3684f28c67538d4d072c22734' as const;
+export const O1_ZEROX_ALLOWANCE_HOLDER_CODE_HASH_V1 =
+  '0x99f5e8edaceacfdd183eb5f1da8a7757b322495b80cf7928db289a1b1a09f799' as const;
+export const O1_ZEROX_DEPLOYER_V1 = '0x00000000000004533fe15556b1e086bb1a72ceae' as const;
+/** 0x's feature number for the Settler a taker submits themselves. */
+export const O1_ZEROX_TAKER_SUBMITTED_FEATURE_V1 = 2;
 
-export const EIP1967_IMPLEMENTATION_SLOT_V1 =
-  '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as const;
-export const EIP1967_ADMIN_SLOT_V1 =
-  '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103' as const;
+export const O1_ZEROX_EXEC_SELECTOR_V1 = '0x2213bc0b' as const;
+/** `execute((address,address,uint256),bytes[],bytes32)`. `executeWithPermit`
+ * has another selector and is never accepted: it would spend a signature. */
+export const O1_ZEROX_SETTLER_EXECUTE_SELECTOR_V1 = '0x1fff991f' as const;
 
-export const O1_SWAP_SELECTOR_V1 = '0xe6cb474f' as const;
-export const O1_MAX_HOPS_V1 = 8;
-
-export const O1_SWAP_ABI_V1 = [
+export const O1_ZEROX_EXEC_ABI_V1 = [
   {
     type: 'function',
-    name: 'swap',
+    name: 'exec',
     stateMutability: 'payable',
     inputs: [
-      {
-        name: 'swaps',
-        type: 'tuple[]',
-        components: [
-          { name: 'dexType', type: 'uint8' },
-          { name: 'tokenIn', type: 'address' },
-          { name: 'tokenOut', type: 'address' },
-          { name: 'pool', type: 'address' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'tickSpacing', type: 'int24' },
-          { name: 'exchange', type: 'address' },
-          { name: 'extraData', type: 'bytes' },
-        ],
-      },
-      // The verified source (2026-10-19) calls it `feeToken`: the input or
-      // output token the fee is taken in. Never a recipient.
-      { name: 'settlementToken', type: 'address' },
-      { name: 'amountIn', type: 'uint256' },
-      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'operator', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'target', type: 'address' },
+      { name: 'data', type: 'bytes' },
     ],
-    outputs: [],
+    outputs: [{ name: 'result', type: 'bytes' }],
   },
 ] as const;
 
+const O1_ZEROX_DEPLOYER_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'prev',
+    stateMutability: 'view',
+    inputs: [{ name: 'featureId', type: 'uint128' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const;
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * Whether the bytes after `exec`'s own arguments are nothing, or exactly one
+ * ERC-8021 attribution suffix (schema 0): the codes in ASCII, their length,
+ * a zero byte and the sixteen-byte marker. o1 ends every order with its
+ * Builder Code this way (seen 2026-11-11). AllowanceHolder reads its five
+ * arguments and nothing after them, so the suffix changes nothing it does;
+ * anything else behind the arguments is refused as unexplained.
+ */
+export function o1AttributionSuffixOrNothingV1(tail: string): boolean {
+  if (tail === '') return true;
+  const match = /^((?:[0-9a-f]{2}){1,64})([0-9a-f]{2})00(?:8021){8}$/.exec(tail.toLowerCase());
+  if (!match) return false;
+  const codes = match[1]!;
+  if (parseInt(match[2]!, 16) !== codes.length / 2) return false;
+  // Printable ASCII only: a code, or codes with commas between them.
+  return (codes.match(/.{2}/g) ?? []).every((byte) => {
+    const value = parseInt(byte, 16);
+    return value >= 0x21 && value <= 0x7e;
+  });
+}
+
+export interface O1SettlerSlippageV1 {
+  recipient: `0x${string}`;
+  buyToken: `0x${string}`;
+  minAmountOut: bigint;
+}
+
+/**
+ * Reads what the Settler will check at the end, from the place the Settler
+ * reads it. `slippage` is a static struct, so its three words sit directly
+ * after the selector whatever the encoder did with the actions after them.
+ * Null when the bytes are not a call to `execute` or a word is not an address.
+ */
+export function readO1SettlerSlippageV1(data: string): O1SettlerSlippageV1 | null {
+  const bytes = data.toLowerCase();
+  // Selector, the three words, the two offsets-or-values that follow them.
+  if (!/^0x[0-9a-f]*$/.test(bytes) || bytes.length < 10 + 5 * 64 || bytes.length % 2 !== 0) return null;
+  if (bytes.slice(0, 10) !== O1_ZEROX_SETTLER_EXECUTE_SELECTOR_V1) return null;
+  const word = (index: number) => bytes.slice(10 + index * 64, 10 + (index + 1) * 64);
+  const address = (value: string): `0x${string}` | null =>
+    /^0{24}[0-9a-f]{40}$/.test(value) ? (`0x${value.slice(24)}` as `0x${string}`) : null;
+  const recipient = address(word(0));
+  const buyToken = address(word(1));
+  if (!recipient || !buyToken) return null;
+  return { recipient, buyToken, minAmountOut: BigInt(`0x${word(2)}`) };
+}
+
 export interface O1RouterPinReaderV1 {
   verify(): Promise<
-    | { ok: true; blockNumber: string }
+    | {
+        ok: true;
+        blockNumber: string;
+        /** The Settlers 0x's registry names now: the current one, then the
+         * one before it when there is one. Lowercase. */
+        settlers: readonly `0x${string}`[];
+      }
     | { ok: false; reason: 'not_configured' | 'unavailable' | 'mismatch' }
   >;
 }
@@ -85,6 +156,15 @@ type O1PinResultV1 = Awaited<ReturnType<O1RouterPinReaderV1['verify']>>;
 
 /** Comparison-time passes, per endpoint. A refusal is never kept. */
 const O1_PIN_CACHE_V1 = new Map<string, { until: number; value: O1PinResultV1 }>();
+
+/** The contract answered, and its answer was to revert. */
+function revertedV1(error: unknown): boolean {
+  if (!(error instanceof ContractFunctionExecutionError)) return false;
+  return (
+    error.cause instanceof ContractFunctionRevertedError ||
+    error.cause instanceof ContractFunctionZeroDataError
+  );
+}
 
 export function createO1RouterPinReaderV1(input: {
   rpcUrl: string;
@@ -104,42 +184,35 @@ export function createO1RouterPinReaderV1(input: {
     if (!rpcUrl) return { ok: false, reason: 'not_configured' };
     try {
       const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
-      const [proxyCode, implementationSlot, adminSlot, blockNumber] = await Promise.all([
-        client.getBytecode({ address: O1_BASE_ROUTER_PROXY_V1 }),
-        client.getStorageAt({
-          address: O1_BASE_ROUTER_PROXY_V1,
-          slot: EIP1967_IMPLEMENTATION_SLOT_V1,
-        }),
-        client.getStorageAt({
-          address: O1_BASE_ROUTER_PROXY_V1,
-          slot: EIP1967_ADMIN_SLOT_V1,
-        }),
+      const feature = BigInt(O1_ZEROX_TAKER_SUBMITTED_FEATURE_V1);
+      const registry = { address: O1_ZEROX_DEPLOYER_V1, abi: O1_ZEROX_DEPLOYER_ABI_V1 } as const;
+      const [holderCode, current, previous, blockNumber] = await Promise.all([
+        client.getBytecode({ address: O1_ZEROX_ALLOWANCE_HOLDER_V1 }),
+        // A revert here is 0x saying the Settler is paused. It is a refusal,
+        // not a failed read, and it is not softened by the one before.
+        client
+          .readContract({ ...registry, functionName: 'ownerOf', args: [feature] })
+          .catch((error: unknown) => {
+            if (revertedV1(error)) return null;
+            throw error;
+          }),
+        // No previous Settler is an ordinary state of the registry.
+        client
+          .readContract({ ...registry, functionName: 'prev', args: [feature] })
+          .catch((error: unknown) => {
+            if (revertedV1(error)) return null;
+            throw error;
+          }),
         client.getBlockNumber(),
       ]);
-      if (!proxyCode || !implementationSlot || !adminSlot) {
+      if (!holderCode || keccak256(holderCode as Hex) !== O1_ZEROX_ALLOWANCE_HOLDER_CODE_HASH_V1) {
         return { ok: false, reason: 'mismatch' };
       }
-      const implementation = getAddress(
-        `0x${implementationSlot.slice(-40)}` as Hex,
-      ).toLowerCase();
-      const admin = getAddress(`0x${adminSlot.slice(-40)}` as Hex).toLowerCase();
-      if (
-        keccak256(proxyCode) !== O1_BASE_ROUTER_PROXY_CODE_HASH_V1 ||
-        implementation !== O1_BASE_ROUTER_IMPLEMENTATION_V1 ||
-        admin !== O1_BASE_ROUTER_ADMIN_V1
-      ) {
-        return { ok: false, reason: 'mismatch' };
-      }
-      const implementationCode = await client.getBytecode({
-        address: O1_BASE_ROUTER_IMPLEMENTATION_V1,
-      });
-      if (
-        !implementationCode ||
-        keccak256(implementationCode) !== O1_BASE_ROUTER_IMPLEMENTATION_CODE_HASH_V1
-      ) {
-        return { ok: false, reason: 'mismatch' };
-      }
-      return { ok: true, blockNumber: blockNumber.toString() };
+      if (!current || current.toLowerCase() === ZERO_ADDRESS) return { ok: false, reason: 'mismatch' };
+      const settlers = [current, previous]
+        .filter((value): value is `0x${string}` => typeof value === 'string' && value.toLowerCase() !== ZERO_ADDRESS)
+        .map((value) => value.toLowerCase() as `0x${string}`);
+      return { ok: true, blockNumber: blockNumber.toString(), settlers: [...new Set(settlers)] };
     } catch {
       // Never bubble a viem error: its diagnostic text contains the RPC URL.
       return { ok: false, reason: 'unavailable' };

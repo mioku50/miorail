@@ -57,9 +57,13 @@ export interface RunSafetyKernelInput {
    * decayed fresh quote agrees with itself, and would otherwise pass.
    */
   reviewedMinimumOutputAtomic?: string;
-  /** Fresh proxy + implementation code-hash check. Required for o1 because
-   * its pinned address is upgradeable. */
+  /** Fresh read of AllowanceHolder's code and of 0x's registry. Required for
+   * o1 because the Settler its order runs is redeployed and can be paused. */
   o1ContractPinVerified?: boolean;
+  /** The Settlers the registry vouched for: at build, the ones it named; at
+   * approval, the one the stored calls run, confirmed by the same fresh read.
+   * Never taken from the order's own bytes. */
+  o1Settlers?: readonly string[];
   /** Fresh outer proxy plus selected upstream code-hash/allowlist check. */
   hydrexContractPinVerified?: boolean;
   hydrexUpstreamRouter?: string;
@@ -466,7 +470,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     checks.push(
       check(
         'provider_contract_pin_o1',
-        'o1 proxy, admin and implementation code hashes match the reviewed pins',
+        '0x AllowanceHolder code matches the reviewed pin and 0x’s registry names the Settler',
         input.o1ContractPinVerified ? 'passed' : 'failed',
         input.o1ContractPinVerified ? null : 'o1_contract_pin_unverified',
       ),
@@ -483,6 +487,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
             minimumOutputAtomic: reviewedMinimum,
             swapper: input.walletAddress,
             routerAddress: input.routerAddress,
+            settlers: input.o1Settlers ?? [],
             expiresAt: input.quoteExpiry,
           }
         : undefined;
@@ -495,7 +500,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     checks.push(
       check(
         'provider_guard_o1',
-        'o1-specific RLP-derived calldata, route and router validation (validateO1Swap)',
+        'o1 calldata: exact one-transaction allowance to the registry’s Settler, which pays the wallet the reviewed minimum (validateO1Swap)',
         guard.success ? 'passed' : 'failed',
         guard.success ? null : `${guard.code}: ${guard.reason}`,
       ),

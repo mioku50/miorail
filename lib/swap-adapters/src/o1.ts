@@ -17,7 +17,7 @@ import {
   type O1OrderRequestV1,
 } from './o1-client.js';
 import { parseO1OrderV1 } from './o1-order.js';
-import { O1_BASE_ROUTER_PROXY_V1, createO1RouterPinReaderV1, type O1RouterPinReaderV1 } from './o1-pinned.js';
+import { O1_ZEROX_ALLOWANCE_HOLDER_V1, createO1RouterPinReaderV1, type O1RouterPinReaderV1 } from './o1-pinned.js';
 import type { SwapGasMeterV1 } from './swap-gas-meter.js';
 import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
@@ -153,6 +153,7 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
       inputAsset: input.intent.fromAsset!,
       outputAsset: input.intent.toAsset!,
       amountInAtomic: input.intent.amount.amountAtomic,
+      settlers: pin.settlers,
     });
     if (!parsed.ok) return providerFailure(this.id, parsed.errorCode);
     const observedAt = input.now.toISOString();
@@ -164,7 +165,7 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
       ? await this.gasMeter
           .measure({
             walletAddress: input.walletAddress,
-            approval: { token: input.intent.fromAsset!.address!, spender: O1_BASE_ROUTER_PROXY_V1, amountAtomic: input.intent.amount.amountAtomic },
+            approval: { token: input.intent.fromAsset!.address!, spender: O1_ZEROX_ALLOWANCE_HOLDER_V1, amountAtomic: input.intent.amount.amountAtomic },
             call: parsed.value.swapCall,
           })
           .catch(() => null)
@@ -206,6 +207,9 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
         measuredGas ? 'gas_simulated' : 'gas_limit_not_estimate',
         'expected_output_derived_from_slippage_floor',
         'public_mempool',
+        // The order runs 0x's Settler, whose actions are not decoded: what is
+        // checked is the allowance going in and the Settler's own final check.
+        'nested_upstream_calldata',
       ],
       usesExternalAggregators: true,
       sourceIndependence: 'overlapping',

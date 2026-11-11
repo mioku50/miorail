@@ -1,31 +1,21 @@
-import { decodeFunctionData, erc20Abi, parseTransaction, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, erc20Abi, keccak256, parseTransaction, type Hex } from 'viem';
 import type { AssetRefV1, LiquiditySourceRefV1, PoolRefV1 } from '@mioagent/route-domain';
 import { O1OrderResponseV1Schema, type O1OrderRequestV1 } from './o1-client.js';
 import {
-  O1_BASE_ROUTER_PROXY_V1,
-  O1_MAX_HOPS_V1,
-  O1_SWAP_ABI_V1,
-  O1_SWAP_SELECTOR_V1,
+  O1_ZEROX_ALLOWANCE_HOLDER_V1,
+  O1_ZEROX_EXEC_ABI_V1,
+  O1_ZEROX_EXEC_SELECTOR_V1,
+  o1AttributionSuffixOrNothingV1,
+  readO1SettlerSlippageV1,
 } from './o1-pinned.js';
 import { normalizeAddress } from './normalization.js';
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-export interface O1DecodedRouteLegV1 {
-  dexType: number;
-  tokenIn: `0x${string}`;
-  tokenOut: `0x${string}`;
-  pool: `0x${string}`;
-  fee: number;
-  tickSpacing: number;
-  exchange: `0x${string}`;
-  extraData: Hex;
-}
 
 export interface ParsedO1OrderV1 {
   orderId: string;
   swapTransactionId: string;
-  routerAddress: typeof O1_BASE_ROUTER_PROXY_V1;
+  routerAddress: typeof O1_ZEROX_ALLOWANCE_HOLDER_V1;
+  /** The 0x Settler the order runs, which the registry named. */
+  settler: `0x${string}`;
   swapCall: { to: `0x${string}`; value: string; data: Hex };
   providerApprovalCount: number;
   gasUnits: string;
@@ -33,7 +23,6 @@ export interface ParsedO1OrderV1 {
   amountInAtomic: string;
   minimumOutputAtomic: string;
   expectedOutputAtomic: string;
-  route: O1DecodedRouteLegV1[];
   pools: PoolRefV1[];
   liquiditySources: LiquiditySourceRefV1[];
   safeResponse: Record<string, unknown>;
@@ -49,49 +38,11 @@ function expectedFromMinimumV1(minimum: bigint, slippageBps: number): bigint | n
   return (minimum * 10_000n + denominator - 1n) / denominator;
 }
 
-function routeProtocolV1(leg: O1DecodedRouteLegV1): string {
-  return `o1-dex-${leg.dexType}`;
-}
-
-function provenanceV1(
-  route: O1DecodedRouteLegV1[],
-  assets: readonly [AssetRefV1, AssetRefV1],
-): { pools: PoolRefV1[]; liquiditySources: LiquiditySourceRefV1[] } {
-  const pools = new Map<string, PoolRefV1>();
-  const sources = new Map<string, LiquiditySourceRefV1>();
-  for (const leg of route) {
-    const protocol = routeProtocolV1(leg);
-    const sourceKey = `eip155:8453/${protocol}:${leg.pool}`;
-    pools.set(sourceKey, {
-      chainId: 8453,
-      address: leg.pool,
-      protocol,
-      // o1's tuple uses a venue-specific uint24 field. Calling it basis
-      // points would invent units, so the normalized pool keeps it unknown.
-      feeBps: null,
-      assets: [...assets],
-    });
-    sources.set(sourceKey, {
-      sourceKey,
-      chainId: 8453,
-      protocol,
-      poolAddress: leg.pool,
-      assets: [...assets],
-      upstreamProvider: leg.exchange === ZERO_ADDRESS ? 'o1-exchange' : leg.exchange,
-    });
-  }
-  return {
-    pools: [...pools.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value),
-    liquiditySources: [...sources.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, value]) => value),
-  };
-}
-
 /**
  * Parses the raw unsigned transactions returned by o1. Nothing from
- * description/exchange labels grants permission. Targets, selectors, amounts
- * and route legs all come from decoded RLP/calldata.
+ * description/exchange labels grants permission. Targets, selectors, the
+ * allowance and the Settler's final check all come from decoded RLP/calldata,
+ * and the Settler must be one 0x's registry named when it was asked.
  */
 export function parseO1OrderV1(input: {
   payload: unknown;
@@ -99,6 +50,8 @@ export function parseO1OrderV1(input: {
   inputAsset: AssetRefV1;
   outputAsset: AssetRefV1;
   amountInAtomic: string;
+  /** From the pin reader: the Settlers 0x's registry names now. */
+  settlers: readonly string[];
 }): ParseO1OrderResultV1 {
   const parsed = O1OrderResponseV1Schema.safeParse(input.payload);
   if (!parsed.success) return { ok: false, errorCode: 'o1_order_invalid_schema' };
@@ -119,18 +72,19 @@ export function parseO1OrderV1(input: {
 
   const inputAddress = input.inputAsset.address?.toLowerCase();
   const outputAddress = input.outputAsset.address?.toLowerCase();
+  const signer = input.request.signerAddress.toLowerCase();
   if (!inputAddress || !outputAddress || !/^[1-9][0-9]*$/.test(input.amountInAtomic)) {
     return { ok: false, errorCode: 'o1_order_asset_unsupported' };
   }
   const expectedAmountIn = BigInt(input.amountInAtomic);
+  const settlers = new Set(input.settlers.map((address) => address.toLowerCase()));
 
   let swap: {
     transactionId: string;
     to: `0x${string}`;
-    value: bigint;
     data: Hex;
-    route: O1DecodedRouteLegV1[];
-    amountIn: bigint;
+    settler: `0x${string}`;
+    inner: Hex;
     minimumOut: bigint;
   } | null = null;
   let approvals = 0;
@@ -160,57 +114,46 @@ export function parseO1OrderV1(input: {
     totalGas += gas;
     if (feePerGas !== null && feePerGas > maxFeePerGas) maxFeePerGas = feePerGas;
 
-    if (to === O1_BASE_ROUTER_PROXY_V1 && data.slice(0, 10) === O1_SWAP_SELECTOR_V1) {
+    if (to === O1_ZEROX_ALLOWANCE_HOLDER_V1 && data.slice(0, 10) === O1_ZEROX_EXEC_SELECTOR_V1) {
       if (swap) return { ok: false, errorCode: 'o1_swap_call_count_invalid' };
-      let decoded: ReturnType<typeof decodeFunctionData<typeof O1_SWAP_ABI_V1>>;
+      let decoded: ReturnType<typeof decodeFunctionData<typeof O1_ZEROX_EXEC_ABI_V1>>;
       try {
-        decoded = decodeFunctionData({ abi: O1_SWAP_ABI_V1, data });
+        decoded = decodeFunctionData({ abi: O1_ZEROX_EXEC_ABI_V1, data });
       } catch {
         return { ok: false, errorCode: 'o1_swap_calldata_invalid' };
       }
-      if (decoded.functionName !== 'swap') {
-        return { ok: false, errorCode: 'o1_swap_calldata_invalid' };
-      }
-      const [rawRoute, rawSettlementToken, amountIn, minimumOut] = decoded.args;
-      const settlementToken = rawSettlementToken.toLowerCase();
+      const [rawOperator, rawToken, amount, rawTarget, rawInner] = decoded.args;
+      const operator = rawOperator.toLowerCase() as `0x${string}`;
+      const inner = rawInner.toLowerCase() as Hex;
+      // The registry decides which contract may be handed the allowance. An
+      // address the order names and the registry does not is never run.
+      if (!settlers.has(operator)) return { ok: false, errorCode: 'o1_settler_not_in_registry' };
+      // The bytes are the five values read above, encoded the one standard
+      // way, and behind them nothing but o1's own attribution suffix.
+      const canonical = encodeFunctionData({ abi: O1_ZEROX_EXEC_ABI_V1, functionName: 'exec', args: decoded.args }).toLowerCase();
       if (
-        rawRoute.length === 0 ||
-        rawRoute.length > O1_MAX_HOPS_V1 ||
-        (settlementToken !== inputAddress && settlementToken !== outputAddress) ||
-        amountIn !== expectedAmountIn ||
-        minimumOut <= 0n ||
-        value !== 0n
+        rawTarget.toLowerCase() !== operator ||
+        rawToken.toLowerCase() !== inputAddress ||
+        amount !== expectedAmountIn ||
+        value !== 0n ||
+        !data.startsWith(canonical) ||
+        !o1AttributionSuffixOrNothingV1(data.slice(canonical.length))
       ) {
         return { ok: false, errorCode: 'o1_swap_calldata_invalid' };
       }
-      const route: O1DecodedRouteLegV1[] = rawRoute.map((leg) => ({
-        dexType: Number(leg.dexType),
-        tokenIn: leg.tokenIn.toLowerCase() as `0x${string}`,
-        tokenOut: leg.tokenOut.toLowerCase() as `0x${string}`,
-        pool: leg.pool.toLowerCase() as `0x${string}`,
-        fee: Number(leg.fee),
-        tickSpacing: Number(leg.tickSpacing),
-        exchange: leg.exchange.toLowerCase() as `0x${string}`,
-        extraData: leg.extraData.toLowerCase() as Hex,
-      }));
-      if (
-        route[0]!.tokenIn !== inputAddress ||
-        route[route.length - 1]!.tokenOut !== outputAddress ||
-        route.some(
-          (leg, index) =>
-            leg.pool === ZERO_ADDRESS || (index > 0 && leg.tokenIn !== route[index - 1]!.tokenOut),
-        )
-      ) {
+      const slippage = readO1SettlerSlippageV1(inner);
+      if (!slippage) return { ok: false, errorCode: 'o1_settler_call_invalid' };
+      if (slippage.recipient !== signer || slippage.buyToken !== outputAddress) {
         return { ok: false, errorCode: 'o1_route_asset_mismatch' };
       }
+      if (slippage.minAmountOut <= 0n) return { ok: false, errorCode: 'o1_minimum_output_invalid' };
       swap = {
         transactionId: entry.id,
         to: to as `0x${string}`,
-        value,
         data,
-        route,
-        amountIn,
-        minimumOut,
+        settler: operator,
+        inner,
+        minimumOut: slippage.minAmountOut,
       };
       continue;
     }
@@ -221,7 +164,7 @@ export function parseO1OrderV1(input: {
         if (decoded.functionName !== 'approve') throw new TypeError('not approve');
         const [spender, amount] = decoded.args;
         if (
-          spender.toLowerCase() !== O1_BASE_ROUTER_PROXY_V1 ||
+          spender.toLowerCase() !== O1_ZEROX_ALLOWANCE_HOLDER_V1 ||
           amount < expectedAmountIn ||
           value !== 0n
         ) {
@@ -241,31 +184,43 @@ export function parseO1OrderV1(input: {
   if (!swap) return { ok: false, errorCode: 'o1_swap_call_count_invalid' };
   const expectedOutput = expectedFromMinimumV1(swap.minimumOut, input.request.slippageBps);
   if (!expectedOutput) return { ok: false, errorCode: 'o1_minimum_output_invalid' };
-  const provenance = provenanceV1(swap.route, [input.inputAsset, input.outputAsset]);
+  // The Settler's actions are not decoded, so no pool is named. The one
+  // source says where the order settles; a build compares it with the quote's.
+  const liquiditySources: LiquiditySourceRefV1[] = [
+    {
+      sourceKey: `eip155:8453/o1-exchange:zerox:${swap.settler}`,
+      chainId: 8453,
+      protocol: 'o1-exchange',
+      poolAddress: null,
+      assets: [input.inputAsset, input.outputAsset],
+      upstreamProvider: 'zerox',
+    },
+  ];
   return {
     ok: true,
     value: {
       orderId: response.id,
       swapTransactionId: swap.transactionId,
-      routerAddress: O1_BASE_ROUTER_PROXY_V1,
-      swapCall: { to: swap.to, value: swap.value.toString(), data: swap.data },
+      routerAddress: O1_ZEROX_ALLOWANCE_HOLDER_V1,
+      settler: swap.settler,
+      swapCall: { to: swap.to, value: '0', data: swap.data },
       providerApprovalCount: approvals,
       gasUnits: totalGas.toString(),
       maxFeePerGasWei: maxFeePerGas > 0n ? maxFeePerGas.toString() : null,
-      amountInAtomic: swap.amountIn.toString(),
+      amountInAtomic: expectedAmountIn.toString(),
       minimumOutputAtomic: swap.minimumOut.toString(),
       expectedOutputAtomic: expectedOutput.toString(),
-      route: swap.route,
-      pools: provenance.pools,
-      liquiditySources: provenance.liquiditySources,
+      pools: [],
+      liquiditySources,
       safeResponse: {
         orderId: response.id,
         transactionIds: response.transactions.map((entry) => entry.id),
-        routerAddress: O1_BASE_ROUTER_PROXY_V1,
-        amountIn: swap.amountIn.toString(),
+        routerAddress: O1_ZEROX_ALLOWANCE_HOLDER_V1,
+        settler: swap.settler,
+        amountIn: expectedAmountIn.toString(),
         minimumOutput: swap.minimumOut.toString(),
         gasUnits: totalGas.toString(),
-        route: swap.route,
+        settlerCallHash: keccak256(swap.inner),
         providerApprovalCount: approvals,
       },
     },

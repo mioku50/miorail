@@ -282,6 +282,16 @@ export function unsimulatedStateV1(errorCode = 'no_simulation_provider'): Simula
  * record whose route cannot be recovered — which leaves the guard's facts
  * missing, and the Safety Kernel blocks on that.
  */
+/** The 0x Settler an o1 candidate settles through, as its one liquidity
+ * source names it. Null for anything else, and the kernel then has no
+ * Settler to hold the calls against. */
+export function o1SettlerFromCandidateV1(candidate: RouteCandidateV1): `0x${string}` | null {
+  const source = candidate.liquiditySources.length === 1 ? candidate.liquiditySources[0] : null;
+  if (!source?.sourceKey.startsWith('eip155:8453/o1-exchange:zerox:')) return null;
+  const marker = source.sourceKey.split(':').at(-1);
+  return marker && /^0x[0-9a-f]{40}$/.test(marker) ? (marker as `0x${string}`) : null;
+}
+
 export function aerodromeKernelInputV1(
   providerId: SwapBuildProviderId,
   candidate: RouteCandidateV1,
@@ -394,9 +404,10 @@ export async function reviewStoredBlueprintV1(
   const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
     ? 'goplus'
     : (contractSecurityResults[0]?.provider ?? 'none');
+  const o1Settler = providerId === 'o1-exchange' ? o1SettlerFromCandidateV1(selected) : null;
   const o1ContractPinVerified =
     providerId === 'o1-exchange'
-      ? ((await deps.providerContractPin?.(providerId)) ?? false)
+      ? Boolean(o1Settler) && ((await deps.providerContractPin?.(providerId, { o1Settler })) ?? false)
       : undefined;
   const hydrexUpstreamRouter = providerId === 'hydrex'
     ? selected.liquiditySources[0]?.sourceKey.split(':').at(-1)
@@ -423,6 +434,7 @@ export async function reviewStoredBlueprintV1(
     intentHash: blueprint.intentHash,
     selectedCandidateHash: blueprint.selectedCandidateHash,
     o1ContractPinVerified,
+    o1Settlers: o1Settler ? [o1Settler] : undefined,
     hydrexContractPinVerified,
     hydrexUpstreamRouter,
     ...aerodromeKernelInputV1(providerId, selected, blueprint),
@@ -779,6 +791,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       aerodrome: buildResult.aerodrome,
       reviewedMinimumOutputAtomic: selected.minimumOutput.amountAtomic,
       o1ContractPinVerified: buildResult.o1?.contractPinVerified,
+      o1Settlers: buildResult.o1?.settlers,
       hydrexContractPinVerified: buildResult.hydrex?.contractPinVerified,
       hydrexUpstreamRouter: buildResult.hydrex?.upstreamRouter,
       balancer: buildResult.balancer,

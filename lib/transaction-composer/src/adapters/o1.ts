@@ -2,7 +2,7 @@ import { encodeFunctionData, erc20Abi } from 'viem';
 import type { TokenAmountV1 } from '@mioagent/route-domain';
 import {
   O1OrderClientV1,
-  O1_BASE_ROUTER_PROXY_V1,
+  O1_ZEROX_ALLOWANCE_HOLDER_V1,
   atomicToHumanDecimal,
   canonicalRequestHash,
   canonicalResponseHash,
@@ -103,6 +103,7 @@ export class O1SwapBuildAdapter implements SwapBuildAdapter {
       inputAsset: input.intent.fromAsset!,
       outputAsset: input.intent.toAsset!,
       amountInAtomic: input.intent.amount.amountAtomic,
+      settlers: pin.settlers,
     });
     if (!parsed.ok) return failure('invalid_response', parsed.errorCode, false);
     if (!sameSources(parsed.value.liquiditySources, input.selectedCandidate.liquiditySources)) {
@@ -132,8 +133,9 @@ export class O1SwapBuildAdapter implements SwapBuildAdapter {
       amountDecimal: minimumDecimal,
     };
 
-    // o1 currently returns an unlimited approval. Provider approval bytes are
-    // deliberately discarded and replaced with an exact atomic approval.
+    // o1 returns an unlimited approval to AllowanceHolder. Provider approval
+    // bytes are deliberately discarded and replaced with an exact atomic one:
+    // the Settler can then be given this swap's input and nothing after it.
     const inputToken = input.intent.fromAsset!.address!.toLowerCase() as `0x${string}`;
     const calls = [
       {
@@ -142,7 +144,7 @@ export class O1SwapBuildAdapter implements SwapBuildAdapter {
         data: encodeFunctionData({
           abi: erc20Abi,
           functionName: 'approve',
-          args: [O1_BASE_ROUTER_PROXY_V1, BigInt(input.intent.amount.amountAtomic)],
+          args: [O1_ZEROX_ALLOWANCE_HOLDER_V1, BigInt(input.intent.amount.amountAtomic)],
         }),
       },
       parsed.value.swapCall,
@@ -151,7 +153,7 @@ export class O1SwapBuildAdapter implements SwapBuildAdapter {
     return {
       outcome: 'built',
       provider: 'o1-exchange',
-      routerAddress: O1_BASE_ROUTER_PROXY_V1,
+      routerAddress: O1_ZEROX_ALLOWANCE_HOLDER_V1,
       calls,
       quoteExpiry,
       requestId: input.requestId,
@@ -159,7 +161,7 @@ export class O1SwapBuildAdapter implements SwapBuildAdapter {
       responseHash: canonicalResponseHash('o1-exchange', parsed.value.safeResponse),
       expectedOutput,
       minimumOutput,
-      o1: { contractPinVerified: true },
+      o1: { contractPinVerified: true, settlers: pin.settlers },
     };
   }
 }

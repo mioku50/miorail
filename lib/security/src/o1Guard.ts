@@ -1,41 +1,48 @@
-import { decodeFunctionData, erc20Abi, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex } from 'viem';
 import { normalizeBaseChain, type BaseCall } from './baseGuards.js';
 
 /** Duplicated independently from swap-adapters to prevent a reverse package
- * dependency. Cross-package tests assert these bytes stay equal. */
-export const O1_BASE_ROUTER_PROXY = '0x7293d41c28e5fc2292e62d26fec60e22a145d1a5';
-export const O1_MAX_HOPS = 8;
+ * dependency. Cross-package tests assert these bytes stay equal.
+ *
+ * Since 2026-11-11 an o1 order is an `exec` on 0x's AllowanceHolder that runs
+ * the Settler 0x's registry names; o1's own router is no longer accepted. */
+export const O1_ZEROX_ALLOWANCE_HOLDER = '0x0000000000001ff3684f28c67538d4d072c22734';
+export const O1_ZEROX_SETTLER_EXECUTE_SELECTOR = '0x1fff991f';
 
-const O1_SWAP_ABI = [
+const O1_ZEROX_EXEC_ABI = [
   {
     type: 'function',
-    name: 'swap',
+    name: 'exec',
     stateMutability: 'payable',
     inputs: [
-      {
-        name: 'swaps',
-        type: 'tuple[]',
-        components: [
-          { name: 'dexType', type: 'uint8' },
-          { name: 'tokenIn', type: 'address' },
-          { name: 'tokenOut', type: 'address' },
-          { name: 'pool', type: 'address' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'tickSpacing', type: 'int24' },
-          { name: 'exchange', type: 'address' },
-          { name: 'extraData', type: 'bytes' },
-        ],
-      },
-      { name: 'settlementToken', type: 'address' },
-      { name: 'amountIn', type: 'uint256' },
-      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'operator', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'target', type: 'address' },
+      { name: 'data', type: 'bytes' },
     ],
-    outputs: [],
+    outputs: [{ name: 'result', type: 'bytes' }],
   },
 ] as const;
 
 const ADDRESS = /^0x[0-9a-f]{40}$/;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const ADDRESS_WORD = /^0{24}[0-9a-f]{40}$/;
+
+/** Nothing, or exactly one ERC-8021 attribution suffix (schema 0): ASCII
+ * codes, their length, a zero byte, the sixteen-byte marker. o1 ends its
+ * orders with its Builder Code; AllowanceHolder reads nothing after its own
+ * five arguments. Anything else behind them is unexplained and refused. */
+function attributionSuffixOrNothing(tail: string): boolean {
+  if (tail === '') return true;
+  const match = /^((?:[0-9a-f]{2}){1,64})([0-9a-f]{2})00(?:8021){8}$/.exec(tail);
+  if (!match) return false;
+  const codes = match[1]!;
+  if (parseInt(match[2]!, 16) !== codes.length / 2) return false;
+  return (codes.match(/.{2}/g) ?? []).every((byte) => {
+    const value = parseInt(byte, 16);
+    return value >= 0x21 && value <= 0x7e;
+  });
+}
 
 export interface O1SwapContext {
   inputTokenAddress: string;
@@ -44,6 +51,9 @@ export interface O1SwapContext {
   minimumOutputAtomic: string;
   swapper: string;
   routerAddress: string;
+  /** The Settlers 0x's registry named when the batch was built. Read from the
+   * chain by the build, never taken from the order. */
+  settlers: readonly string[];
   expiresAt: string;
 }
 
@@ -59,7 +69,7 @@ export type O1GuardResult =
         spenders: string[];
         spendAmountRaw: string;
         minimumOutputRaw: string;
-        hops: number;
+        settler: string;
       };
     }
   | { success: false; code: string; reason: string; checks: string[] };
@@ -97,14 +107,18 @@ export function validateO1Swap(input: {
   const inputToken = context.inputTokenAddress.toLowerCase();
   const outputToken = context.outputTokenAddress.toLowerCase();
   const swapper = context.swapper.toLowerCase();
+  const settlers = Array.isArray(context.settlers) ? context.settlers.map((address) => String(address).toLowerCase()) : [];
   if (
-    router !== O1_BASE_ROUTER_PROXY ||
+    router !== O1_ZEROX_ALLOWANCE_HOLDER ||
     !ADDRESS.test(inputToken) ||
     !ADDRESS.test(outputToken) ||
     inputToken === outputToken ||
     !ADDRESS.test(swapper)
   ) {
     return fail('o1_context_invalid', 'o1.exchange assets, router, or wallet are invalid', checks);
+  }
+  if (settlers.length === 0 || settlers.length > 2 || settlers.some((address) => !ADDRESS.test(address))) {
+    return fail('o1_settler_unverified', 'No 0x Settler was read from the registry for this batch', checks);
   }
   const amountIn = atomic(context.amountInAtomic);
   const reviewedMinimum = atomic(context.minimumOutputAtomic);
@@ -149,67 +163,88 @@ export function validateO1Swap(input: {
     if (spender.toLowerCase() !== router || amount !== amountIn) {
       return fail(
         'o1_approval_not_exact',
-        'o1.exchange approval must be exact and router-bound',
+        'o1.exchange approval must be exact and bound to AllowanceHolder',
         checks,
       );
     }
   } catch {
     return fail('o1_approval_invalid', 'o1.exchange approval calldata is invalid', checks);
   }
-  checks.push('Exact input-token approval to pinned o1 router');
+  checks.push('Exact input-token approval to 0x AllowanceHolder');
 
   if (String(swapCall!.to).toLowerCase() !== router || swapValue !== 0n) {
     return fail(
       'o1_swap_target_invalid',
-      'o1.exchange swap must target only the pinned router',
+      'o1.exchange swap must target only 0x AllowanceHolder',
       checks,
     );
   }
-  let decodedSwap: ReturnType<typeof decodeFunctionData<typeof O1_SWAP_ABI>>;
+  const swapData = String(swapCall!.data).toLowerCase() as Hex;
+  let decodedSwap: ReturnType<typeof decodeFunctionData<typeof O1_ZEROX_EXEC_ABI>>;
   try {
-    decodedSwap = decodeFunctionData({
-      abi: O1_SWAP_ABI,
-      data: String(swapCall!.data).toLowerCase() as Hex,
-    });
+    decodedSwap = decodeFunctionData({ abi: O1_ZEROX_EXEC_ABI, data: swapData });
   } catch {
     return fail('o1_swap_calldata_invalid', 'o1.exchange swap calldata is invalid', checks);
   }
-  if (decodedSwap.functionName !== 'swap') {
-    return fail('o1_swap_calldata_invalid', 'o1.exchange swap calldata is invalid', checks);
-  }
-  const [route, rawSettlementToken, decodedAmountIn, minimumOut] = decodedSwap.args;
-  const settlementToken = rawSettlementToken.toLowerCase();
-  if (
-    route.length === 0 ||
-    route.length > O1_MAX_HOPS ||
-    (settlementToken !== inputToken && settlementToken !== outputToken) ||
-    decodedAmountIn !== amountIn ||
-    minimumOut < reviewedMinimum
-  ) {
+  const [rawOperator, rawToken, allowance, rawTarget, rawInner] = decodedSwap.args;
+  const operator = rawOperator.toLowerCase();
+  if (!settlers.includes(operator)) {
     return fail(
-      'o1_swap_bounds_invalid',
-      'o1.exchange route amounts or hop count exceed the review',
+      'o1_settler_not_in_registry',
+      'The contract given the allowance is not a Settler the 0x registry named',
       checks,
     );
   }
-  for (const [index, leg] of route.entries()) {
-    const from = leg.tokenIn.toLowerCase();
-    const to = leg.tokenOut.toLowerCase();
-    const pool = leg.pool.toLowerCase();
-    if (
-      pool === ZERO_ADDRESS ||
-      (index === 0 && from !== inputToken) ||
-      (index === route.length - 1 && to !== outputToken) ||
-      (index > 0 && from !== route[index - 1]!.tokenOut.toLowerCase())
-    ) {
-      return fail(
-        'o1_route_asset_mismatch',
-        'o1.exchange route does not match the reviewed assets',
-        checks,
-      );
-    }
+  let canonical: string;
+  try {
+    canonical = encodeFunctionData({ abi: O1_ZEROX_EXEC_ABI, functionName: 'exec', args: decodedSwap.args }).toLowerCase();
+  } catch {
+    return fail('o1_swap_calldata_invalid', 'o1.exchange swap calldata is invalid', checks);
   }
-  checks.push('Decoded route, exact input, reviewed minimum, and pinned router');
+  if (
+    rawTarget.toLowerCase() !== operator ||
+    rawToken.toLowerCase() !== inputToken ||
+    allowance !== amountIn ||
+    !swapData.startsWith(canonical) ||
+    !attributionSuffixOrNothing(swapData.slice(canonical.length))
+  ) {
+    return fail(
+      'o1_swap_bounds_invalid',
+      'The allowance is not exactly the reviewed input, for the Settler alone',
+      checks,
+    );
+  }
+  checks.push('One-transaction allowance: exact input, input token, registry-named Settler');
+
+  // The Settler reads its final check from the three words after the selector.
+  const inner = rawInner.toLowerCase();
+  const word = (index: number) => inner.slice(10 + index * 64, 10 + (index + 1) * 64);
+  if (
+    inner.length < 10 + 5 * 64 ||
+    inner.slice(0, 10) !== O1_ZEROX_SETTLER_EXECUTE_SELECTOR ||
+    !ADDRESS_WORD.test(word(0)) ||
+    !ADDRESS_WORD.test(word(1))
+  ) {
+    return fail('o1_settler_call_invalid', 'The Settler call is not execute with a readable final check', checks);
+  }
+  const recipient = `0x${word(0).slice(24)}`;
+  const buyToken = `0x${word(1).slice(24)}`;
+  const minimumOut = BigInt(`0x${word(2)}`);
+  if (recipient !== swapper || buyToken !== outputToken) {
+    return fail(
+      'o1_route_asset_mismatch',
+      'The Settler would pay another address or another token',
+      checks,
+    );
+  }
+  if (minimumOut < reviewedMinimum) {
+    return fail(
+      'o1_swap_bounds_invalid',
+      'The Settler would accept less than the reviewed minimum',
+      checks,
+    );
+  }
+  checks.push('Settler pays the wallet the reviewed token, at least the reviewed minimum');
   return {
     success: true,
     code: 'allowed',
@@ -217,12 +252,12 @@ export function validateO1Swap(input: {
     semantics: {
       actionType: 'o1_exchange_swap',
       tokenAddresses: [inputToken, outputToken],
-      // The pinned o1 router settles to msg.sender; Base Account is the caller.
+      // The Settler sends what it bought to slippage.recipient, checked above.
       recipients: [swapper],
       spenders: [router],
       spendAmountRaw: amountIn.toString(),
       minimumOutputRaw: minimumOut.toString(),
-      hops: route.length,
+      settler: operator,
     },
   };
 }

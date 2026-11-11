@@ -165,10 +165,13 @@ export type ContractSecurityLookup = (
   input: ContractSecurityLookupInput,
 ) => Promise<ExecutionTokenSecurityResult[]>;
 
-/** Re-checks an upgradeable provider boundary immediately before review or
- * approval. Only o1 uses it today; immutable routers do not need the read. */
+/** Re-checks a provider boundary that can change immediately before review or
+ * approval; immutable routers do not need the read. For o1 the boundary is
+ * 0x's registry: `o1Settler` is the Settler the stored calls run, and the
+ * answer is yes only while the registry still names it. */
 export type SwapProviderContractPinLookup = (
   provider: SwapBuildProviderId,
+  facts?: { o1Settler?: string | null },
 ) => Promise<boolean>;
 
 /** T67B.1: the calls this asks about are exactly the ones about to be
@@ -289,9 +292,10 @@ export interface SwapBuildSuccess {
    * when it is missing.
    */
   aerodrome?: AerodromeBuildFactsV1;
-  /** Present only after both o1 proxy and implementation hashes were checked
-   * during this exact build. Approval performs the same read again. */
-  o1?: { contractPinVerified: true };
+  /** Present only after AllowanceHolder's code and 0x's registry were read
+   * during this exact build; `settlers` is what the registry named then.
+   * Approval performs the same read again. */
+  o1?: { contractPinVerified: true; settlers: readonly `0x${string}`[] };
   /** Hydrex outer proxy and the exact upstream path were pinned during build. */
   hydrex?: {
     contractPinVerified: true;
