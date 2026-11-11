@@ -52,6 +52,7 @@ import {
   RouteIntentV1Schema,
   SafetyKernelResultV1Schema,
   SimulationStateV1Schema,
+  SUBMISSION_BATCH_ID_MAX_V1,
   TransactionReceiptV1Schema,
 } from '@mioagent/route-domain';
 import { B20_PIPELINE_STATES_V1 } from '@mioagent/opportunity-rail';
@@ -5547,8 +5548,10 @@ export const SubmissionAttemptWireV1Schema = z
     proofId: z.string().min(1).max(200).nullable(),
     approvedCallsHash: z.string().regex(/^0x[0-9a-f]{64}$/),
     /** Null is the honest unrecoverable state, and the UI says so rather than
-     * offering a retry that would send a second transaction. */
-    batchId: z.string().min(1).max(200).nullable(),
+     * offering a retry that would send a second transaction. The bound is
+     * the stored attempt's: a swap sent in three steps has an id of 322
+     * characters. */
+    batchId: z.string().min(1).max(SUBMISSION_BATCH_ID_MAX_V1).nullable(),
     status: SubmissionAttemptStatusWireV1Schema,
     errorCode: z.string().min(1).max(120).nullable(),
     createdAt: z.string().min(1),
@@ -5567,7 +5570,7 @@ export type SubmissionAttemptResponseV1 = z.infer<typeof SubmissionAttemptRespon
  * receipts are recorded through the submission route, which knows how to check
  * them against a proof. */
 export const SubmissionAttemptBatchRequestV1Schema = z
-  .object({ batchId: z.string().min(1).max(200) })
+  .object({ batchId: z.string().min(1).max(SUBMISSION_BATCH_ID_MAX_V1) })
   .strict();
 export type SubmissionAttemptBatchRequestV1 = z.infer<typeof SubmissionAttemptBatchRequestV1Schema>;
 

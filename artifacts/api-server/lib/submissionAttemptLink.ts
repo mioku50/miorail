@@ -3,6 +3,7 @@ import {
   type SubmissionAttemptRepositoryV1,
 } from '@mioagent/route-storage';
 import type { SubmissionAttemptV1 } from '@mioagent/route-domain';
+import { logger } from '@mioagent/utils';
 
 // ---------------------------------------------------------------------------
 // T67C.2 — linking a submission record to its recovery attempt.
@@ -94,7 +95,15 @@ export async function recordAttemptOutcomeV1(
       batchId: input.attempt.batchId ?? input.batchId,
       now: input.now,
     });
-  } catch {
-    // Swallowed on purpose — see the header. The attempt stays open.
+  } catch (cause) {
+    // Kept out of the response on purpose — see the header. The attempt stays
+    // open. It is said in the log: until 2026-11-11 it was said nowhere, and
+    // every swap sent in two or three steps was refused here for the length of
+    // its id while the page listed it as a wallet request still to check.
+    logger.warn('Submission attempt outcome was not recorded', {
+      status,
+      name: cause instanceof Error ? cause.name : 'unknown',
+      batchIdLength: input.batchId?.length ?? null,
+    });
   }
 }

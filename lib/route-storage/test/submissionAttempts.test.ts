@@ -3,10 +3,12 @@ import test, { describe } from 'node:test';
 
 import { RouteStorageConflictError, RouteStorageIntegrityError } from '../src/types.js';
 import { InMemorySubmissionAttemptRepositoryV1 } from '../src/submissionAttemptsMemory.js';
+import { SUBMISSION_BATCH_ID_MAX_V1 } from '@mioagent/route-domain';
 import {
   applySubmissionAttemptUpdateV1,
   attemptStatusFromSubmissionV1,
   newSubmissionAttemptV1,
+  RECOVERABLE_ATTEMPTS_LIMIT_V1,
   submissionAttemptBatchEffectV1,
   submissionAttemptCreateEffectV1,
   type CreateSubmissionAttemptInputV1,
@@ -163,6 +165,93 @@ describe('what is recoverable', () => {
       await repo.listRecoverable('tenant-1', '0x2222222222222222222222222222222222222222'),
       [],
     );
+  });
+});
+
+describe('a swap sent in steps', () => {
+  // A swap sent one transaction at a time has no wallet batch. Its id is
+  // viem's fallback format: every hash, the chain id and a marker, 32 bytes each.
+  const stepsId = (steps: number) => `0x${'cd'.repeat(32 * steps)}${'00'.repeat(30)}2105${'5792'.repeat(16)}`;
+
+  // 2026-11-11: fourteen swaps of two and three steps had completed, and each
+  // still stood among "Wallet requests to check": the id was refused for its length.
+  test('the attempt takes the id of two and of three steps, and is confirmed with it', async () => {
+    for (const steps of [1, 2, 3]) {
+      const repo = repository();
+      const created = await repo.createAttempt(input());
+      const id = stepsId(steps);
+      assert.equal(id.length, 2 + 64 * (steps + 2));
+      const submitted = await repo.updateAttempt({
+        attemptId: created.id,
+        tenantId: 'tenant-1',
+        status: 'submitted',
+        batchId: id,
+        now: LATER,
+      });
+      assert.equal(submitted?.status, 'submitted', `${steps} steps`);
+      assert.equal(submitted?.batchId, id);
+      const confirmed = await repo.updateAttempt({
+        attemptId: created.id,
+        tenantId: 'tenant-1',
+        status: 'confirmed',
+        now: LATER,
+      });
+      assert.equal(confirmed?.status, 'confirmed');
+      assert.equal(confirmed?.batchId, id);
+      assert.equal((await repo.findAttemptByBatch(id))?.id, created.id);
+    }
+  });
+
+  test('the bound is the one a submission record has, and an id beyond it is refused', async () => {
+    assert.equal(SUBMISSION_BATCH_ID_MAX_V1, 500);
+    const repo = repository();
+    const created = await repo.createAttempt(input());
+    await assert.rejects(
+      repo.updateAttempt({
+        attemptId: created.id,
+        tenantId: 'tenant-1',
+        status: 'submitted',
+        batchId: `0x${'c'.repeat(SUBMISSION_BATCH_ID_MAX_V1 - 1)}`,
+        now: LATER,
+      }),
+      RouteStorageIntegrityError,
+    );
+    const atTheBound = await repo.updateAttempt({
+      attemptId: created.id,
+      tenantId: 'tenant-1',
+      status: 'submitted',
+      batchId: `0x${'c'.repeat(SUBMISSION_BATCH_ID_MAX_V1 - 2)}`,
+      now: LATER,
+    });
+    assert.equal(atTheBound?.status, 'submitted');
+  });
+});
+
+describe('what a listing holds when a wallet has many finished swaps', () => {
+  test('an attempt nobody has an answer for is listed before the confirmed ones, however many', async () => {
+    const repo = repository();
+    const open = await repo.createAttempt(input({ blueprintId: 'blueprint-open', routeRunId: 'run-open' }));
+    for (let index = 0; index < RECOVERABLE_ATTEMPTS_LIMIT_V1 + 5; index += 1) {
+      const created = await repo.createAttempt(
+        input({ blueprintId: `blueprint-${index}`, routeRunId: `run-${index}`, proofId: `proof-${index}` }),
+      );
+      await repo.updateAttempt({
+        attemptId: created.id,
+        tenantId: 'tenant-1',
+        status: 'confirmed',
+        batchId: `batch-${index}`,
+        now: new Date(LATER.getTime() + index * 1_000),
+      });
+    }
+    const listed = await repo.listRecoverable('tenant-1', WALLET);
+    assert.equal(listed.length, RECOVERABLE_ATTEMPTS_LIMIT_V1);
+    assert.equal(listed[0]?.id, open.id, 'older than every confirmed attempt, and still first');
+    assert.deepEqual(
+      listed.slice(1).map((attempt) => attempt.status),
+      Array.from({ length: RECOVERABLE_ATTEMPTS_LIMIT_V1 - 1 }, () => 'confirmed'),
+    );
+    // Newest first among the confirmed.
+    assert.equal(listed[1]?.batchId, `batch-${RECOVERABLE_ATTEMPTS_LIMIT_V1 + 4}`);
   });
 });
 

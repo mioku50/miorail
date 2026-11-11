@@ -17,6 +17,8 @@ import {
   sequentialNoticeV1,
   swapDeliveryPlanV1,
 } from './sequentialDelivery';
+import { SUBMISSION_BATCH_ID_MAX_V1 } from '@mioagent/route-domain';
+import { writeRecoveryMarkerV1 } from './recoveryMarker';
 import { blueprintSubmitPreflight, sequentialSendOutcomeV1 } from './useSubmitApprovedBlueprint';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +26,7 @@ const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const ROUTER = `0x${'6'.repeat(40)}` as Hex;
 const H1 = `0x${'a1'.repeat(32)}` as Hex;
 const H2 = `0x${'b2'.repeat(32)}` as Hex;
+const H3 = `0x${'c3'.repeat(32)}` as Hex;
 
 // What Rabby answers for both EIP-5792 methods (its source, 2026-10-31).
 const missing = (method: string) =>
@@ -126,10 +129,48 @@ test('a Permit2 allowance already in place covers a step only for the amount and
   assert.equal(permit2AllowanceInPlaceV1(['2000000', 1_794_423_000, 3], wanted), false);
 });
 
+test('a swap sent in two or three steps keeps its handle: the marker takes its id', () => {
+  // 2026-11-11: fourteen "Wallet requests to check" on one wallet, every one a swap of two or three
+  // steps that had completed. The id of such a swap is 258 or 322 characters; the marker and the
+  // stored attempt allowed 200, so the marker was not written and the attempt was never closed.
+  const written = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => written.get(key) ?? null,
+    setItem: (key: string, value: string) => void written.set(key, value),
+    removeItem: (key: string) => void written.delete(key),
+    key: (index: number) => [...written.keys()][index] ?? null,
+    get length() {
+      return written.size;
+    },
+  };
+  const wallet = `0x${'1'.repeat(40)}` as Hex;
+  for (const hashes of [[H1], [H1, H2], [H1, H2, H3]] as Hex[][]) {
+    const batchId = sequentialBatchIdV1(hashes, 8453);
+    assert.equal(batchId.length, 2 + 64 * (hashes.length + 2));
+    assert.ok(batchId.length <= SUBMISSION_BATCH_ID_MAX_V1, `${hashes.length} steps`);
+    assert.equal(
+      writeRecoveryMarkerV1(storage, {
+        schemaVersion: 'submission-recovery-marker/v1',
+        attemptId: `submission-attempt:${hashes.length}`,
+        batchId,
+        goal: 'swap',
+        routeRunId: 'run-1',
+        blueprintId: 'blueprint-1',
+        proofId: null,
+        walletAddress: wallet,
+        chainId: 8453,
+        createdAt: '2026-11-11T20:14:00.000Z',
+      }),
+      true,
+      `${hashes.length} steps`,
+    );
+  }
+  assert.equal(written.size, 3);
+});
+
 test('a press that sent nothing leaves no wallet request to check', () => {
-  // 2026-11-11: eleven "Wallet requests to check" on one wallet, none of which had sent anything. The
-  // batch path opens an attempt; when the wallet refuses the batch and steps are not granted either,
-  // that attempt must be closed with what was said, before the page says so.
+  // The batch path opens an attempt; when the wallet refuses the batch and steps are not granted
+  // either, that attempt must be closed with what was said, before the page says so.
   const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
   const steps = source.slice(source.indexOf('const approveAndSendInSteps = async'), source.indexOf('const submit = async'));
   assert.match(steps, /const closeCarriedAttempt = async \(message: string\) => \{/);

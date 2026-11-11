@@ -68,9 +68,21 @@ export interface SubmissionAttemptRepositoryV1 {
    * an indistinguishable 404 rather than confirming somebody else's row. */
   bindBatch(input: BindSubmissionBatchInputV1): Promise<SubmissionAttemptV1 | null>;
   updateAttempt(input: UpdateSubmissionAttemptInputV1): Promise<SubmissionAttemptV1 | null>;
-  /** Open attempts for one wallet, newest first. Tenant-scoped in the QUERY. */
+  /** Open attempts for one wallet, at most RECOVERABLE_ATTEMPTS_LIMIT_V1 of them:
+   * those that still need the person first, then those the wallet confirmed,
+   * newest first within each. Tenant-scoped in the QUERY. */
   listRecoverable(tenantId: string, walletAddress: string): Promise<SubmissionAttemptV1[]>;
 }
+
+/**
+ * How many open attempts one listing returns.
+ *
+ * A `confirmed` attempt stays open (its proof may still be reconciling) and no
+ * page shows it as something to check, so a wallet gathers one per finished
+ * swap. Listed newest first, twenty of those would have pushed an older attempt
+ * nobody has an answer for out of the listing, so they are listed last.
+ */
+export const RECOVERABLE_ATTEMPTS_LIMIT_V1 = 20;
 
 export type SubmissionAttemptEffectV1 =
   | { effect: 'insert' }

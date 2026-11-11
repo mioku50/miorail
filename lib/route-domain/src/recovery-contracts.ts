@@ -67,6 +67,19 @@ export const RECOVERABLE_ATTEMPT_STATUSES_V1: readonly SubmissionAttemptStatusV1
   'confirmed',
 ];
 
+/**
+ * The longest batch id an attempt or a marker may carry, in characters.
+ *
+ * A swap sent in steps has no wallet batch, so its id is viem's fallback
+ * format: every transaction hash, the chain id and a marker, 32 bytes each.
+ * Two steps are 258 characters and three are 322. The bound here was 200 until
+ * 2026-11-11, so every swap of two or three steps was recorded on its proof
+ * and refused on its attempt, and the attempt stayed among "Wallet requests to
+ * check" for a swap that had completed (fourteen of them on one wallet). It is
+ * the bound the submission record itself accepts.
+ */
+export const SUBMISSION_BATCH_ID_MAX_V1 = 500;
+
 /** Statuses that presuppose the wallet handed back a batch id. Asserted by the
  * schema below AND by a CHECK constraint in migration 0022 — the state and its
  * handle cannot come apart. */
@@ -93,7 +106,7 @@ const SubmissionAttemptV1ObjectSchema = z
     /** The wallet batch handle. Null means genuinely unrecoverable: there is
      * nothing to ask `wallet_getCallsStatus` about, and the UI says so rather
      * than offering a retry. */
-    batchId: z.string().min(1).max(200).nullable(),
+    batchId: z.string().min(1).max(SUBMISSION_BATCH_ID_MAX_V1).nullable(),
     status: SubmissionAttemptStatusV1Schema,
     errorCode: z.string().min(1).max(120).nullable(),
     createdAt: TimestampV1Schema,
@@ -166,7 +179,7 @@ const SubmissionRecoveryMarkerV1ObjectSchema = z
     attemptId: EntityIdV1Schema,
     /** Null until the wallet answers. A marker in this state records only that
      * a wallet was opened. */
-    batchId: z.string().min(1).max(200).nullable(),
+    batchId: z.string().min(1).max(SUBMISSION_BATCH_ID_MAX_V1).nullable(),
     goal: SubmissionGoalV1Schema,
     routeRunId: EntityIdV1Schema,
     blueprintId: EntityIdV1Schema,

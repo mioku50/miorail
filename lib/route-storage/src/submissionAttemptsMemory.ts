@@ -4,6 +4,7 @@ import {
   applySubmissionAttemptUpdateV1,
   assertSubmissionAttemptV1,
   newSubmissionAttemptV1,
+  RECOVERABLE_ATTEMPTS_LIMIT_V1,
   submissionAttemptBatchEffectV1,
   submissionAttemptConflictV1,
   submissionAttemptCreateEffectV1,
@@ -120,7 +121,12 @@ export class InMemorySubmissionAttemptRepositoryV1 implements SubmissionAttemptR
       .filter(
         (row) => row.tenantId === tenantId && row.walletAddress === wallet && submissionAttemptIsOpenV1(row),
       )
-      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .sort(
+        (left, right) =>
+          Number(left.status === 'confirmed') - Number(right.status === 'confirmed') ||
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      )
+      .slice(0, RECOVERABLE_ATTEMPTS_LIMIT_V1)
       .map((row) => this.clone(assertSubmissionAttemptV1(row, 'read')));
   }
 }

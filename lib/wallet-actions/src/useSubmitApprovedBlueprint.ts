@@ -644,8 +644,8 @@ export function useSubmitApprovedBlueprint({
     // A press that came here from a batch the wallet refused opened an attempt
     // for that batch. When this path stops before a step is sent, nothing was
     // sent and nothing will be: the attempt is closed with what was said.
-    // Left open, it stayed among "Wallet requests to check" for a transaction
-    // that never existed (2026-11-11: eleven of them on one wallet).
+    // Left open, it would stay among "Wallet requests to check" for a
+    // transaction that never existed.
     const closeCarriedAttempt = async (message: string) => {
       const attempt = attemptRef.current;
       const carried = approvedRef.current;

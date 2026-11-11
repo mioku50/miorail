@@ -7,6 +7,7 @@ import {
   applySubmissionAttemptUpdateV1,
   assertSubmissionAttemptV1,
   newSubmissionAttemptV1,
+  RECOVERABLE_ATTEMPTS_LIMIT_V1,
   submissionAttemptBatchEffectV1,
   submissionAttemptConflictV1,
   submissionAttemptCreateEffectV1,
@@ -217,7 +218,7 @@ export function createDatabaseSubmissionAttemptRepository(
         FROM submission_attempts
         WHERE user_id = ${tenantId} AND wallet_address = ${walletAddress.toLowerCase()}
           AND status = ANY(${OPEN_STATUSES_V1})
-        ORDER BY updated_at DESC LIMIT 20`;
+        ORDER BY (status = 'confirmed'), updated_at DESC LIMIT ${RECOVERABLE_ATTEMPTS_LIMIT_V1}`;
       return (rows as Record<string, unknown>[]).map(rowToAttemptV1);
     },
   };
