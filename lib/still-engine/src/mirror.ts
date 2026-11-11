@@ -37,6 +37,22 @@ import type {
 import type { Outcome } from './rpc.js';
 
 const SECONDS_PER_YEAR = 31_536_000n;
+
+/**
+ * What a year of a Morpho loan costs at the rate it charges now, in basis points.
+ *
+ * Morpho states a rate per second and compounds it at every accrual, so a year costs more than the
+ * rate times the seconds in it. Until 2026-11-11 this was that plain product: a cbBTC market at
+ * 1,674,105,673 per second read "5.28% a year" where a year costs 5.42%, the figure Morpho's own app
+ * shows (audit DATA-2). The arithmetic is Morpho's `wTaylorCompounded`, three terms of e^x - 1, the
+ * same it accrues interest with. Rounded up: a cost is never understated.
+ */
+export function morphoYearlyRateBpsV1(ratePerSecondWad: bigint): number {
+  const first = ratePerSecondWad * SECONDS_PER_YEAR;
+  const second = (first * first) / (2n * WAD);
+  const third = (second * first) / (3n * WAD);
+  return Number(mulDiv(first + second + third, BPS, WAD, 'up'));
+}
 const USDC_DECIMALS = 6;
 const PRICE_SCALE_MORPHO = 10n ** 36n;
 
@@ -514,7 +530,7 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
         debtAtomic: debt === undefined ? null : debt.toString(),
         capacityCents: cents(capacity),
         availableCents: cents(available),
-        borrowRateBps: rate === undefined ? null : Number(mulDiv(rate * SECONDS_PER_YEAR, BPS, WAD, 'up')),
+        borrowRateBps: rate === undefined ? null : morphoYearlyRateBpsV1(rate),
         liquidityCents: liquidity === undefined ? null : usdcToCents(liquidity, 'down').toString(),
         deductions: deductionsOf(capacity, debtCents, available),
         safety,

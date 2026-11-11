@@ -95,8 +95,10 @@ export interface VenueLine {
   /** Still's limit from this venue's collateral, before debts. */
   capacityCents: string | null;
   availableCents: string | null;
-  /** Borrow rate a year in basis points, as the venue reports it now. On Aave V4 it includes the
-   * position's risk premium, which a loan SPCXc covers pays (10% of the drawn rate). */
+  /** What a year of this loan costs at the rate charged now, in basis points. On Morpho it is the
+   * per-second rate compounded over a year, as Morpho's own app states it. On Aave V4 it is the
+   * rate the hub states, and it includes the position's risk premium, which a loan SPCXc covers
+   * pays (10% of the drawn rate). */
   borrowRateBps: number | null;
   /** What the venue can lend now; the available amount never exceeds it. */
   liquidityCents: string | null;

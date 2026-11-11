@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import type { CalendarRead } from '../src/calendar.js';
-import { computeMirror } from '../src/mirror.js';
+import { computeMirror, morphoYearlyRateBpsV1 } from '../src/mirror.js';
 import type { MirrorReport } from '../src/report.js';
 import { EXAMPLE, SATURDAY, SUNDAY, WEEKDAY, calendar, ok, reverted, snapshot, universe, type Holdings } from './fixtures.js';
 import { assertMatches } from './matches.js';
@@ -371,3 +371,23 @@ describe('SPCXc, the stock with a collateral risk', () => {
   });
 });
 
+describe('what a year of a Morpho loan costs', () => {
+  it('is the per-second rate compounded over a year, as Morpho states it, not the rate times the seconds', () => {
+    // Audit DATA-2, block 55,685,761: cbBTC at 1,674,105,673 a second. The plain product is 5.279%, which
+    // Still showed as "5.28% a year"; Morpho's own app showed 5.42%, and so does a year of that loan.
+    assert.equal(morphoYearlyRateBpsV1(1_674_105_673n), 543);
+    // WETH in the same block: 5.320% plain, 5.464% compounded.
+    assert.equal(morphoYearlyRateBpsV1(1_686_960_000n), 547);
+    assert.equal(morphoYearlyRateBpsV1(0n), 0);
+    // A cost is rounded up, never down: one unit a second over a year is under a basis point, and reads as one.
+    assert.equal(morphoYearlyRateBpsV1(1n), 1);
+  });
+
+  it('is what the Mirror reports for a Morpho loan', () => {
+    const morpho = run().venues.find((row) => row.venue === 'morpho');
+    assert.ok(morpho, 'the example wallet has a Morpho line');
+    // The fixture's market charges 1,665,852,318 a second: 5.2534% plain, 5.3939% compounded.
+    assert.equal(morpho.borrowRateBps, morphoYearlyRateBpsV1(1_665_852_318n));
+    assert.equal(morpho.borrowRateBps, 540);
+  });
+});
