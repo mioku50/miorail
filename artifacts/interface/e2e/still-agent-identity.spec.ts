@@ -42,6 +42,7 @@ async function install(page: Page) {
     export function StillMorePage() { return null; }
     export function StillAssistantsPage() { return null; }
     export function StillSafetyPage() { return null; }
+    export function StillWatchGate({children}) { return children; }
   ` }));
   await page.goto('/agent');
   await expect(page.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();

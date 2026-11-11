@@ -123,7 +123,8 @@ for (const width of [390, 1280]) {
     await expect(holdings.nth(1)).toContainText('Ether0 ETH');
     await expect(page.getByText(/^Read from Base at block 53,000,000\./)).toBeVisible();
     await page.getByRole('tab', { name: 'Loans · 1', exact: true }).click();
-    await expect(page.getByText('Prices can fall 52% together before liquidation.', { exact: true })).toBeVisible();
+    // One stock is pledged, so the sentence names it; "together" is for a loan against several.
+    await expect(page.getByText('NVIDIA can fall 52% before liquidation.', { exact: true })).toBeVisible();
     await noSidewaysScroll(page);
     await page.screenshot({ path: testInfo.outputPath(`assets-${width}.png`), fullPage: true });
 
@@ -371,7 +372,10 @@ for (const width of [390, 1366, 1920]) {
     await page.goto('/');
     const money = page.getByLabel('$784.62 modelled borrowing room', { exact: true });
     await expect(money).toBeVisible();
-    await expect(page.getByText('Not checked', { exact: true })).toBeVisible();
+    // Home does not read the live limit and no longer says "Not checked", which read as a failure:
+    // it says where the limit is read, and that is a link there.
+    await expect(page.getByText('Not checked', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Read it in Get money', exact: true })).toHaveAttribute('href', '/borrow');
     await expect(page.getByText('Available to spend', { exact: true })).toHaveCount(0);
     const actionBox = await page.getByRole('link', { name: 'Get money', exact: true }).boundingBox();
     expect(actionBox!.y + actionBox!.height).toBeLessThan(height - (width < 900 ? 76 : 0));
