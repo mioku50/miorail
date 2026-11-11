@@ -246,3 +246,47 @@ test('with neither gas-USD field the route still quotes, unscored rather than re
   if (result.outcome !== 'quoted') return;
   assert.equal(result.candidate.estimatedGas.estimatedCostUsd, null);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-11: the trade API states price impact against its own reference, and for a buy of a
+// tokenized stock the figure is often below zero (−0.02 for NVDAc, −100 for TSLAc). Each of those was
+// read as a malformed answer and refused the whole quote, which left Swap AI with one router.
+// ---------------------------------------------------------------------------
+
+async function quotedWithImpact(priceImpact: unknown) {
+  const intent = makeIntent();
+  const payload = uniswapResponse(intent) as { quote: Record<string, unknown> };
+  delete payload.quote.priceImpactBps;
+  delete payload.quote.priceImpactPct;
+  payload.quote.priceImpact = priceImpact;
+  return adapterFor(payload).quote({ intent, walletAddress: WALLET, requestId: 'uniswap-impact', now: NOW });
+}
+
+test('a route that beats Uniswap’s reference price by a little quotes with no adverse impact', async () => {
+  for (const stated of [-0.04, -0.02, '-0.5', -1]) {
+    const result = await quotedWithImpact(stated);
+    if (result.outcome !== 'quoted') throw new Error(`refused ${String(stated)}: ${result.errorCode}`);
+    assert.equal(result.candidate.priceImpact?.bps, 0);
+    // The amounts are untouched by it.
+    assert.equal(result.candidate.expectedOutput.amountAtomic, '38000000000000000');
+  }
+});
+
+test('a figure far below zero says the reference is wrong: the quote stands, and no impact is stated', async () => {
+  for (const stated of [-100, -10.54, '-1.01']) {
+    const result = await quotedWithImpact(stated);
+    if (result.outcome !== 'quoted') throw new Error(`refused ${String(stated)}: ${result.errorCode}`);
+    assert.equal(result.candidate.priceImpact, null);
+  }
+});
+
+test('an unreadable price impact is still refused, and a positive one is read as before', async () => {
+  for (const stated of ['', 'n/a', '-', '--1', null]) {
+    const result = await quotedWithImpact(stated);
+    assert.notEqual(result.outcome, 'quoted', `accepted ${JSON.stringify(stated)}`);
+    if (result.outcome !== 'quoted') assert.match(result.errorCode, /^provider_(price_impact_invalid|invalid_schema)$/);
+  }
+  const positive = await quotedWithImpact(0.3);
+  if (positive.outcome !== 'quoted') throw new Error(`refused: ${positive.errorCode}`);
+  assert.equal(positive.candidate.priceImpact?.bps, 30);
+});

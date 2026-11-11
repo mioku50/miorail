@@ -17,7 +17,7 @@ import {
   routeCardIntentFixture,
   routeCardQuotedAdapterFixture,
 } from '../../../lib/route-card/test/fixtures.js';
-import { raiseVerificationDepthV1, RoutePlanCoordinator, timedSwapAdaptersV1 } from './routePlanCoordinator.js';
+import { createProviderRestV1, raiseVerificationDepthV1, RoutePlanCoordinator, timedSwapAdaptersV1 } from './routePlanCoordinator.js';
 
 const input = {
   tenantId: 'tenant-card',
@@ -432,5 +432,79 @@ describe('the comparison says which provider it waited for', () => {
     assert.equal(await fast!.quote({} as never), quoted);
     await assert.rejects(() => broken!.quote({} as never), /boom/);
     assert.deepEqual(durations, { kyberswap: 900, hydrex: 6_300 });
+  });
+});
+
+// 2026-11-11: Hydrex's API went dark on 11-09, and every comparison waited its whole ten seconds for it.
+describe('a router that stopped answering rests', () => {
+  const unreachable = { outcome: 'unavailable', provider: 'hydrex', errorCode: 'provider_unreachable', retryable: true } as const;
+  const noRoute = { outcome: 'unavailable', provider: 'hydrex', errorCode: 'provider_no_route', retryable: false } as const;
+  const free = { intent: { protocolConstraint: { mode: 'none', protocols: [] } } } as never;
+  const named = { intent: { protocolConstraint: { mode: 'include_only', protocols: ['hydrex'] } } } as never;
+
+  test('after two answers that never came it is not asked for five minutes, then asked once', async () => {
+    let clock = 0, asked = 0, answer: typeof unreachable | typeof noRoute = unreachable;
+    const rest = createProviderRestV1({ now: () => clock });
+    const [hydrex] = rest.wrap([{ id: 'hydrex', supports: () => true, quote: async () => { asked += 1; return answer; } }]);
+    assert.equal(await hydrex!.quote(free), unreachable);
+    assert.deepEqual(rest.resting(), []);
+    assert.equal(await hydrex!.quote(free), unreachable);
+    assert.equal(asked, 2);
+    assert.deepEqual(rest.resting(), ['hydrex']);
+    // Resting: answered at once, with the same words, and the router is not asked.
+    clock += 4 * 60_000;
+    assert.deepEqual(await hydrex!.quote(free), unreachable);
+    assert.equal(asked, 2);
+    // The rest is over: one comparison asks, and one more silence rests it again at once.
+    clock += 61_000;
+    assert.equal(await hydrex!.quote(free), unreachable);
+    assert.equal(asked, 3);
+    assert.deepEqual(rest.resting(), ['hydrex']);
+    // It answers again, with anything at all: it is asked every time from then on.
+    clock += 5 * 60_000 + 1;
+    answer = noRoute;
+    assert.equal(await hydrex!.quote(free), noRoute);
+    assert.equal(await hydrex!.quote(free), noRoute);
+    assert.equal(asked, 5);
+    assert.deepEqual(rest.resting(), []);
+  });
+
+  test('one silence is not a rest, a timeout counts as one, and a throttle or a refusal never does', async () => {
+    let clock = 0;
+    const answers: unknown[] = [
+      unreachable, noRoute, { outcome: 'timeout', provider: 'hydrex', errorCode: 'provider_timeout', retryable: true },
+      { outcome: 'rate_limited', provider: 'hydrex', errorCode: 'provider_rate_limited', retryable: true },
+      { outcome: 'timeout', provider: 'hydrex', errorCode: 'provider_timeout', retryable: true }, unreachable,
+    ];
+    const rest = createProviderRestV1({ now: () => clock });
+    const [hydrex] = rest.wrap([{ id: 'hydrex', supports: () => true, quote: async () => answers.shift() as never }]);
+    for (const expected of [[], [], [], [], [], ['hydrex']]) {
+      await hydrex!.quote(free);
+      clock += 1_000;
+      assert.deepEqual(rest.resting(), expected);
+    }
+  });
+
+  test('a router the person asked for by name is always asked', async () => {
+    let asked = 0;
+    const rest = createProviderRestV1({ now: () => 0 });
+    const [hydrex] = rest.wrap([{ id: 'hydrex', supports: () => true, quote: async () => { asked += 1; return unreachable; } }]);
+    await hydrex!.quote(free);
+    await hydrex!.quote(free);
+    assert.deepEqual(rest.resting(), ['hydrex']);
+    assert.equal(await hydrex!.quote(named), unreachable);
+    assert.equal(asked, 3);
+  });
+
+  test('each router rests by itself', async () => {
+    const rest = createProviderRestV1({ now: () => 0 });
+    let kyber = 0;
+    const [hydrex, kyberswap] = rest.wrap([
+      { id: 'hydrex', supports: () => true, quote: async () => unreachable },
+      { id: 'kyberswap', supports: () => true, quote: async () => { kyber += 1; return { ...noRoute, provider: 'kyberswap' } as never; } },
+    ]);
+    for (let i = 0; i < 3; i++) { await hydrex!.quote(free); await kyberswap!.quote(free); }
+    assert.equal(kyber, 3);
+    assert.deepEqual(rest.resting(), ['hydrex']);
   });
 });

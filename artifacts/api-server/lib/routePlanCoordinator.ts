@@ -10,7 +10,7 @@ import type {
   SwapPendingIntentRepositoryV1,
   SwapPendingIntentRowV1,
 } from '@mioagent/route-storage';
-import type { SwapRouteAdapter } from '@mioagent/swap-adapters';
+import { providerFailure, type SwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
   resolveSwapIntentWithLlmV2,
   type IntentResolutionV2,
@@ -30,6 +30,8 @@ export interface RoutePlanCoordinatorDependencies {
   llm: LlmProvider;
   engine: SwapRouteEngine;
   adapters: SwapRouteAdapter[];
+  /** Which routers are not asked for a while because they stopped answering. Absent: the process's own. */
+  providerRest?: ProviderRestV1;
   repository: RouteStorageRepository;
   /** Absent means no continuation: every request is read on its own, exactly as
    * before this existed. Supplied only where the table is present. */
@@ -134,6 +136,56 @@ export function timedSwapAdaptersV1(
     },
   }));
 }
+
+// ---------------------------------------------------------------------------
+// A router that has stopped answering is not waited for on every comparison
+// (2026-11-11).
+//
+// The engine waits for the slowest quote. Hydrex's API went dark on 2026-11-09
+// at about 20:00 UTC, and from then on every comparison took its whole ten
+// seconds to be told nothing, the two a second the others need notwithstanding.
+// After two answers in a row that never came, a router rests for five minutes:
+// it is reported unreachable at once, as it was a moment ago, and asked again
+// when the rest is over. One slow comparison in five minutes finds out when it
+// is back. A router the person asked for by name ("Use Hydrex only") is always
+// asked: there the wait is the answer they want.
+// ---------------------------------------------------------------------------
+export const PROVIDER_REST_AFTER_V1 = 2;
+export const PROVIDER_REST_MS_V1 = 5 * 60_000;
+
+export function createProviderRestV1(options: { now?: () => number; after?: number; restMs?: number } = {}) {
+  const now = options.now ?? Date.now, after = options.after ?? PROVIDER_REST_AFTER_V1, restMs = options.restMs ?? PROVIDER_REST_MS_V1;
+  const silent = new Map<string, { count: number; restUntil: number }>();
+  return {
+    wrap(adapters: readonly SwapRouteAdapter[]): SwapRouteAdapter[] {
+      return adapters.map((adapter) => ({
+        id: adapter.id,
+        supports: (intent) => adapter.supports(intent),
+        async quote(input) {
+          const constraint = input.intent.protocolConstraint;
+          const named = constraint.mode === 'include_only' && constraint.protocols.includes(adapter.id);
+          const state = silent.get(adapter.id);
+          if (!named && state && state.restUntil > now()) return providerFailure(adapter.id, 'provider_unreachable');
+          const result = await adapter.quote(input);
+          const unanswered = result.outcome !== 'quoted' && (result.outcome === 'timeout' || result.errorCode === 'provider_unreachable');
+          if (!unanswered) silent.delete(adapter.id);
+          else {
+            const count = (state?.count ?? 0) + 1;
+            silent.set(adapter.id, { count, restUntil: count >= after ? now() + restMs : 0 });
+          }
+          return result;
+        },
+      }));
+    },
+    /** Which routers rest now. */
+    resting: (): string[] => [...silent].filter(([, state]) => state.restUntil > now()).map(([id]) => id).sort(),
+    /** Testing seam. */
+    reset(): void { silent.clear(); },
+  };
+}
+export type ProviderRestV1 = ReturnType<typeof createProviderRestV1>;
+/** One for the process: a router is unreachable for every wallet at once. */
+export const providerRestV1: ProviderRestV1 = createProviderRestV1();
 
 export class RoutePlanCoordinator {
   constructor(private readonly dependencies: RoutePlanCoordinatorDependencies) {}
@@ -261,7 +313,7 @@ export class RoutePlanCoordinator {
       walletAddress: input.walletAddress,
       requestId: input.requestId,
       now: input.now,
-      adapters: timedSwapAdaptersV1(this.dependencies.adapters, quoteMs),
+      adapters: timedSwapAdaptersV1((this.dependencies.providerRest ?? providerRestV1).wrap(this.dependencies.adapters), quoteMs),
       repository: this.dependencies.repository,
       loadReliability: loader
         ? async (candidates) => {
@@ -302,6 +354,8 @@ export class RoutePlanCoordinator {
       reason: evaluation.reason,
       routeCard: routeCard ? 'built' : 'none',
       quoted: evaluation.candidates.map((candidate) => candidate.provider.id).sort(),
+      // Routers not asked this time: they did not answer the last two comparisons (createProviderRestV1).
+      resting: (this.dependencies.providerRest ?? providerRestV1).resting(),
       refused: evaluation.adapterFailures.map(
         (failure) => `${failure.provider}:${failure.errorCode}`,
       ).sort(),
