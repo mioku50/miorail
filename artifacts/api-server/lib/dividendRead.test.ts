@@ -5,7 +5,7 @@ import { B20_CORPORATE_ACTION_TOPICS_V1, type B20MultiplierEventV1 } from '@mioa
 import type { B20CorporateActionRowV1 } from '@mioagent/route-storage';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 
-import { dividendNoticesFromActionsV1, readDividendCalendarV1, type DividendReadDepsV1 } from './dividendRead.js';
+import { dividendNoticesFromActionsV1, dividendPriceWindowsV1, readDividendCalendarV1, type DividendReadDepsV1 } from './dividendRead.js';
 
 const GOOGLC = '0xb2000000000000000000002d0ba3164cc74f58b7';
 const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
@@ -182,6 +182,36 @@ describe('the dividend calendar, read', () => {
     assert.equal(paid.state, 'effective');
     assert.equal(paid.token.at, '2026-09-14T22:21:00.000Z');
     assert.equal(paid.token.priceUsd, '348.89');
+  });
+});
+
+describe('the windows of old runs the calendar reads (audit OPS-7)', () => {
+  const NOW = new Date('2026-09-30T12:00:00.000Z');
+
+  test('they are exactly the windows the calendar asks its price reader for', async () => {
+    // The cash-exit pass keeps the runs inside these when it removes old ones. They are found by running
+    // the calendar with a reader that only writes down what it is asked, so the two cannot disagree.
+    const deps = depsV1();
+    await readDividendCalendarV1(NOW, deps);
+    const asked = deps.windows.map((window) => { const [since, until] = window.split('..'); return { since, until }; });
+    assert.deepEqual(await dividendPriceWindowsV1(NOW, depsV1()), asked);
+    assert.deepEqual(asked, [
+      { since: '2026-09-14T12:29:21.000Z', until: '2026-09-14T19:29:21.000Z' },
+      { since: '2026-09-30T00:00:00.000Z', until: '2026-09-30T12:00:00.000Z' },
+    ]);
+  });
+
+  test('the real price reader is never asked: finding the windows reads no run', async () => {
+    let asked = 0;
+    const windows = await dividendPriceWindowsV1(NOW, depsV1({ async references() { asked += 1; return []; } }));
+    assert.equal(asked, 0);
+    assert.equal(windows.length, 2);
+  });
+
+  test('a read the calendar depends on that fails makes it throw, so that nothing is removed on a guess', async () => {
+    await assert.rejects(() => dividendPriceWindowsV1(NOW, depsV1({ async transitions() { throw new Error('database is down'); } })), /database is down/);
+    await assert.rejects(() => dividendPriceWindowsV1(NOW, depsV1({ async multiplierEvents() { throw new Error('actions unread'); } })), /actions unread/);
+    await assert.rejects(() => dividendPriceWindowsV1(NOW, depsV1({ async tokens() { throw new Error('registry unread'); } })), /registry unread/);
   });
 });
 

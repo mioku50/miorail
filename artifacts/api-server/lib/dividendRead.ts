@@ -220,6 +220,31 @@ export function dividendNoticesFromActionsV1(rows: readonly B20CorporateActionRo
 /** One read of a token's corporate actions serves its multiplier events and
  * its notices in the same calendar read. */
 const actionsReadV1 = new Map<string, { at: number; rows: Promise<B20CorporateActionRowV1[]> }>();
+/**
+ * The windows of stored public-ladder runs the calendar reads prices from: the moment of each
+ * multiplier change, and the last hours.
+ *
+ * Found by running the calendar itself with a price reader that only writes down what it was asked,
+ * so the answer cannot drift from the calendar's own code. The cash-exit pass keeps the runs inside
+ * these windows when it removes old ones (audit OPS-7): they are the only stored runs anything reads
+ * after a week. A read the calendar depends on that fails makes this throw, and a caller that could
+ * not learn the windows must remove nothing.
+ */
+export async function dividendPriceWindowsV1(
+  now: Date,
+  deps: DividendReadDepsV1 = databaseDividendReadDepsV1,
+): Promise<Array<{ since: string; until: string }>> {
+  const asked: Array<{ since: string; until: string }> = [];
+  await readDividendCalendarV1(now, {
+    ...deps,
+    async references(_tokens, window) {
+      asked.push({ since: window.since.toISOString(), until: window.until.toISOString() });
+      return [];
+    },
+  });
+  return asked;
+}
+
 function actionsForV1(tokenAddress: string): Promise<B20CorporateActionRowV1[]> {
   const now = Date.now();
   const hit = actionsReadV1.get(tokenAddress);

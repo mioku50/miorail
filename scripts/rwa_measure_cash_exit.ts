@@ -64,6 +64,7 @@ import {
   budgetedRpcConfigFromEnvV1,
   createBudgetedReaderV1,
 } from '../artifacts/api-server/lib/budgetedRpc.js';
+import { dividendPriceWindowsV1 } from '../artifacts/api-server/lib/dividendRead.js';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
@@ -73,6 +74,12 @@ import {
   errorCodeSummaryV1,
   throttledPassV1,
 } from './rwaCashExitPacer.js';
+import {
+  CASH_EXIT_RETENTION_BATCH_V1,
+  cashExitRetentionDaysV1,
+  cashExitRetentionLineV1,
+  cashExitRetentionPlanV1,
+} from './rwaCashExitRetention.js';
 import {
   CORPUS_PAGE_LIMIT_V1,
   corpusV1,
@@ -393,6 +400,24 @@ async function main(): Promise<void> {
       `${Math.round(quotes.waitedMs / 1000)}s of waiting, ${quotes.rateLimited} still rate limited (${share}%); ` +
       `one quote every ${quotes.gapMs} ms at the end, ${quotes.longestGapMs} ms at the slowest`,
   );
+  // Old ladders go here, after the pass has measured and said what it measured. Off unless the
+  // deployment says how many days to keep, and a failure in it never fails the pass: the pass's
+  // work is the measurement.
+  const keepDays = cashExitRetentionDaysV1(process.env);
+  if (keepDays !== null) {
+    try {
+      const windows = await dividendPriceWindowsV1(new Date());
+      const plan = cashExitRetentionPlanV1({ days: keepDays, nowMs: Date.now(), windows });
+      if (!plan) {
+        console.log('retention: skipped, a window the dividend calendar reads is not a time; nothing was removed');
+      } else {
+        const removed = await cashExit.pruneCompletedBefore({ chainId: 8453, ...plan, limit: CASH_EXIT_RETENTION_BATCH_V1 });
+        console.log(cashExitRetentionLineV1({ days: keepDays, removed, kept: plan.keep.length }));
+      }
+    } catch (error) {
+      console.log(`retention: skipped, the windows to keep could not be read (${error instanceof Error ? error.message.slice(0, 120) : 'unknown'}); nothing was removed`);
+    }
+  }
   // A pass the router throttled out of most of its work did not do its work. The exit code says so, and
   // the service alerts carry a failed unit to Telegram and say when it recovers.
   if (throttledPassV1(quotes)) {
