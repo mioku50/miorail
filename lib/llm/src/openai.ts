@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
 export interface OpenAiConfig {
@@ -107,9 +108,16 @@ export class OpenAiCompatibleClient implements LlmProvider {
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
     const timeoutMs = Math.max(1, Math.min(CLIENT_TIMEOUT_MS_V1, Math.floor(request.timeoutMs ?? CLIENT_TIMEOUT_MS_V1)));
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = request.signal
+      ? AbortSignal.any([request.signal, timeoutSignal])
+      : timeoutSignal;
     try {
-      return await this.generateWithin(request, AbortSignal.timeout(timeoutMs));
+      return await abortableV1(signal, () => this.generateWithin(request, signal));
     } catch (error) {
+      // A caller's reason belongs to the whole request, even when it happens
+      // to be a TimeoutError. It must not become a retryable provider timeout.
+      request.signal?.throwIfAborted();
       // The signal also aborts reading the body, so a stalled stream lands
       // here too. Named, so a fallover line says what happened.
       if (error instanceof Error && error.name === 'TimeoutError') throw new LlmTimeoutError(timeoutMs);

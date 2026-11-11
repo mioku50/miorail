@@ -101,6 +101,38 @@ async function readyRepository() {
   return repository;
 }
 
+test('disconnect during Moonwell security loading cannot prepare or store an action later', async () => {
+  await readyRepository();
+  const controller = new AbortController();
+  let started!: () => void;
+  let finish!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const delayed = new Promise<void>(resolve => { finish = resolve; });
+  executionSecurityRuntime.getProvider = (() => ({
+    providerName: 'goplus', status: 'partial', statusCode: 'partial', authMode: 'public',
+    provider: { async getTokenSecurity({ tokenAddresses }: { tokenAddresses: string[] }) {
+      started();
+      await delayed;
+      return tokenAddresses.map(address => ({ address, provider: 'goplus' as const, status: 'ok' as const,
+        flags: {}, rawRiskLabels: [], summary: 'usable' }));
+    } },
+  })) as typeof executionSecurityRuntime.getProvider;
+  let inserted = 0;
+  moonwellWriteRuntime.insertAction = async () => { inserted++; };
+  const provider = new MoonwellProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const run = runDirectMoonwellWrite({ signal: controller.signal, message: 'supply 100 USDC to moonwell',
+    walletAddress: WALLET, tools, userConfirmedEnabled: true, userId: 'default-user' });
+  await ready;
+  controller.abort(new Error('unit disconnect'));
+  await assert.rejects(run, /unit disconnect/);
+  finish();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(inserted, 0);
+  assert.equal(provider.calls.length, 0);
+});
+
 test('Moonwell write intent detector requires moonwell plus a quantified verb', () => {
   assert.deepEqual(detectMoonwellWriteIntent('Supply 100 USDC to Moonwell'), {
     verb: 'supply', amount: 100, amountText: '100', asset: 'USDC',

@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 // T44: BaseApp-native Moonwell write flow. Detects an explicit Moonwell
 // supply/withdraw/borrow/repay command, applies the SAME production gates as
 // the Base MCP send/swap routes (execution capability, autonomy policy,
@@ -112,6 +113,7 @@ function healthLabel(health: number | null): string {
 }
 
 export async function runDirectMoonwellWrite(input: {
+  signal?: AbortSignal;
   message: string;
   normalizedIntent?: MoonwellWriteIntent;
   walletAddress?: string;
@@ -119,6 +121,8 @@ export async function runDirectMoonwellWrite(input: {
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectMoonwellWriteResult | null> {
+  input.signal?.throwIfAborted();
+  const wait = <T>(work: () => PromiseLike<T> | T) => abortableV1(input.signal, work);
   const intent = input.normalizedIntent ?? detectMoonwellWriteIntent(input.message);
   if (!intent) return null;
 
@@ -135,7 +139,7 @@ export async function runDirectMoonwellWrite(input: {
   // send/swap. The policy accounts spending in USDC, so only USDC amounts are
   // supported (same restriction the swap route applies).
   const repository = moonwellWriteRuntime.getRepository();
-  const policy = await repository.getByUser(input.userId, 8453);
+  const policy = await wait(() => repository.getByUser(input.userId, 8453));
   if (!policy || !policy.isActive || policy.killSwitch || !policy.mainnetOptIn
     || policy.expiresAt <= Date.now() || policy.walletAddress !== walletAddress) {
     return blocked('Connect your wallet to prepare this deposit. Miorail can compare Earn routes without it.', 'mainnet_policy_not_ready');
@@ -149,7 +153,7 @@ export async function runDirectMoonwellWrite(input: {
 
   // 3) Security screening — same GoPlus context as send (canonical Base USDC).
   const canonicalUsdc = canonicalUsdcForBaseChain(8453).toLowerCase();
-  const security = await loadTokenSecurityContext(8453, [canonicalUsdc]);
+  const security = await wait(() => loadTokenSecurityContext(8453, [canonicalUsdc]));
   const verdict = security.tokenSecurity.find((item) => item.address.toLowerCase() === canonicalUsdc);
   const screening = screenAction({
     instruction: input.message,
@@ -163,8 +167,9 @@ export async function runDirectMoonwellWrite(input: {
   const callTool = async (name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean; errorCode?: string }> => {
     let called: { content: string; isError: boolean };
     try {
-      called = await input.tools.callTool(name, args);
+      called = await wait(() => input.tools.callTool(name, args));
     } catch {
+      input.signal?.throwIfAborted();
       called = { content: JSON.stringify({ errorCode: 'moonwell_tool_unavailable' }), isError: true };
     }
     const errorCode = called.isError ? sanitizedToolErrorCode(called.content, 'moonwell_tool_failed') : undefined;
@@ -180,7 +185,7 @@ export async function runDirectMoonwellWrite(input: {
   // 4) Health factor before borrow/withdraw — official plugin rule.
   let healthNote = '';
   if (intent.verb === 'borrow' || intent.verb === 'withdraw') {
-    const health = await callTool('moonwell_get_health', { chain: 'base', address: walletAddress });
+    const health = await wait(() => callTool('moonwell_get_health', { chain: 'base', address: walletAddress }));
     if (health.errorCode) {
       return {
         kind: 'moonwell_write',
@@ -202,12 +207,12 @@ export async function runDirectMoonwellWrite(input: {
   }
 
   // 5) Prepare — server-side HTTP via the moonwell_prepare_* tool (partnerFetch).
-  const prepare = await callTool(`moonwell_prepare_${intent.verb}`, {
+  const prepare = await wait(() => callTool(`moonwell_prepare_${intent.verb}`, {
     chain: 'base',
     asset: intent.asset,
     amountDecimal: intent.amountText,
     from: walletAddress,
-  });
+  }));
   if (prepare.errorCode) {
     return {
       kind: 'moonwell_write',
@@ -221,6 +226,7 @@ export async function runDirectMoonwellWrite(input: {
     const parsed = JSON.parse(prepare.content) as { transactions?: Array<{ to: string; data?: string; value?: string; chainId?: number }> };
     transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
   } catch {
+    input.signal?.throwIfAborted();
     transactions = [];
   }
   if (transactions.length === 0) {
@@ -251,7 +257,7 @@ export async function runDirectMoonwellWrite(input: {
     actionType: `moonwell_${intent.verb}` as const,
     calls: transactions.map((tx) => ({ to: tx.to, value: tx.value || '0', data: tx.data || '0x' })),
   };
-  const guard = await evaluateExecutableAction({
+  const guard = await wait(() => evaluateExecutableAction({
     chain: 'eip155:8453',
     actionType: payload.actionType,
     calls: payload.calls,
@@ -259,7 +265,7 @@ export async function runDirectMoonwellWrite(input: {
     providerContext: security.providerContext,
     tokenSecurity: security.tokenSecurity,
     moonwell: { amountDecimal: intent.amountText },
-  });
+  }));
   const simulation = guard.simulation || {
     success: false,
     allowed: false,
@@ -298,7 +304,7 @@ export async function runDirectMoonwellWrite(input: {
     },
   };
   try {
-    await moonwellWriteRuntime.insertAction({
+    await wait(() => moonwellWriteRuntime.insertAction({
       id: actionId,
       userId: input.userId,
       kind: 'transaction',
@@ -308,8 +314,9 @@ export async function runDirectMoonwellWrite(input: {
       metadata,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
+    }));
   } catch {
+    input.signal?.throwIfAborted();
     return {
       kind: 'moonwell_write',
       content: 'Moonwell prepared the transaction, but the action record could not be stored. Retry.',

@@ -139,3 +139,110 @@ test('a 429 with a zero allowance is told apart from a busy minute', async () =>
     (error: unknown) => error instanceof LlmHttpError && error.status === 429 && !error.zeroAllowance,
   );
 });
+
+test('a caller that already left never starts an upstream request', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller_disconnected');
+  controller.abort(reason);
+  let calls = 0;
+  const upstream = new OpenAiCompatibleClient({
+    baseUrl: 'https://gateway.example',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'test-model',
+    fetchImpl: async () => {
+      calls += 1;
+      return respond({ choices: [{ message: { role: 'assistant', content: 'too late' } }] });
+    },
+  });
+
+  await assert.rejects(
+    upstream.generate({ messages: [{ role: 'user', content: 'hi' }], signal: controller.signal }),
+    (error: unknown) => error === reason,
+  );
+  assert.equal(calls, 0);
+});
+
+test('caller cancellation stops waiting even when fetch ignores its signal', async () => {
+  const controller = new AbortController();
+  // A whole-request deadline must retain its identity instead of becoming a
+  // per-provider timeout that a chain could retry.
+  const reason = new DOMException('whole_request_deadline', 'TimeoutError');
+  let observedSignal: AbortSignal | null | undefined;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  const upstream = new OpenAiCompatibleClient({
+    baseUrl: 'https://gateway.example',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'test-model',
+    fetchImpl: (_url, init) => {
+      observedSignal = init?.signal;
+      started();
+      return new Promise<Response>(() => undefined);
+    },
+  });
+
+  const generation = upstream.generate({
+    messages: [{ role: 'user', content: 'hi' }],
+    signal: controller.signal,
+  });
+  const rejected = assert.rejects(generation, (error: unknown) => error === reason);
+  await ready;
+  controller.abort(reason);
+  await rejected;
+  assert.equal(observedSignal?.aborted, true);
+  assert.equal(observedSignal?.reason, reason);
+});
+
+test('caller cancellation also stops a stalled response body', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller_disconnected');
+  let readingBody!: () => void;
+  const ready = new Promise<void>((resolve) => { readingBody = resolve; });
+  const upstream = new OpenAiCompatibleClient({
+    baseUrl: 'https://gateway.example',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'test-model',
+    fetchImpl: async () => {
+      const response = respond({ choices: [] });
+      response.json = async () => {
+        readingBody();
+        return new Promise<never>(() => undefined);
+      };
+      return response;
+    },
+  });
+
+  const generation = upstream.generate({
+    messages: [{ role: 'user', content: 'hi' }],
+    signal: controller.signal,
+  });
+  const rejected = assert.rejects(generation, (error: unknown) => error === reason);
+  await ready;
+  controller.abort(reason);
+  await rejected;
+});
+
+test('a provider timeout remains retryable while the caller is still present', async () => {
+  const controller = new AbortController();
+  const upstream = new OpenAiCompatibleClient({
+    baseUrl: 'https://gateway.example',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'test-model',
+    // The client must stop waiting even if an adapter ignores cancellation.
+    fetchImpl: () => new Promise<Response>(() => undefined),
+  });
+  const keepAlive = setInterval(() => undefined, 1_000);
+  try {
+    await assert.rejects(
+      upstream.generate({
+        messages: [{ role: 'user', content: 'hi' }],
+        signal: controller.signal,
+        timeoutMs: 20,
+      }),
+      (error: unknown) => error instanceof LlmTimeoutError && error.timeoutMs === 20,
+    );
+    assert.equal(controller.signal.aborted, false);
+  } finally {
+    clearInterval(keepAlive);
+  }
+});

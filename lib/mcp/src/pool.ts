@@ -1,3 +1,4 @@
+import { abortableV1 } from "@mioagent/utils";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { BaseMcpClient } from "./client.js";
@@ -30,8 +31,15 @@ type ToolListParams = Parameters<Client["listTools"]>[0];
 
 /** The two calls Miorail makes on a Wallet MCP connection. */
 export interface BaseMcpCallsV1 {
-  callTool(params: ToolCallParams): ReturnType<Client["callTool"]>;
-  listTools(params?: ToolListParams): ReturnType<Client["listTools"]>;
+  callTool(
+    params: ToolCallParams,
+    resultSchema?: Parameters<Client["callTool"]>[1],
+    options?: Parameters<Client["callTool"]>[2],
+  ): ReturnType<Client["callTool"]>;
+  listTools(
+    params?: ToolListParams,
+    options?: Parameters<Client["listTools"]>[1],
+  ): ReturnType<Client["listTools"]>;
 }
 
 /** What the pool keeps open. `BaseMcpClient` is one. */
@@ -42,6 +50,8 @@ export interface BaseMcpPoolableClientV1 {
 }
 
 export interface BaseMcpLeaseInputV1 {
+  /** Cancels this request, never the shared connection or another lease. */
+  signal?: AbortSignal;
   /** Whose connection. One per person and server. */
   userId: string;
   serverUrl: URL;
@@ -108,8 +118,8 @@ function serverAnsweredV1(error: unknown): boolean {
     && e.code !== -32001;
 }
 
-async function withTimeoutV1<T>(promise: Promise<T>, timeoutMs: number | undefined): Promise<T> {
-  if (!timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+async function withTimeoutV1<T>(promise: Promise<T>, timeoutMs: number | undefined, signal?: AbortSignal): Promise<T> {
+  if (!timeoutMs || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return abortableV1(signal, () => promise);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -119,7 +129,7 @@ async function withTimeoutV1<T>(promise: Promise<T>, timeoutMs: number | undefin
     }, timeoutMs);
   });
   try {
-    return await Promise.race([promise, timeout]);
+    return await abortableV1(signal, () => Promise.race([promise, timeout]));
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -149,6 +159,10 @@ export class BaseMcpClientPoolV1 {
 
   async lease(input: BaseMcpLeaseInputV1): Promise<BaseMcpClientLeaseV1> {
     const entry = await this.acquire(input);
+    if (input.signal?.aborted) {
+      this.release(entry);
+      input.signal.throwIfAborted();
+    }
     return new PooledLeaseV1(this, entry, input);
   }
 
@@ -175,10 +189,12 @@ export class BaseMcpClientPoolV1 {
 
   /** @internal A counted claim on the person's connection, opened if needed. */
   async acquire(input: BaseMcpLeaseInputV1): Promise<PoolEntryV1> {
+    input.signal?.throwIfAborted();
     const entry = this.usableEntry(input);
     entry.leases += 1;
     try {
-      await withTimeoutV1(entry.ready, input.connectTimeoutMs);
+      await withTimeoutV1(entry.ready, input.connectTimeoutMs, input.signal);
+      input.signal?.throwIfAborted();
     } catch (error) {
       // This caller stops waiting. The connection, if it opens, is still the
       // person's for the next request; a failed open has retired itself.
@@ -292,40 +308,71 @@ class PooledLeaseV1 implements BaseMcpClientLeaseV1 {
 
   getClient(): BaseMcpCallsV1 {
     return {
-      callTool: (params) => this.run((client) => client.callTool(params)),
-      listTools: (params) => this.run((client) => client.listTools(params)),
+      callTool: (params, resultSchema, options) => {
+        const signal = this.callSignal(options?.signal);
+        return this.run(
+          (client) => client.callTool(params, resultSchema, signal ? { ...options, signal } : options),
+          signal,
+        );
+      },
+      listTools: (params, options) => {
+        const signal = this.callSignal(options?.signal);
+        return this.run(
+          (client) => client.listTools(params, signal ? { ...options, signal } : options),
+          signal,
+        );
+      },
     };
   }
 
   async close(): Promise<void> {
     if (this.released) return;
     this.released = true;
-    // A replacement still opening decides which connection this lease holds.
-    if (this.replacing) await this.replacing.to.catch(() => undefined);
+    // Release now, even if a replacement is still connecting. Its completion
+    // checks the released state and gives back a late claim instead of transferring it.
     this.pool.release(this.entry);
   }
 
-  private async run<T>(call: (client: BaseMcpCallsV1) => Promise<T>): Promise<T> {
+  private callSignal(signal?: AbortSignal): AbortSignal | undefined {
+    return this.input.signal && signal && this.input.signal !== signal
+      ? AbortSignal.any([this.input.signal, signal])
+      : this.input.signal ?? signal;
+  }
+
+  private async run<T>(call: (client: BaseMcpCallsV1) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     if (this.released) throw new Error("Wallet MCP lease was already returned");
     const entry = this.entry;
     try {
-      return await call(entry.client.getClient());
+      return await abortableV1(signal, () => call(entry.client.getClient()));
     } catch (error) {
+      // This caller leaving is not a broken shared connection. Another lease
+      // may be reading it right now; neither retire it nor recreate/retry.
+      signal?.throwIfAborted();
       if (serverAnsweredV1(error)) throw error;
       this.pool.retire(entry);
       if (!baseMcpSessionForgottenV1(error)) throw error;
       // The server forgot the session and ran nothing: the one retry, on a
       // fresh connection that this lease now holds instead.
-      const fresh = await this.replace(entry);
-      return call(fresh.client.getClient());
+      const fresh = await abortableV1(signal, () => this.replace(entry, signal));
+      signal?.throwIfAborted();
+      if (this.released) throw new Error("Wallet MCP lease was already returned", { cause: error });
+      return abortableV1(signal, () => call(fresh.client.getClient()));
     }
   }
 
-  private async replace(entry: PoolEntryV1): Promise<PoolEntryV1> {
+  private async replace(entry: PoolEntryV1, signal?: AbortSignal): Promise<PoolEntryV1> {
+    signal?.throwIfAborted();
+    if (this.released) throw new Error("Wallet MCP lease was already returned");
     // Another call on this lease already moved it to a fresh connection.
     if (this.entry !== entry) return this.entry;
     if (this.replacing?.from === entry) return this.replacing.to;
     const to = this.pool.acquire(this.input).then((fresh) => {
+      if (this.released || signal?.aborted) {
+        this.pool.release(fresh);
+        signal?.throwIfAborted();
+        throw new Error("Wallet MCP lease was already returned");
+      }
       this.pool.release(entry);
       this.entry = fresh;
       return fresh;

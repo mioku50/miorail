@@ -65,6 +65,55 @@ function usableSecurity() {
   });
 }
 
+test('disconnect during native send preflight cannot create an action afterwards', async () => {
+  await readyRepository();
+  usableSecurity();
+  const controller = new AbortController();
+  let started!: () => void;
+  let finish!: (value: Awaited<ReturnType<typeof baseAppNativeRuntime.evaluate>>) => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  baseAppNativeRuntime.evaluate = async () => { started(); return new Promise(resolve => { finish = resolve; }); };
+  let inserted = 0;
+  baseAppNativeRuntime.insertAction = async () => { inserted++; };
+  const run = runDirectBaseAppNativeSend({ signal: controller.signal,
+    message: `send 0.25 USDC to ${RECIPIENT}`, walletAddress: TENANT_WALLET,
+    userConfirmedEnabled: true, userId: TENANT_ID });
+  await ready;
+  controller.abort(new Error('unit disconnect'));
+  await assert.rejects(run, /unit disconnect/);
+  finish({ allowed: true, success: true, code: 'allowed' } as Awaited<ReturnType<typeof baseAppNativeRuntime.evaluate>>);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(inserted, 0);
+});
+
+test('disconnect during native swap preparation never reaches preflight or action storage', async () => {
+  await readyRepository();
+  usableSecurity();
+  const controller = new AbortController();
+  let started!: () => void;
+  let finish!: (value: Awaited<ReturnType<typeof baseAppNativeRuntime.prepareUniswap5792>>) => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  baseAppNativeRuntime.prepareUniswap5792 = async () => { started(); return new Promise(resolve => { finish = resolve; }); };
+  let evaluated = 0;
+  let inserted = 0;
+  baseAppNativeRuntime.evaluate = async () => { evaluated++; throw new Error('unexpected evaluation'); };
+  baseAppNativeRuntime.insertAction = async () => { inserted++; };
+  const run = runDirectBaseAppNativeSwap({ signal: controller.signal,
+    message: 'swap 0.5 USDC to ETH', walletAddress: TENANT_WALLET,
+    userConfirmedEnabled: true, userId: TENANT_ID });
+  await ready;
+  controller.abort(new Error('unit disconnect'));
+  await assert.rejects(run, /unit disconnect/);
+  const expiresAt = new Date().toISOString();
+  finish({ calls: [], requestId: 'unused', expiresAt, context: {
+    amountDecimal: '0.5', inputAsset: canonicalGuardAssetV1('USDC')!, outputAsset: canonicalGuardAssetV1('ETH')!,
+    swapper: TENANT_WALLET, routerVersion: '2.0', expiresAt,
+  } });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(evaluated, 0);
+  assert.equal(inserted, 0);
+});
+
 test('T47 native send binds the action and wallet_sendCalls payload to the BaseApp tenant wallet', async () => {
   await readyRepository();
   usableSecurity();

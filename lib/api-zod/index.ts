@@ -1717,7 +1717,7 @@ export const WalletChallengeResponseSchema = z.object({
 
 // Chat
 export const ChatMessageRequestSchema = z.object({
-  message: z.string().min(1),
+  message: z.string().min(1).max(4000),
   chatId: z.string().optional(),
   walletAddress: z.string().optional(),
   chainEnv: z.string().optional(),

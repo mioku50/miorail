@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { BaseMcpClientPoolV1, baseMcpSessionForgottenV1, type BaseMcpPoolableClientV1 } from "../src/pool.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { BaseMcpClientPoolV1, baseMcpSessionForgottenV1, type BaseMcpPoolableClientV1, type BaseMcpCallsV1 } from "../src/pool.js";
 
 /** The shape the SDK's Streamable HTTP transport throws: HTTP status in `code`. */
 class HttpLikeError extends Error {
@@ -18,10 +19,20 @@ class AnsweredError extends Error {
   }
 }
 
-type Behaviour = (connection: number, tool: string) => unknown;
+type Behaviour = (
+  connection: number,
+  tool: string,
+  resultSchema?: Parameters<BaseMcpCallsV1["callTool"]>[1],
+  options?: Parameters<BaseMcpCallsV1["callTool"]>[2],
+) => unknown;
 
 function harness(options: {
   behaviour?: Behaviour;
+  listBehaviour?: (
+    connection: number,
+    params?: Parameters<BaseMcpCallsV1["listTools"]>[0],
+    options?: Parameters<BaseMcpCallsV1["listTools"]>[1],
+  ) => unknown;
   connect?: (connection: number) => Promise<void>;
   idleMs?: number;
   maxConnections?: number;
@@ -47,12 +58,23 @@ function harness(options: {
     getClient() {
       const id = this.id;
       return {
-        callTool: (async (params: { name: string }) => {
-          const result = options.behaviour?.(id, params.name);
+        callTool: (async (
+          params: { name: string },
+          resultSchema?: Parameters<BaseMcpCallsV1["callTool"]>[1],
+          requestOptions?: Parameters<BaseMcpCallsV1["callTool"]>[2],
+        ) => {
+          const result = options.behaviour?.(id, params.name, resultSchema, requestOptions);
           if (result instanceof Error) throw result;
           return result ?? { content: [{ type: "text", text: `connection ${id}` }] };
         }) as never,
-        listTools: (async () => ({ tools: [{ name: "get_wallets", inputSchema: { type: "object" } }] })) as never,
+        listTools: (async (
+          params?: Parameters<BaseMcpCallsV1["listTools"]>[0],
+          requestOptions?: Parameters<BaseMcpCallsV1["listTools"]>[1],
+        ) => {
+          const result = options.listBehaviour?.(id, params, requestOptions);
+          if (result instanceof Error) throw result;
+          return result ?? { tools: [{ name: "get_wallets", inputSchema: { type: "object" } }] };
+        }) as never,
       };
     }
   }
@@ -308,5 +330,180 @@ describe("Wallet MCP connection pool", () => {
     assert.equal(baseMcpSessionForgottenV1(new HttpLikeError(500, "boom")), false);
     assert.equal(baseMcpSessionForgottenV1(new AnsweredError(404, "not a transport error")), false);
     assert.equal(baseMcpSessionForgottenV1(new TypeError("fetch failed")), false);
+  });
+});
+
+describe("Wallet MCP request cancellation", () => {
+  it("forwards the SDK result schema and call/list options, including the signal", async () => {
+    const controller = new AbortController();
+    let schema: unknown;
+    let callOptions: unknown;
+    let listOptions: unknown;
+    const h = harness({
+      behaviour: (_connection, _tool, resultSchema, options) => {
+        schema = resultSchema;
+        callOptions = options;
+      },
+      listBehaviour: (_connection, _params, options) => { listOptions = options; },
+    });
+    const lease = await h.pool.lease(h.input());
+    try {
+      const calls = { timeout: 123, signal: controller.signal };
+      await lease.getClient().callTool({ name: "get_wallets" }, CallToolResultSchema, calls);
+      const lists = { timeout: 456, signal: controller.signal };
+      await lease.getClient().listTools(undefined, lists);
+      assert.equal(schema, CallToolResultSchema);
+      assert.deepEqual(callOptions, calls);
+      assert.deepEqual(listOptions, lists);
+    } finally {
+      await lease.close();
+      h.pool.closeAll();
+    }
+  });
+
+  it("does not open a connection for an already-cancelled caller", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller_disconnected");
+    controller.abort(reason);
+    const h = harness();
+    await assert.rejects(
+      h.pool.lease({ ...h.input(), signal: controller.signal }),
+      (error: unknown) => error === reason,
+    );
+    assert.equal(h.clients.length, 0);
+    assert.equal(h.pool.size, 0);
+  });
+
+  it("does not retire a shared connection or retry a 404 after cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller_disconnected");
+    const h = harness({
+      behaviour: (_connection, tool) => {
+        if (tool === "cancel") {
+          controller.abort(reason);
+          return new HttpLikeError(404, "Session not found");
+        }
+        return undefined;
+      },
+    });
+    const cancelled = await h.pool.lease({ ...h.input(), signal: controller.signal });
+    const other = await h.pool.lease(h.input());
+    try {
+      await assert.rejects(
+        cancelled.getClient().callTool({ name: "cancel" }),
+        (error: unknown) => error === reason,
+      );
+      await cancelled.close();
+      assert.equal(text(await other.getClient().callTool({ name: "healthy" })), "connection 1");
+      assert.equal(h.clients.length, 1);
+      assert.equal(h.clients[0]!.closed, false);
+      assert.equal(h.pool.size, 1);
+    } finally {
+      await cancelled.close();
+      await other.close();
+      h.pool.closeAll();
+    }
+  });
+
+  it("stops waiting for a hung call without disrupting another lease", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller_disconnected");
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const h = harness({
+      behaviour: (_connection, tool, _schema, options) => {
+        if (tool === "stalled") {
+          assert.equal(options?.signal, controller.signal);
+          started();
+          return new Promise<never>(() => undefined);
+        }
+        return undefined;
+      },
+    });
+    const a = await h.pool.lease(h.input());
+    const b = await h.pool.lease(h.input());
+    try {
+      const pending = a.getClient().callTool({ name: "stalled" }, undefined, { signal: controller.signal });
+      const rejected = assert.rejects(pending, (error: unknown) => error === reason);
+      await ready;
+      controller.abort(reason);
+      await rejected;
+      await a.close();
+      assert.equal(text(await b.getClient().callTool({ name: "healthy" })), "connection 1");
+      assert.equal(h.clients[0]!.closed, false);
+      assert.equal(h.pool.size, 1);
+    } finally {
+      await a.close();
+      await b.close();
+      h.pool.closeAll();
+    }
+  });
+
+  it("releases an aborted connection waiter without closing another caller's connection", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller_disconnected");
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => { open = resolve; });
+    const h = harness({ connect: () => opened });
+    const cancelled = h.pool.lease({ ...h.input(), signal: controller.signal });
+    const rejected = assert.rejects(cancelled, (error: unknown) => error === reason);
+    const other = h.pool.lease(h.input());
+    controller.abort(reason);
+    await rejected;
+    open();
+    const lease = await other;
+    assert.equal(text(await lease.getClient().callTool({ name: "healthy" })), "connection 1");
+    assert.equal(h.clients[0]!.closed, false);
+    await lease.close();
+    h.advance(1_000);
+    h.pool.sweep();
+    await h.settle();
+    assert.equal(h.clients[0]!.closed, true, "the aborted waiter's claim was also released");
+    assert.equal(h.pool.size, 0);
+  });
+
+  it("returns a replacement that finishes after a per-call abort and lease close", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller_disconnected");
+    let opening!: () => void;
+    const ready = new Promise<void>((resolve) => { opening = resolve; });
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => { open = resolve; });
+    const calls: number[] = [];
+    const h = harness({
+      connect: async (connection) => {
+        if (connection === 2) {
+          opening();
+          await opened;
+        }
+      },
+      behaviour: (connection) => {
+        calls.push(connection);
+        return connection === 1 ? new HttpLikeError(404, "Session not found") : undefined;
+      },
+    });
+    const lease = await h.pool.lease(h.input());
+    try {
+      const pending = lease.getClient().callTool({ name: "get_wallets" }, undefined, { signal: controller.signal });
+      const rejected = assert.rejects(pending, (error: unknown) => error === reason);
+      await ready;
+      controller.abort(reason);
+      await rejected;
+      await lease.close();
+      await h.settle();
+      assert.equal(h.clients[0]!.closed, true, "close does not wait for the replacement handshake");
+      open();
+      await h.settle();
+      assert.deepEqual(calls, [1], "the cancelled operation is never retried on the late connection");
+      h.advance(1_000);
+      h.pool.sweep();
+      await h.settle();
+      assert.equal(h.clients[1]!.closed, true, "the late replacement has no stranded claim");
+      assert.equal(h.pool.size, 0);
+    } finally {
+      open();
+      await lease.close();
+      h.pool.closeAll();
+    }
   });
 });

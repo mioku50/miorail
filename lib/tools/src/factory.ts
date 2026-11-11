@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
@@ -22,6 +23,8 @@ export const settingsAPI = {
 };
 
 export interface CreateToolAggregatorOptions {
+  /** Lifetime of the request that owns this aggregator and its pool lease. */
+  signal?: AbortSignal;
   baseMcpEnabled?: boolean;
   baseMcpServerUrl?: string;
   baseMcpOAuthProvider?: BaseMcpOAuthProvider;
@@ -114,117 +117,143 @@ export function selectBaseMcpRuntimeTools(
 }
 
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string, options: CreateToolAggregatorOptions = {}): Promise<ToolAggregator> {
+  const signal = options.signal;
+  signal?.throwIfAborted();
   const aggregator = new ToolAggregator();
-  const settings = await settingsAPI.getUserSettings(userId);
-
-  const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
-  const baseMcpOnly = options.baseMcpOnly === true;
-
-  const useCoinGecko = !baseMcpOnly && toggles?.coingecko === true;
-  const useMoralis = !baseMcpOnly && toggles?.moralis === true;
-
-  const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : undefined;
-  let moralisProvider: RealMoralisProvider | undefined;
-
-  if (useMoralis) {
-    try {
-      const moralisKey = await settingsAPI.getDecryptedKey(userId, 'moralis_api_key', sessionSecret);
-      if (moralisKey) {
-        moralisProvider = new RealMoralisProvider(moralisKey);
-      }
-    } catch {
-      // Real-or-fail-closed: do not substitute balances when the encrypted
-      // credential cannot be opened.
-    }
+  if (signal) {
+    aggregator.setAbortSignal(signal);
+    const closeOnAbort = () => { void aggregator.close().catch(() => undefined); };
+    signal.addEventListener('abort', closeOnAbort, { once: true });
+    aggregator.registerCleanup(() => signal.removeEventListener('abort', closeOnAbort));
   }
+  try {
+    const settings = await abortableV1(signal, () => settingsAPI.getUserSettings(userId));
 
-  if (coinGeckoProvider || moralisProvider) {
-    aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
-  }
+    const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
+    const baseMcpOnly = options.baseMcpOnly === true;
 
-  const baseMcpEnabled = options.baseMcpEnabled ?? parseBool(process.env.BASE_MCP_ENABLED);
-  const baseMcpServerUrl = options.baseMcpServerUrl || baseMcpServerUrlFromEnv();
-  let mcpClient: any;
+    const useCoinGecko = !baseMcpOnly && toggles?.coingecko === true;
+    const useMoralis = !baseMcpOnly && toggles?.moralis === true;
 
-  if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider && baseMcpCatalogEnabled(toggles)) {
-    const { baseMcpClientPoolV1, createBaseMcpHttpTransport, McpSendCallsClient } = await import('@mioagent/mcp');
+    const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : undefined;
+    let moralisProvider: RealMoralisProvider | undefined;
 
-    try {
-      const serverUrl = new URL(baseMcpServerUrl);
-      const oauthProvider = options.baseMcpOAuthProvider;
-      // The person's kept connection (lib/mcp pool.ts): the first request
-      // opens it, later ones skip the handshake. Cleanup gives it back; the
-      // pool closes it once it has sat unused.
-      const baseClient = await baseMcpClientPoolV1().lease({
-        userId,
-        serverUrl,
-        generation: options.baseMcpConnectionGeneration ?? 'default',
-        createTransport: () => createBaseMcpHttpTransport(serverUrl, oauthProvider),
-      });
-      aggregator.registerCleanup(() => baseClient.close());
-      mcpClient = new McpSendCallsClient(baseClient);
-      if (baseMcpOnly && options.baseMcpPreparedClaim) {
-        aggregator.registerProvider(new PreparedBaseClaimToolProviderV1(mcpClient, options.baseMcpPreparedClaim));
-      }
-      if (!options.baseMcpReadOnlyOnly && !baseMcpOnly) {
-        aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
-      }
+    if (useMoralis) {
       try {
-        const cacheKey = dynamicBaseMcpCacheKey(userId, options.dynamicToolsCacheVersion);
-        const discoveredTools = await listDynamicBaseMcpToolsCached(baseClient, cacheKey, toggles);
-        const dynamicTools = selectBaseMcpRuntimeTools(
-          discoveredTools,
-          // Base-MCP-only is read-only by default. An exact action name is
-          // admitted only for a typed Extensions vertical; dynamic discovery
-          // alone never grants it.
-          options.baseMcpReadOnlyOnly || baseMcpOnly,
-          !baseMcpOnly && options.includeBaseMcpSwap,
-          !baseMcpOnly && options.includeBaseMcpSend,
-          options.baseMcpAllowedActionTools,
-        );
-        if (dynamicTools.length > 0) {
-          aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
-            allowUserConfirmedSwap: !baseMcpOnly && options.includeBaseMcpSwap,
-            allowUserConfirmedSend: !baseMcpOnly && options.includeBaseMcpSend,
-            allowedUserConfirmedTools: options.baseMcpAllowedActionTools,
-            sensitiveResultTools: options.baseMcpSensitiveResultTools,
-          }));
+        const moralisKey = await abortableV1(signal, () => settingsAPI.getDecryptedKey(userId, 'moralis_api_key', sessionSecret));
+        if (moralisKey) {
+          moralisProvider = new RealMoralisProvider(moralisKey);
         }
-      } catch (error) {
-        console.warn('Failed to list dynamic Base MCP tools', {
-          code: error instanceof Error ? error.name : 'unknown_error',
+      } catch {
+        signal?.throwIfAborted();
+        // Real-or-fail-closed: do not substitute balances when the encrypted
+        // credential cannot be opened.
+      }
+    }
+
+    if (coinGeckoProvider || moralisProvider) {
+      aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
+    }
+
+    const baseMcpEnabled = options.baseMcpEnabled ?? parseBool(process.env.BASE_MCP_ENABLED);
+    const baseMcpServerUrl = options.baseMcpServerUrl || baseMcpServerUrlFromEnv();
+    let mcpClient: any;
+
+    if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider && baseMcpCatalogEnabled(toggles)) {
+      const { baseMcpClientPoolV1, createBaseMcpHttpTransport, McpSendCallsClient } = await abortableV1(signal, () => import('@mioagent/mcp'));
+
+      try {
+        const serverUrl = new URL(baseMcpServerUrl);
+        const oauthProvider = options.baseMcpOAuthProvider;
+        // The person's kept connection (lib/mcp pool.ts): the first request
+        // opens it, later ones skip the handshake. Cleanup gives it back; the
+        // pool closes it once it has sat unused.
+        const baseClient = await abortableV1(signal, () => baseMcpClientPoolV1().lease({
+          userId,
+          serverUrl,
+          generation: options.baseMcpConnectionGeneration ?? 'default',
+          createTransport: () => createBaseMcpHttpTransport(serverUrl, oauthProvider),
+          signal,
+        }).then((lease) => {
+          // A transport adapter can finish opening after its waiter left.
+          // Return only this request's lease, never the shared pool connection.
+          if (signal?.aborted) {
+            void lease.close().catch(() => undefined);
+            signal.throwIfAborted();
+          }
+          aggregator.registerCleanup(() => lease.close());
+          return lease;
+        }));
+        mcpClient = new McpSendCallsClient(baseClient);
+        if (baseMcpOnly && options.baseMcpPreparedClaim) {
+          aggregator.registerProvider(new PreparedBaseClaimToolProviderV1(mcpClient, options.baseMcpPreparedClaim));
+        }
+        if (!options.baseMcpReadOnlyOnly && !baseMcpOnly) {
+          aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
+        }
+        try {
+          const cacheKey = dynamicBaseMcpCacheKey(userId, options.dynamicToolsCacheVersion);
+          const discoveredTools = await abortableV1(signal, () => listDynamicBaseMcpToolsCached(baseClient, cacheKey, toggles, { signal }));
+          const dynamicTools = selectBaseMcpRuntimeTools(
+            discoveredTools,
+            // Base-MCP-only is read-only by default. An exact action name is
+            // admitted only for a typed Extensions vertical; dynamic discovery
+            // alone never grants it.
+            options.baseMcpReadOnlyOnly || baseMcpOnly,
+            !baseMcpOnly && options.includeBaseMcpSwap,
+            !baseMcpOnly && options.includeBaseMcpSend,
+            options.baseMcpAllowedActionTools,
+          );
+          if (dynamicTools.length > 0) {
+            aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
+              allowUserConfirmedSwap: !baseMcpOnly && options.includeBaseMcpSwap,
+              allowUserConfirmedSend: !baseMcpOnly && options.includeBaseMcpSend,
+              allowedUserConfirmedTools: options.baseMcpAllowedActionTools,
+              sensitiveResultTools: options.baseMcpSensitiveResultTools,
+            }));
+          }
+        } catch (error) {
+          signal?.throwIfAborted();
+          console.warn('Failed to list dynamic Base MCP tools', {
+            code: error instanceof Error ? error.name : 'unknown_error',
+          });
+        }
+      } catch (e) {
+        signal?.throwIfAborted();
+        console.error('Failed to initialize Base MCP client', {
+          code: e instanceof Error ? e.name : 'unknown_error',
         });
       }
-    } catch (e) {
-      console.error('Failed to initialize Base MCP client', {
-        code: e instanceof Error ? e.name : 'unknown_error',
-      });
     }
-  }
 
-  if (!baseMcpOnly && options.includeMorphoReadOnly && toggles?.morpho !== false) {
-    aggregator.registerProvider(new MorphoMcpToolProvider());
-  }
+    if (!baseMcpOnly && options.includeMorphoReadOnly && toggles?.morpho !== false) {
+      aggregator.registerProvider(new MorphoMcpToolProvider());
+    }
 
-  if (!baseMcpOnly && options.includeUniswapQuote && toggles?.uniswap !== false) {
-    // T48b: BASE_MCP_PLUGIN_MODE default 'mcp' resolves UNISWAP_MCP_GATEWAY_KEY
-    // here; UNISWAP_API_KEY is only consulted in 'direct' mode. Registration
-    // never fails or gates on UNISWAP_API_KEY being unset in mcp mode — the
-    // provider itself already degrades to an empty tool list when no
-    // credential is configured (read-only quote availability, not a crash).
-    aggregator.registerProvider(new UniswapQuoteToolProvider(undefined, resolvePluginCredential('uniswap')));
-  }
+    if (!baseMcpOnly && options.includeUniswapQuote && toggles?.uniswap !== false) {
+      // T48b: BASE_MCP_PLUGIN_MODE default 'mcp' resolves UNISWAP_MCP_GATEWAY_KEY
+      // here; UNISWAP_API_KEY is only consulted in 'direct' mode. Registration
+      // never fails or gates on UNISWAP_API_KEY being unset in mcp mode — the
+      // provider itself already degrades to an empty tool list when no
+      // credential is configured (read-only quote availability, not a crash).
+      aggregator.registerProvider(new UniswapQuoteToolProvider(undefined, resolvePluginCredential('uniswap')));
+    }
 
-  // Moonwell is a plain HTTP API (no MCP server, no API key). It is a Base
-  // mainnet product, so it is only registered outside the Sepolia runtime.
-  if (!baseMcpOnly && options.includeMoonwell && toggles?.moonwell !== false && process.env.CHAIN_ENV !== 'sepolia') {
-    aggregator.registerProvider(new MoonwellHttpToolProvider());
-  }
+    // Moonwell is a plain HTTP API (no MCP server, no API key). It is a Base
+    // mainnet product, so it is only registered outside the Sepolia runtime.
+    if (!baseMcpOnly && options.includeMoonwell && toggles?.moonwell !== false && process.env.CHAIN_ENV !== 'sepolia') {
+      aggregator.registerProvider(new MoonwellHttpToolProvider());
+    }
 
-  if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly && !baseMcpOnly) {
-    const { SepoliaToolProvider } = await import('./sepolia.js');
-    aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
-  }
+    if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly && !baseMcpOnly) {
+      const { SepoliaToolProvider } = await abortableV1(signal, () => import('./sepolia.js'));
+      aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
+    }
 
-  return aggregator;
+    signal?.throwIfAborted();
+    return aggregator;
+  } catch (error) {
+    void aggregator.close().catch(() => undefined);
+    throw error;
+  }
 }

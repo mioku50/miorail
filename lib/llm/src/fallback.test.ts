@@ -411,3 +411,120 @@ test('when every link rests, they are all asked anyway', async () => {
   );
   assert.equal((await chain.generate(REQUEST)).message.content, 'from primary');
 });
+
+test('a cancelled request starts neither the primary nor the fallback', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller_disconnected');
+  controller.abort(reason);
+  const primary = answering('primary');
+  const fallback = answering('fallback');
+  const events: string[] = [];
+  const chain = new FallbackLlmProvider(
+    { label: 'primary.example', provider: primary },
+    { label: 'fallback.example', provider: fallback },
+    {
+      onFallover: () => { events.push('fallover'); },
+      onRest: () => { events.push('rest'); },
+    },
+  );
+
+  await assert.rejects(
+    chain.generate({ ...REQUEST, signal: controller.signal }),
+    (error: unknown) => error === reason,
+  );
+  assert.equal(primary.calls.length, 0);
+  assert.equal(fallback.calls.length, 0);
+  assert.deepEqual(events, []);
+});
+
+test('caller cancellation stops a hung provider with or without a time budget', async (t) => {
+  for (const timeoutMs of [undefined, 30_000]) {
+    await t.test(timeoutMs === undefined ? 'without budget' : 'within a provider share', async () => {
+      const controller = new AbortController();
+      const reason = new Error('caller_disconnected');
+      let started!: () => void;
+      const ready = new Promise<void>((resolve) => { started = resolve; });
+      let finish!: (response: LlmResponse) => void;
+      let observedSignal: AbortSignal | undefined;
+      const primary: LlmProvider = {
+        generate(request) {
+          observedSignal = request.signal;
+          started();
+          return new Promise<LlmResponse>((resolve) => { finish = resolve; });
+        },
+      };
+      const fallback = answering('fallback');
+      const events: string[] = [];
+      const rest = new LlmLinkRestV1();
+      const chain = new FallbackLlmProvider(
+        { label: 'primary.example', provider: primary },
+        { label: 'fallback.example', provider: fallback },
+        {
+          rest,
+          onFallover: () => { events.push('fallover'); },
+          onRest: () => { events.push('rest'); },
+        },
+      );
+
+      const generation = chain.generate({ ...REQUEST, timeoutMs, signal: controller.signal });
+      const rejected = assert.rejects(generation, (error: unknown) => error === reason);
+      await ready;
+      controller.abort(reason);
+      await rejected;
+      finish({ message: { role: 'assistant', content: 'late answer' } });
+      assert.equal(observedSignal, controller.signal);
+      assert.equal(fallback.calls.length, 0);
+      assert.deepEqual(events, []);
+      assert.equal(rest.resting('primary.example'), false);
+    });
+  }
+});
+
+test('an aborted caller does not rest a primary that rejects with an account error', async () => {
+  const controller = new AbortController();
+  const reason = new Error('caller_disconnected');
+  const rest = new LlmLinkRestV1();
+  const fallback = answering('fallback');
+  const events: string[] = [];
+  const chain = new FallbackLlmProvider(
+    {
+      label: 'primary.example',
+      provider: {
+        async generate() {
+          controller.abort(reason);
+          throw new LlmHttpError(402, 'insufficient credits');
+        },
+      },
+    },
+    { label: 'fallback.example', provider: fallback },
+    {
+      rest,
+      onFallover: () => { events.push('fallover'); },
+      onRest: () => { events.push('rest'); },
+    },
+  );
+
+  await assert.rejects(
+    chain.generate({ ...REQUEST, signal: controller.signal }),
+    (error: unknown) => error === reason,
+  );
+  assert.equal(rest.resting('primary.example'), false);
+  assert.equal(fallback.calls.length, 0);
+  assert.deepEqual(events, []);
+});
+
+test('a provider-owned abort still falls over when its caller did not cancel', async () => {
+  const controller = new AbortController();
+  const primary = failing(new DOMException('upstream aborted its own request', 'AbortError'));
+  const fallback = answering('fallback');
+  const chain = new FallbackLlmProvider(
+    { label: 'primary.example', provider: primary },
+    { label: 'fallback.example', provider: fallback },
+  );
+  const request = { ...REQUEST, signal: controller.signal };
+
+  assert.equal((await chain.generate(request)).message.content, 'fallback');
+  assert.equal(primary.calls[0]?.signal, controller.signal);
+  assert.equal(fallback.calls[0]?.signal, controller.signal);
+  assert.equal(controller.signal.aborted, false);
+});

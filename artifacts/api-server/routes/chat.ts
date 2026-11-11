@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema, ChatReconcileResponseSchema } from '@mioagent/api-zod';
-import { Agent } from '@mioagent/agent';
+import { Agent, AgentRunLimitErrorV1 } from '@mioagent/agent';
+import { chatRequestBoundaryV1, CHAT_DEADLINE_MS_V1, ChatRequestCancelledV1 } from '../lib/chatRequestBoundary.js';
+import { chatLimitsV1 } from '../middleware/chatLimits.js';
 import { createLlmProvider, createStructuredLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
@@ -63,6 +65,7 @@ import { runDirectBaseAppNativeSend, runDirectBaseAppNativeSwap } from '../lib/s
 export const chatRouter = Router();
 
 export const chatRouteRuntime = {
+  timeoutMs: CHAT_DEADLINE_MS_V1,
   createApiToolAggregatorForUser,
   createLlmProvider,
   createStructuredLlmProvider,
@@ -187,7 +190,9 @@ chatRouter.post('/reconcile', async (req, res, next) => {
 });
 
 
-chatRouter.post('/', async (req, res, next) => {
+chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
+  const boundary = chatRequestBoundaryV1(res, chatRouteRuntime.timeoutMs);
+  const reply = (body: unknown) => { boundary.signal.throwIfAborted(); return res.json(body); };
   try {
     const { message } = ChatMessageRequestSchema.parse(req.body);
     const userId = tenantUserId(req);
@@ -201,11 +206,12 @@ chatRouter.post('/', async (req, res, next) => {
       : configuredChainEnv;
     const runtimeChainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
     const runtimeExecutionCapabilities = getExecutionCapabilities(runtimeChainEnv);
-    const tools = await chatRouteRuntime.createApiToolAggregatorForUser(
+    const tools = await boundary.tools(() => chatRouteRuntime.createApiToolAggregatorForUser(
       req,
       userId,
       process.env.SESSION_SECRET || 'test-secret',
       {
+        signal: boundary.signal,
         readOnlyOnly: true,
         includeMorphoReadOnly: true,
         includeUniswapQuote: true,
@@ -218,21 +224,18 @@ chatRouter.post('/', async (req, res, next) => {
         // which is a configuration, not a design. Execution belongs to the
         // Routes flow and its one submit path.
       },
-    );
-    // 'close', not 'finish': a reader who leaves mid-stream never finishes the
-    // response, and the person's Wallet MCP connection must still go back.
-    res.once('close', () => { void tools.close(); });
-    const walletMatch = await verifyBaseMcpWalletMatch(tools, walletAddress);
+    ));
+    const walletMatch = await boundary.wait(() => verifyBaseMcpWalletMatch(tools, walletAddress));
     if (walletMatch.checked && !walletMatch.match) tools.setBaseMcpWalletToolsEnabled(false);
     console.log("TRACE: tools created");
 
     console.log("TRACE: querying chats db");
-    const userChats = await db
+    const userChats = await boundary.wait(() => db
       .select()
       .from(chats)
       .where(eq(chats.userId, userId))
       .orderBy(desc(chats.updatedAt))
-      .limit(1);
+      .limit(1));
     console.log("TRACE: chats db query done");
 
     let chatId: string = crypto.randomUUID();
@@ -260,7 +263,6 @@ chatRouter.post('/', async (req, res, next) => {
       runtimeChainId: 8453 as const,
     };
     let semanticDecision: SemanticRoutingDecision | undefined;
-    let semanticLlm: ReturnType<typeof createLlmProvider> | undefined;
     const unsafeTransactionInstruction = EXPLICIT_TRANSACTION_REQUEST.test(message)
       && (requestsApprovalBypass(message) || looksLikePromptInjection(message));
     const explicitRevokeIntent = parseRevokeApproval(message) !== null;
@@ -273,50 +275,54 @@ chatRouter.post('/', async (req, res, next) => {
           toolCalls: [],
           errorCode: requestsApprovalBypass(message) ? 'approval_bypass_forbidden' : 'prompt_injection_blocked',
         }
-      : (walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSend({
+      : (walletEnvironment === 'baseapp' ? await boundary.wait(() => runDirectBaseAppNativeSend({
+      signal: boundary.signal,
       message,
       walletAddress,
       userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
       userId,
-    }) : await runDirectBaseMcpSend({
+    })) : await boundary.wait(() => runDirectBaseMcpSend({
+      message,
+      walletAddress,
+      tools,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })))
+      || (walletEnvironment === 'baseapp' ? await boundary.wait(() => runDirectBaseAppNativeSwap({
+      signal: boundary.signal,
+      message,
+      walletAddress,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })) : await boundary.wait(() => runDirectBaseMcpSwap({
+      message,
+      walletAddress,
+      tools,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })))
+      || await boundary.wait(() => runDirectMoonwellWrite({
+      signal: boundary.signal,
       message,
       walletAddress,
       tools,
       userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
       userId,
     }))
-      || (walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSwap({
-      message,
-      walletAddress,
-      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
-      userId,
-    }) : await runDirectBaseMcpSwap({
-      message,
-      walletAddress,
-      tools,
-      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
-      userId,
-    }))
-      || await runDirectMoonwellWrite({
-      message,
-      walletAddress,
-      tools,
-      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
-      userId,
-    })
-      || await runDirectQuoteRead({ message, walletAddress, tools })
-      || await runDirectStreamRead({
+      || await boundary.wait(() => runDirectQuoteRead({ message, walletAddress, tools }))
+      || await boundary.wait(() => runDirectStreamRead({
         message,
         walletAddress,
         tools,
         walletEnvironment,
         walletMatch,
         nativePortfolioReader: (address) => fetchInternalPortfolio(address, runtimeChainEnv),
-      });
+      }));
     if (!directRead && !explicitRevokeIntent) {
-      semanticLlm = chatRouteRuntime.createStructuredLlmProvider();
-      semanticDecision = await chatRouteRuntime.routeSemanticIntent({
+      const semanticLlm = boundary.llm(chatRouteRuntime.createStructuredLlmProvider());
+      semanticDecision = await boundary.wait(() => chatRouteRuntime.routeSemanticIntent({
         llm: semanticLlm,
+        signal: boundary.signal,
         message,
         context: semanticContext,
         walletAddress,
@@ -326,7 +332,7 @@ chatRouter.post('/', async (req, res, next) => {
         walletEnvironment,
         walletMatch,
         nativePortfolioReader: (address) => fetchInternalPortfolio(address, runtimeChainEnv),
-      });
+      }));
       directRead = semanticDecision.result;
     }
     if (directRead) {
@@ -334,13 +340,13 @@ chatRouter.post('/', async (req, res, next) => {
       const normalizedIntentHash = semanticDecision?.normalizedIntentHash
         || (normalizedIntent ? stableSemanticHash(normalizedIntent) : undefined);
       const pendingAction = normalizedIntent && normalizedIntentHash && walletAddress
-        ? await storePreparedTransaction({
+        ? await boundary.wait(() => storePreparedTransaction({
             userId,
             walletAddress,
             normalizedIntent,
             normalizedIntentHash,
             result: directRead,
-          })
+          }))
         : null;
       const assistantMsg = {
         chatId,
@@ -372,17 +378,17 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
       } else {
-        await db.insert(chats).values({
+        await boundary.wait(() => db.insert(chats).values({
           id: chatId,
           userId,
           messages: currentMessages,
           createdAt: new Date(),
           updatedAt: new Date(),
-        });
+        }));
       }
-      return res.json(assistantMsg);
+      return reply(assistantMsg);
     }
 
     // T42.3 regression fix: this early-return gate must not swallow explicit
@@ -406,14 +412,14 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
       } else {
-        await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
+        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
       }
-      return res.json(assistantMsg);
+      return reply(assistantMsg);
     }
 
-    const runtimeToolInventory = await tools.listTools();
+    const runtimeToolInventory = await boundary.wait(() => tools.listTools());
     const requestedProvider = detectRequestedProvider(message, runtimeToolInventory);
     const runtimeSkill = detectRuntimeSkill(message);
     const runtimeSkillState = runtimeSkill
@@ -460,11 +466,11 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
       } else {
-        await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
+        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
       }
-      return res.json(assistantMsg);
+      return reply(assistantMsg);
     }
 
     if (intent.isActionIntent && isWalletConnected) {
@@ -484,7 +490,7 @@ chatRouter.post('/', async (req, res, next) => {
       pricesStatus = statusRes.prices.status;
       riskStatus = statusRes.risk.status;
       securityProvider = statusRes.risk.provider;
-      const memoryMd = (await MemoryService.getUserSettings(userId))?.memoryMd || null;
+      const memoryMd = (await boundary.wait(() => MemoryService.getUserSettings(userId)))?.memoryMd || null;
       const requiresTokenSecurity = ['portfolio', 'risk', 'security'].includes(intent.intentType || '');
 
       const toolCallTraces: any[] = [
@@ -526,9 +532,9 @@ chatRouter.post('/', async (req, res, next) => {
 
       if (['portfolio', 'risk', 'rebalance', 'security', 'yield', 'approvals'].includes(intent.intentType || '') && walletAddress) {
         try {
-          const portfolio = await fetchInternalPortfolio(walletAddress, chainEnvVal, {
+          const portfolio = await boundary.wait(() => fetchInternalPortfolio(walletAddress, chainEnvVal, {
             includeApprovals: intent.intentType === 'approvals',
-          });
+          }));
           toolCallTraces.push({
             toolName: 'fetch_internal_portfolio',
             args: { walletAddress, chainEnv: chainEnvVal },
@@ -611,7 +617,7 @@ chatRouter.post('/', async (req, res, next) => {
       let approvalScannerUnavailable = false;
       if (revokeIntent && walletAddress) {
         try {
-          const appRes = await chatRouteRuntime.fetchInternalApprovals(walletAddress, chainEnvVal);
+          const appRes = await boundary.wait(() => chatRouteRuntime.fetchInternalApprovals(walletAddress, chainEnvVal));
           if (isApprovalScannerUnavailableStatus(appRes.status)) {
             approvalScannerUnavailable = true;
             metadata.title = "Approval Scanner Unavailable";
@@ -664,7 +670,7 @@ chatRouter.post('/', async (req, res, next) => {
       let simRes;
       if (!isReadonly && payload.calls && payload.calls.length > 0) {
         try {
-          simRes = await simulateTrade({ ...(payload as any), instruction: message, memoryMd });
+          simRes = await boundary.wait(() => simulateTrade({ ...(payload as any), instruction: message, memoryMd }));
         } catch {
           simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
         }
@@ -754,7 +760,7 @@ chatRouter.post('/', async (req, res, next) => {
         isError: false,
       });
 
-      await db.insert(actions).values({
+      await boundary.wait(() => db.insert(actions).values({
         id: actionId,
         userId,
         kind: payload.actionType === 'revoke_approval' ? 'transaction' : 'recommendation',
@@ -765,7 +771,7 @@ chatRouter.post('/', async (req, res, next) => {
         metadata,
         createdAt: new Date(),
         updatedAt: new Date()
-      }).onConflictDoNothing();
+      }).onConflictDoNothing());
 
       const assistantMsg = {
         chatId,
@@ -783,32 +789,33 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
       } else {
-        await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
+        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
       }
 
       try {
-        await ObservabilityService.logAction({
+        await boundary.wait(() => ObservabilityService.logAction({
           userId,
           actionId: assistantMsg.messageId,
           actionType: 'portfolio_scan',
           details: { message, intentType: intent.intentType, actionId },
           cost: '0.0010',
-        });
+        }));
       } catch {
         // ignore
       }
 
-      return res.json(assistantMsg);
+      return reply(assistantMsg);
     }
 
     // The extractor and the assistant have deliberately different jobs.
     // Never reuse the fast structured model for the user-facing reasoning turn.
-    const llm = chatRouteRuntime.createLlmProvider();
+    const llm = boundary.llm(chatRouteRuntime.createLlmProvider());
     console.log("TRACE: llm created");
     const agent = new Agent({
       llmProvider: llm,
+      signal: boundary.signal,
       toolAggregator: tools,
       toolResultGuard: (result) => screenPartnerToolResult({
         ...result,
@@ -829,19 +836,19 @@ chatRouter.post('/', async (req, res, next) => {
 
     if (userChats.length > 0) {
       console.log("TRACE: updating chats db");
-      await db.update(chats)
+      await boundary.wait(() => db.update(chats)
         .set({ messages: currentMessages, updatedAt: new Date() })
-        .where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+        .where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
       console.log("TRACE: updated chats db");
     } else {
       console.log("TRACE: inserting chats db");
-      await db.insert(chats).values({
+      await boundary.wait(() => db.insert(chats).values({
         id: chatId,
         userId,
         messages: currentMessages,
         createdAt: new Date(),
         updatedAt: new Date()
-      });
+      }));
       console.log("TRACE: inserted chats db");
     }
 
@@ -908,24 +915,37 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(assistantMsg);
 
-    await db.update(chats)
+    await boundary.wait(() => db.update(chats)
       .set({ messages: currentMessages, updatedAt: new Date() })
-      .where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+      .where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
 
     try {
-      await ObservabilityService.logAction({
+      await boundary.wait(() => ObservabilityService.logAction({
         userId,
         actionId: assistantMessageId,
         actionType: 'inference_call',
         details: { message },
         cost: '0.0010',
-      });
+      }));
     } catch {
       // ignore
     }
 
-    res.json(assistantMsg);
+    reply(assistantMsg);
   } catch (error) {
+    if (boundary.signal.aborted) {
+      if (boundary.signal.reason instanceof ChatRequestCancelledV1
+        && boundary.signal.reason.code === 'chat_timeout' && !res.destroyed && !res.headersSent) {
+        res.status(504).json({ error: 'chat_timeout', code: 'chat_timeout' });
+      }
+      return;
+    }
+    if (error instanceof AgentRunLimitErrorV1) {
+      res.status(422).json({ error: error.code, code: error.code });
+      return;
+    }
     next(error);
+  } finally {
+    boundary.dispose();
   }
 });

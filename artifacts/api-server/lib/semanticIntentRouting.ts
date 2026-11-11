@@ -216,6 +216,7 @@ async function runTokenSecurityRead(normalized: NormalizedSemanticIntent): Promi
 
 export async function routeSemanticIntent(input: {
   llm: LlmProvider;
+  signal?: AbortSignal;
   message: string;
   context: SemanticConversationContext;
   walletAddress?: string;
@@ -226,7 +227,9 @@ export async function routeSemanticIntent(input: {
   walletMatch?: BaseMcpWalletMatchResult;
   nativePortfolioReader?: (walletAddress: string) => Promise<unknown>;
 }): Promise<SemanticRoutingDecision> {
+  input.signal?.throwIfAborted();
   const extraction = await extractSemanticIntent({ llm: input.llm, message: input.message, context: input.context });
+  input.signal?.throwIfAborted();
   if (!extraction) {
     return isFinancialLanguage(input.message)
       ? { extraction: null, normalized: null, result: direct('semantic_clarification', 'Please clarify the financial request with the asset, amount or read you want on Base.', 'semantic_intent_invalid') }
@@ -290,6 +293,7 @@ export async function routeSemanticIntent(input: {
   if (normalized.intent === 'send') {
     if (normalized.asset?.symbol !== 'USDC') return decision(direct('semantic_clarification', 'Miorail direct sends currently support canonical Base USDC only. Which USDC amount should I send?', 'send_asset_unsupported'));
     const result = input.walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSend({
+      signal: input.signal,
       message: input.message,
       normalizedIntent: {
         amount: Number(normalized.amount!.kind === 'exact' ? normalized.amount!.value : Number.NaN),
@@ -315,6 +319,7 @@ export async function routeSemanticIntent(input: {
   }
   if (normalized.intent === 'swap') {
     const result = input.walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSwap({
+      signal: input.signal,
       message: input.message,
       normalizedIntent: {
         amount: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',
@@ -344,6 +349,7 @@ export async function routeSemanticIntent(input: {
       return decision(direct('partner_provider_unavailable', `${name} write adapter is unavailable. No other protocol was substituted.`, `${normalized.protocol || 'protocol'}_write_unavailable`));
     }
     const result = await runDirectMoonwellWrite({
+      signal: input.signal,
       message: input.message,
       normalizedIntent: {
         verb: normalized.intent as MoonwellWriteVerb,

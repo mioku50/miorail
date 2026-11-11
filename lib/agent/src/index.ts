@@ -1,11 +1,12 @@
 import { LlmProvider, LlmMessage } from '@mioagent/llm';
 import { ToolAggregator } from '@mioagent/tools';
 import { MemoryService } from '@mioagent/memory';
-import { logger } from '@mioagent/utils';
+import { logger, abortableV1 } from '@mioagent/utils';
 
 export interface AgentConfig {
   llmProvider: LlmProvider;
   toolAggregator: ToolAggregator;
+  signal?: AbortSignal;
   runtimeContext?: {
     walletAddress?: string;
     chainId: number;
@@ -66,17 +67,26 @@ function isGenericHttpTool(toolName: string): boolean {
   return /^web[_:.\-/]?request$/i.test(trimmed) || /^plugin[_:.\-/]?http[_:.\-/]?request$/i.test(trimmed);
 }
 
+export class AgentRunLimitErrorV1 extends Error {
+  constructor(readonly code: 'agent_turn_limit' | 'agent_tool_limit') {
+    super(code);
+    this.name = 'AgentRunLimitErrorV1';
+  }
+}
+
 export class Agent {
   constructor(private config: AgentConfig) {}
 
   async *chatStream(userId: string, userMessage: string, history: LlmMessage[] = []): AsyncGenerator<AgentEvent, void, unknown> {
+    const { signal } = this.config;
+    const wait = <T>(work: () => PromiseLike<T> | T) => abortableV1(signal, work);
     console.log("TRACE: agent.chatStream started");
     console.log("TRACE: getting user settings");
-    const userSettings = await MemoryService.getUserSettings(userId);
+    const userSettings = await wait(() => MemoryService.getUserSettings(userId));
     console.log("TRACE: got user settings");
     const memory = userSettings?.memoryMd;
     console.log("TRACE: listing tools");
-    const providerInventory = await this.config.toolAggregator.listProviderTools();
+    const providerInventory = await wait(() => this.config.toolAggregator.listProviderTools());
     const allTools = providerInventory.flatMap((entry) => entry.tools);
     const runtime = this.config.runtimeContext;
     const providerNamespace = runtime?.providerNamespace?.toLowerCase();
@@ -140,15 +150,16 @@ export class Agent {
       }
     })) : undefined;
 
-    let isFinished = false;
-
-    while (!isFinished) {
+    let toolCalls = 0;
+    for (let turn = 0; turn < 8; turn++) {
+      signal?.throwIfAborted();
       logger.info('Agent generating response');
       const llmStart = Date.now();
-      const response = await this.config.llmProvider.generate({
+      const response = await wait(() => this.config.llmProvider.generate({
         messages,
-        tools: llmTools
-      });
+        tools: llmTools,
+        signal,
+      }));
       logger.info('Agent generated response', { durationMs: Date.now() - llmStart, hasToolCalls: !!(response.message.tool_calls && response.message.tool_calls.length > 0) });
 
       const msg = response.message;
@@ -160,6 +171,8 @@ export class Agent {
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         for (const tc of msg.tool_calls) {
+          signal?.throwIfAborted();
+          if (++toolCalls > 32) throw new AgentRunLimitErrorV1('agent_tool_limit');
           yield { type: 'tool_call', toolName: tc.function.name, args: tc.function.arguments };
 
           let argsObj = {};
@@ -169,8 +182,8 @@ export class Agent {
             // skip
           }
 
-          let resultStr;
-          let isErr;
+          let resultStr: string;
+          let isErr: boolean;
           logger.info('Agent calling tool', { toolName: tc.function.name });
           const toolStart = Date.now();
           if (!allowedToolNames.has(tc.function.name)) {
@@ -184,25 +197,27 @@ export class Agent {
               requiredProvider: providerNamespace,
             });
           } else try {
-            const res = await this.config.toolAggregator.callTool(tc.function.name, argsObj);
+            const res = await wait(() => this.config.toolAggregator.callTool(tc.function.name, argsObj, { signal }));
             resultStr = res.content;
             isErr = res.isError;
             if (this.config.toolResultGuard) {
               try {
-                const guarded = await this.config.toolResultGuard({
+                const guarded = await wait(() => this.config.toolResultGuard!({
                   toolName: tc.function.name,
                   content: resultStr,
                   isError: isErr,
-                });
+                }));
                 resultStr = guarded.content;
                 isErr = guarded.isError;
               } catch {
+                signal?.throwIfAborted();
                 resultStr = JSON.stringify({ errorCode: 'tool_result_screening_failed' });
                 isErr = true;
               }
             }
             logger.info('Agent tool call success', { toolName: tc.function.name, durationMs: Date.now() - toolStart });
           } catch (e) {
+            signal?.throwIfAborted();
             resultStr = e instanceof Error ? e.message : String(e);
             isErr = true;
             logger.error('Agent tool call error', { toolName: tc.function.name, error: String(e), durationMs: Date.now() - toolStart });
@@ -231,8 +246,9 @@ export class Agent {
           });
         }
       } else {
-        isFinished = true;
+        return;
       }
     }
+    throw new AgentRunLimitErrorV1('agent_turn_limit');
   }
 }

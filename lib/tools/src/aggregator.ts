@@ -1,8 +1,13 @@
-import { ToolDef, ToolProvider } from './provider.js';
+import { ToolDef, ToolProvider, type ToolCallContextV1 } from './provider.js';
+import { abortableV1 } from '@mioagent/utils';
 
 export class ToolAggregator {
   private providers: Map<string, ToolProvider> = new Map();
   private cleanups: Array<() => void | Promise<void>> = [];
+  private signal?: AbortSignal;
+
+  /** One request owns this aggregator; direct and agent reads share its cancellation. */
+  setAbortSignal(signal: AbortSignal): void { this.signal = signal; }
 
   registerProvider(provider: ToolProvider): void {
     this.providers.set(provider.id, provider);
@@ -20,7 +25,7 @@ export class ToolAggregator {
   async listTools(): Promise<ToolDef[]> {
     const allTools: ToolDef[] = [];
     for (const provider of this.providers.values()) {
-      const tools = await provider.listTools();
+      const tools = await abortableV1(this.signal, () => provider.listTools());
       allTools.push(...tools);
     }
     return allTools;
@@ -29,7 +34,7 @@ export class ToolAggregator {
   async listProviderTools(): Promise<Array<{ providerId: string; tools: ToolDef[] }>> {
     const inventory: Array<{ providerId: string; tools: ToolDef[] }> = [];
     for (const provider of this.providers.values()) {
-      inventory.push({ providerId: provider.id, tools: await provider.listTools() });
+      inventory.push({ providerId: provider.id, tools: await abortableV1(this.signal, () => provider.listTools()) });
     }
     return inventory;
   }
@@ -50,11 +55,14 @@ export class ToolAggregator {
     return undefined;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
+  async callTool(name: string, args: Record<string, unknown>, context?: ToolCallContextV1): Promise<{ content: string; isError: boolean }> {
+    const signal = this.signal && context?.signal
+      ? AbortSignal.any([this.signal, context.signal]) : this.signal ?? context?.signal;
+    signal?.throwIfAborted();
     for (const provider of this.providers.values()) {
       const tool = provider.findTool(name);
       if (tool) {
-        return provider.callTool(name, args);
+        return abortableV1(signal, () => provider.callTool(name, args, { signal }));
       }
     }
     throw new Error(`Tool '${name}' not found`);

@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 import type { Request } from 'express';
 import { createToolAggregatorForUser, type PreparedBaseClaimCallsV1 } from '@mioagent/tools';
 import {
@@ -27,6 +28,7 @@ export async function createApiToolAggregatorForUser(
   userId: string,
   sessionSecret: string,
   options: {
+    signal?: AbortSignal;
     readOnlyOnly?: boolean;
     includeMorphoReadOnly?: boolean;
     includeUniswapQuote?: boolean;
@@ -40,16 +42,19 @@ export async function createApiToolAggregatorForUser(
     baseMcpOnly?: boolean;
   } = {},
 ) {
+  const signal = options.signal;
+  signal?.throwIfAborted();
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
   const refresh = enabled && serverUrl
-    ? await refreshBaseMcpOAuthIfNeeded({
+    ? await abortableV1(signal, () => refreshBaseMcpOAuthIfNeeded({
         userId,
         sessionSecret,
         redirectUrl: callbackUrl(req),
         serverUrl,
-      })
+      }))
     : undefined;
+  signal?.throwIfAborted();
   const oauthProvider = enabled && serverUrl && refresh?.status !== 'needs_reauth'
     ? createBaseMcpOAuthProviderForUser({
         userId,
@@ -62,10 +67,11 @@ export async function createApiToolAggregatorForUser(
   // dynamicBaseMcpCache.ts) off the stored oauth token's connectedAt +
   // expiresAt. Either value changing (reconnect, refresh) busts the cache
   // immediately; an unchanged token reuses the cached listTools() result.
-  const authStatus = oauthProvider ? await getBaseMcpAuthStatus(userId) : undefined;
+  const authStatus = oauthProvider ? await abortableV1(signal, () => getBaseMcpAuthStatus(userId)) : undefined;
   const dynamicToolsCacheVersion = authStatus ? `${authStatus.connectedAt || ''}:${authStatus.expiresAt || ''}` : undefined;
 
   return createToolAggregatorForUser(userId, sessionSecret, {
+    signal,
     baseMcpEnabled: enabled,
     baseMcpServerUrl: serverUrl?.toString(),
     baseMcpOAuthProvider: oauthProvider,

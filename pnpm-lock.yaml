@@ -744,6 +744,9 @@ importers:
 
   lib/llm:
     dependencies:
+      '@mioagent/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@mioagent/x402-gateway':
         specifier: workspace:*
         version: link:../x402-gateway
@@ -769,6 +772,9 @@ importers:
 
   lib/mcp:
     dependencies:
+      '@mioagent/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@mioagent/security':
         specifier: workspace:*
         version: link:../security
@@ -1300,6 +1306,9 @@ importers:
 
   lib/tools:
     dependencies:
+      '@mioagent/utils':
+        specifier: workspace:*
+        version: link:../utils
       '@mioagent/data-providers':
         specifier: workspace:*
         version: link:../data-providers

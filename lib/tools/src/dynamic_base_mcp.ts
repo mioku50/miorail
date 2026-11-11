@@ -1,9 +1,10 @@
+import { abortableV1 } from '@mioagent/utils';
 import * as baseMcpClassifier from '@mioagent/mcp';
 import type {
   BaseMcpToolForClassification,
   ClassifiedBaseMcpTool,
 } from '@mioagent/mcp';
-import type { ToolDef, ToolProvider } from './provider.js';
+import type { ToolDef, ToolProvider, ToolCallContextV1 } from './provider.js';
 
 type ClassifierRuntime = {
   classifyBaseMcpTools?: typeof baseMcpClassifier.classifyBaseMcpTools;
@@ -32,8 +33,8 @@ const readOnlyArgumentGuardRuntime: typeof baseMcpClassifier.baseMcpReadOnlyArgu
 
 type BaseMcpCallClient = {
   getClient(): {
-    callTool(input: { name: string; arguments?: Record<string, unknown> }): Promise<unknown>;
-    listTools?(params?: { cursor?: string }): Promise<{ tools?: unknown[]; nextCursor?: string }>;
+    callTool(input: { name: string; arguments?: Record<string, unknown> }, schema?: undefined, options?: { signal?: AbortSignal }): Promise<unknown>;
+    listTools?(params?: { cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ tools?: unknown[]; nextCursor?: string }>;
   };
 };
 
@@ -209,14 +210,19 @@ export function classifyDynamicBaseMcpTools(
 export async function listDynamicBaseMcpToolsFromClient(
   client: BaseMcpCallClient,
   toggles?: Record<string, boolean>,
+  signal?: AbortSignal,
 ): Promise<DynamicBaseMcpTool[]> {
+  signal?.throwIfAborted();
   const listTools = client.getClient().listTools;
   if (!listTools) return [];
 
   const rawTools: unknown[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 10; page += 1) {
-    const response = await listTools.call(client.getClient(), cursor ? { cursor } : undefined);
+    const response = await abortableV1(signal, () => listTools.call(
+      client.getClient(), cursor ? { cursor } : undefined, { signal },
+    ));
+    signal?.throwIfAborted();
     if (Array.isArray(response.tools)) rawTools.push(...response.tools);
     cursor = typeof response.nextCursor === 'string' && response.nextCursor ? response.nextCursor : undefined;
     if (!cursor) break;
@@ -264,7 +270,8 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     return tool ? toToolDef(tool) : undefined;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
+  async callTool(name: string, args: Record<string, unknown>, context?: ToolCallContextV1): Promise<{ content: string; isError: boolean }> {
+    context?.signal?.throwIfAborted();
     const tool = this.toolMap.get(name);
     if (!tool) return { content: `Unknown tool: ${name}`, isError: true };
     if (tool.scope === 'wallet' && !this.walletToolsEnabled) {
@@ -283,12 +290,14 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
         || explicitlyAllowed;
       if (allowedProtectedTool) {
         try {
-          const result = await this.client.getClient().callTool({ name, arguments: args });
+          const result = await this.client.getClient().callTool({ name, arguments: args }, undefined, { signal: context?.signal });
+          context?.signal?.throwIfAborted();
           const sensitiveResultAllowed = (this.options.sensitiveResultTools || [])
             .map(normalizeToolName)
             .includes(normalizeToolName(tool.name));
           return { content: serializeToolResult(result, true, sensitiveResultAllowed), isError: false };
         } catch (error) {
+          context?.signal?.throwIfAborted();
           return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
         }
       }
@@ -320,12 +329,14 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     }
 
     try {
-      const result = await this.client.getClient().callTool({ name, arguments: args });
+      const result = await this.client.getClient().callTool({ name, arguments: args }, undefined, { signal: context?.signal });
+      context?.signal?.throwIfAborted();
       const sensitiveResultAllowed = (this.options.sensitiveResultTools || [])
         .map(normalizeToolName)
         .includes(normalizeToolName(tool.name));
       return { content: serializeToolResult(result, false, sensitiveResultAllowed), isError: false };
     } catch (error) {
+      context?.signal?.throwIfAborted();
       return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
     }
   }

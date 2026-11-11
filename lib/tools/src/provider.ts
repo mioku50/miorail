@@ -4,6 +4,8 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+export interface ToolCallContextV1 { signal?: AbortSignal }
+
 export interface ToolProvider {
   id: string; // "base-mcp" | "moralis" | "native" | ...
   listTools(): Promise<ToolDef[]>; // catalog, filtered by isProtocolEnabled(id)
@@ -11,5 +13,6 @@ export interface ToolProvider {
   callTool(
     name: string,
     args: Record<string, unknown>,
+    context?: ToolCallContextV1,
   ): Promise<{ content: string; isError: boolean }>;
 }

@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mioagent/utils": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/mcp": "workspace:*",
     "@mioagent/security": "workspace:*",

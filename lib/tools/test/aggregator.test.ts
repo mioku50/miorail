@@ -54,3 +54,28 @@ test('ToolAggregator throws on unknown tool call', async () => {
     /Tool 'unknown' not found/
   );
 });
+
+test('a bound request signal stops hung tools and prevents later calls', async () => {
+  const aggregator = new ToolAggregator();
+  const controller = new AbortController();
+  aggregator.setAbortSignal(controller.signal);
+  const provider = new MockProvider();
+  let seen: AbortSignal | undefined;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  let calls = 0;
+  provider.callTool = async (_name, _args, context?: { signal?: AbortSignal }) => {
+    calls++;
+    seen = context?.signal;
+    started();
+    return new Promise<never>(() => {});
+  };
+  aggregator.registerProvider(provider);
+  const pending = aggregator.callTool('mock-tool', {});
+  await ready;
+  controller.abort(new Error('unit request left'));
+  await assert.rejects(pending, /unit request left/);
+  assert.strictEqual(seen, controller.signal);
+  await assert.rejects(aggregator.callTool('mock-tool', {}), /unit request left/);
+  assert.strictEqual(calls, 1);
+});

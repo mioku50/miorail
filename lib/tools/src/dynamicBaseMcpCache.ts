@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 // T48b: bounded TTL cache for the live Base MCP `listTools()` inventory.
 // Before this cache, `listDynamicBaseMcpToolsFromClient` re-ran a full
 // (possibly paginated) `listTools()` call against mcp.base.org on every
@@ -26,6 +27,7 @@ export function dynamicBaseMcpCacheKey(userId: string, oauthTokenVersion?: strin
 }
 
 export interface DynamicToolsCacheDeps {
+  signal?: AbortSignal;
   now?: () => number;
   ttlMs?: number;
 }
@@ -42,12 +44,14 @@ export async function listDynamicBaseMcpToolsCached(
   toggles?: Record<string, boolean>,
   deps: DynamicToolsCacheDeps = {},
 ): Promise<DynamicBaseMcpTool[]> {
+  deps.signal?.throwIfAborted();
   const now = (deps.now ?? Date.now)();
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   const cached = cache.get(key);
   if (cached && cached.expiresAt > now) return cached.tools;
 
-  const tools = await listDynamicBaseMcpToolsFromClient(client, toggles);
+  const tools = await abortableV1(deps.signal, () => listDynamicBaseMcpToolsFromClient(client, toggles, deps.signal));
+  deps.signal?.throwIfAborted();
   cache.set(key, { tools, expiresAt: now + ttlMs });
   return tools;
 }

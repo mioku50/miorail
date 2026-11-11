@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 import { LlmHttpError, LlmTimeoutError } from './openai.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
@@ -92,15 +93,19 @@ export class LlmLinkRestV1 {
 
 /** The chain's own guarantee: a link that ignores `timeoutMs` still loses
  * its turn when its share runs out. The client aborts its request too. */
-async function withinShareV1<T>(work: Promise<T>, ms: number): Promise<T> {
+async function withinShareV1<T>(
+  work: () => PromiseLike<T> | T,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      work,
+    return await abortableV1(signal, () => Promise.race([
+      work(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new LlmTimeoutError(ms)), ms);
       }),
-    ]);
+    ]));
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -183,6 +188,7 @@ export class LlmProviderChainV1 implements LlmProvider {
   }
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
+    request.signal?.throwIfAborted();
     const now = this.options.now ?? Date.now;
     const rest = this.options.rest;
     const awake = rest ? this.links.filter((link) => !rest.resting(link.label)) : this.links;
@@ -192,6 +198,7 @@ export class LlmProviderChainV1 implements LlmProvider {
 
     const failures: Array<{ label: string; error: unknown }> = [];
     for (const [index, link] of links.entries()) {
+      request.signal?.throwIfAborted();
       let share: number | null = null;
       if (deadline !== null) {
         const left = deadline - now();
@@ -213,10 +220,14 @@ export class LlmProviderChainV1 implements LlmProvider {
         });
       }
       try {
+        const linkRequest = share === null ? request : { ...request, timeoutMs: share };
         return share === null
-          ? await link.provider.generate(request)
-          : await withinShareV1(link.provider.generate({ ...request, timeoutMs: share }), share);
+          ? await abortableV1(request.signal, () => link.provider.generate(linkRequest))
+          : await withinShareV1(() => link.provider.generate(linkRequest), share, request.signal);
       } catch (error) {
+        // Cancellation is the caller ending the whole answer, not a failed
+        // upstream. Never charge a fallback or rest a link because of it.
+        request.signal?.throwIfAborted();
         // A request the NEXT provider would reject identically is rethrown
         // as-is, so the caller sees the real cause rather than a second symptom.
         if (!shouldFallOverV1(error)) throw error;

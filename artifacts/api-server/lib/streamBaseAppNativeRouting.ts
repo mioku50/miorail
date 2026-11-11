@@ -1,3 +1,4 @@
+import { abortableV1 } from '@mioagent/utils';
 import crypto from 'node:crypto';
 import { db, actions } from '@mioagent/db';
 import type { AutonomyPolicy, AutonomyPolicyRepository } from '@mioagent/autonomy';
@@ -58,7 +59,7 @@ export const baseAppNativeRuntime: {
   loadTokenSecurity: typeof loadTokenSecurityContext;
   evaluate: typeof evaluateExecutableAction;
   insertAction: (row: NativeActionRow) => Promise<void>;
-  prepareUniswap5792: (intent: SwapIntent, walletAddress: string) => Promise<UniswapPreparation>;
+  prepareUniswap5792: (intent: SwapIntent, walletAddress: string, signal?: AbortSignal) => Promise<UniswapPreparation>;
 } = {
   getRepository: getAutonomyPolicyRepository,
   loadTokenSecurity: loadTokenSecurityContext,
@@ -102,12 +103,15 @@ async function freshUsdcSecurity() {
 }
 
 export async function runDirectBaseAppNativeSend(input: {
+  signal?: AbortSignal;
   message: string;
   normalizedIntent?: BaseMcpSendIntent;
   walletAddress?: string;
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectBaseAppNativeResult | null> {
+  input.signal?.throwIfAborted();
+  const wait = <T>(work: () => PromiseLike<T> | T) => abortableV1(input.signal, work);
   const intent = input.normalizedIntent ?? detectBaseMcpSendIntent(input.message);
   if (!intent) return null;
   const kind: NativeResultKind = 'baseapp_native_send';
@@ -116,7 +120,7 @@ export async function runDirectBaseAppNativeSend(input: {
     return blocked(kind, 'Authenticate the current BaseApp wallet before requesting a transfer.', 'send_wallet_required');
   }
   const walletAddress = input.walletAddress.toLowerCase();
-  const policy = await baseAppNativeRuntime.getRepository().getByUser(input.userId, 8453);
+  const policy = await wait(() => baseAppNativeRuntime.getRepository().getByUser(input.userId, 8453));
   if (!validPolicy(policy, input.userId, walletAddress)) {
     return blocked(kind, 'Native transfer is blocked until the active mainnet policy matches the authenticated BaseApp wallet.', 'mainnet_policy_not_ready');
   }
@@ -126,7 +130,7 @@ export async function runDirectBaseAppNativeSend(input: {
   if (intent.amount > policy.maxPerAction) {
     return blocked(kind, 'Transfer blocked: the amount exceeds the policy maximum per action.', 'send_max_per_action_exceeded');
   }
-  const { security, usable } = await freshUsdcSecurity();
+  const { security, usable } = await wait(() => freshUsdcSecurity());
   if (!usable) return blocked(kind, 'Transfer blocked: no fresh usable GoPlus verdict exists for canonical Base USDC.', 'send_token_security_unavailable');
 
   const canonicalInstruction = `send ${intent.amountText} USDC to ${intent.recipient}`;
@@ -138,14 +142,14 @@ export async function runDirectBaseAppNativeSend(input: {
   if (payload.actionType !== 'limited_transfer' || payload.calls.length !== 1) {
     return blocked(kind, 'Transfer could not be encoded as a bounded canonical-USDC action.', 'native_send_prepare_failed');
   }
-  const guard = await baseAppNativeRuntime.evaluate({
+  const guard = await wait(() => baseAppNativeRuntime.evaluate({
     chain: 8453,
     actionType: 'limited_transfer',
     calls: payload.calls,
     instruction: input.message,
     providerContext: security.providerContext,
     tokenSecurity: security.tokenSecurity,
-  });
+  }));
   if (!guard.allowed) return blocked(kind, `Transfer preflight failed (${guard.code}).`, 'native_send_preflight_blocked');
 
   const actionId = crypto.randomUUID();
@@ -165,7 +169,7 @@ export async function runDirectBaseAppNativeSend(input: {
     createdBy: 'baseapp-native-routing',
     expiresAt,
   };
-  await baseAppNativeRuntime.insertAction({
+  await wait(() => baseAppNativeRuntime.insertAction({
     id: actionId,
     userId: input.userId,
     kind: 'transaction',
@@ -175,7 +179,7 @@ export async function runDirectBaseAppNativeSend(input: {
     metadata,
     createdAt: new Date(),
     updatedAt: new Date(),
-  });
+  }));
   return {
     kind,
     content: `I prepared a ${intent.amountText} USDC transfer for your current BaseApp wallet. Review it in Action Inbox and confirm with wallet_sendCalls; the server did not sign or broadcast anything.`,
@@ -215,23 +219,25 @@ function uniswapToken(symbol: string): { address: string; decimals: number } {
 // T56: response-shape validation for both endpoints now lives in the shared
 // @mioagent/swap-adapters UniswapTradeClient; this transport only performs
 // the gated HTTP call and records the post-fact trace for each attempt.
-function pluginHttpTradeTransport(traces: StreamToolTrace[]): UniswapTradeTransport {
+function pluginHttpTradeTransport(traces: StreamToolTrace[], signal?: AbortSignal): UniswapTradeTransport {
   return {
     async post(path, body) {
+      signal?.throwIfAborted();
       const toolName = `plugin_http_request:POST ${path}`;
       try {
-        const response = await pluginHttpRequest({
+        const response = await abortableV1(signal, () => pluginHttpRequest({
           plugin: 'uniswap',
           url: `https://trade-api.gateway.uniswap.org${path}`,
           method: 'POST',
           body,
           extraHeaders: { accept: 'application/json', 'x-universal-router-version': '2.0' },
           timeoutMs: uniswapTimeoutMs(),
-        });
+        }));
         if (response.status < 200 || response.status >= 300) throw new Error(`uniswap_http_${response.status}`);
         traces.push({ toolName, args: { path }, result: { status: 'success' }, isError: false });
         return { status: response.status, payload: response.data };
       } catch (error) {
+        signal?.throwIfAborted();
         const message = error instanceof Error ? error.message : String(error);
         const trace: StreamToolTrace = {
           toolName,
@@ -245,7 +251,9 @@ function pluginHttpTradeTransport(traces: StreamToolTrace[]): UniswapTradeTransp
   };
 }
 
-export async function prepareUniswap5792(intent: SwapIntent, walletAddress: string): Promise<UniswapPreparation> {
+export async function prepareUniswap5792(intent: SwapIntent, walletAddress: string, signal?: AbortSignal): Promise<UniswapPreparation> {
+  signal?.throwIfAborted();
+  const wait = <T>(work: () => PromiseLike<T> | T) => abortableV1(signal, work);
   if (intent.tokenIn !== 'USDC' || !['ETH', 'WETH'].includes(intent.tokenOut)) throw new Error('uniswap_pair_unsupported');
   const tokenIn = uniswapToken(intent.tokenIn);
   const tokenOut = uniswapToken(intent.tokenOut);
@@ -258,9 +266,9 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
   if (!inputAsset || !outputAsset) throw new Error('uniswap_pair_unsupported');
   const amount = baseUnits(intent.amount, tokenIn.decimals);
   const traces: StreamToolTrace[] = [];
-  const client = new UniswapTradeClient(pluginHttpTradeTransport(traces));
+  const client = new UniswapTradeClient(pluginHttpTradeTransport(traces, signal));
 
-  const quoteResult = await client.quote({
+  const quoteResult = await wait(() => client.quote({
     type: 'EXACT_INPUT',
     amount,
     tokenIn: tokenIn.address,
@@ -278,13 +286,13 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
     // moment a standing Permit2 allowance lapses. `EXACT` keeps the approval
     // equal to the input amount.
     permitAmount: 'EXACT',
-  });
+  }));
   if (quoteResult.outcome !== 'quote') throw new Error('uniswap_quote_invalid');
   const quotePayload = quoteResult.payload!;
   const quote = quotePayload.quote;
 
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-  const swapResult = await client.swap5792(
+  const swapResult = await wait(() => client.swap5792(
     {
       quote,
       ...(quotePayload.permitData ? { permitData: quotePayload.permitData } : {}),
@@ -292,7 +300,7 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
       urgency: 'normal',
     },
     walletAddress,
-  );
+  ));
   if (swapResult.outcome !== 'prepared') throw new Error('uniswap_5792_invalid');
   return {
     calls: swapResult.calls!,
@@ -311,12 +319,15 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
 }
 
 export async function runDirectBaseAppNativeSwap(input: {
+  signal?: AbortSignal;
   message: string;
   normalizedIntent?: SwapIntent;
   walletAddress?: string;
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectBaseAppNativeResult | null> {
+  input.signal?.throwIfAborted();
+  const wait = <T>(work: () => PromiseLike<T> | T) => abortableV1(input.signal, work);
   const intent = input.normalizedIntent ?? detectSwapIntent(input.message);
   if (!intent) return null;
   const kind: NativeResultKind = 'baseapp_native_swap';
@@ -325,7 +336,7 @@ export async function runDirectBaseAppNativeSwap(input: {
     return blocked(kind, 'Authenticate the current BaseApp wallet before requesting a swap.', 'swap_wallet_required');
   }
   const walletAddress = input.walletAddress.toLowerCase();
-  const policy = await baseAppNativeRuntime.getRepository().getByUser(input.userId, 8453);
+  const policy = await wait(() => baseAppNativeRuntime.getRepository().getByUser(input.userId, 8453));
   if (!validPolicy(policy, input.userId, walletAddress)) {
     return blocked(kind, 'Native swap is blocked until the active mainnet policy matches the authenticated BaseApp wallet.', 'mainnet_policy_not_ready');
   }
@@ -336,7 +347,7 @@ export async function runDirectBaseAppNativeSwap(input: {
   if (!Number.isFinite(amount) || amount <= 0 || amount > policy.maxPerAction) {
     return blocked(kind, 'Swap blocked: the amount is invalid or exceeds the policy maximum per action.', 'swap_max_per_action_exceeded');
   }
-  const { security, usable } = await freshUsdcSecurity();
+  const { security, usable } = await wait(() => freshUsdcSecurity());
   if (!usable) return blocked(kind, 'Swap blocked: no fresh usable GoPlus verdict exists for canonical Base USDC.', 'swap_token_security_unavailable');
 
   // T48b: real post-fact tool-trace steps for this swap — skill_load, the
@@ -348,16 +359,17 @@ export async function runDirectBaseAppNativeSwap(input: {
 
   let prepared: UniswapPreparation;
   try {
-    prepared = await baseAppNativeRuntime.prepareUniswap5792(intent, walletAddress);
+    prepared = await wait(() => baseAppNativeRuntime.prepareUniswap5792(intent, walletAddress, input.signal));
     traces.push(...(prepared.traces || []));
   } catch (error) {
+    input.signal?.throwIfAborted();
     const failedTrace = (error as { trace?: StreamToolTrace } | undefined)?.trace;
     if (failedTrace) traces.push(failedTrace);
     const code = error instanceof Error ? error.message.replace(/[^a-z0-9_]+/gi, '_').toLowerCase() : 'uniswap_prepare_failed';
     return blocked(kind, `Uniswap could not prepare a native wallet batch (${code}).`, code, traces);
   }
   const payload = { chain: 'eip155:8453', actionType: 'uniswap_swap' as const, calls: prepared.calls };
-  const guard = await baseAppNativeRuntime.evaluate({
+  const guard = await wait(() => baseAppNativeRuntime.evaluate({
     chain: 8453,
     actionType: payload.actionType,
     calls: payload.calls,
@@ -365,7 +377,7 @@ export async function runDirectBaseAppNativeSwap(input: {
     providerContext: security.providerContext,
     tokenSecurity: security.tokenSecurity,
     uniswap: prepared.context,
-  });
+  }));
   traces.push({
     toolName: 'security_preflight',
     args: { actionType: payload.actionType, chain: 8453 },
@@ -383,7 +395,7 @@ export async function runDirectBaseAppNativeSwap(input: {
   const actionId = crypto.randomUUID();
   const expiresAt = new Date(Math.min(policy.expiresAt, Date.parse(prepared.expiresAt))).toISOString();
   const context = { ...prepared.context, expiresAt };
-  await baseAppNativeRuntime.insertAction({
+  await wait(() => baseAppNativeRuntime.insertAction({
     id: actionId,
     userId: input.userId,
     kind: 'transaction',
@@ -408,7 +420,7 @@ export async function runDirectBaseAppNativeSwap(input: {
     },
     createdAt: new Date(),
     updatedAt: new Date(),
-  });
+  }));
   return {
     kind,
     content: `I prepared a ${intent.amount} USDC → ${intent.tokenOut} Uniswap batch for your current BaseApp wallet. Review it in Action Inbox and confirm with wallet_sendCalls; no Base MCP approval URL was created.`,

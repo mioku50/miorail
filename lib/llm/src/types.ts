@@ -17,6 +17,8 @@ export interface LlmMessage {
 
 export interface LlmRequest {
   messages: LlmMessage[];
+  /** Stops this whole answer, including any fallback provider, when its caller leaves. */
+  signal?: AbortSignal;
   model?: string;
   temperature?: number;
   /**
