@@ -60,7 +60,10 @@ test('MCP and HTTP return identical terms from one cached calendar, including th
   assert.deepEqual(mcp, http.body);
   assert.deepEqual(JSON.parse((result.content as { text: string }[])[0]!.text), mcp);
   assert.equal(fetchFn.mock.callCount(), 1, 'two doors must share the same cached calendar');
-  assert.equal(mcp.termsVersion, '2026-10-26');
+  assert.equal(mcp.termsVersion, '2026-11-11');
+  // The terms of 2026-11-11 state the rule for a stock price the feed stopped refreshing (audit BASE-7).
+  assert.deepEqual({ share: mcp.stalePrice.stockSharePercentOfProtocol, hours: mcp.stalePrice.afterOpenMarketHours }, { share: 40, hours: 25 });
+  assert.match(mcp.stalePrice.rule, /counts as it does while the market is closed/);
   assert.equal(mcp.sharePercentOfProtocol, 50);
   assert.equal(mcp.weekend.activeNow, true);
   assert.equal(mcp.weekend.stockSharePercentOfProtocol, 40);
