@@ -18,6 +18,14 @@ const ROUTER = `0x${'6'.repeat(40)}`;
 const AMOUNT = 7_000_000n;
 const ALLOWANCE_DATA = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ROUTER, AMOUNT] });
 const SWAP_DATA = '0x12345678';
+// A Uniswap route spends through Permit2: the token lets Permit2 move it, Permit2 lets the router.
+const PERMIT2 = '0x000000000022d473030f116ddee9f6b43ac78ba3';
+const TO_PERMIT2_DATA = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [PERMIT2, AMOUNT] });
+const PERMIT2_APPROVE_DATA = encodeFunctionData({
+  abi: [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', outputs: [],
+    inputs: [{ name: 'token', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }] }] as const,
+  functionName: 'approve', args: [USDC, ROUTER as `0x${string}`, AMOUNT, 4_070_908_800],
+});
 const TX = [`0x${'b1'.repeat(32)}`, `0x${'b2'.repeat(32)}`, `0x${'b3'.repeat(32)}`];
 
 type WalletKind = 'no-methods' | 'silent-capabilities' | 'slow-capabilities';
@@ -32,7 +40,8 @@ const receiptOf = (hash: string) => ({
 // a test says otherwise, since a swap is not handed to a wallet without one (final audit FA1, 2026-11-04).
 // attemptsDown: the attempts route cannot record one (its storage is unavailable).
 // loseSwapReply: the wallet sends the swap and its answer never comes back.
-async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean; attempts?: boolean; attemptsDown?: boolean; loseSwapReply?: boolean; allowanceInPlace?: boolean } = {}) {
+// permit2: the approved calls are a Uniswap route's three. refuseSteps: the server keeps one batch for these calls.
+async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean; attempts?: boolean; attemptsDown?: boolean; loseSwapReply?: boolean; allowanceInPlace?: boolean; permit2?: boolean; refuseSteps?: boolean } = {}) {
   await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript',
     body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
   await page.addInitScript(({ wallet, kind, hashes, declineSwapOnce, loseSwapReply, router }) => {
@@ -126,13 +135,15 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
     if (path === '/api/route-intelligence/swap/blueprints/bp_1/approve' && request.method() === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
       state.approvals.push(body);
-      const steps = body.delivery === 'sequential';
+      const steps = body.delivery === 'sequential' && !options.refuseSteps;
       return route.fulfill({ json: {
         outcome: 'approved',
         lifecycle: 'approved',
         payload: {
           blueprintId: 'bp_1', blueprintHash: HASH, approvedCallsHash: HASH, chainId: '0x2105', from: WALLET,
-          calls: [{ to: USDC, value: '0x0', data: ALLOWANCE_DATA }, { to: ROUTER, value: '0x0', data: SWAP_DATA }],
+          calls: options.permit2
+            ? [{ to: USDC, value: '0x0', data: TO_PERMIT2_DATA }, { to: PERMIT2, value: '0x0', data: PERMIT2_APPROVE_DATA }, { to: ROUTER, value: '0x0', data: SWAP_DATA }]
+            : [{ to: USDC, value: '0x0', data: ALLOWANCE_DATA }, { to: ROUTER, value: '0x0', data: SWAP_DATA }],
           atomicRequired: !steps,
           ...(steps ? { delivery: 'sequential' } : {}),
         },
@@ -211,6 +222,41 @@ test('a wallet with no batch methods swaps in two steps, the second only once th
   expect(String(submitted!.batchId)).toMatch(new RegExp(`^${TX[0]}${TX[1]!.slice(2)}0{60}2105(5792){16}$`));
   expect(confirmed).toMatchObject({ status: 'confirmed', batchId: submitted!.batchId });
   await expect(page.getByText(/fee sponsored|Press again/)).toHaveCount(0);
+});
+
+test('a Uniswap route goes in three steps: the token’s allowance to Permit2, Permit2’s to the router, then the swap', async ({ page }) => {
+  // 2026-11-11: this wallet was told "These calls can only be sent together" for exactly these calls.
+  const state = await install(page, 'no-methods', { permit2: true });
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirmed onchain', exact: true })).toBeVisible();
+
+  expect(state.approvals).toEqual([expect.objectContaining({ delivery: 'sequential' })]);
+  const sends = await walletSends(page);
+  expect(sends.map((send) => send.data)).toEqual([TO_PERMIT2_DATA, PERMIT2_APPROVE_DATA, SWAP_DATA]);
+  // Each step was asked for only after the one before it had landed.
+  for (const index of [0, 1]) {
+    const landed = state.receiptReadAt.find((read) => read.hash === TX[index]);
+    expect(landed && sends[index + 1]!.at >= landed.at).toBe(true);
+  }
+  const [submitted, confirmed] = state.records;
+  expect(submitted).toMatchObject({ status: 'submitted', transactionHashes: [TX[0], TX[1], TX[2]] });
+  expect(confirmed).toMatchObject({ status: 'confirmed', batchId: submitted!.batchId });
+  await expect(page.getByText(/can only be sent together|Press again/)).toHaveCount(0);
+});
+
+test('a batch the wallet refused, for calls the server keeps as one batch, leaves no wallet request to check', async ({ page }) => {
+  // The batch path opens an attempt before the wallet is asked. Refused by the wallet, and with steps
+  // not granted either, nothing was sent: the attempt is closed, not left for the person to check.
+  const state = await install(page, 'silent-capabilities', { refuseSteps: true });
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /^These calls can only be sent together, and this wallet cannot do that\. Nothing was sent\./ })).toBeVisible();
+
+  expect(await walletSends(page)).toEqual([]);
+  expect(state.attempts).toHaveLength(1);
+  expect(state.attempts[0]!.status).toBe('failed');
+  expect(state.records).toEqual([expect.objectContaining({ status: 'failed', submissionAttemptId: 'attempt_1' })]);
 });
 
 test('a declined swap step leaves the allowance, and the next press sends only the swap', async ({ page }) => {

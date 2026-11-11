@@ -17,6 +17,7 @@ import {
   type SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
+import { PERMIT2_ADDRESS } from '@mioagent/security/uniswapGuard';
 import { decodeFunctionData, erc20Abi, maxUint256 } from 'viem';
 import {
   aerodromeKernelInputV1,
@@ -121,33 +122,102 @@ export function buildApprovedPayload(
   };
 }
 
+const PERMIT2_APPROVE_SELECTOR_V1 = '0x87517c45';
+const PERMIT2_APPROVE_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+    ],
+    outputs: [],
+  },
+] as const;
+const MAX_UINT160_V1 = (BigInt(1) << BigInt(160)) - BigInt(1);
+const MAX_UINT48_V1 = (BigInt(1) << BigInt(48)) - BigInt(1);
+
+type ApprovedCallV1 = ApprovedBlueprintPayloadV1['calls'][number];
+
+/** `token.approve(spender, amount)` for an exact amount and no ETH, or null. */
+function exactErc20AllowanceV1(call: ApprovedCallV1): { token: string; spender: string; amount: bigint } | null {
+  if (BigInt(call.value) !== 0n) return null;
+  try {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: call.data });
+    if (decoded.functionName !== 'approve') return null;
+    const [spender, amount] = decoded.args as readonly [`0x${string}`, bigint];
+    if (amount <= 0n || amount >= maxUint256) return null;
+    return { token: call.to.toLowerCase(), spender: spender.toLowerCase(), amount };
+  } catch {
+    return null;
+  }
+}
+
+/** `Permit2.approve(token, spender, amount, expiration)` for an exact amount that ends, or null. */
+function exactPermit2AllowanceV1(call: ApprovedCallV1): { token: string; spender: string; amount: bigint } | null {
+  if (call.to.toLowerCase() !== PERMIT2_ADDRESS || BigInt(call.value) !== 0n) return null;
+  if (call.data.slice(0, 10).toLowerCase() !== PERMIT2_APPROVE_SELECTOR_V1) return null;
+  try {
+    const decoded = decodeFunctionData({ abi: PERMIT2_APPROVE_ABI_V1, data: call.data });
+    const [token, spender, amount, expiration] = decoded.args;
+    if (amount <= 0n || amount >= MAX_UINT160_V1) return null;
+    if (BigInt(expiration) <= 0n || BigInt(expiration) >= MAX_UINT48_V1) return null;
+    return { token: token.toLowerCase(), spender: spender.toLowerCase(), amount };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The same approved calls, delivered one transaction at a time, or null.
  *
- * Granted only where order alone keeps the promise the batch kept: the swap
- * alone, or one ERC-20 approval of an exact amount to the very contract the
- * swap calls, then the swap. The wallet waits for the approval to land before
- * it is asked for the swap. A stopped second step leaves that exact allowance
- * in place; the operator accepted that on 2026-10-31 for wallets that cannot
- * send a batch (Rabby, an imported key in Coinbase Wallet), and the next quote
- * finds the allowance and asks for no new approval. Loans never come here.
+ * Granted only where order alone keeps the promise the batch kept. The shapes:
+ *
+ * - the swap alone;
+ * - one ERC-20 approval of an exact amount to the very contract the swap
+ *   calls, then the swap;
+ * - Uniswap's two (added 2026-11-11): an exact Permit2 allowance, ending with
+ *   the quote, to the very contract the swap calls, then the swap; and, for a
+ *   wallet that has never used Permit2, an ERC-20 approval of the same exact
+ *   amount to Permit2 before it. Until that day a wallet that cannot send a
+ *   batch was told a Uniswap route "can only be sent together", and Uniswap
+ *   had just begun to win the comparison for tokenized stocks.
+ *
+ * The wallet waits for each step to land before it is asked for the next. A
+ * stopped last step leaves those exact allowances in place; the operator
+ * accepted that on 2026-10-31 for wallets that cannot send a batch (Rabby, an
+ * imported key in Coinbase Wallet). An ERC-20 allowance to Permit2 moves
+ * nothing by itself: Permit2 spends it only through an allowance of its own,
+ * or a signature, and the one given here is exact and ends. Loans never come
+ * here.
  */
 export function sequentialSwapDeliveryV1(payload: ApprovedBlueprintPayloadV1): SequentialApprovedPayloadV1 | null {
   const calls = payload.calls;
+  const swap = calls[calls.length - 1];
+  if (!swap || calls.length > 3) return null;
+  const router = swap.to.toLowerCase();
   if (calls.length === 2) {
-    const [allowance, swap] = calls as [(typeof calls)[number], (typeof calls)[number]];
-    if (BigInt(allowance.value) !== 0n) return null;
-    let decoded: ReturnType<typeof decodeFunctionData<typeof erc20Abi>>;
-    try {
-      decoded = decodeFunctionData({ abi: erc20Abi, data: allowance.data });
-    } catch {
+    const direct = exactErc20AllowanceV1(calls[0]!);
+    const throughPermit2 = exactPermit2AllowanceV1(calls[0]!);
+    const granted = (direct && direct.spender === router) || (throughPermit2 && throughPermit2.spender === router);
+    if (!granted) return null;
+  } else if (calls.length === 3) {
+    // The token lets Permit2 move exactly this amount, and Permit2 lets the
+    // swap's contract move exactly the same amount of the same token.
+    const toPermit2 = exactErc20AllowanceV1(calls[0]!);
+    const toRouter = exactPermit2AllowanceV1(calls[1]!);
+    if (
+      !toPermit2 || !toRouter ||
+      toPermit2.spender !== PERMIT2_ADDRESS ||
+      toRouter.spender !== router ||
+      toRouter.token !== toPermit2.token ||
+      toRouter.amount !== toPermit2.amount
+    ) {
       return null;
     }
-    if (decoded.functionName !== 'approve') return null;
-    const [spender, amount] = decoded.args as readonly [`0x${string}`, bigint];
-    if (spender.toLowerCase() !== swap.to.toLowerCase() || amount <= 0n || amount >= maxUint256) return null;
-  } else if (calls.length !== 1) {
-    return null;
   }
   return { ...payload, atomicRequired: false, delivery: 'sequential' };
 }

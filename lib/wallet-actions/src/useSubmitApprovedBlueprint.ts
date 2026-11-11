@@ -43,10 +43,14 @@ import {
   SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1,
   SEQUENTIAL_SEND_UNREAD_V1,
   SEQUENTIAL_SWAP_DECLINED_V1,
+  PERMIT2_ADDRESS_V1,
+  PERMIT2_ALLOWANCE_ABI_V1,
   SWAP_NEEDS_ONE_BATCH_V1,
   batchFailureInvitesStepsV1,
   batchRefusalContinuesInStepsV1,
   exactAllowanceOfV1,
+  permit2AllowanceInPlaceV1,
+  permit2AllowanceOfV1,
   sequentialAfterBatchFailureV1,
   sequentialBatchIdV1,
   sequentialNoticeV1,
@@ -545,6 +549,18 @@ export function useSubmitApprovedBlueprint({
         }).catch(() => null);
         if (typeof current === 'bigint' && current >= allowance.amount) continue;
       }
+      // The same for Permit2's own allowance to the router (a Uniswap route).
+      const permit2 = last || allowance ? null : permit2AllowanceOfV1(call);
+      if (permit2) {
+        const current = await readContract(config, {
+          address: PERMIT2_ADDRESS_V1,
+          abi: PERMIT2_ALLOWANCE_ABI_V1,
+          functionName: 'allowance',
+          args: [payload.from, permit2.token, permit2.spender],
+          chainId: base.id,
+        }).catch(() => null);
+        if (permit2AllowanceInPlaceV1(current, permit2)) continue;
+      }
       if (last && sent.length > 0 && quoteExpiry && Date.parse(quoteExpiry) - Date.now() < 5_000) {
         await stop('expired', SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1);
         return;
@@ -625,14 +641,35 @@ export function useSubmitApprovedBlueprint({
    * decides whether these calls may go one at a time; asking is all this side
    * does. */
   const approveAndSendInSteps = async (approvalInput: Parameters<typeof approveSwap.mutateAsync>[0]) => {
+    // A press that came here from a batch the wallet refused opened an attempt
+    // for that batch. When this path stops before a step is sent, nothing was
+    // sent and nothing will be: the attempt is closed with what was said.
+    // Left open, it stayed among "Wallet requests to check" for a transaction
+    // that never existed (2026-11-11: eleven of them on one wallet).
+    const closeCarriedAttempt = async (message: string) => {
+      const attempt = attemptRef.current;
+      const carried = approvedRef.current;
+      if (!attempt || !carried) return;
+      clearRecoveryMarkerV1(markerStorage === undefined ? browserMarkerStorageV1() : markerStorage, carried.from, attempt);
+      await recordSafely({
+        walletAddress: carried.from,
+        routeRunId,
+        blueprintId,
+        approvedCallsHash: carried.approvedCallsHash,
+        status: 'failed',
+        error: message,
+      });
+    };
     setStatus('approving');
     const approval = await approveSwap.mutateAsync({ ...approvalInput, delivery: 'sequential' });
     if (approval.outcome === 'expired') {
+      await closeCarriedAttempt(approval.reason);
       setStatus('expired');
       setError(approval.reason);
       return;
     }
     if (approval.outcome === 'blocked') {
+      await closeCarriedAttempt(approval.reason);
       setStatus('blocked');
       setError(approval.reason);
       return;
@@ -645,19 +682,21 @@ export function useSubmitApprovedBlueprint({
       sequentialAsked: true,
     });
     if (!preflight.ok) {
+      await closeCarriedAttempt(preflight.reason);
       setStatus('failed');
       setError(preflight.reason);
       return;
     }
-    approvedRef.current = payload;
     // Steps were asked for because this wallet cannot send a batch. The
     // server keeps a batch for calls whose order alone would not keep its
     // promise, and those this wallet cannot send.
     if (!('delivery' in payload) || payload.delivery !== 'sequential') {
+      await closeCarriedAttempt(SWAP_NEEDS_ONE_BATCH_V1);
       setStatus('failed');
       setError(SWAP_NEEDS_ONE_BATCH_V1);
       return;
     }
+    approvedRef.current = payload;
     setSponsoredGas(null);
     // A press that arrives here from a batch the wallet refused carries its attempt on.
     if (!attemptRef.current) {

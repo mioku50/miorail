@@ -9,7 +9,10 @@ import {
   SEQUENTIAL_BATCH_MAGIC_V1,
   batchFailureInvitesStepsV1,
   batchRefusalContinuesInStepsV1,
+  PERMIT2_ADDRESS_V1,
   exactAllowanceOfV1,
+  permit2AllowanceInPlaceV1,
+  permit2AllowanceOfV1,
   sequentialBatchIdV1,
   sequentialNoticeV1,
   swapDeliveryPlanV1,
@@ -88,6 +91,58 @@ test('an allowance among the approved calls is read exactly, and nothing else is
   assert.equal(exactAllowanceOfV1({ to: USDC, data: transfer }), null);
   assert.equal(exactAllowanceOfV1({ to: USDC, data: '0x095ea7b3' }), null);
   assert.equal(exactAllowanceOfV1({ to: ROUTER, data: '0x12345678' }), null);
+});
+
+// 2026-11-11: a Uniswap route's allowance is Permit2's own, and a wallet that cannot send a batch was
+// refused the whole swap for it. The server now grants steps for it; here the step is read and, when
+// it is already in place, not asked for twice.
+test('a Permit2 allowance among the approved calls is read exactly, and nothing else is one', () => {
+  const PERMIT2_ABI = [{
+    type: 'function', name: 'approve', stateMutability: 'nonpayable', outputs: [],
+    inputs: [{ name: 'token', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }],
+  }] as const;
+  const data = encodeFunctionData({ abi: PERMIT2_ABI, functionName: 'approve', args: [USDC as Hex, ROUTER, 2_000_000n, 1_794_423_000] });
+  assert.deepEqual(permit2AllowanceOfV1({ to: PERMIT2_ADDRESS_V1.toUpperCase().replace('0X', '0x'), data }), {
+    token: USDC, spender: ROUTER, amount: 2_000_000n, expiration: 1_794_423_000,
+  });
+  // The same bytes to another contract, an ERC-20 approval, and a cut call are not one.
+  assert.equal(permit2AllowanceOfV1({ to: ROUTER, data }), null);
+  assert.equal(permit2AllowanceOfV1({ to: PERMIT2_ADDRESS_V1, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ROUTER, 1n] }) }), null);
+  assert.equal(permit2AllowanceOfV1({ to: PERMIT2_ADDRESS_V1, data: '0x87517c45' }), null);
+  assert.equal(exactAllowanceOfV1({ to: PERMIT2_ADDRESS_V1, data }), null, 'and it is not mistaken for an ERC-20 approval');
+});
+
+test('a Permit2 allowance already in place covers a step only for the amount and to the same end', () => {
+  const wanted = { amount: 2_000_000n, expiration: 1_794_423_000 };
+  // Permit2.allowance answers (amount, expiration, nonce).
+  assert.equal(permit2AllowanceInPlaceV1([2_000_000n, 1_794_423_000, 3], wanted), true, 'the one a stopped swap step left');
+  assert.equal(permit2AllowanceInPlaceV1([5_000_000n, 1_794_500_000, 3], wanted), true);
+  assert.equal(permit2AllowanceInPlaceV1([1_999_999n, 1_794_423_000, 3], wanted), false, 'less than the swap spends');
+  assert.equal(permit2AllowanceInPlaceV1([2_000_000n, 1_794_422_999, 3], wanted), false, 'ends before this quote does');
+  assert.equal(permit2AllowanceInPlaceV1([0n, 0, 0], wanted), false);
+  // Not read is not in place.
+  assert.equal(permit2AllowanceInPlaceV1(null, wanted), false);
+  assert.equal(permit2AllowanceInPlaceV1(undefined, wanted), false);
+  assert.equal(permit2AllowanceInPlaceV1(['2000000', 1_794_423_000, 3], wanted), false);
+});
+
+test('a press that sent nothing leaves no wallet request to check', () => {
+  // 2026-11-11: eleven "Wallet requests to check" on one wallet, none of which had sent anything. The
+  // batch path opens an attempt; when the wallet refuses the batch and steps are not granted either,
+  // that attempt must be closed with what was said, before the page says so.
+  const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
+  const steps = source.slice(source.indexOf('const approveAndSendInSteps = async'), source.indexOf('const submit = async'));
+  assert.match(steps, /const closeCarriedAttempt = async \(message: string\) => \{/);
+  assert.match(steps, /clearRecoveryMarkerV1\(/);
+  assert.match(steps, /status: 'failed',\s+error: message,/);
+  for (const reason of ['approval.reason', 'preflight.reason', 'SWAP_NEEDS_ONE_BATCH_V1']) {
+    assert.ok(steps.includes(`await closeCarriedAttempt(${reason});`), `closed when it stops for ${reason}`);
+  }
+  assert.equal(steps.split('await closeCarriedAttempt(').length - 1, 4, 'expired, blocked, preflight and one-batch');
+  // And the steps themselves skip a Permit2 allowance that is already there.
+  const sender = source.slice(source.indexOf('const sendOneAtATime = async'), source.indexOf('const approveAndSendInSteps = async'));
+  assert.match(sender, /const permit2 = last \|\| allowance \? null : permit2AllowanceOfV1\(call\);/);
+  assert.match(sender, /if \(permit2AllowanceInPlaceV1\(current, permit2\)\) continue;/);
 });
 
 test('the steps’ batch id is viem’s fallback id, so the poller reads every receipt itself', async () => {

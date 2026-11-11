@@ -47,6 +47,71 @@ export function exactAllowanceOfV1(call: { to: string; data: string }): { token:
   }
 }
 
+export const PERMIT2_ADDRESS_V1 = '0x000000000022d473030f116ddee9f6b43ac78ba3' as const;
+
+const PERMIT2_APPROVE_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+    ],
+    outputs: [],
+  },
+] as const;
+
+export const PERMIT2_ALLOWANCE_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'user', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    outputs: [
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+      { name: 'nonce', type: 'uint48' },
+    ],
+  },
+] as const;
+
+/**
+ * A Permit2 allowance among the approved calls, decoded, or null. Uniswap's
+ * routes spend through Permit2: the token lets Permit2 move it, and Permit2
+ * lets the router move an exact amount until the quote ends. Sent in steps,
+ * that second allowance is a step of its own (2026-11-11).
+ */
+export function permit2AllowanceOfV1(call: { to: string; data: string }): { token: Hex; spender: Hex; amount: bigint; expiration: number } | null {
+  if (call.to.toLowerCase() !== PERMIT2_ADDRESS_V1 || call.data.slice(0, 10).toLowerCase() !== '0x87517c45') return null;
+  try {
+    const decoded = decodeFunctionData({ abi: PERMIT2_APPROVE_ABI_V1, data: call.data as Hex });
+    const [token, spender, amount, expiration] = decoded.args;
+    return { token: token.toLowerCase() as Hex, spender: spender.toLowerCase() as Hex, amount, expiration: Number(expiration) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether what Permit2 already holds covers a step: at least the amount, and
+ * ending no earlier than the step's own allowance would. The one left by a
+ * stopped swap step of the same review is exactly that, and is not asked for
+ * twice; an older one that ends sooner is written again. An answer that could
+ * not be read covers nothing.
+ */
+export function permit2AllowanceInPlaceV1(current: unknown, wanted: { amount: bigint; expiration: number }): boolean {
+  if (!Array.isArray(current) || typeof current[0] !== 'bigint') return false;
+  const expiration = Number(current[1]);
+  return current[0] >= wanted.amount && Number.isFinite(expiration) && expiration >= wanted.expiration;
+}
+
 export type SwapDeliveryPlanV1 = 'atomic' | 'sequential';
 
 /**
@@ -109,7 +174,7 @@ export function sequentialAfterBatchFailureV1(walletName?: string | null): strin
 }
 
 export const SEQUENTIAL_SWAP_DECLINED_V1 =
-  'The allowance for the exact amount is in place; the swap itself was not sent. Press again to send just the swap while this quote holds.';
+  'The allowance for the exact amount is in place; the swap itself was not sent. Press again to go on from there while this quote holds.';
 
 export const SEQUENTIAL_ALLOWANCE_FAILED_V1 =
   'The allowance transaction failed onchain, so the swap was not sent. Nothing was swapped.';

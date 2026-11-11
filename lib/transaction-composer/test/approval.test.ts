@@ -175,3 +175,54 @@ test('steps are granted for the swap alone, or one exact allowance to the swap�
     assert.equal(sequentialSwapDeliveryV1(payload(calls as ApprovedBlueprintPayloadV1['calls'])), null);
   }
 });
+
+test('steps are granted for Uniswap’s Permit2 allowances: exact, ending, for the swap’s own contract', () => {
+  // 2026-11-11: a wallet that cannot send a batch pressed Review on a Uniswap route for NVDAc and was told
+  // "These calls can only be sent together". The calls were Permit2.approve(USDC, router, exactly 2 USDC,
+  // the quote's own deadline) and the swap: an allowance as exact as the ERC-20 one, and one that ends.
+  const router = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
+  const permit2 = '0x000000000022d473030f116ddee9f6b43ac78ba3' as const;
+  const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
+  const other = `0x${'7'.repeat(40)}` as const;
+  const PERMIT2_ABI = [{
+    type: 'function', name: 'approve', stateMutability: 'nonpayable', outputs: [],
+    inputs: [{ name: 'token', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }],
+  }] as const;
+  const EXPIRES = 1_794_423_000;
+  const viaPermit2 = (over: { token?: `0x${string}`; spender?: `0x${string}`; amount?: bigint; expiration?: number; to?: `0x${string}`; value?: `0x${string}` } = {}) => ({
+    to: over.to ?? permit2, value: over.value ?? ('0x0' as const),
+    data: encodeFunctionData({ abi: PERMIT2_ABI, functionName: 'approve', args: [over.token ?? usdc, over.spender ?? router, over.amount ?? 2_000_000n, over.expiration ?? EXPIRES] }),
+  });
+  const toPermit2 = (amount = 2_000_000n, spender: `0x${string}` = permit2, token: `0x${string}` = usdc) => ({
+    to: token, value: '0x0' as const, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [spender, amount] }),
+  });
+  const swap = { to: router, value: '0x0' as const, data: '0x3593564c' as const };
+  const payload = (calls: ApprovedBlueprintPayloadV1['calls']): ApprovedBlueprintPayloadV1 => ({
+    blueprintId: 'bp', blueprintHash: `0x${'1'.repeat(64)}`, approvedCallsHash: `0x${'2'.repeat(64)}`,
+    chainId: '0x2105', from: WALLET as `0x${string}`, calls, atomicRequired: true,
+  });
+  const ask = (calls: unknown[]) => sequentialSwapDeliveryV1(payload(calls as ApprovedBlueprintPayloadV1['calls']));
+
+  // A wallet that already lets Permit2 move the token: two steps.
+  assert.deepEqual(ask([viaPermit2(), swap]), { ...payload([viaPermit2(), swap]), atomicRequired: false, delivery: 'sequential' });
+  // A wallet that never used Permit2: three, and the calls are returned as they were approved.
+  assert.deepEqual(ask([toPermit2(), viaPermit2(), swap])?.calls, [toPermit2(), viaPermit2(), swap]);
+
+  const refused: Array<[string, unknown[]]> = [
+    ['a Permit2 allowance for another contract than the swap’s', [viaPermit2({ spender: other }), swap]],
+    ['an unlimited Permit2 allowance', [viaPermit2({ amount: (1n << 160n) - 1n }), swap]],
+    ['a Permit2 allowance of nothing', [viaPermit2({ amount: 0n }), swap]],
+    ['a Permit2 allowance that never ends', [viaPermit2({ expiration: 281_474_976_710_655 }), swap]],
+    ['a Permit2 allowance with no end stated', [viaPermit2({ expiration: 0 }), swap]],
+    ['the same bytes sent to a contract that is not Permit2', [viaPermit2({ to: other }), swap]],
+    ['ETH sent along with the allowance', [viaPermit2({ value: '0x1' }), swap]],
+    ['three calls whose first lets somebody else move the token', [toPermit2(2_000_000n, other), viaPermit2(), swap]],
+    ['three calls whose first is unlimited', [toPermit2(maxUint256), viaPermit2(), swap]],
+    ['three calls with two different amounts', [toPermit2(3_000_000n), viaPermit2(), swap]],
+    ['three calls about two different tokens', [toPermit2(2_000_000n, permit2, other), viaPermit2(), swap]],
+    ['three calls in another order', [viaPermit2(), toPermit2(), swap]],
+    ['four calls', [toPermit2(), viaPermit2(), viaPermit2(), swap]],
+    ['no calls', []],
+  ];
+  for (const [label, calls] of refused) assert.equal(ask(calls), null, label);
+});
