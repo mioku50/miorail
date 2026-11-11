@@ -297,9 +297,27 @@ describe('earnings reports', () => {
     const r = run(snapshot(EXAMPLE), calendar({}, ['NVDAc']));
     assertMatches(line(r, 'NVDAc'), { stillFactorBps: 2800, failed: ['NVDAc earnings date'], earnings: { source: 'unread', lowered: true } });
     assertMatches(line(r, 'AAPLc'), { stillFactorBps: 3900, failed: [] });
-    assert.equal(r.headline.complete, false);
     // The calendar answered: the date is the protocol's to publish, not a read of ours that failed.
     assert.deepEqual(r.coverage.failed, [{ what: 'NVDAc earnings date', owner: 'protocol' }]);
+    // Audit UI-1 (2026-11-10): Still's rule for a date nobody published is fixed, and the server lends by it,
+    // so the amount is what Still gives now. It was reported as a floor, and every page said "at least".
+    assert.equal(r.headline.complete, true);
+    // A calendar that did not answer is a read of ours that failed, and that does leave a floor.
+    const unread = run(snapshot(EXAMPLE), { ok: false });
+    assert.equal(unread.headline.complete, false);
+    assert.equal(unread.coverage.failed.every((failure) => failure.owner === 'us'), true);
+  });
+
+  it('a loan at Still’s limit for a stock with no published date says the limit is in use, not an unknown', () => {
+    // One stock pledged and nothing else, with no date published for it.
+    const free = run(snapshot({ pledged: { NVDAc: 340_000_000n } }), calendar({}, ['NVDAc']));
+    const capacity = BigInt(line(free, 'NVDAc').capacityCents ?? '0');
+    assert.ok(capacity > 0n, 'the stock counts at the lowered share');
+    assertMatches(free.headline, { state: 'funded', complete: true });
+    // Borrowed to what Still lends against it at that share, and a little past it.
+    const used = run(snapshot({ pledged: { NVDAc: 340_000_000n }, aaveDebt: capacity * 10_000n + 1_000_000n }), calendar({}, ['NVDAc']));
+    assertMatches(used.headline, { state: 'none', complete: true, reason: 'limit_in_use', availableCents: '0' });
+    assert.deepEqual(used.coverage.failed, [{ what: 'NVDAc earnings date', owner: 'protocol' }]);
   });
 
   it('a wallet without stocks does not depend on the calendar', () => {

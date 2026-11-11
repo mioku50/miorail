@@ -23,6 +23,7 @@ import {
   assetsNamedInV2,
   assetsViewV1,
   homeViewV1,
+  unpublishedNoteV1,
   mobileLayoutV1,
   skyCaptionV1,
   skyEarningsFromTermsV1,
@@ -152,6 +153,19 @@ describe('Home', () => {
     const unread = homeViewV1({ report: report(undefined, { ok: false }), sky: skyStateV1({ now: WEDNESDAY }), dividends });
     assert.deepEqual(unread.failed, ['Earnings calendar (Aave API)']);
     assert.deepEqual(unread.unpublished, []);
+    // Audit UI-1 (2026-11-10): a date nobody published is counted by Still's own fixed rule, so the amount
+    // is what Still gives now. It was called a floor, and read "at least" on every page.
+    assert.equal(left.available?.atLeast, false);
+    assert.equal(left.unpublishedNote,
+      'Not published yet: NVDAc earnings date. Still counts that stock at 40% of the protocol’s own limit until Aave publishes the date, and the amount here is worked out that way.');
+    // A read of ours that failed still leaves a floor, and says nothing about publishing.
+    assert.equal(unread.available?.atLeast, true);
+    assert.equal(unread.unpublishedNote, null);
+    // With the loan at that limit, the sentence says so instead of leaving "$0.00" to be guessed at.
+    assert.equal(unpublishedNoteV1({ terms: left.unpublished.length ? report(undefined, calendar({}, ['NVDAc'])).terms : (undefined as never), headline: { reason: 'limit_in_use' } as never }, ['SPCXc earnings date']),
+      'Not published yet: SPCXc earnings date. Still counts that stock at 40% of the protocol’s own limit until Aave publishes the date; your loan already uses that.');
+    assert.match(unpublishedNoteV1({ terms: report().terms, headline: { reason: null } as never }, ['A earnings date', 'B earnings date']) ?? '', /Still counts those stocks at 40%/);
+    assert.equal(unpublishedNoteV1({ terms: report().terms, headline: { reason: null } as never }, []), null);
   });
 
   it('says the loan is in balance, what can be spent and what is owed, from the report alone', () => {

@@ -52,6 +52,8 @@ export interface HomeViewV1 {
   failed: string[];
   /** What the protocol does not publish yet, named (SPCXc's earnings date, 2026-11-05): counted the careful way. */
   unpublished: string[];
+  /** The sentence for them, with the share Still counts such a stock at; null when everything is published. */
+  unpublishedNote: string | null;
 }
 
 const TICKERS_V1: Readonly<Record<string, string>> = { cbBTC: 'BTC', ETH: 'ETH' };
@@ -216,7 +218,20 @@ export function homeViewV1(input: {
     comingUp,
     failed,
     unpublished,
+    unpublishedNote: unpublishedNoteV1(report, unpublished),
   };
+}
+
+/** What Still does about a report date the protocol has not published, in a sentence (audit UI-1,
+ * 2026-11-10). The rule is fixed and the server lends by it, so the amount shown is what Still gives
+ * now: it used to be called a floor, and a holder whose loan was at that limit read "at least $0.00"
+ * with nothing saying the limit was in use. */
+export function unpublishedNoteV1(report: Pick<MirrorReport, 'terms' | 'headline'>, unpublished: readonly string[]): string | null {
+  if (unpublished.length === 0) return null;
+  const percent = Math.round(report.terms.earnings.stockShareBps / 100);
+  const which = unpublished.length === 1 ? 'that stock' : 'those stocks';
+  return `Not published yet: ${unpublished.join(', ')}. Still counts ${which} at ${percent}% of the protocol’s own limit until Aave publishes the date`
+    + (report.headline.reason === 'limit_in_use' ? '; your loan already uses that.' : ', and the amount here is worked out that way.');
 }
 
 const DAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });

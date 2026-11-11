@@ -125,11 +125,20 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
   let complete = true;
   const aave: AaveSnapshot | null = snapshot.aave;
 
+  // What a line names as not known because the protocol has not published it, and not because a read of
+  // ours failed. Still's rule for it is fixed (no report date counts as inside the window, at the lowered
+  // share), and the server lends by the same rule, so the amount worked out is what Still gives now and not
+  // a floor under something unknown (audit UI-1, 2026-11-10: a holder of SPCXc with a loan at Still's limit
+  // read "at least $0.00" on every page, and nothing said the limit was in use).
+  const unpublished = new Set<string>();
   // The share Still lends at for this stock now, with its earnings note on the line.
   const shareOf = (asset: StockAsset, line: AssetLine): bigint => {
     const { note, failed } = earningsOf(asset);
     line.earnings = note;
-    if (failed !== null) ledger.need(undefined, failed.what, line.failed, failed.owner);
+    if (failed !== null) {
+      ledger.need(undefined, failed.what, line.failed, failed.owner);
+      if (failed.owner === 'protocol') unpublished.add(failed.what);
+    }
     return stillShareBps('stock', weekend, note.lowered);
   };
 
@@ -252,7 +261,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
         capacityCents += lineCents;
       }
     }
-    if (line.failed.length > 0) capacityComplete = false;
+    if (line.failed.some((what) => !unpublished.has(what))) capacityComplete = false;
 
     const using = reserve.status.ok ? reserve.status.value.usingAsCollateral : undefined;
     const userFactor = reserve.userFactorBps.ok ? reserve.userFactorBps.value : undefined;
@@ -525,7 +534,9 @@ function computeAll(universe: Universe, snapshot: WalletSnapshot, weekend: boole
   return {
     lines: parts.flatMap((p) => p.lines),
     venues: parts.flatMap((p) => p.venues),
-    complete: parts.every((p) => p.complete) && ledger.failures.length === 0,
+    // A read of ours that failed leaves the total a floor. What the protocol has not published does not:
+    // it is counted by Still's own rule, and stays named in the report's coverage.
+    complete: parts.every((p) => p.complete) && ledger.failures.every((failure) => failure.owner === 'protocol'),
     failures: ledger.failures,
   };
 }
