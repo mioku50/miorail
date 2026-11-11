@@ -1883,6 +1883,9 @@ export const PrepareActionRequestSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  // The person's own word that an earlier handoff of this action to their wallet sent nothing, so
+  // the wallet may be asked once more (audit WAL-7). Never set by anything but that button.
+  again: z.boolean().optional(),
 });
 
 export const PrepareActionResponseSchema = z.object({

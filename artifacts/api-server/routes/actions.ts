@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db, actions } from '@mioagent/db';
 import { builderCodeFromEnvV1 } from '@mioagent/route-domain';
-import { desc, eq, and, inArray } from 'drizzle-orm';
+import { desc, eq, and, inArray, sql } from 'drizzle-orm';
 import {
   ActionsFeedResponseSchema,
   ExecuteActionResponseSchema,
@@ -621,6 +621,27 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
 // Mainnet preparation is available only in the explicitly activated
 // user-confirmed mode. Screening + simulation
 // are re-derived LIVE (stored metadata is advisory only) and gate the response.
+// ---------------------------------------------------------------------------
+// The handoff of an action to the wallet, on record before the wallet is asked
+// (audit WAL-7, 2026-11-10).
+// ---------------------------------------------------------------------------
+export const WALLET_HANDOFF_UNRESOLVED_V1 = 'wallet_handoff_unresolved';
+const WALLET_HANDOFF_DETAIL_V1 = 'This action was already handed to your wallet, and Miorail never heard what the wallet did with it. '
+  + 'If you confirmed it there, it was sent: check the wallet’s activity first. Ask the wallet again only if nothing was sent.';
+
+interface WalletHandoffV1 { preparedAt: string; count: number }
+/** The handoff still open on this action: handed to the wallet, and no answer recorded since. */
+function walletHandoffV1(metadata: unknown): WalletHandoffV1 | null {
+  const handoff = (metadata as { walletHandoff?: unknown } | null)?.walletHandoff as { preparedAt?: unknown; count?: unknown } | undefined;
+  return handoff && typeof handoff.preparedAt === 'string' && handoff.preparedAt.length > 0
+    ? { preparedAt: handoff.preparedAt, count: typeof handoff.count === 'number' && Number.isSafeInteger(handoff.count) ? handoff.count : 1 } : null;
+}
+const nextWalletHandoffV1 = (before: WalletHandoffV1 | null): WalletHandoffV1 => ({ preparedAt: new Date().toISOString(), count: (before?.count ?? 0) + 1 });
+/** True only while the action's handoff is still the one this request read: two presses at once hand over one. */
+const sameWalletHandoffV1 = (before: WalletHandoffV1 | null) => before === null
+  ? sql`${actions.metadata}->'walletHandoff' IS NULL`
+  : sql`${actions.metadata}->'walletHandoff'->>'preparedAt' = ${before.preparedAt}`;
+
 actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
   try {
     const userId = tenantUserId(req);
@@ -637,6 +658,15 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     }
     if (action.status !== 'pending') {
       return res.status(400).json({ success: false, error: 'Action is not pending' });
+    }
+    // An action already handed to the wallet whose answer never came back is not handed over again
+    // by a plain press (audit WAL-7, 2026-11-10). The wallet's prompt outlives the page: a tab closed
+    // or reloaded while it was open, and the person may have confirmed it there. The server heard
+    // nothing, the action still read "pending", and a second press sent the same transfer twice.
+    // Only the person can say nothing was sent, and they say it with `again`.
+    const handedBefore = walletHandoffV1(action.metadata);
+    if (handedBefore && prepareRequest.data.again !== true) {
+      return res.json({ success: false, code: WALLET_HANDOFF_UNRESOLVED_V1, handedAt: handedBefore.preparedAt, error: WALLET_HANDOFF_DETAIL_V1 });
     }
 
     // Extract execution payload (same logic as /execute). T44b: the whitelist
@@ -900,9 +930,12 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         preparedAt: new Date().toISOString(),
         requiresUserApproval: true,
       };
-      await db.update(actions)
-        .set({ metadata: { ...meta, autonomyReservation, executionGuard: guardAudit }, updatedAt: new Date() })
-        .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
+      const handed = await db.update(actions)
+        .set({ metadata: { ...meta, autonomyReservation, executionGuard: guardAudit, walletHandoff: nextWalletHandoffV1(handedBefore) }, updatedAt: new Date() })
+        .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending'), sameWalletHandoffV1(handedBefore)))
+        .returning({ id: actions.id });
+      // Another press was handed over meanwhile: this one does not reach the wallet.
+      if (handed.length !== 1) return res.status(409).json({ success: false, code: WALLET_HANDOFF_UNRESOLVED_V1, error: WALLET_HANDOFF_DETAIL_V1 });
 
       return res.json(PrepareActionResponseSchema.parse({
         success: true,
@@ -934,9 +967,12 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       }));
     }
 
-    await db.update(actions)
-      .set({ metadata: { ...meta, executionGuard: guardAudit }, updatedAt: new Date() })
-      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
+    const handed = await db.update(actions)
+      .set({ metadata: { ...meta, executionGuard: guardAudit, walletHandoff: nextWalletHandoffV1(handedBefore) }, updatedAt: new Date() })
+      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending'), sameWalletHandoffV1(handedBefore)))
+      .returning({ id: actions.id });
+    // Another press was handed over meanwhile: this one does not reach the wallet.
+    if (handed.length !== 1) return res.status(409).json({ success: false, code: WALLET_HANDOFF_UNRESOLVED_V1, error: WALLET_HANDOFF_DETAIL_V1 });
 
     return res.json(PrepareActionResponseSchema.parse({
       success: true,
@@ -1021,7 +1057,11 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
     const hasProof = hasValidTxHash || Boolean(executionProof);
 
     let recordStatus: 'executed' | 'failed' | 'pending_confirmation' | 'submitted_unknown' | 'cancelled' = 'failed';
-    if (status === 4001 || (error && String(error).toLowerCase().includes('reject')) || (error && String(error).toLowerCase().includes('cancel'))) {
+    // Cancelled is the wallet's own code for the person's No, and nothing else: an error whose words hold
+    // "cancel", "reject" or "close" may arrive after the wallet took the request (WalletConnect's
+    // "connection closed"), and calling that cancelled recorded a transfer that may have gone as one
+    // that did not (audit WAL-7).
+    if (status === 4001) {
       recordStatus = 'cancelled';
     } else if (status === 102) {
       recordStatus = 'pending_confirmation';

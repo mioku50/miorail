@@ -10,6 +10,27 @@ import { requireLiveWalletAccountV1 } from './liveWalletConnection';
 import { base } from 'wagmi/chains';
 import type { Address, Hex } from 'viem';
 import { usePrepareAction, useConfirmAction } from '@mioagent/api-client-react';
+import { walletDidNotSendV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+
+/** The server's code for an action already handed to the wallet with no answer on record. */
+export const WALLET_HANDOFF_UNRESOLVED_V1 = 'wallet_handoff_unresolved';
+/** What the page says when the wallet's answer proves nothing either way. */
+export const WALLET_CONFIRM_UNKNOWN_V1 = 'Your wallet did not say whether it sent this. Check the wallet’s activity: if it was sent, it is done; it will not be asked again from here.';
+
+/**
+ * What a failed wallet request proves, for the Action Inbox (audit WAL-7, 2026-11-10). The words of an
+ * error decide nothing: "connection closed" used to count as a cancellation, although it can arrive
+ * after the wallet took the request, and the transfer was then recorded as cancelled while it may have gone.
+ */
+export function walletConfirmOutcomeV1(cause: unknown): 'cancelled' | 'not_sent' | 'unknown' {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    const record = current as { code?: unknown; name?: unknown; cause?: unknown };
+    if (record.code === 4001 || record.name === 'UserRejectedRequestError') return 'cancelled';
+    current = record.cause;
+  }
+  return walletDidNotSendV1(cause) ? 'not_sent' : 'unknown';
+}
 
 export type ConfirmFlowStatus =
   | 'idle'
@@ -53,8 +74,12 @@ export function CallsStatusPoller({ batchId, onStatusChange }: CallsStatusPoller
 }
 
 export interface UseWalletConfirmActionResult {
-  /** Kick off prepare → wallet send → poll → confirm. */
-  confirm: () => Promise<void>;
+  /** Kick off prepare → wallet send → poll → confirm. `again` is the person's own word that an earlier
+   * handoff of this action to their wallet sent nothing (see `handedBefore`). */
+  confirm: (options?: { again?: boolean }) => Promise<void>;
+  /** The server holds an earlier handoff of this action to the wallet with no answer on record: the wallet
+   * may have sent it. Nothing is asked of the wallet again until the person says nothing was sent. */
+  handedBefore: boolean;
   isPreparing: boolean;
   isSending: boolean;
   isPolling: boolean;
@@ -170,6 +195,7 @@ export function useWalletConfirmAction({
   const [status, setStatus] = useState<ConfirmFlowStatus>(initialBatchId ? 'pending' : 'idle');
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [handedBefore, setHandedBefore] = useState(false);
   const confirmedRef = useRef(false);
 
   useEffect(() => {
@@ -231,7 +257,7 @@ export function useWalletConfirmAction({
       ? createElement(CallsStatusPoller, { batchId, onStatusChange: handleStatusChange })
       : null;
 
-  const confirm = async () => {
+  const confirm = async (options: { again?: boolean } = {}) => {
     if (!address) {
       setError('Connect your wallet first');
       setStatus('failed');
@@ -254,18 +280,25 @@ export function useWalletConfirmAction({
     setError(null);
     setStatus('preparing');
 
+    // Whether the server has this press on record as handed to the wallet. Before that, a failure is the
+    // page's own and is reported to nobody; after it, the wallet's answer is what the server is told.
+    let handed = false;
     try {
-      const prepared = await prepareAction.mutateAsync({ actionId, walletAddress: address });
+      // A restored connection is brought back before anything is recorded or the wallet is asked
+      // (2026-11-09), and it must hold the account the action is prepared for (audit WAL-1).
+      await requireLiveWalletAccountV1(config, address);
+      const prepared = await prepareAction.mutateAsync({ actionId, walletAddress: address, ...(options.again === true ? { again: true } : {}) });
       if (!prepared.success || !prepared.calls?.length) {
+        // Handed to the wallet before, with no answer on record: the wallet may have sent it (audit WAL-7).
+        setHandedBefore((prepared as { code?: unknown }).code === WALLET_HANDOFF_UNRESOLVED_V1);
         setStatus('failed');
         setError(prepared.error ?? 'Action is not confirmable');
         return;
       }
+      setHandedBefore(false);
+      handed = true;
 
       setStatus('sending');
-      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
-      // the account the action was prepared for: a wallet that answers as another is not asked (audit WAL-1).
-      await requireLiveWalletAccountV1(config, address);
       const result = await sendCalls.mutateAsync({
         account: address,
         calls: prepared.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
@@ -290,18 +323,21 @@ export function useWalletConfirmAction({
         // Continue polling even if initial persistence call fails
       }
     } catch (e: unknown) {
-      const errStr = e instanceof Error ? e.message : String(e);
-      const isCancelled =
-        errStr.toLowerCase().includes('reject') ||
-        errStr.toLowerCase().includes('cancel') ||
-        errStr.toLowerCase().includes('close') ||
-        errStr.toLowerCase().includes('denied') ||
-        (e as { code?: number })?.code === 4001 ||
-        (e as { shortMessage?: string })?.shortMessage?.toLowerCase()?.includes('reject');
-
-      const finalStatus = isCancelled ? 'cancelled' : 'failed';
-      setStatus(finalStatus);
-      const errMsg = isCancelled ? 'Cancelled by user' : (e instanceof Error ? e.message : 'Wallet flow failed');
+      // Nothing was handed to the wallet: the connection was not ready, the wallet answers as another
+      // account, or the server refused. The action stays as it was, and nothing is recorded about it.
+      if (!handed) {
+        setStatus('failed');
+        setError(walletSubmissionFailureMessageV1(e));
+        return;
+      }
+      // What the wallet's answer proves (audit WAL-7). Its own code for the person's No is a cancellation.
+      // A refusal that shows nothing was sent is a failure. Anything else, "connection closed" among it,
+      // may have come after the wallet took the request: the outcome is unknown, and is recorded as that.
+      const outcome = walletConfirmOutcomeV1(e);
+      const isCancelled = outcome === 'cancelled';
+      setStatus(isCancelled ? 'cancelled' : 'failed');
+      const errMsg = isCancelled ? 'Cancelled by user'
+        : outcome === 'not_sent' ? walletSubmissionFailureMessageV1(e) : WALLET_CONFIRM_UNKNOWN_V1;
       setError(errMsg);
 
       try {
@@ -309,7 +345,8 @@ export function useWalletConfirmAction({
           sanitizeBigInts({
             actionId,
             batchId: '',
-            status: isCancelled ? 4001 : 500,
+            // 0 is "sent or not, unknown": the server keeps the action as submitted, outcome unknown.
+            status: isCancelled ? 4001 : outcome === 'not_sent' ? 500 : 0,
             error: errMsg,
           }) as unknown as { actionId: string; batchId: string; status: number }
         );
@@ -321,6 +358,7 @@ export function useWalletConfirmAction({
 
   return {
     confirm,
+    handedBefore,
     isPreparing: status === 'preparing',
     isSending: status === 'sending',
     isPolling: status === 'pending',

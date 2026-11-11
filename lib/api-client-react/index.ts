@@ -3071,7 +3071,8 @@ export function usePrepareAction(
       fetchApi<apiSpec.PrepareActionResponse>(`/api/actions/${data.actionId}/prepare`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: data.walletAddress }),
+        // `again` rides only with the person's own word that an earlier handoff sent nothing (audit WAL-7).
+        body: JSON.stringify({ walletAddress: data.walletAddress, ...(data.again === true ? { again: true } : {}) }),
       }),
     ...options,
   });

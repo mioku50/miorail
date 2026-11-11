@@ -84,7 +84,7 @@ export function WalletConfirmButton({
   // import `ox` at module scope.
   const resolvedSuffix = dataSuffix ?? builderCodeToDataSuffix(builderCode);
 
-  const { confirm, status, error, isPreparing, isSending, isPolling, isConfirming, txHash, poller } =
+  const { confirm, handedBefore, status, error, isPreparing, isSending, isPolling, isConfirming, txHash, poller } =
     useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix, initialBatchId: (action.metadata as Record<string, any>)?.confirmation?.batchId || null });
 
   // Fire onConfirmed once per terminal transition (success or failed or cancelled).
@@ -150,6 +150,16 @@ export function WalletConfirmButton({
       >
         ⚡ {label}
       </Button>
+      {/* Handed to the wallet before, and its answer never came back: it may have been sent (audit WAL-7).
+          The wallet is asked again only on the person's own word that nothing was sent. */}
+      {handedBefore && !busy ? (
+        <div role="alert" style={{ marginTop: 8, fontSize: 13, lineHeight: 1.4 }}>
+          <p style={{ margin: '0 0 6px' }}>{error}</p>
+          <Button variant="secondary" disabled={disabled || !canConfirm} onClick={() => { void confirm({ again: true }); }}>
+            I checked: nothing was sent. Ask my wallet again
+          </Button>
+        </div>
+      ) : null}
     </>
   );
 }

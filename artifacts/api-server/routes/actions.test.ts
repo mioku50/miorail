@@ -426,17 +426,22 @@ test('Actions API', async (t) => {
               data: `0xa9059cbb${recipient.slice(2).padStart(64, '0')}${(1_000_000).toString(16).padStart(64, '0')}`,
             }],
           },
-          metadata: { instruction: 'Transfer 1 USDC to an approved recipient', walletAddress: wallet },
+          metadata: updatedMetadata ?? { instruction: 'Transfer 1 USDC to an approved recipient', walletAddress: wallet },
           createdAt: new Date(),
           updatedAt: new Date(),
         }]),
       })),
     }));
+    // The row the update changed, as PostgreSQL returns it: none when another press was handed over first.
+    let lostRace = false;
     const mockUpdate = mock.fn(() => ({
-      set: mock.fn((values: any) => {
-        updatedMetadata = values.metadata;
-        return { where: mock.fn(async () => []) };
-      }),
+      set: mock.fn((values: any) => ({
+        where: mock.fn(() => ({ returning: async () => {
+          if (lostRace) return [];
+          updatedMetadata = values.metadata;
+          return [{ id: 'act-bounded' }];
+        } })),
+      })),
     }));
     mock.method(db, 'select', mockSelect);
     mock.method(db, 'update', mockUpdate);
@@ -457,6 +462,30 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.body.autonomy.amountUsdc, 1);
     assert.strictEqual((await repository.getByUser('default-user', 8453))?.reservedToday, 1);
     assert.strictEqual(updatedMetadata.autonomyReservation.status, 'reserved');
+
+    // Audit WAL-7 (2026-11-10): the handoff is on record before the wallet is asked. The wallet's prompt
+    // outlives the page, so a second plain press is not handed over: the first may have been sent.
+    assert.strictEqual(updatedMetadata.walletHandoff.count, 1);
+    const handedAt = updatedMetadata.walletHandoff.preparedAt;
+    const updatesBefore = mockUpdate.mock.callCount();
+    const second = await request(app).post('/api/actions/act-bounded/prepare').send({ walletAddress: wallet });
+    assert.strictEqual(second.status, 200);
+    assert.deepStrictEqual([second.body.success, second.body.code, second.body.handedAt, second.body.calls], [false, 'wallet_handoff_unresolved', handedAt, undefined]);
+    assert.match(second.body.error, /^This action was already handed to your wallet, and Miorail never heard what the wallet did with it\./);
+    assert.strictEqual(mockUpdate.mock.callCount(), updatesBefore, 'a refused press records nothing');
+    // A press that lost to another one handed over at the same moment reaches no wallet either.
+    lostRace = true;
+    const raced = await request(app).post('/api/actions/act-bounded/prepare').send({ walletAddress: wallet, again: true });
+    assert.deepStrictEqual([raced.status, raced.body.success, raced.body.code, raced.body.calls], [409, false, 'wallet_handoff_unresolved', undefined]);
+    lostRace = false;
+    // On the person's own word that nothing was sent, the wallet is asked once more, and that is on record too.
+    const again = await request(app).post('/api/actions/act-bounded/prepare').send({ walletAddress: wallet, again: true });
+    assert.deepStrictEqual([again.status, again.body.success, again.body.calls.length], [200, true, 1]);
+    assert.strictEqual(updatedMetadata.walletHandoff.count, 2);
+    for (const junk of ['yes', 1, null]) {
+      const refused = await request(app).post('/api/actions/act-bounded/prepare').send({ walletAddress: wallet, again: junk });
+      assert.notStrictEqual(refused.body.success, true, JSON.stringify(junk));
+    }
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
@@ -965,6 +994,45 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.status, 'pending_confirmation');
     assert.strictEqual(updatedStatus, 'pending_confirmation');
+
+    mock.restoreAll();
+  });
+
+  await t.test('WAL-7: an error that only sounds like a cancellation is never recorded as one', async () => {
+    // 2026-11-10 audit: "connection closed" can arrive after the wallet took the request. Recording it
+    // as cancelled said a transfer that may have gone did not go.
+    const recorded: string[] = [];
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm-words', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Transfer 1 USDC' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        recorded.push(vals.status);
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const send = (body: Record<string, unknown>) => request(app).post('/api/actions/act-confirm-words/confirm').send({ batchId: '', ...body });
+    // The wallet did not say whether it sent it: outcome unknown, the action is not offered again.
+    assert.strictEqual((await send({ status: 0, error: 'WebSocket connection closed: the request was cancelled' })).body.status, 'submitted_unknown');
+    // A refusal that shows nothing was sent is a failure, whatever its words.
+    assert.strictEqual((await send({ status: 500, error: 'User denied account authorization; request rejected' })).body.status, 'failed');
+    // The wallet's own code for the person's No is the only cancellation.
+    assert.strictEqual((await send({ status: 4001, error: 'Cancelled by user' })).body.status, 'cancelled');
+    assert.deepStrictEqual(recorded, ['submitted_unknown', 'failed', 'cancelled']);
 
     mock.restoreAll();
   });
