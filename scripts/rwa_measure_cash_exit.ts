@@ -104,8 +104,15 @@ const MEASUREMENT_TENANT_V1 = 'rwa-public-ladder';
  * at roughly half a call a second. Eight quotes per asset arriving as fast as
  * the event loop can issue them is the shape of a client that gets throttled
  * and then reports the throttle as a market finding.
+ *
+ * Since 2026-11-11 every quote waits its own turn (./rwaCashExitPacer.ts), so
+ * this gap no longer has to pace the aggregator. It was two and a half seconds;
+ * with the quotes themselves paced a ladder takes five seconds or more, and the
+ * first paced pass over 409 representations was on its way to some 75 minutes
+ * of the unit's 90. One second keeps the chain reads further apart than they
+ * were before and gives the pass its margin back.
  */
-const DEFAULT_GAP_MS_V1 = 2_500;
+const DEFAULT_GAP_MS_V1 = 1_000;
 
 /** `decimals()`. A raw selector rather than an ABI encoder: this package has
  * no viem dependency, and one word in is one word out. */
