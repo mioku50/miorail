@@ -1,7 +1,8 @@
 import {
-  ContractFunctionExecutionError,
+  BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
+  ExecutionRevertedError,
   createPublicClient,
   http,
   keccak256,
@@ -157,12 +158,19 @@ type O1PinResultV1 = Awaited<ReturnType<O1RouterPinReaderV1['verify']>>;
 /** Comparison-time passes, per endpoint. A refusal is never kept. */
 const O1_PIN_CACHE_V1 = new Map<string, { until: number; value: O1PinResultV1 }>();
 
-/** The contract answered, and its answer was to revert. */
+/** The contract answered, and its answer was to revert. Endpoints say it in
+ * different ways (code 3 with data, or -32000 with only the words), so the
+ * whole chain of causes is looked through; a transport failure has none of
+ * these in it and stays a failed read. */
 function revertedV1(error: unknown): boolean {
-  if (!(error instanceof ContractFunctionExecutionError)) return false;
-  return (
-    error.cause instanceof ContractFunctionRevertedError ||
-    error.cause instanceof ContractFunctionZeroDataError
+  if (!(error instanceof BaseError)) return false;
+  return Boolean(
+    error.walk(
+      (cause) =>
+        cause instanceof ContractFunctionRevertedError ||
+        cause instanceof ContractFunctionZeroDataError ||
+        cause instanceof ExecutionRevertedError,
+    ),
   );
 }
 

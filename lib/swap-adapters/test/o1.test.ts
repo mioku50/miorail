@@ -371,9 +371,10 @@ describe('the o1 pin read: AllowanceHolder’s code and 0x’s registry', () => 
   ]);
   type ChainV1 = {
     code?: string | null;
-    /** An address answers; `revert` is the contract refusing; `down` is the endpoint failing. */
-    ownerOf?: `0x${string}` | 'revert' | 'down';
-    prev?: `0x${string}` | 'revert';
+    /** An address answers; `revert` is the contract refusing (`revert-words`: as endpoints that give
+     * no code 3 and no data say it); `down` is the endpoint failing. */
+    ownerOf?: `0x${string}` | 'revert' | 'revert-words' | 'down';
+    prev?: `0x${string}` | 'revert' | 'revert-words';
   };
 
   /** A JSON-RPC endpoint that knows one AllowanceHolder and one registry. */
@@ -393,6 +394,7 @@ describe('the o1 pin read: AllowanceHolder’s code and 0x’s registry', () => 
         const value = decoded.functionName === 'ownerOf' ? (chain.ownerOf ?? SETTLER) : (chain.prev ?? PREVIOUS_SETTLER);
         if (value === 'down') return null;
         if (value === 'revert') return reverted;
+        if (value === 'revert-words') return { jsonrpc: '2.0', id: call.id, error: { code: -32000, message: 'execution reverted' } };
         return result(encodeFunctionResult({ abi: DEPLOYER_ABI, functionName: decoded.functionName, result: value }));
       }
       return { jsonrpc: '2.0', id: call.id, error: { code: -32601, message: 'method not found' } };
@@ -417,11 +419,13 @@ describe('the o1 pin read: AllowanceHolder’s code and 0x’s registry', () => 
 
   test('a registry with no previous Settler names one', async () => {
     assert.deepEqual(await read({ prev: 'revert' }), { ok: true, blockNumber: '56131456', settlers: [SETTLER] });
+    assert.deepEqual(await read({ prev: 'revert-words' }), { ok: true, blockNumber: '56131456', settlers: [SETTLER] }, 'a revert said in words only');
     assert.deepEqual(await read({ prev: SETTLER }), { ok: true, blockNumber: '56131456', settlers: [SETTLER] });
   });
 
   test('a paused Settler is a refusal, and the one before it does not soften it', async () => {
     assert.deepEqual(await read({ ownerOf: 'revert' }), { ok: false, reason: 'mismatch' });
+    assert.deepEqual(await read({ ownerOf: 'revert-words' }), { ok: false, reason: 'mismatch' });
   });
 
   test('other code at AllowanceHolder’s address, or none, is a refusal', async () => {
