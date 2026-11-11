@@ -334,3 +334,69 @@ export function parseOpsDeadlineStateV1(text: string | null): Record<string, num
     return {};
   }
 }
+
+// ---------------------------------------------------------------------------
+// The disk. Two tables grow by about 170 MB a day and nothing removed a row
+// (audit OPS-7); a full disk stops PostgreSQL and the API with it, and no unit
+// fails before that. The same pass reads how full the disk is and says so when
+// it crosses a line. What was said is one number in deadlines.json.
+// ---------------------------------------------------------------------------
+
+/** Percent full at which the disk is spoken of, each once on the way up. */
+export const OPS_DISK_STAGES_PERCENT_V1 = [80, 90, 95] as const;
+/** Having crossed a line, the disk must fall this far under it before the line is forgotten. */
+export const OPS_DISK_HYSTERESIS_PERCENT_V1 = 3;
+export const OPS_DISK_STATE_KEY_V1 = 'disk-root';
+
+export interface OpsDiskReadingV1 { usedPercent: number; freeBytes: number; totalBytes: number }
+
+/** A statfs answer as `df` counts it: what is used, out of what is used plus what an ordinary user may
+ * still write. Null for an answer that is not a disk. */
+export function opsDiskReadingV1(stat: { bsize: number; blocks: number; bfree: number; bavail: number } | null): OpsDiskReadingV1 | null {
+  if (!stat) return null;
+  const { bsize, blocks, bfree, bavail } = stat;
+  if (![bsize, blocks, bfree, bavail].every((value) => Number.isFinite(value) && value >= 0) || bsize === 0 || blocks === 0 || bfree > blocks) return null;
+  const used = blocks - bfree;
+  const usable = used + bavail;
+  if (usable === 0) return null;
+  return { usedPercent: (used / usable) * 100, freeBytes: bavail * bsize, totalBytes: usable * bsize };
+}
+
+export interface OpsDiskPlanV1 {
+  say: 'filling' | 'recovered' | null;
+  reading: OpsDiskReadingV1 | null;
+  /** What to keep once this pass's message reached a chat, and when it reached none. */
+  next: number;
+  kept: number;
+}
+
+/** Whether the disk is to be spoken of now. `told` is the line last said (0 for none). A disk that was
+ * not read says nothing and forgets nothing. */
+export function planOpsDiskV1(input: { reading: OpsDiskReadingV1 | null; told: number }): OpsDiskPlanV1 {
+  const told = (OPS_DISK_STAGES_PERCENT_V1 as readonly number[]).includes(input.told) ? input.told : 0;
+  const reading = input.reading;
+  if (!reading) return { say: null, reading: null, next: told, kept: told };
+  const reached = [...OPS_DISK_STAGES_PERCENT_V1].reverse().find((line) => reading.usedPercent >= line) ?? 0;
+  if (reached > told) return { say: 'filling', reading, next: reached, kept: told };
+  // Lower than the line last said: it counts only once the disk is clearly under that line, so a disk
+  // sitting on a line is not announced and taken back by turns.
+  if (reached < told && reading.usedPercent < told - OPS_DISK_HYSTERESIS_PERCENT_V1) {
+    return reached === 0 ? { say: 'recovered', reading, next: 0, kept: told } : { say: null, reading, next: reached, kept: reached };
+  }
+  return { say: null, reading, next: told, kept: told };
+}
+
+/** The disk's section of the pass's message; null when there is nothing to say. */
+export function opsDiskHtmlV1(plan: OpsDiskPlanV1): string | null {
+  if (plan.say === null || plan.reading === null) return null;
+  const gb = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  const full = `${Math.floor(plan.reading.usedPercent)}% full`;
+  if (plan.say === 'recovered') {
+    return `<b>Miorail: the server’s disk is back under ${OPS_DISK_STAGES_PERCENT_V1[0]}%</b>\nIt is ${full}, with ${gb(plan.reading.freeBytes)} free.`;
+  }
+  return [
+    '<b>Miorail: the server’s disk is filling</b>',
+    `It is ${full}: ${gb(plan.reading.freeBytes)} free of ${gb(plan.reading.totalBytes)}. A full disk stops PostgreSQL, and the API with it; no service fails before that.`,
+    'The two largest tables are official_cash_exit_runs and market_venue_transfers. Old cash-exit measurements can be removed; the nightly backups in /var/backups/miorail take space too.',
+  ].join('\n');
+}

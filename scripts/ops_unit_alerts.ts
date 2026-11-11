@@ -6,13 +6,15 @@
  * subscribed in `ops_alert_chats` (scripts/ops_alert_link.ts subscribes one).
  * The chats are also kept in chats.json beside it, renewed by a quiet pass
  * once it is six hours old, so a pass can still speak while the database is
- * the thing that is down. No signer, no chain, no wallet; the bot token is
- * never printed, and no journal line is ever read.
+ * the thing that is down. The same message carries a date that is coming
+ * (a secret that expires) and the disk once it is 80% full; what was said of
+ * those is kept in deadlines.json. No signer, no chain, no wallet; the bot
+ * token is never printed, and no journal line is ever read.
  *
  *   node --import tsx scripts/ops_unit_alerts.ts --dry   plans and prints, sends and writes nothing
  */
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -22,16 +24,20 @@ import { TelegramBotErrorV1, createTelegramBotClientV1, telegramConfigV1 } from 
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
+  OPS_DISK_STATE_KEY_V1,
   deliveredOpsAlertsV1,
   opsAlertChatCacheStaleV1,
   opsAlertHtmlV1,
   opsDeadlineHtmlV1,
   opsDeadlinesV1,
+  opsDiskHtmlV1,
+  opsDiskReadingV1,
   parseOpsAlertStateV1,
   parseOpsDeadlineStateV1,
   parseSystemctlShowV1,
   planOpsAlertsV1,
   planOpsDeadlinesV1,
+  planOpsDiskV1,
   unheardOpsAlertsV1,
   type OpsAlertStateV1,
 } from './opsUnitAlerts.js';
@@ -42,6 +48,16 @@ const SHOW_V1 = 'Id,LoadState,ActiveState,Result,ExecMainStatus,ExecMainExitTime
 function readText(path: string): string | null {
   try {
     return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** The filesystem's own counts; null when it cannot be asked. */
+function readDisk(path: string): { bsize: number; blocks: number; bfree: number; bavail: number } | null {
+  try {
+    const stat = statfsSync(path);
+    return { bsize: stat.bsize, blocks: stat.blocks, bfree: stat.bfree, bavail: stat.bavail };
   } catch {
     return null;
   }
@@ -87,16 +103,22 @@ async function main(): Promise<void> {
   // Dates that are coming (a secret that expires) are said by the same pass, in the same message; what was
   // said of them lives in its own file, so that a month-long reminder does not start Node every two minutes.
   const deadlinesPath = join(dir, 'deadlines.json');
-  const deadlines = planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(process.env), told: parseOpsDeadlineStateV1(readText(deadlinesPath)), nowMs });
+  const told = parseOpsDeadlineStateV1(readText(deadlinesPath));
+  const deadlines = planOpsDeadlinesV1({ deadlines: opsDeadlinesV1(process.env), told, nowMs });
+  // How full the disk is, read where the database lives. The line last said of it is kept in the same file.
+  const disk = planOpsDiskV1({ reading: opsDiskReadingV1(readDisk('/')), told: told[OPS_DISK_STATE_KEY_V1] ?? 0 });
   const keepDeadlines = (delivered: boolean): void => {
-    const value = delivered ? deadlines.next : deadlines.kept;
+    const value = { ...(delivered ? deadlines.next : deadlines.kept) };
+    const line = delivered ? disk.next : disk.kept;
+    if (line > 0) value[OPS_DISK_STATE_KEY_V1] = line;
     writeJson(deadlinesPath, value, Object.keys(value).length > 0);
   };
-  const html = [opsAlertHtmlV1(pass, nowMs), opsDeadlineHtmlV1(deadlines.due)].filter((section): section is string => section !== null).join('\n\n') || null;
+  const html = [opsAlertHtmlV1(pass, nowMs), opsDeadlineHtmlV1(deadlines.due), opsDiskHtmlV1(disk)].filter((section): section is string => section !== null).join('\n\n') || null;
   const summary = {
     event: 'ops_unit_alerts', units: units.length, failed: units.filter((unit) => unit.activeState === 'failed').length,
     open: pass.state.episodes.length, announce: pass.failed.length, remind: pass.stillFailing.length, recovered: pass.recovered.length,
     dates: deadlines.due.length,
+    diskPercent: disk.reading ? Math.floor(disk.reading.usedPercent) : null, disk: disk.say,
   };
   if (dry) {
     console.log(JSON.stringify({ ...summary, outcome: 'dry' }));

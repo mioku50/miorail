@@ -13,6 +13,9 @@ import {
   opsDeadlinesV1,
   parseOpsDeadlineStateV1,
   planOpsDeadlinesV1,
+  planOpsDiskV1,
+  opsDiskHtmlV1,
+  opsDiskReadingV1,
   parseOpsAlertStateV1,
   parseSystemctlShowV1,
   opsFailureReasonV1,
@@ -200,4 +203,49 @@ test('the date is said in words that name what stops and what to do, and its fil
   assert.deepEqual([parseOpsDeadlineStateV1(null), parseOpsDeadlineStateV1('{not json'), parseOpsDeadlineStateV1('[1]')], [{}, {}, {}]);
   // Kept apart from the episodes: the unit starts Node every two minutes while state.json exists.
   assert.match(readFileSync(new URL('./ops_unit_alerts.ts', import.meta.url), 'utf8'), /join\(dir, 'deadlines\.json'\)/);
+});
+
+// Audit OPS-7: two tables grow every day and a full disk stops PostgreSQL without any unit failing first.
+test('the disk is read as df reads it, and an answer that is not a disk is nothing', () => {
+  // 100 GB of 4 KiB blocks, 20% free of which 5% is root's own.
+  const reading = opsDiskReadingV1({ bsize: 4096, blocks: 25_000_000, bfree: 5_000_000, bavail: 3_750_000 })!;
+  assert.equal(Math.round(reading.usedPercent * 10) / 10, 84.2);
+  assert.equal(reading.freeBytes, 3_750_000 * 4096);
+  assert.equal(reading.totalBytes, 23_750_000 * 4096);
+  assert.equal(opsDiskReadingV1(null), null);
+  assert.equal(opsDiskReadingV1({ bsize: 0, blocks: 10, bfree: 1, bavail: 1 }), null);
+  assert.equal(opsDiskReadingV1({ bsize: 4096, blocks: 10, bfree: 11, bavail: 1 }), null);
+  assert.equal(opsDiskReadingV1({ bsize: 4096, blocks: Number.NaN, bfree: 1, bavail: 1 }), null);
+});
+
+test('each line is said once on the way up, and the disk is forgotten only clearly under the first', () => {
+  const at = (usedPercent: number) => ({ usedPercent, freeBytes: 10_000_000_000, totalBytes: 100_000_000_000 });
+  const plan = (usedPercent: number, told: number) => planOpsDiskV1({ reading: at(usedPercent), told });
+  assert.deepEqual([plan(50, 0).say, plan(79.9, 0).say], [null, null]);
+  // Crossing a line: said, and kept as said only once the message reached a chat.
+  assert.deepEqual({ ...plan(80, 0), reading: undefined }, { say: 'filling', reading: undefined, next: 80, kept: 0 });
+  assert.equal(plan(85, 80).say, null, 'the same line is not said twice');
+  assert.deepEqual({ ...plan(91, 80), reading: undefined }, { say: 'filling', reading: undefined, next: 90, kept: 80 });
+  assert.deepEqual({ ...plan(99, 0), reading: undefined }, { say: 'filling', reading: undefined, next: 95, kept: 0 }, 'the highest line reached');
+  // On a line: neither taken back nor said again.
+  assert.deepEqual({ ...plan(78, 80), reading: undefined }, { say: null, reading: undefined, next: 80, kept: 80 });
+  assert.deepEqual({ ...plan(76.9, 80), reading: undefined }, { say: 'recovered', reading: undefined, next: 0, kept: 80 });
+  // Down one line without a word, so that the higher one can be said again.
+  assert.deepEqual({ ...plan(84, 90), reading: undefined }, { say: null, reading: undefined, next: 80, kept: 80 });
+  assert.equal(plan(88, 90).say, null);
+  assert.equal(plan(88, 90).next, 90);
+  // Not read: nothing said, nothing forgotten. A number that is not a line is no line.
+  assert.deepEqual(planOpsDiskV1({ reading: null, told: 90 }), { say: null, reading: null, next: 90, kept: 90 });
+  assert.equal(planOpsDiskV1({ reading: at(50), told: 17 }).next, 0);
+});
+
+test('the disk message says how full, how much is left, and what a full disk does', () => {
+  const reading = { usedPercent: 83.6, freeBytes: 16_400_000_000, totalBytes: 96_700_000_000 };
+  const filling = opsDiskHtmlV1(planOpsDiskV1({ reading, told: 0 }))!;
+  assert.match(filling, /^<b>Miorail: the server’s disk is filling<\/b>\nIt is 83% full: 16\.4 GB free of 96\.7 GB\. A full disk stops PostgreSQL/);
+  assert.match(filling, /official_cash_exit_runs and market_venue_transfers/);
+  const back = opsDiskHtmlV1(planOpsDiskV1({ reading: { ...reading, usedPercent: 71.2, freeBytes: 27_900_000_000 }, told: 80 }))!;
+  assert.equal(back, '<b>Miorail: the server’s disk is back under 80%</b>\nIt is 71% full, with 27.9 GB free.');
+  assert.equal(opsDiskHtmlV1(planOpsDiskV1({ reading, told: 80 })), null);
+  assert.equal(opsDiskHtmlV1(planOpsDiskV1({ reading: null, told: 0 })), null);
 });
