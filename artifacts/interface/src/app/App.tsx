@@ -25,6 +25,7 @@ import {
   StillMorePage,
   StillSafetyPage,
   StillWalletPage,
+  StillWatchGate,
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
 import { StillWalletControlsProvider } from '../features/still/StillWalletControls';
@@ -335,9 +336,9 @@ export function App() {
             redirects here with its query and the hash of its section, so a
             Discover link's `?token=` reaches the section it was meant for. */}
         <Route path="/watch">
-          <RequireSession>
+          <StillWatchGate>
             <WatchPage />
-          </RequireSession>
+          </StillWatchGate>
         </Route>
         <Route path="/investigate">{() => <Redirect to={`/watch${window.location.search}#investigate`} replace />}</Route>
         <Route path="/portfolio">{() => <Redirect to={`/watch${window.location.search}#tokens`} replace />}</Route>

@@ -157,7 +157,11 @@ export function skyCaptionV1(sky: SkyStateV1): SkyCaptionV1 {
         : `The earnings calendar could not be read just now: new loans against ${sky.unread.length > 3 ? 'stocks' : listV1(sky.unread)} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until it is.`,
   ].filter((line): line is string => line !== null);
   const earningsDetail = details.length ? details.join(' ') : null;
-  const limits = !sky.limitsRead ? null : sky.clouds.length > 0 || sky.unread.length > 0 ? 'earnings limits' : 'full limits';
+  // The headline is the page's, not a wallet's: "earnings limits" over every page read as the whole site's
+  // mode while seven stocks of eight, and all the crypto, were at full limits (audit UI-5). It names whom.
+  const lowered = [...new Set([...reporting, ...sky.unread])];
+  const limits = !sky.limitsRead ? null : lowered.length === 0 ? 'full limits'
+    : `earnings limits for ${lowered.length > 2 ? `${lowered.length} stocks` : listV1(lowered)}`;
   if (sky.marketPhase === 'closed') {
     return {
       headline: 'Wall Street is closed. Base is open.',

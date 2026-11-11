@@ -9,6 +9,7 @@ import {
   stockChangeLabelV1,
   stockPriceLabelV1,
   stockPriceNoteV1,
+  stockPriceStaleLabelV1,
   stockQuoteViewsByKeyV1,
 } from '../src/console/stockQuotesView';
 import { compactUsdV1, morphoMarketUrlV1, stockUsesViewV1 } from '../src/console/stockUsesView';
@@ -33,6 +34,9 @@ describe('the list reads like a list of stocks', () => {
     assert.equal(stockChangeLabelV1(0.00001), '0.00%');
     assert.equal(stockPriceNoteV1('2026-10-03T13:46:00Z', NOW), 'Price on Base · 14 min ago');
     assert.equal(stockPriceNoteV1(null, NOW), null);
+    // Audit UI-8: on the board a price from hours ago stood beside a fresh one and looked the same.
+    assert.deepEqual(['2026-10-03T13:46:00Z', '2026-10-03T13:30:00Z', '2026-10-03T13:00:00Z', '2026-10-03T11:28:00Z', null, 'never'].map((at) => stockPriceStaleLabelV1(at, NOW)),
+      [null, '30 min old', '60 min old', '3 h old', null, null]);
   });
 
   test('a tile leads with the ticker, names the company, and shows a price only when there is one', () => {
@@ -80,9 +84,17 @@ describe('the list reads like a list of stocks', () => {
     assert.match(markup, /<span class="mr-choice-name">NVDA<\/span><span class="mr-choice-px mono">\$234\.31<\/span>/);
     assert.match(markup, /<span class="mr-choice-company">NVIDIA Corporation<\/span>/);
     assert.match(markup, /<span class="mr-choice-chg mono">\+0\.42%<\/span>/);
-    // No quote, no price, no $0 — a letter instead of an icon.
-    assert.match(markup, /<span class="mr-choice-icon mr-choice-letter" aria-hidden="true">A<\/span><span class="mr-choice-name">AMZN<\/span><span class="mr-choice-px mono"><\/span>/);
+    // No quote, no price, no $0 — a letter instead of an icon, and the slot says so: an empty one beside
+    // priced neighbours read as a broken page (audit UI-8).
+    assert.match(markup, /<span class="mr-choice-icon mr-choice-letter" aria-hidden="true">A<\/span><span class="mr-choice-name">AMZN<\/span><span class="mr-choice-px thin">Not priced now<\/span>/);
     assert.doesNotMatch(markup, /\$0\.00|\$0</);
+    // A contract with no tokens outstanding says that on its tile, and its price slot stays empty.
+    const empty = renderToStaticMarkup(
+      <Chooser choices={[{ ...choice('security:isin:US0231351067', 'AMZN', 'Amazon.com Inc.'), emptyNote: 'No tokens outstanding' }]}
+        quotes={quotes} selectedKey={null} loading={false} error={null} onUnderlying={() => undefined} />,
+    );
+    assert.match(empty, /<span class="mr-choice-px mono"><\/span>/);
+    assert.doesNotMatch(empty, /Not priced now/);
     // The change carries no colour: no tone, no green, no red.
     assert.doesNotMatch(markup, /mr-choice-chg[^"]*(good|bad|up|down)/);
   });

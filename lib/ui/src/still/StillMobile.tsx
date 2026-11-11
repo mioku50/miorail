@@ -16,10 +16,19 @@ function moneyLabelV1(cents: number): string {
   return formatCents(BigInt(cents));
 }
 
+/** The picture is 390 units wide, and the label is set at 11px, weight 600: about 6.4 units a character. */
+const PICTURE_WIDTH_V1 = 390, ROOM_LABEL_UNIT_V1 = 6.4, ROOM_LABEL_EDGE_V1 = 6;
+/** Where a label centred on `centre` goes so that its right end stays inside the picture. */
+export function roomLabelXV1(centre: number, label: string): number {
+  const half = (label.length * ROOM_LABEL_UNIT_V1) / 2;
+  return Math.round(Math.min(centre, PICTURE_WIDTH_V1 - ROOM_LABEL_EDGE_V1 - half) * 10) / 10;
+}
+
 export function StillMobile({ input }: { input: MobileInputV1 }) {
   const layout = mobileLayoutV1(input);
   const owed = input.loan?.owedCents ?? 0;
   const room = input.loan ? Math.max(0, input.loan.limitCents - owed) : 0;
+  const roomLabel = `${layout.loan && layout.loan.side < 30 ? `owed ${moneyLabelV1(owed)} · ` : ''}room ${moneyLabelV1(room)}`;
   return (
     <g className="sm" data-state={input.state}>
       <g className="sm-swing">
@@ -39,8 +48,11 @@ export function StillMobile({ input }: { input: MobileInputV1 }) {
           </text>
         ) : null}
         {layout.limit ? (
-          <text className="sm-room-label" x={layout.limit.x + layout.limit.side / 2} y={layout.limit.y + layout.limit.side + 16}>
-            {layout.loan && layout.loan.side < 30 ? `owed ${moneyLabelV1(owed)} · ` : ''}model {moneyLabelV1(room)}
+          // "room", not "model": beside a square that says $37.48, "model $0.00" read as the loan's own
+          // modelled value (audit UI-2). The label is kept inside the picture: centred under the limit it ran
+          // past the right edge on a phone from $1,000 up (audit UI-6).
+          <text className="sm-room-label" x={roomLabelXV1(layout.limit.x + layout.limit.side / 2, roomLabel)} y={layout.limit.y + layout.limit.side + 16}>
+            {roomLabel}
           </text>
         ) : null}
         {layout.shapes.map((shape) => (

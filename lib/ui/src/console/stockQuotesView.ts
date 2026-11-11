@@ -103,6 +103,16 @@ export function stockQuoteViewsByKeyV1(
   return views;
 }
 
+/** A price's age, for the board's tile, once it is old enough to matter: "45 min old", "3 h old"; null
+ * for a price under half an hour old, or none. On the board a price from the morning stood beside one a
+ * minute old and looked the same (audit UI-8). */
+export function stockPriceStaleLabelV1(priceAt: string | null, now: Date): string | null {
+  if (!priceAt) return null;
+  const minutes = Math.round((now.getTime() - Date.parse(priceAt)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 30) return null;
+  return minutes < 90 ? `${minutes} min old` : `${Math.round(minutes / 60)} h old`;
+}
+
 /** "Price on Base · 14 min ago": what the number is, and its age. */
 export function stockPriceNoteV1(priceAt: string | null, now: Date): string | null {
   if (!priceAt) return null;

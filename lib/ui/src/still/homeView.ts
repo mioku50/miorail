@@ -54,6 +54,8 @@ export interface HomeViewV1 {
   unpublished: string[];
   /** The sentence for them, with the share Still counts such a stock at; null when everything is published. */
   unpublishedNote: string | null;
+  /** A loan that already takes all the room Still's limit gives: said once, in a sentence (audit UI-2). */
+  roomNote: string | null;
 }
 
 const TICKERS_V1: Readonly<Record<string, string>> = { cbBTC: 'BTC', ETH: 'ETH' };
@@ -169,7 +171,13 @@ export function homeViewV1(input: {
   }
 
   const comingUp: ComingUpV1[] = [];
-  if (sky.closed.active) {
+  // The closed-market limits are about stocks. A wallet with only cbBTC, WETH or gold was told "Weekend limits
+  // begin." every Friday, though Morpho collateral counts the same all week (audit UI-9).
+  const holdsStock = report.assets.some((line) => line.kind === 'stock' &&
+    ((line.valueCents !== null && line.valueCents !== '0') || (line.pledged !== null && line.pledged.raw !== '0')));
+  if (!holdsStock) {
+    // Nothing to say about the market's hours.
+  } else if (sky.closed.active) {
     comingUp.push({ when: comingWhenV1(sky.closed.endsAt, sky.at), icon: 'sun', text: 'Full limits come back with the market.' });
   } else {
     const weekend = newYorkMomentV1(sky.closed.startsAt).startsWith('Fri') && newYorkMomentV1(sky.closed.endsAt).startsWith('Sun');
@@ -219,6 +227,10 @@ export function homeViewV1(input: {
     failed,
     unpublished,
     unpublishedNote: unpublishedNoteV1(report, unpublished),
+    // "At least $0.00", "model $0.00" and "Not checked" were three names for one fact nobody was told:
+    // there is no room now, because the loan uses it.
+    roomNote: owed !== null && availableCents === '0' && report.headline.complete
+      ? 'Your loan already uses all of Still’s limit for this collateral. Repaying, or adding collateral, frees room.' : null,
   };
 }
 

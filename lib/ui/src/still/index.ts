@@ -9,7 +9,7 @@ export * from './agentAnswers';
 export * from './checkView';
 export * from './mobileLayout';
 export { SkyLayer, sunPointV1 } from './Sky';
-export { StillMobile } from './StillMobile';
+export { StillMobile, roomLabelXV1 } from './StillMobile';
 export * from './StillFrame';
 export * from './StillHome';
 export * from './StillPages';

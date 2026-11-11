@@ -39,6 +39,7 @@ import {
   StillHomeSignedOut,
   StillMore,
   StillMobile,
+  roomLabelXV1,
   StillAssistants,
   ThinkingOrbs,
   type MobileHoldingV1,
@@ -107,7 +108,8 @@ describe('the visual sky and separate US market state', () => {
     });
     assert.equal(reporting.clouds.length, 1);
     assert.deepEqual(skyCaptionV1(reporting), {
-      headline: 'Market open · earnings limits',
+      // Audit UI-5: the headline names whom the earnings limits are for; the rest are at full limits.
+      headline: 'Market open · earnings limits for Alphabet',
       detail: 'Alphabet reports now: new loans against it count at 40% of the protocol’s limit until Thu 8 PM New York.',
     });
   });
@@ -122,7 +124,9 @@ describe('the sky and Still’s terms', () => {
     assert.deepEqual(unread, ['Apple', 'Amazon', 'Alphabet', 'Meta', 'Microsoft', 'SpaceX']);
     const sky = skyStateV1({ now: MONDAY, earnings, unread, calendarRead });
     assert.equal(sky.clouds.length, 1);
-    assert.equal(skyCaptionV1(sky).headline, 'Market open · earnings limits');
+    assert.equal(skyCaptionV1(sky).headline, 'Market open · earnings limits for 7 stocks');
+    // One stock with no date published is named, as SpaceX was from 2026-11-04.
+    assert.equal(skyCaptionV1(skyStateV1({ now: MONDAY, earnings: [], unread: ['SpaceX'], calendarRead: true })).headline, 'Market open · earnings limits for SpaceX');
     // The calendar answered and left them out: it lists no date for them, which is not a failed read.
     assert.match(skyCaptionV1(sky).detail!, /NVIDIA reports now: .* Aave’s earnings calendar lists no report date for 6 stocks yet: new loans against them count at 40%/);
     assert.deepEqual(skyCaptionV1(skyStateV1({ now: MONDAY })), { headline: 'Market open', detail: null });
@@ -189,7 +193,11 @@ describe('Home', () => {
     assert.match(html, /In balance\./);
     assert.match(html, /aria-label="\$784\.62 modelled borrowing room"/);
     assert.match(html, /Live borrowing limit/);
-    assert.match(html, /Not checked/);
+    // Audit UI-2: the constant "Not checked" stood where a figure goes and read as a failure. The words are the way to the live limit.
+    assert.doesNotMatch(html, /Not checked/);
+    assert.match(html, /<a[^>]*href="\/borrow"[^>]*class="still-live-limit"[^>]*>Read it in Get money<\/a>|<a[^>]*class="still-live-limit"[^>]*href="\/borrow"[^>]*>Read it in Get money<\/a>/);
+    assert.match(html, />room \$784\.62</);
+    assert.doesNotMatch(html, />model \$/);
     assert.doesNotMatch(html, /Available to spend/);
     assert.match(html, /Owed \$240\.17/);
     assert.match(html, /role="img"/);
@@ -279,8 +287,50 @@ describe('the mobile', () => {
       holdings: [{ id: 'NVDAc', label: 'NVDA', kind: 'stock', valueCents: 19 }],
       loan: { owedCents: 0, limitCents: 6, weekdayLimitCents: 6 }, state: 'empty',
     }} /></svg>);
-    assert.match(html, /model \$0\.06/);
-    assert.doesNotMatch(html, /model \$0</);
+    assert.match(html, /room \$0\.06/);
+    assert.doesNotMatch(html, /room \$0</);
+  });
+
+  // Audit UI-9: a wallet with only cbBTC, WETH or gold was told "Weekend limits begin." every Friday,
+  // though Morpho collateral counts the same all week.
+  it('says the market’s closed hours only to a wallet that holds or has pledged a stock', () => {
+    const sky = skyStateV1({ now: WEDNESDAY });
+    const withStocks = homeViewV1({ report: report(), sky });
+    assert.ok(withStocks.comingUp.some((row) => /Weekend limits begin\./.test(row.text)));
+    const coins = report();
+    coins.assets = coins.assets.filter((line) => line.kind !== 'stock');
+    const view = homeViewV1({ report: coins, sky });
+    assert.equal(view.comingUp.some((row) => /limits/.test(row.text)), false);
+    const weekend = homeViewV1({ report: coins, sky: skyStateV1({ now: SATURDAY_AT }) });
+    assert.equal(weekend.comingUp.some((row) => /Full limits come back/.test(row.text)), false);
+  });
+
+  // Audit UI-2: "at least $0.00", "model $0.00" and "Not checked" were three names for one fact nobody was told.
+  it('says in one sentence when the loan already uses all of Still’s limit, and only then', () => {
+    const sky = skyStateV1({ now: WEDNESDAY });
+    const used = report();
+    used.headline = { ...used.headline, availableCents: '0', complete: true };
+    assert.equal(homeViewV1({ report: used, sky }).roomNote, 'Your loan already uses all of Still’s limit for this collateral. Repaying, or adding collateral, frees room.');
+    assert.equal(homeViewV1({ report: report(), sky }).roomNote, null);
+    const unread = report();
+    unread.headline = { ...unread.headline, availableCents: '0', complete: false };
+    assert.equal(homeViewV1({ report: unread, sky }).roomNote, null);
+    const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: used, sky }), reading: used.reading, loading: false, failed: null, onRetry: () => {} }} />);
+    assert.match(html, /Your loan already uses all of Still’s limit for this collateral\./);
+  });
+
+  // Audit UI-6: centred under the limit, the label ran past the right edge of the 390-unit picture on a phone.
+  it('keeps the room label inside the picture, however long the amount', () => {
+    const big = renderToStaticMarkup(<svg><StillMobile input={{
+      holdings: [{ id: 'NVDAc', label: 'NVDA', kind: 'stock', valueCents: 2_000_000 }],
+      loan: { owedCents: 85, limitCents: 783_602, weekdayLimitCents: 783_602 }, state: 'calm',
+    }} /></svg>);
+    const label = /<text class="sm-room-label" x="([0-9.]+)"[^>]*>([^<]+)<\/text>/.exec(big)!;
+    assert.equal(label[2], 'owed $0.85 · room $7,835.17');
+    assert.ok(Number(label[1]) + (label[2]!.length * 6.4) / 2 <= 390 - 6, `${label[1]} + half of ${label[2]!.length} characters`);
+    // A short label stays centred under the limit, where it was.
+    assert.equal(roomLabelXV1(346, 'room $0.06'), 346);
+    assert.equal(roomLabelXV1(346, 'owed $0.85 · room $7,835.17'), 297.6);
   });
 
   it('is area-true: circles against the largest holding, squares against the limit', () => {
@@ -317,7 +367,8 @@ describe('Assets', () => {
     const apple = view.rows.find((r) => r.id === 'AAPLc')!;
     assert.match(apple.lines.at(-1)!.text, /≈ \$0\.19, if you hold AAPLc when it converts \(an estimate\)/);
     assert.deepEqual(view.loans.map((l) => [l.label, l.owed]), [['Aave V4 · Coinbase Stocks', '$240.17']]);
-    assert.equal(view.loans[0]!.safety, 'Prices can fall 52% together before liquidation.');
+    // Audit UI-4: against one stock it is that stock that can fall, not "prices together".
+    assert.equal(view.loans[0]!.safety, 'NVIDIA can fall 52% before liquidation.');
     assert.deepEqual(view.loans[0]!.liquidation, ['NVIDIA below $100.92, if only it moved']);
     const html = renderToStaticMarkup(<StillAssets model={{ sky: skyStateV1({ now: WEDNESDAY }), view, loading: false, failed: null, onRetry: () => {}, signedIn: true, signInHref: '/signin' }} />);
     assert.match(html, /Loans · 1/);
@@ -361,7 +412,8 @@ describe('what the wallet holds, on Assets', () => {
     assert.equal(view.reviewedTotal, formatCents(reviewedCents));
     assert.equal(view.usdcTotal, '$12.34');
     assert.equal(view.total, formatCents(reviewedCents + BigInt(1234)));
-    assert.equal(view.totalNote, `${formatCents(reviewedCents)} reviewed for loans · $12.34 USDC`);
+    // Audit UI-10: holdings are gross, and a loan's USDC makes them grow: what is owed is said beside them.
+    assert.equal(view.totalNote, `${formatCents(reviewedCents)} reviewed for loans · $12.34 USDC · $240.17 owed, not subtracted`);
     // Apple is one of Still's reviewed stocks: it is a row, not an "also".
     assert.deepEqual(view.others, []);
   });

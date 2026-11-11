@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Redirect, useLocation } from 'wouter';
 import { useMyDividends, useStillCheck, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
 import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
@@ -8,6 +8,7 @@ import {
   StillAssistants,
   StillConsolePage,
   StillFrame,
+  StillHeader,
   StillHomeSignedIn,
   StillHomeSignedOut,
   StillMore,
@@ -19,6 +20,7 @@ import {
 } from '@mioagent/ui/still';
 import { useAuthGate } from '../../app/AuthProvider';
 import { AppLoading } from '../../app/AppLoading';
+import { RequireSession } from '../../app/RequireSession';
 import { useStillSky, useStillWallet } from './useStillSky';
 
 // ---------------------------------------------------------------------------
@@ -209,6 +211,29 @@ export function StillMorePage() {
   return (
     <StillFrame tab="more" sky={sky}>
       <StillMore model={{ sky, account: basename ?? short, signInHref }} />
+    </StillFrame>
+  );
+}
+
+/**
+ * Watch, for a reader who is not signed in (audit UI-7, 2026-11-10).
+ *
+ * The gate used to stand alone on an empty page: no header, no way back into Still, no first-level
+ * heading, and the old console's words ("chats, actions, fuel"). A link to /watch, or to any of the four
+ * old addresses that redirect here, was a dead end. Now it is drawn in Still's frame, with its own
+ * heading and what the sign-in is for; signed in, the page is the page.
+ */
+export function StillWatchGate({ children }: { children: ReactNode }) {
+  const gate = useAuthGate();
+  const sky = useStillSky();
+  if (gate.showPrivateSurfaces) return <>{children}</>;
+  return (
+    <StillFrame tab="more" sky={sky}>
+      <StillHeader title="Watch" sky={sky}
+        lede="Look into a wallet or a token on Base, and keep a list of the ones you watch. The list is kept for your wallet, so this page opens once you sign in." />
+      <RequireSession copy={{ eyebrow: 'Watch', body: 'One signature shows this is your wallet, so your watchlist opens. It does not send a transaction.' }}>
+        {children}
+      </RequireSession>
     </StillFrame>
   );
 }

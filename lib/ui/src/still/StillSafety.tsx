@@ -78,6 +78,11 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           liquidation could start.
         </p>
         <p className="still-note">
+          Still takes report dates from Aave’s own earnings calendar. While that calendar lists no date for a stock, or cannot be read, Still
+          cannot know that a report is not due, so it lends at most {percentV1(earnings)} against that stock until the date is there: for as
+          long as that takes, not for two days. The line under the sky names the stocks this holds for now.
+        </p>
+        <p className="still-note">
           The windows change what you can borrow, not a loan you already have: Still never repays or sells for you. Collateral on Morpho
           (cbBTC, WETH or ETH, and PAXG gold) stays at {percentV1(share)} at all times.
         </p>

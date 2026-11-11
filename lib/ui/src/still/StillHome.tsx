@@ -261,9 +261,13 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
             <div className="still-sub">{view.stateLine}</div>
           </div>
           <div className="still-section">
+            {/* The largest thing here used to be the constant "Not checked", which reads as a failure and which
+                nothing on this page could change (audit UI-2). The live limit is read in Get money, so the
+                words are the way there. */}
             <div className="still-eyebrow">Live borrowing limit</div>
-            <div className="still-live-limit">Not checked</div>
-            <p className="still-note">Get money checks your selected stock collateral through Aave V4, or cbBTC, WETH and PAXG (gold) through Morpho. Read the live limit for your exact choice.</p>
+            <StillLink href="/borrow" className="still-live-limit">Read it in Get money</StillLink>
+            <p className="still-note">Get money checks your selected stock collateral through Aave V4, or cbBTC, WETH and PAXG (gold) through Morpho, and reads the live limit for your exact choice.</p>
+            {view.roomNote ? <p className="still-note">{view.roomNote}</p> : null}
             {view.owed ? (
               <div className="still-owed">
                 <span className="sw" aria-hidden="true" />

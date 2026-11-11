@@ -256,10 +256,14 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     {capacity.comparison ? (
                       <div className="still-borrow-compare">
                         <dl className="still-borrow-compare-list">
-                          <div><dt>{capacity.comparison.protocol} would lend up to</dt><dd className="mono">{capacity.comparison.protocolLimitUsdc} USDC</dd></div>
-                          <div><dt>Still lends up to</dt><dd className="mono">{capacity.comparison.stillLimitUsdc} USDC · {capacity.comparison.sharePercent} of it</dd></div>
+                          {/* With a loan already there, these two are ceilings for the whole debt, while the figure
+                              above is what is left: read side by side without "in total", "Aave would lend up to
+                              91.42" looked like 91.42 more (audit UI-3). */}
+                          <div><dt>{capacity.comparison.protocol} would lend up to{capacity.existingDebt ? ', in total' : ''}</dt><dd className="mono">{capacity.comparison.protocolLimitUsdc} USDC</dd></div>
+                          <div><dt>Still lends up to{capacity.existingDebt ? ', in total' : ''}</dt><dd className="mono">{capacity.comparison.stillLimitUsdc} USDC · {capacity.comparison.sharePercent} of it</dd></div>
                         </dl>
-                        <p className="still-note">Borrowing {capacity.comparison.protocol}’s full amount, the smallest fall in price could start liquidation. Borrowing Still’s, your collateral could fall {capacity.comparison.marginPercent} first.</p>
+                        {capacity.existingDebt ? <p className="still-note">Both are ceilings for your whole debt: the {capacity.existingDebt} USDC you owe is already inside them, and Still’s borrowing limit above is what is left.</p> : null}
+                        <p className="still-note">Borrowing {capacity.comparison.protocol}’s full amount, the smallest fall in price could start liquidation. {capacity.existingDebt ? 'With your whole debt at Still’s ceiling' : 'Borrowing Still’s'}, your collateral could fall {capacity.comparison.marginPercent} first.</p>
                         {capacity.comparison.lowered ? <p className="still-note">{capacity.comparison.lowered}</p> : null}
                       </div>
                     ) : null}

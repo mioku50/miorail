@@ -43,7 +43,7 @@ import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlert
 import type { WeekendMarketViewV1, WeekendQuietViewV1 } from './weekendMarketView';
 import type { StocksSectionsModelV1, StocksSectionV1 } from './stocksSections';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
-import { stockPriceNoteV1, type StockQuoteViewV1 } from './stockQuotesView';
+import { stockPriceNoteV1, stockPriceStaleLabelV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { StockUsesViewV1 } from './stockUsesView';
 import type { StockChartViewV1 } from './stockChartView';
 import { StockWeekChart } from './ConsoleCharts';
@@ -1157,11 +1157,18 @@ function ChoiceButton({
         <span className="mr-choice-px mono">{quote.price}</span>
       ) : quote?.depthLabel ? (
         <span className="mr-choice-px thin">{quote.depthLabel}</span>
-      ) : (
+      ) : choice.emptyNote ? (
         <span className="mr-choice-px mono"></span>
+      ) : (
+        // No price this time, said: an empty slot beside priced neighbours read as a broken page (audit UI-8).
+        <span className="mr-choice-px thin">Not priced now</span>
       )}
       <span className="mr-choice-sub">
         {company ? <span className="mr-choice-company">{company}</span> : null}
+        {/* A price old enough to matter says its age on the tile. */}
+        {quote?.price && stockPriceStaleLabelV1(quote.priceAt, new Date()) ? (
+          <span className="pill mr-choice-tag">{stockPriceStaleLabelV1(quote.priceAt, new Date())}</span>
+        ) : null}
         {/* The issuer list is the part that may be shortened; the tag is not.
             As a bare text node it could not shrink, so "Backed · Coinbase ·
             Dinari" pushed the badge out of the card and it rendered as

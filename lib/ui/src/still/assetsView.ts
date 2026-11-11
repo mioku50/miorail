@@ -232,6 +232,15 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     .map((holding) => ({ symbol: holding.tokenSymbol, amount: decimalTextV1(holding.tokens), href: `/stocks/${holding.symbol.toLowerCase()}` }))
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
+  /** The names of what a loan is pledged against: every stock deposited in Aave's spoke, or the one
+   * collateral of a Morpho market. */
+  const pledgedInV1 = (v: MirrorReport['venues'][number]): string[] => {
+    if (v.venue !== 'aave-v4') {
+      const coin = CRYPTO.find((asset) => asset.morphoMarket.toLowerCase() === v.market.toLowerCase());
+      return coin ? [coin.id === 'ETH' ? 'WETH' : coin.id] : [];
+    }
+    return report.assets.filter((line) => line.venue === v.venue && line.pledged !== null && line.pledged.raw !== '0').map((line) => line.name);
+  };
   const loans: LoanRowV1[] = report.venues
     .filter((v) => v.debtCents !== null && v.debtCents !== '0')
     .map((v) => ({
@@ -245,14 +254,21 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
           ? `${ formatTokenAmount(BigInt(v.debtAtomic), 6, 6).replace(/\.?0+$/, '') } USDC`
           : formatCents(v.debtCents!),
       rate: v.borrowRateBps === null ? null : `${(v.borrowRateBps / 100).toFixed(2)}% a year, variable`,
-      safety: v.safety ? `Prices can fall ${Math.floor(v.safety.marginBps / 100)}% together before liquidation.` : null,
+      // "Together" is for a loan against two or more things; against one stock it is that stock (audit UI-4).
+      safety: v.safety ? `${pledgedInV1(v).length === 1 ? `${pledgedInV1(v)[0]} can` : 'Prices can'} fall ${Math.floor(v.safety.marginBps / 100)}%${
+        pledgedInV1(v).length === 1 ? '' : ' together'} before liquidation.` : null,
       state: v.safety?.state ?? null,
       liquidation: v.liquidationPrices.map((p) => {
         const name = report.assets.find((l) => l.asset === p.asset)?.name ?? p.asset;
         return p.unreachable ? `${name}: no price of it alone liquidates this loan` : `${name} below ${formatCents(p.priceCents!)}, if only it moved`;
       }),
-      more: v.availableCents === null ? null : `Modelled additional room: ${formatCents(v.availableCents)}. A live loan limit has not been checked.`,
+      // The same amount Home shows, said the same way: a floor when one of our own reads failed (audit UI-4).
+      more: v.availableCents === null ? null
+        : `Modelled additional room: ${report.headline.complete ? '' : 'at least '}${formatCents(v.availableCents)}. Get money reads the live limit.`,
     }));
+  // What is owed, for the note under the total: holdings are gross, and a loan's USDC makes them grow (audit UI-10).
+  const owedCents = report.venues.reduce((sum, v) => sum + (v.debtCents !== null ? BigInt(v.debtCents) : BigInt(0)), BigInt(0));
+  const owedNote = owedCents > BigInt(0) ? `${formatCents(owedCents)} owed, not subtracted` : null;
 
   // The total adds the wallet's USDC once it is read; while it is read, or when it did not answer,
   // the total is the reviewed holdings' and the note says why.
@@ -269,7 +285,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     total: priced ? formatCents(total + usdcCents) : null,
     reviewedTotal,
     usdcTotal,
-    totalNote: usdcNote === null ? reviewedNote : `${reviewedNote} · ${usdcNote}`,
+    totalNote: [reviewedNote, usdcNote, owedNote].filter((part): part is string => part !== null).join(' · '),
     count,
     rows,
     others,
