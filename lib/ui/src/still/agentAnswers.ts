@@ -220,6 +220,35 @@ function markedTokenV2(question: string, named: ReadonlyArray<{ asset: string; a
 const ALL_WORDS_V2 = new RegExp(`${EDGE}(?:all|everything|max|все|всё|весь|всех|вся|целиком|полностью)(?:$|[^\\p{L}])`, 'iu');
 const HALF_WORDS_V2 = /half|половин/iu;
 
+// ---------------------------------------------------------------------------
+// An amount the rules cannot read as one plain number (audit MCP-1, 2026-11-10).
+//
+// The amount was "the first number in the question", and "all" wherever the
+// word stood. So "send 50% of my NVDAc" prepared 50 shares, "send all but 0.5"
+// prepared all of them, "On 12 November send 0.1" prepared 12, and "1,000"
+// prepared 1. The answer then said "Prepared", as if it had understood.
+//
+// Nothing is worked out from such a question. A share in percent, an
+// exception ("all but", "кроме"), more than one number, or a number with a
+// thousands separator all mean the same thing here: the amount is asked for
+// again, as one plain number or "all". Asking twice costs a sentence; a wrong
+// amount on the screen costs the person their attention at the one moment it
+// matters.
+// ---------------------------------------------------------------------------
+const AMOUNT_PERCENT_V2 = /%|percent|процент/iu;
+const AMOUNT_EXCEPT_V2 = new RegExp(`${EDGE}(?:but|except|excluding|other\\s+than|without|leave|leaving|keep|keeping|minus|less`
+  + `|кроме|без|оставь|оставив|оставить|оставляя|оставим|за\\s+исключением|минус|за\\s+вычетом)(?:$|[^\\p{L}])`, 'iu');
+/** "1,000" or "12,500,000": digits grouped by commas in threes. "0,5" is a decimal and is not one. */
+const AMOUNT_THOUSANDS_V2 = /(?:^|[^\d.,])\d{1,3}(?:,\d{3})+(?![\d,.]|\p{L})/u;
+const AMOUNT_NUMBERS_V2 = /\d+(?:[.,]\d+)*/gu;
+
+/** Whether `text` holds an amount these rules would have to guess at. For a transfer, pass the
+ * question without its recipient: an address is digits too. */
+export function agentAmountUnclearV2(text: string): boolean {
+  return AMOUNT_PERCENT_V2.test(text) || AMOUNT_EXCEPT_V2.test(text) || AMOUNT_THOUSANDS_V2.test(text)
+    || (text.match(AMOUNT_NUMBERS_V2) ?? []).length > 1;
+}
+
 /** The tokens a swap can name: USDC and the assets Still reads. */
 const SWAP_TOKEN_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
   ['USDC', /usdc|usd coin|юсдс|юсдц/iu],
@@ -231,6 +260,8 @@ export interface AgentSwapRequestV2 {
   to: string | null;
   /** An exact amount of `from` as typed, or a share of the wallet's `from`. */
   amount: { kind: 'exact'; value: string } | { kind: 'share'; share: 'all' | 'half' } | null;
+  /** The question holds an amount that is not one plain number: none was read, and none is guessed. */
+  amountUnclear: boolean;
 }
 
 /** A request to swap, read by fixed rules; null when the question is not one. */
@@ -274,7 +305,9 @@ export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null 
   if (from !== null && from === to) to = null;
 
   let amount: AgentSwapRequestV2['amount'] = null;
-  if (ALL_WORDS_V2.test(question)) amount = { kind: 'share', share: 'all' };
+  const amountUnclear = agentAmountUnclearV2(question);
+  if (amountUnclear) amount = null;
+  else if (ALL_WORDS_V2.test(question)) amount = { kind: 'share', share: 'all' };
   else if (HALF_WORDS_V2.test(question)) amount = { kind: 'share', share: 'half' };
   else {
     // To buy, the amount is what is spent: "for 10 USDC", "$10". A number of
@@ -285,7 +318,7 @@ export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null 
     const raw = spent?.[1] ?? spent?.[2] ?? null;
     if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
   }
-  return { from, to, amount };
+  return { from, to, amount, amountUnclear };
 }
 
 /** Base units as the exact decimal, trailing zeros dropped. */
@@ -347,9 +380,14 @@ export function agentSwapAnswerV2(input: {
   }
   if (request.amount === null) {
     return say(
-      ru
-        ? `Подготовил обмен ${from} на ${to}: укажите сумму в Swap AI. ${signs}`
-        : `Prepared a swap of ${from} to ${to}: name the amount in Swap AI. ${signs}`,
+      // An amount that was written and not read is said as that: "Prepared" would claim it was understood.
+      request.amountUnclear
+        ? ru
+          ? `Сумму я читаю только как одно простое число, поэтому угадывать не стал: обмен ${from} на ${to} открыт без суммы, укажите её в Swap AI. ${signs}`
+          : `I take an amount only as one plain number, so I did not guess one: the swap of ${from} to ${to} opens with no amount, name it in Swap AI. ${signs}`
+        : ru
+          ? `Подготовил обмен ${from} на ${to}: укажите сумму в Swap AI. ${signs}`
+          : `Prepared a swap of ${from} to ${to}: name the amount in Swap AI. ${signs}`,
       goalFor(null),
     );
   }
@@ -443,6 +481,8 @@ export interface AgentSendRequestV2 {
   /** How many assets the question names, USDC included. */
   named: number;
   amount: { kind: 'exact'; value: string } | { kind: 'share'; share: 'all' | 'half' } | { kind: 'dollars' } | null;
+  /** The question holds an amount that is not one plain number: none was read, and none is guessed. */
+  amountUnclear: boolean;
   /** As the question wrote it. A name that is not a Basename cannot be resolved here. */
   recipient: { kind: 'address' | 'basename' | 'other_name'; value: string } | null;
   /** More than one recipient written, or where not to send: asked back, never read for the first one
@@ -466,7 +506,10 @@ export function agentSendRequestV2(question: string): AgentSendRequestV2 | null 
   const assets = [...assetsNamedInV2(rest), ...(SEND_USDC_V2.test(rest) ? ['USDC'] : [])];
   if (!recipient && assets.length !== 1) return null;
   let amount: AgentSendRequestV2['amount'] = null;
-  if (ALL_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'all' };
+  // Read from the question without its recipient: an address or a name holds digits of its own.
+  const amountUnclear = agentAmountUnclearV2(rest);
+  if (amountUnclear) amount = null;
+  else if (ALL_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'all' };
   else if (HALF_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'half' };
   else if (SEND_DOLLARS_V2.test(rest)) amount = { kind: 'dollars' };
   else {
@@ -476,7 +519,7 @@ export function agentSendRequestV2(question: string): AgentSendRequestV2 | null 
   const written = new Set([...Array.from(question.matchAll(SEND_ADDRESSES_V2), (match) => match[0].toLowerCase()),
     ...Array.from(question.matchAll(SEND_NAMES_V2), (match) => match[1]!.toLowerCase())]);
   const unclear = written.size > 1 ? 'several' : SEND_NEGATED_V2.test(question) ? 'negated' : null;
-  return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, recipient, unclear };
+  return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, amountUnclear, recipient, unclear };
 }
 
 /** The page's own answer to a transfer, when the server is not asked: it reads the wallet and the recipient. */

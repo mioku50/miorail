@@ -97,6 +97,14 @@ export async function stillAgentSendAnswerV1(input: {
   if (recipient.kind === 'other_name') {
     return say(t(`Я читаю имена .base.eth и адреса 0x…, а имя ${recipient.value} проверить не могу. Напишите адрес 0x….`, `I read .base.eth names and 0x addresses, and cannot check ${recipient.value}. Write the 0x address instead.`));
   }
+  // An amount that is not one plain number is never worked out (audit MCP-1): a percentage, "all but",
+  // a date beside the amount, "1,000". The answer says so, and prepares nothing.
+  if (request.amountUnclear) {
+    return say(t(
+      `Сумму я читаю только как одно простое число, поэтому угадывать не стал. Напишите одно количество ${symbol}, например 0.5, или «все».`,
+      `I take an amount only as one plain number, so I did not guess. Write one amount of ${symbol}, such as 0.5, or “all”.`,
+    ));
+  }
   if (!request.amount) return say(t(`Сколько перевести? Напишите количество ${symbol} или «все».`, `How much? Write an amount of ${symbol}, or “all”.`));
   if (request.amount.kind === 'dollars') {
     return say(t(`Назовите количество в ${symbol} или «все»: сумму в долларах я в акции не пересчитываю.`, `Name an amount in ${symbol}, or “all”: I do not turn dollars into shares.`));

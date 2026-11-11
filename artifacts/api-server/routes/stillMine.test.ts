@@ -369,6 +369,21 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     assert.match(refused.text, said, question);
     assert.equal(refused.sendAction ?? null, null, question);
   }
+  // Audit MCP-1, 2026-11-10: each of these prepared a wrong amount (50 shares, all of them, 12, 1) and said
+  // "Prepared". An amount that is not one plain number is asked for again, and nothing is handed over.
+  stillMineRuntimeV1.askLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 12 });
+  for (const [question, said] of [
+    ['send 50% of my NVDAc to friend.base.eth', /^I take an amount only as one plain number, so I did not guess\. Write one amount of NVDAc, such as 0\.5, or “all”\.$/],
+    ['переведи все кроме 0,5 NVDAc на friend.base.eth', /^Сумму я читаю только как одно простое число, поэтому угадывать не стал\. Напишите одно количество NVDAc, например 0\.5, или «все»\.$/],
+    ['On 12 November send 0.1 NVDAc to friend.base.eth', /^I take an amount only as one plain number, so I did not guess\./],
+    ['send 1,000 NVDAc to friend.base.eth', /^I take an amount only as one plain number, so I did not guess\./],
+    ['send everything except 0.1 NVDAc to friend.base.eth', /^I take an amount only as one plain number, so I did not guess\./],
+  ] as const) {
+    const asked = (await ask(server, question)).body.answer;
+    assert.match(asked.text, said, question);
+    assert.equal(asked.sendAction ?? null, null, question);
+    assert.doesNotMatch(asked.text, /Prepared|Подготовил/, question);
+  }
 });
 
 test('a stock that is all pledged is said to be, with the way to take it back first', async () => {

@@ -15,6 +15,7 @@ import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
   agentAnswerV1,
   agentRouteV2,
+  agentAmountUnclearV2,
   agentSendRequestV2,
   agentSwapAnswerV2,
   agentSwapRequestV2,
@@ -451,7 +452,7 @@ describe('the Agent', () => {
     // question as a calculation".
     const asked = 'Мне нужен свап моих всех usdc на eth';
     assert.deepEqual(agentRouteV2(asked), { route: 'swap', topic: 'action_prep' });
-    assert.deepEqual(agentSwapRequestV2(asked), { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } });
+    assert.deepEqual(agentSwapRequestV2(asked), { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' }, amountUnclear: false });
     for (const [q, expected] of [
       ['swap 10 USDC to ETH', { from: 'USDC', to: 'ETH', amount: { kind: 'exact', value: '10' } }],
       ['обменяй 0,5 eth на usdc', { from: 'ETH', to: 'USDC', amount: { kind: 'exact', value: '0.5' } }],
@@ -468,7 +469,7 @@ describe('the Agent', () => {
       ['buy ETH with all my USDC', { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } }],
       ['обменяй все USDC на все свои эфиры', { from: 'USDC', to: 'ETH', amount: { kind: 'share', share: 'all' } }],
     ] as const) {
-      assert.deepEqual(agentSwapRequestV2(q), expected, q);
+      assert.deepEqual(agentSwapRequestV2(q), { ...expected, amountUnclear: false }, q);
       assert.equal(agentRouteV2(q).route, 'swap', q);
     }
     // A loan is not a swap, and a what-if is a calculation.
@@ -498,12 +499,45 @@ describe('the Agent', () => {
     assert.equal(unclear.actionLink?.href, '/routes');
   });
 
+  // Audit MCP-1, 2026-11-10: the amount was the first number in the question, and "all" wherever the word
+  // stood. Each line below prepared a wrong amount, and the answer said "Prepared".
+  it('takes an amount only as one plain number: a percentage, an exception, a second number or "1,000" is asked back', () => {
+    const address = `0x${'ab'.repeat(20)}`;
+    for (const q of [
+      `send 50% of my NVDAc to ${address}`, 'Send 0.5% of my NVDAc to bob.base.eth', 'send 25 percent of my NVDAc to bob.base.eth', 'переведи 10 процентов NVDAc на bob.base.eth',
+      'send all but 0.5 NVDAc to bob.base.eth', 'send everything except 1 NVDAc to bob.base.eth', 'переведи все кроме 0,5 NVDAc на friend.base.eth',
+      'переведи все NVDAc без 1 на friend.base.eth', 'отправь всё, оставь 2 NVDAc, на friend.base.eth', 'send all my NVDAc minus 1 to bob.base.eth',
+      'On 12 November send 0.1 NVDAc to bob.base.eth', 'send 1,000 NVDAc to bob.base.eth', 'send 12,500,000 NVDAc to bob.base.eth',
+    ]) {
+      const request = agentSendRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear, request?.asset], [null, true, 'NVDAc'], q);
+    }
+    for (const q of ['swap 50% of my USDC to ETH', 'обменяй 25% моих USDC на ETH', 'swap all but 100 USDC to ETH', 'swap 1,000 USDC to ETH', 'обменяй все USDC кроме 10 на ETH', 'on 12 November swap 5 USDC to ETH']) {
+      const request = agentSwapRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear, request?.from, request?.to], [null, true, 'USDC', 'ETH'], q);
+    }
+    // One plain number, a decimal comma, "all" and "half" are read as before; an address or a name holds digits of its own.
+    assert.deepEqual(agentSendRequestV2(`переведи 0,5 NVDA на ${address}`)?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSendRequestV2('send 2 NVDAc to bob123.base.eth')?.amount, { kind: 'exact', value: '2' });
+    assert.deepEqual(agentSendRequestV2('send all my NVDAc to bob.base.eth')?.amount, { kind: 'share', share: 'all' });
+    assert.deepEqual(agentSwapRequestV2('swap 10 USDC to ETH')?.amount, { kind: 'exact', value: '10' });
+    for (const plain of ['send 0.5 NVDAc', 'swap 10 USDC to ETH', 'обменяй 0,5 eth на usdc', 'продай половину NVDA', 'send all my NVDAc']) assert.equal(agentAmountUnclearV2(plain), false, plain);
+    for (const unclear of ['50%', 'ten percent', 'all but 1', 'всё кроме 1', '1,000', '5 and 6']) assert.equal(agentAmountUnclearV2(unclear), true, unclear);
+    // The swap answer says the amount was not read, and opens Swap AI with none; it never says "Prepared".
+    const swap = agentSwapAnswerV2({ question: 'swap 50% of my USDC to ETH', report: null });
+    assert.match(swap.text, /^I take an amount only as one plain number, so I did not guess one: the swap of USDC to ETH opens with no amount, name it in Swap AI\./);
+    assert.equal(swap.actionLink?.href, `/routes?goal=${encodeURIComponent('Swap USDC to ETH')}`);
+    const ru = agentSwapAnswerV2({ question: 'обменяй 25% моих USDC на ETH', report: null });
+    assert.match(ru.text, /^Сумму я читаю только как одно простое число, поэтому угадывать не стал/);
+    assert.doesNotMatch(`${swap.text} ${ru.text}`, /Prepared|Подготовил/);
+  });
+
   it('reads a transfer by its rules: the stock, how much, and the recipient the question wrote', () => {
     // 2026-11-03: the operator asked for "перевод всех Nvdac на <name>.base.eth"
     // and read the list of what the Agent answers.
     const asked = 'подготовь для меня перевод всех Nvdac на friend.base.eth адрес';
     assert.deepEqual(agentRouteV2(asked), { route: 'send', topic: 'action_prep' });
-    assert.deepEqual(agentSendRequestV2(asked), { asset: 'NVDAc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'friend.base.eth' }, unclear: null });
+    assert.deepEqual(agentSendRequestV2(asked), { asset: 'NVDAc', named: 1, amount: { kind: 'share', share: 'all' }, amountUnclear: false, recipient: { kind: 'basename', value: 'friend.base.eth' }, unclear: null });
     const address = `0x${'ab'.repeat(20)}`;
     for (const [q, expected] of [
       [`переведи 0,5 NVDA на ${address}`, { asset: 'NVDAc', named: 1, amount: { kind: 'exact', value: '0.5' }, recipient: { kind: 'address', value: address }, unclear: null }],
@@ -513,7 +547,7 @@ describe('the Agent', () => {
       // A recipient's name is a person, not a stock.
       ['отправь nvda.base.eth все акции AAPL', { asset: 'AAPLc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'nvda.base.eth' }, unclear: null }],
     ] as const) {
-      assert.deepEqual(agentSendRequestV2(q), expected, q);
+      assert.deepEqual(agentSendRequestV2(q), { ...expected, amountUnclear: false }, q);
       assert.equal(agentRouteV2(q).route, 'send', q);
     }
     // Re-audit R6, 2026-11-04: two recipients, or where not to send, are asked back, never read for the first.
