@@ -35,6 +35,9 @@ export {
   walletNetworkRetryAfterMsV1,
   sendRetryingWalletNetworkV1,
   WALLET_NETWORK_RETRY_MAX_WAIT_MS_V1,
+  WALLET_ON_ANOTHER_NETWORK_V1,
+  walletAccountChangedSentenceV1,
+  walletNotAskedSentenceV1,
   walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from '@mioagent/ui';

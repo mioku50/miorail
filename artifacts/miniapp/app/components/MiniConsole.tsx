@@ -195,7 +195,7 @@ import {
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
   isWalletRejectionError,
-  requireLiveWalletConnectionV1,
+  requireLiveWalletAccountV1,
   transactionHashesFromReceipts,
   useFoundWalletClaim,
   useSpendPermissionGrant,
@@ -1363,9 +1363,12 @@ export function MiniConsole() {
       return;
     }
     try {
-      // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(b20WagmiConfig);
+      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
+      // the account this plan was made for: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error("Your wallet is not connected");
+      await requireLiveWalletAccountV1(b20WagmiConfig, address);
       const result = await b20SendCalls.mutateAsync({
+        account: address,
         calls: begun.payload.calls as never,
         chainId: 8453,
         forceAtomic: begun.payload.atomicRequired,

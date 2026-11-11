@@ -7,7 +7,7 @@ import {
   useStockActionReviewConsoleV1,
 } from "@mioagent/ui";
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
-import { builderCodeToDataSuffix, requireLiveWalletConnectionV1 } from "@mioagent/wallet-actions";
+import { builderCodeToDataSuffix, requireLiveWalletAccountV1 } from "@mioagent/wallet-actions";
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review, in Base App.
@@ -42,9 +42,12 @@ export default function BaseAppStockActionReviewPage() {
   const reviewConsole = useStockActionReviewConsoleV1({
     draft,
     sendCalls: async ({ calls, atomicRequired }) => {
-      // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
+      // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error("Your wallet is not connected");
+      await requireLiveWalletAccountV1(config, address);
       const result = await sendCalls.mutateAsync({
+        account: address,
         calls: calls as never,
         chainId: 8453,
         forceAtomic: atomicRequired,

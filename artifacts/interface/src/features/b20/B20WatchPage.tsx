@@ -49,7 +49,7 @@ import {
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
   isWalletRejectionError,
-  requireLiveWalletConnectionV1,
+  requireLiveWalletAccountV1,
   transactionHashesFromReceipts,
 } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
@@ -524,9 +524,12 @@ export function B20WatchSection() {
     try {
       // The payload comes from the server and is passed through untouched. No
       // calldata is built, rewritten or reordered in this browser.
-      // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
+      // the account this plan was made for: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error('Your wallet is not connected');
+      await requireLiveWalletAccountV1(config, address);
       const result = await sendCalls.mutateAsync({
+        account: address,
         calls: begun.payload.calls as never,
         chainId: 8453,
         forceAtomic: begun.payload.atomicRequired,

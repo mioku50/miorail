@@ -5,8 +5,10 @@ import { base } from 'wagmi/chains';
 import { mock } from 'wagmi/connectors';
 import { getConnectorClient } from 'wagmi/actions';
 
-import { WALLET_CONNECTION_NOT_READY_V1, walletConnectionNotReadyV1, walletDidNotSendV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
-import { WalletConnectionNotReadyErrorV1, liveConnectorV1, requireLiveWalletConnectionV1 } from './liveWalletConnection';
+import { WALLET_CONNECTION_NOT_READY_V1, WALLET_ON_ANOTHER_NETWORK_V1, walletAccountChangedSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1,
+  walletNotAskedSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { WalletAccountChangedErrorV1, WalletConnectionNotReadyErrorV1, connectedAccountsV1, liveConnectorV1, requireLiveWalletAccountV1,
+  requireLiveWalletConnectionV1 } from './liveWalletConnection';
 
 const ACCOUNT = '0x00000000000000000000000000000000000b0b0b' as const;
 
@@ -108,4 +110,85 @@ test('says so plainly when the wallet cannot be brought back, and keeps the pers
     requireLiveWalletConnectionV1(restored(), { reconnectWaitMs: 10, connect: async () => { throw refusal; } }),
     (cause: unknown) => cause === refusal,
   );
+});
+
+// Audit WAL-1 (2026-11-10): the press brings the connection back, and the wallet answers with the
+// account selected in it now, which may not be the one the page showed and the server reviewed.
+const OTHER = '0x00000000000000000000000000000000000c0c0c' as const;
+
+/** A record from the last visit that names `recorded`, over a wallet that now answers as `answering`. */
+function restoredAs(recorded: readonly `0x${string}`[], answering: readonly [`0x${string}`, ...`0x${string}`[]]) {
+  const config = createConfig({ chains: [base], connectors: [mock({ accounts: answering })], transports: { [base.id]: http() } });
+  const record = { id: config.connectors[0]!.id, name: 'Mock Connector', type: 'mock', uid: 'uid-from-the-last-visit' };
+  config.setState((state) => ({
+    ...state,
+    status: 'connected',
+    current: record.uid,
+    connections: new Map([[record.uid, { accounts: recorded as never, chainId: base.id, connector: record as never }]]),
+  }));
+  return config;
+}
+
+test('a wallet that comes back as another account is not asked, by the page’s own check and by wagmi for a send that names the account', async () => {
+  const config = restoredAs([ACCOUNT], [OTHER]);
+  const failure = await requireLiveWalletAccountV1(config, ACCOUNT).then(() => null, (cause: unknown) => cause);
+  assert.ok(failure instanceof WalletAccountChangedErrorV1);
+  assert.equal(failure.expected, ACCOUNT);
+  assert.equal(failure.message, 'Your wallet switched to another account, so it was not asked and nothing was sent. Switch back to 0x0000…0b0b, then press again.');
+  // The connection is live again, and it is the other account's.
+  assert.deepEqual(connectedAccountsV1(config), [OTHER]);
+  // Nothing was sent, and the page says so in the same words wherever the failure surfaces.
+  assert.equal(walletDidNotSendV1(failure), true);
+  assert.equal(walletSubmissionFailureMessageV1(failure, 'MetaMask'), failure.message);
+  assert.equal(walletNotAskedSentenceV1({ cause: failure }), failure.message);
+
+  // A send that names the reviewed account is refused by wagmi before the wallet hears of it.
+  const { sendTransaction } = await import('wagmi/actions');
+  const refused = await sendTransaction(config, { account: ACCOUNT, chainId: base.id, to: OTHER, value: 0n }).then(() => null, (cause: unknown) => cause);
+  assert.equal((refused as Error).name, 'ConnectorAccountNotFoundError');
+  assert.equal(walletDidNotSendV1(refused), true);
+  assert.equal(walletSubmissionFailureMessageV1(refused, 'MetaMask'), failure.message);
+});
+
+test('a wallet that still holds the reviewed account passes, selected first or not', async () => {
+  for (const answering of [[ACCOUNT], [OTHER, ACCOUNT]] as const) {
+    const config = restoredAs([ACCOUNT], answering as unknown as [`0x${string}`, ...`0x${string}`[]]);
+    const live = await requireLiveWalletAccountV1(config, ACCOUNT.toUpperCase().replace('0X', '0x'));
+    assert.equal(live.restored, true);
+    assert.equal(live.connector, liveConnectorV1(config));
+  }
+  // A connection that was live all along is checked the same way.
+  const config = createConfig({ chains: [base], connectors: [mock({ accounts: [ACCOUNT] })], transports: { [base.id]: http() } });
+  const { connect } = await import('wagmi/actions');
+  await connect(config, { connector: config.connectors[0]! });
+  assert.equal((await requireLiveWalletAccountV1(config, ACCOUNT)).restored, false);
+  await assert.rejects(requireLiveWalletAccountV1(config, OTHER), WalletAccountChangedErrorV1);
+});
+
+test('a connection that could not be brought back is said as that, never as another account', async () => {
+  const config = restoredAs([ACCOUNT], [ACCOUNT]);
+  const failure = await requireLiveWalletAccountV1(config, ACCOUNT, { connect: async () => { throw new Error('wallet is locked'); } })
+    .then(() => null, (cause: unknown) => cause);
+  assert.ok(failure instanceof WalletConnectionNotReadyErrorV1);
+  assert.equal(walletNotAskedSentenceV1(failure), null);
+});
+
+test('what was refused before the wallet was asked: another account, another network, and nothing else', () => {
+  const named = 'Your wallet switched to another account, so it was not asked and nothing was sent. Switch back to 0x0000…0b0b, then press again.';
+  const unnamed = 'Your wallet switched to another account, so it was not asked and nothing was sent. Switch back to the account you signed in with, then press again.';
+  // wagmi's own words carry the account.
+  const wagmi = Object.assign(new Error(`Account "${ACCOUNT}" not found for connector "MetaMask".`), { name: 'ConnectorAccountNotFoundError' });
+  assert.equal(walletNotAskedSentenceV1(wagmi), named);
+  assert.equal(walletNotAskedSentenceV1({ shortMessage: 'x', cause: { cause: wagmi } }), named);
+  assert.equal(walletNotAskedSentenceV1(Object.assign(new Error('x'), { name: 'ConnectorAccountNotFoundError' })), unnamed);
+  assert.equal(walletAccountChangedSentenceV1('not an address'), unnamed);
+  const network = Object.assign(new Error('The current chain of the connector (id: 1) does not match the connection’s chain (id: 8453).'), { name: 'ConnectorChainMismatchError' });
+  assert.equal(walletNotAskedSentenceV1(network), WALLET_ON_ANOTHER_NETWORK_V1);
+  assert.equal(walletDidNotSendV1(network), true);
+  assert.equal(walletSubmissionFailureMessageV1(network), WALLET_ON_ANOTHER_NETWORK_V1);
+  // A lost answer, a timeout or the wallet's own error proves nothing.
+  for (const other of [new Error('wallet response lost'), Object.assign(new Error('nonce too low'), { code: -32000 }), { name: 'TimeoutError' }, null, 'boom']) {
+    assert.equal(walletNotAskedSentenceV1(other), null);
+  }
+  assert.equal(walletDidNotSendV1(new Error('wallet response lost')), false);
 });

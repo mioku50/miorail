@@ -3,7 +3,8 @@ import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
-import { sendRetryingWalletNetworkV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletNetworkFailureSentenceV1 } from './walletBatchSupport';
+import { WALLET_CONNECTION_NOT_READY_V1, sendRetryingWalletNetworkV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1,
+  walletNetworkFailureSentenceV1, walletNotAskedSentenceV1 } from './walletBatchSupport';
 import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
@@ -288,7 +289,7 @@ export function useLendingReviewConsoleV1(input: {
                     const unsent = walletDidNotSendV1(error);
                     if (landed) await report(unsent ? 'stopped' : 'submitted', landed).catch(() => undefined);
                     throw new LendingStepsStoppedV1(unsent
-                      ? stepsStoppedV1(operation, index, calls.length, borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying, returning)
+                      ? stepsStoppedV1(operation, index, calls.length, borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : walletNotAskedSentenceV1(error), paying, returning)
                       : stepsUnknownV1(operation, index, calls.length, paying, returning), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'confirming' } });
@@ -352,6 +353,9 @@ export function useLendingReviewConsoleV1(input: {
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName)
+          // The page's connection was not live, or the wallet answers as another account: it was never
+          // asked, the review is ready again, and "the result is unknown" would be false both ways (audit WAL-3).
+          ?? (walletConnectionNotReadyV1(error) ? WALLET_CONNECTION_NOT_READY_V1 : null) ?? walletNotAskedSentenceV1(error)
           // Another attempt holds the market: the server says which, before the wallet was ever asked.
           ?? (!handedToWallet ? serverDetailV1(error, /^execution_active$/) : null)
           ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message

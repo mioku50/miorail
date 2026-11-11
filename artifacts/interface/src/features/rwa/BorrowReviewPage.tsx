@@ -11,7 +11,7 @@ import {
   useConsoleTheme,
 } from '@mioagent/ui';
 import { useStatus } from '@mioagent/api-client-react';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletConnectionV1 } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1 } from '@mioagent/wallet-actions';
 
 import { useConsoleNav } from '../console/useConsoleNav';
 
@@ -61,9 +61,12 @@ export function BorrowReviewPage() {
     draft: params?.draft ?? null,
     walletAddress: address ?? null,
     sendCalls: async ({ calls }) => {
-      // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
+      // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error('Your wallet is not connected');
+      await requireLiveWalletAccountV1(config, address);
       const result = await sendCalls.mutateAsync({
+        account: address,
         calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
         chainId: 8453,
         forceAtomic: true,

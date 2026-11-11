@@ -35,8 +35,8 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
-import { requireLiveWalletConnectionV1 } from './liveWalletConnection';
+import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletNotAskedSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { requireLiveWalletAccountV1 } from './liveWalletConnection';
 import {
   SEQUENTIAL_ALLOWANCE_FAILED_V1,
   SEQUENTIAL_ALLOWANCE_UNREAD_V1,
@@ -703,7 +703,8 @@ export function useSubmitApprovedBlueprint({
       // the wallet is asked anything (2026-11-09: a restored record failed four swaps of one wallet).
       let restored: boolean;
       try {
-        ({ restored } = await requireLiveWalletConnectionV1(config));
+        // And it must hold the account the page showed: the wallet may answer as another one (audit WAL-1).
+        ({ restored } = await requireLiveWalletAccountV1(config, address));
       } catch (cause) {
         // Nothing was approved and the wallet was not asked; a refusal to reconnect keeps its own words.
         setStatus('failed');
@@ -790,6 +791,9 @@ export function useSubmitApprovedBlueprint({
         // A wallet whose own connection to Base failed before it sent anything is
         // asked once more, after the wait it named (MetaMask, 2026-11-08).
         result = await sendRetryingWalletNetworkV1(() => sendCalls.mutateAsync({
+          // The account the server approved these calls for, named on every try: a connection that
+          // no longer holds it is refused before the wallet is asked (audit WAL-1).
+          account: payload.from,
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
           calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
@@ -840,7 +844,7 @@ export function useSubmitApprovedBlueprint({
           const message = stepsNext ? sequentialAfterBatchFailureV1(walletName) : walletSubmissionFailureMessageV1(cause, walletName);
           if (stepsNext) setStepsAfterFailure(true);
           if (stepsNext || walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureSentenceV1(cause) !== null
-            || walletConnectionNotReadyV1(cause)) {
+            || walletConnectionNotReadyV1(cause) || walletNotAskedSentenceV1(cause) !== null) {
             // The wallet cannot send a batch at all, sponsored or not. Saying
             // the sponsor failed sent people to press again for the same no.
             // Nor when it could not reach Base (MetaMask's own RPC, 11-08).

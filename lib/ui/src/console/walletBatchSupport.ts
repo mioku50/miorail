@@ -290,11 +290,46 @@ export function walletConnectionNotReadyV1(cause: unknown): boolean {
 }
 
 /**
+ * The wallet was not asked, because it no longer answers as the account this was prepared for
+ * (audit WAL-1 and WAL-4, 2026-11-10). After a reload the page's connection is brought back on the
+ * press, and the wallet answers with whichever account is selected in it now. Every send names the
+ * account the review was made for: wallet-actions throws WalletAccountChangedError when the
+ * connection does not hold that account, and wagmi's own name for the same refusal is
+ * ConnectorAccountNotFoundError. A wallet on another network is refused the same way, before it
+ * is asked (ConnectorChainMismatchError).
+ */
+export function walletAccountChangedSentenceV1(expected?: string | null): string {
+  // Lower case, as the page shows a wallet everywhere else; wagmi's own words carry a checksummed one.
+  const address = typeof expected === 'string' && /^0x[0-9a-fA-F]{40}$/.test(expected) ? expected.toLowerCase() : null;
+  const named = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'the account you signed in with';
+  return `Your wallet switched to another account, so it was not asked and nothing was sent. Switch back to ${named}, then press again.`;
+}
+export const WALLET_ON_ANOTHER_NETWORK_V1 =
+  'Your wallet is on another network, so it was not asked and nothing was sent. Switch it to Base, then press again.';
+const ACCOUNT_CHANGED_NAMES_V1 = new Set(['WalletAccountChangedError', 'ConnectorAccountNotFoundError']);
+/** The sentence for a send refused before the wallet was asked, for another account or another network; null for anything else. */
+export function walletNotAskedSentenceV1(cause: unknown): string | null {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
+    const record = current as { name?: unknown; message?: unknown; expected?: unknown; cause?: unknown };
+    if (typeof record.name === 'string' && ACCOUNT_CHANGED_NAMES_V1.has(record.name)) {
+      // wagmi: Account "0x…" not found for connector "MetaMask".
+      const named = typeof record.expected === 'string' ? record.expected
+        : typeof record.message === 'string' ? /Account "(0x[0-9a-fA-F]{40})"/.exec(record.message)?.[1] ?? null : null;
+      return walletAccountChangedSentenceV1(named);
+    }
+    if (record.name === 'ConnectorChainMismatchError') return WALLET_ON_ANOTHER_NETWORK_V1;
+    current = record.cause;
+  }
+  return null;
+}
+
+/**
  * Whether the wallet's answer proves that nothing was sent: the person refused
  * (EIP-1193 4001), the wallet said it cannot do this at all, its own
  * connection to Base failed on a read it makes before sending, or the page's
- * connection to it was not live, so it was never asked. A timeout or a
- * dropped connection proves nothing and is not here.
+ * connection to it was not live or answered as another account, so it was
+ * never asked. A timeout or a dropped connection proves nothing and is not here.
  */
 export function walletDidNotSendV1(cause: unknown): boolean {
   let current: unknown = cause;
@@ -304,7 +339,7 @@ export function walletDidNotSendV1(cause: unknown): boolean {
     current = record.cause;
   }
   return walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true
-    || walletConnectionNotReadyV1(cause);
+    || walletConnectionNotReadyV1(cause) || walletNotAskedSentenceV1(cause) !== null;
 }
 
 /**
@@ -317,6 +352,7 @@ export function walletDidNotSendV1(cause: unknown): boolean {
 export function walletSubmissionFailureMessageV1(cause: unknown, walletName?: string | null): string {
   return walletCannotSendSentenceV1(cause, walletName) ?? walletNetworkFailureSentenceV1(cause, walletName)
     ?? (walletConnectionNotReadyV1(cause) ? WALLET_CONNECTION_NOT_READY_V1 : null)
+    ?? walletNotAskedSentenceV1(cause)
     ?? (cause instanceof Error ? cause.message : 'Wallet submission failed');
 }
 

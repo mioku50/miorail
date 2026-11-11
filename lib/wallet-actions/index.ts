@@ -49,7 +49,8 @@ export {
 } from './src/walletBatchSupport';
 export type { AtomicBatchSupportV1 } from './src/walletBatchSupport';
 // 2026-11-09: a press first makes the page's connection to the wallet live (see the module).
-export { WalletConnectionNotReadyErrorV1, liveConnectorV1, requireLiveWalletConnectionV1 } from './src/liveWalletConnection';
+export { WalletAccountChangedErrorV1, WalletConnectionNotReadyErrorV1, connectedAccountsV1, liveConnectorV1, requireLiveWalletAccountV1,
+  requireLiveWalletConnectionV1 } from './src/liveWalletConnection';
 
 // T57: approved-blueprint submission flow (server approve → Base Account
 // wallet → idempotent submission record). Shares CallsStatusPoller,

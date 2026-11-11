@@ -18,7 +18,7 @@
 
 import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAccount, useConfig, useSendCalls, useSwitchChain } from 'wagmi';
-import { requireLiveWalletConnectionV1 } from './liveWalletConnection';
+import { requireLiveWalletAccountV1 } from './liveWalletConnection';
 import { base } from 'wagmi/chains';
 import { useRecordFoundWalletSubmission } from '@mioagent/api-client-react';
 import type { BaseMcpActionReconcileResponseV1 } from '@mioagent/api-spec';
@@ -176,7 +176,9 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
     settle(id, 'sending', null);
     try {
       // A restored connection is brought back before the wallet is asked, even to switch chains (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      // The claim was checked for this account: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error('Your wallet is not connected');
+      await requireLiveWalletAccountV1(config, address);
       if (chainId !== base.id) {
         try {
           await switchChainAsync({ chainId: base.id });
@@ -186,6 +188,7 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
         }
       }
       const sent = await sendCalls.mutateAsync({
+        account: address,
         calls: claim.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
         chainId: base.id,
         experimental_fallback: true,

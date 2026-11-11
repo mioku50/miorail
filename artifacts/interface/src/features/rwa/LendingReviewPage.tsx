@@ -6,7 +6,7 @@ import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useSponsoredGasStatus, useStillEligibilityV1, useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1, stillEligibilityViewV1 } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, requireLiveWalletConnectionV1, sendCallsCapabilitiesV1,
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, requireLiveWalletAccountV1, sendCallsCapabilitiesV1,
   sponsoredGasPlanV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -28,15 +28,18 @@ export function LendingReviewPage() {
   // Still's builder code in its own calldata. Anything else stays one batch,
   // and the server says so.
   const batches = useWalletBatchSupportV1();
-  const steps = useMemo<LendingStepsWalletV1 | null>(() => batches.blocker && address ? {
+  // The review is the signed-in wallet's: every send names it, so a wallet that now answers as another
+  // account is refused before it is asked (audit WAL-1, 2026-11-10).
+  const owner = session.signedIn ? session.wallet as Hex : null;
+  const steps = useMemo<LendingStepsWalletV1 | null>(() => batches.blocker && address && owner ? {
     send: async call => {
       // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
-      return sendTransaction(config, { account: address, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
+      await requireLiveWalletAccountV1(config, owner);
+      return sendTransaction(config, { account: owner, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
         data: LENDING_BUILDER_SUFFIX_V1 ? concat([call.data as Hex, LENDING_BUILDER_SUFFIX_V1 as Hex]) : call.data as Hex });
     },
     receipt: async hash => (await waitForTransactionReceipt(config, { hash: hash as Hex, chainId: 8453, timeout: 180_000 }).catch(() => null))?.status ?? null,
-  } : null, [batches.blocker, address, config]);
+  } : null, [batches.blocker, address, owner, config]);
   // Still pays a batch's network fee when the arm offers it and the wallet takes a fee sponsor
   // (2026-11-08). After the wallet failed with the sponsor, the next press goes without one.
   const sponsoredGas = useSponsoredGasStatus({ enabled: session.signedIn });
@@ -57,10 +60,11 @@ export function LendingReviewPage() {
     sendCalls: async ({ calls, sponsorship }) => {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      if (!owner) throw new Error('lending_identity_changed');
+      await requireLiveWalletAccountV1(config, owner);
       const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: batches.capabilities, declinedBefore: sponsorDeclined });
       try {
-        const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
+        const result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
           // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
           calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
             suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: batches.capabilities, sponsored: gas.state === 'sponsored' }),

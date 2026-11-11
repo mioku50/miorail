@@ -63,17 +63,27 @@ test('every wallet call site in the repository wires ERC-8021 attribution', () =
   );
 });
 
-test('every wallet call site brings a restored connection back before the wallet is asked', () => {
+test('every wallet call site brings a restored connection back, and names the account it sends from', () => {
   // 2026-11-09: wagmi restores the last connection from storage as a bare record and keeps it until
   // its reconnect finishes; the page says Connected, and a press in that window failed four swaps of
   // one wallet with "connector.getChainId is not a function", the wallet never asked.
-  const unguarded: string[] = [];
+  // 2026-11-10 (audit WAL-1): the connection brought back on the press answers with whichever account
+  // the wallet has selected now, and a send that names no account goes from that one. So the check is
+  // the one that also holds the account, and every send names the account it was prepared for.
+  const unguarded: string[] = [], unnamed: string[] = [];
   for (const file of sourceFilesV1(root)) {
     const text = readFileSync(file, 'utf8');
     if (!/\buseSendCalls\s*\(/.test(text)) continue;
-    if (!/\brequireLiveWalletConnectionV1\(/.test(text)) unguarded.push(path.relative(root, file));
+    const name = path.relative(root, file);
+    if (!/\brequireLiveWalletAccountV1\(/.test(text)) unguarded.push(name);
+    const sends = [...text.matchAll(/(?:[sS]endCalls\.mutateAsync\(|\bsendTransaction\(\s*config,\s*)\{/g)];
+    if (sends.length === 0) unnamed.push(`${name}: no send found`);
+    for (const send of sends) {
+      if (!/\baccount:/.test(text.slice(send.index, send.index + 400))) unnamed.push(`${name}:${text.slice(0, send.index).split('\n').length}`);
+    }
   }
-  assert.deepEqual(unguarded, [], 'a wallet call site without the live-connection check fails on a restored record');
+  assert.deepEqual(unguarded, [], 'a wallet call site without the live-account check fails on a restored record, or sends from another account');
+  assert.deepEqual(unnamed, [], 'a send that names no account goes from whichever account the wallet answers with');
 });
 
 test('every remaining Base Account call surface receives ERC-8021 attribution', () => {

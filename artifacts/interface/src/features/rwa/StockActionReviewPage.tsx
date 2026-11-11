@@ -22,7 +22,7 @@ import {
   useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletConnectionV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 /**
@@ -93,9 +93,12 @@ export function StockActionReviewPage() {
     draft: params?.draft ?? null,
     walletBlocker: batches.blocker,
     sendCalls: async ({ calls, atomicRequired }) => {
-      // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
+      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
+      // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
+      if (!address) throw new Error('Your wallet is not connected');
+      await requireLiveWalletAccountV1(config, address);
       const result = await sendCalls.mutateAsync({
+        account: address,
         calls: calls as never,
         chainId: 8453,
         forceAtomic: atomicRequired,

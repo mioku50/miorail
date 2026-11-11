@@ -16,7 +16,7 @@
 
 import type { Config, Connector } from 'wagmi';
 import { connect as wagmiConnect } from 'wagmi/actions';
-import { WALLET_CONNECTION_NOT_READY_V1 } from '@mioagent/ui';
+import { WALLET_CONNECTION_NOT_READY_V1, walletAccountChangedSentenceV1 } from '@mioagent/ui';
 
 /** How long a press waits for wagmi's own reconnect before it connects the wallet again. */
 export const RECONNECT_WAIT_MS_V1 = 3_000;
@@ -31,7 +31,7 @@ export interface WalletConnectionConfigV1 {
   readonly state: {
     readonly status: string;
     readonly current: string | null;
-    readonly connections: ReadonlyMap<string, { readonly connector: object }>;
+    readonly connections: ReadonlyMap<string, { readonly connector: object; readonly accounts?: readonly string[] }>;
   };
   readonly connectors: readonly object[];
   readonly subscribe: (selector: never, listener: never) => () => void;
@@ -46,6 +46,25 @@ export class WalletConnectionNotReadyErrorV1 extends Error {
   constructor(options?: { cause?: unknown }) {
     super(WALLET_CONNECTION_NOT_READY_V1, options);
   }
+}
+
+/** Thrown when the wallet's connection no longer holds the account a review was made for. The wallet
+ * was not asked; its message is the page's sentence. */
+export class WalletAccountChangedErrorV1 extends Error {
+  override name = 'WalletAccountChangedError';
+  /** The account the review was made for. */
+  readonly expected: string;
+  constructor(expected: string) {
+    super(walletAccountChangedSentenceV1(expected));
+    this.expected = expected;
+  }
+}
+
+/** The accounts the page's current connection to the wallet answers with, lowercase. */
+export function connectedAccountsV1(config: Pick<WalletConnectionConfigV1, 'state'>): string[] {
+  const uid = config.state.current;
+  const accounts = uid ? config.state.connections.get(uid)?.accounts : undefined;
+  return Array.isArray(accounts) ? accounts.filter((account): account is string => typeof account === 'string').map((account) => account.toLowerCase()) : [];
 }
 
 /** The current connection's connector when it is a live one, or null for a bare record. */
@@ -131,4 +150,23 @@ export async function requireLiveWalletConnectionV1(
   const connected = liveConnectorV1(config);
   if (!connected) throw new WalletConnectionNotReadyErrorV1();
   return { connector: connected, restored: true };
+}
+
+/**
+ * A live connection that holds `account`, the wallet a review was made for (audit WAL-1, 2026-11-10).
+ *
+ * Bringing a restored connection back asks the wallet which account it is now, and the answer may
+ * be another one than the page showed and the server reviewed. A send that names no account goes
+ * from whichever account answered: a swap of the other account's tokens, or its USDC repaying this
+ * one's loan. So every send is preceded by this, and names the same account itself; wagmi then
+ * refuses a connection that does not hold it before the wallet is asked.
+ */
+export async function requireLiveWalletAccountV1(
+  config: WalletConnectionConfigV1,
+  account: string,
+  options: Parameters<typeof requireLiveWalletConnectionV1>[1] = {},
+): Promise<{ connector: object; restored: boolean }> {
+  const live = await requireLiveWalletConnectionV1(config, options);
+  if (!connectedAccountsV1(config).includes(account.toLowerCase())) throw new WalletAccountChangedErrorV1(account);
+  return live;
 }

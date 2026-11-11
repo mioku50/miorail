@@ -5,7 +5,7 @@ import { getCallsStatus, sendTransaction } from 'wagmi/actions';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { walletRefusedBatchesV1 } from '@mioagent/ui';
 import { StillFrame, StillSpendWalletPay, spendOrderViewV1, useSpendWalletPaymentV1 } from '@mioagent/ui/still';
-import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletConnectionV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from './useStillSky';
 
 const SPEND_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1({
@@ -31,8 +31,8 @@ export function StillSpendWalletPage() {
     orderId, sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null, walletName: batches.walletName,
     send: async (call) => {
       // A restored connection is brought back before the wallet is asked (2026-11-09).
-      await requireLiveWalletConnectionV1(config);
       const owner = session.wallet as Hex;
+      await requireLiveWalletAccountV1(config, owner);
       const asOne = async () => ({ transactionHash: (await sendTransaction(config, { account: owner, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
         data: SPEND_BUILDER_SUFFIX_V1 ? concat([call.data as Hex, SPEND_BUILDER_SUFFIX_V1 as Hex]) : call.data as Hex })).toLowerCase() });
       if (batches.blocker && address) return asOne();
