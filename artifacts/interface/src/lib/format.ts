@@ -107,6 +107,7 @@ export function baseMcpOAuthResultMessage(result?: string | null, code?: string 
       credentials_invalid: 'Stored Wallet MCP credentials cannot be opened. Reconnect to replace them safely.',
       authorization_failed: 'Wallet MCP authorization failed or was cancelled. Reconnect when ready.',
       missing_config: 'Wallet MCP is not fully configured on the server.',
+      started_elsewhere: 'That link came from another site, so nothing was changed. Press Connect here to connect Wallet MCP.',
     };
     return { kind: 'error', text: messages[code || ''] || 'Wallet MCP connection failed. Connect again to reauthorize.' };
   }

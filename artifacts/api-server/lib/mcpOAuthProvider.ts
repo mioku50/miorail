@@ -130,6 +130,24 @@ function tenantFromRequestV1(req: Request): { tenantId: string; walletAddress: `
   return { tenantId: user.id, walletAddress: user.address };
 }
 
+/** The assistants whose own callback addresses Miorail knows. A code sent there reaches that product. */
+const KNOWN_CONSENT_HOSTS_V1: Readonly<Record<string, string>> = { 'claude.ai': 'Claude', 'claude.com': 'Claude', 'chatgpt.com': 'ChatGPT' };
+
+/** Where an authorization code goes, in words for the consent page: the redirect address's host, and what
+ * Miorail knows about it. A client's name is its own choice; this is not. */
+export function consentDestinationV1(redirectUri: string): { where: string; note: string } {
+  const unknown = 'Miorail has not checked who runs that address: authorize only if you started this connection yourself, from an app you trust.';
+  let url: URL;
+  try { url = new URL(redirectUri); } catch { return { where: 'an address Miorail could not read', note: unknown }; }
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+    return { where: `an app on this device (${host}${url.port ? `:${url.port}` : ''})`, note: 'That is a program running on the computer this browser is on. Authorize only if you started this connection yourself.' };
+  }
+  if (url.protocol !== 'https:') return { where: `${url.protocol}//${url.host}`, note: unknown };
+  const known = KNOWN_CONSENT_HOSTS_V1[host];
+  return known ? { where: host, note: `That is ${known}’s own address.` } : { where: host, note: unknown };
+}
+
 function escapeHtmlV1(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -304,7 +322,10 @@ export const mcpOAuthProviderV1: OAuthServerProvider = {
       ['state', params.state ?? ''],
       ['consent_token', consentToken],
     ].map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtmlV1(value)}">`).join('');
-    res.type('html').send(`<!doctype html><html><body><main><h1>Authorize ${escapeHtmlV1(clientName)}</h1><p>This connects the client to wallet ${escapeHtmlV1(identity.walletAddress)} on Base.</p><ul><li>Read your reviewed Miorail plans and measurements</li><li>Prepare unsigned calls for you to review and approve</li><li>Never sign or send a transaction</li></ul><p>Access tokens expire after 15 minutes. The durable grant expires after 30 days and can be revoked in Settings.</p><form method="post" action="/authorize">${hidden}<button name="decision" value="allow" type="submit">Authorize</button><button name="decision" value="deny" type="submit">Cancel</button></form></main></body></html>`);
+    // The name is the client's own word, and anybody may register one called "Claude". What cannot be chosen
+    // freely is where the code is sent, so the page says that, and whether Miorail knows the address (audit AUTH-4).
+    const destination = consentDestinationV1(params.redirectUri);
+    res.type('html').send(`<!doctype html><html><body><main><h1>Authorize ${escapeHtmlV1(clientName)}</h1><p>This connects the client to wallet ${escapeHtmlV1(identity.walletAddress)} on Base.</p><p>The client chose that name itself. The authorization goes to <strong>${escapeHtmlV1(destination.where)}</strong>. ${escapeHtmlV1(destination.note)}</p><ul><li>Read your reviewed Miorail plans and measurements</li><li>Prepare unsigned calls for you to review and approve</li><li>Never sign or send a transaction</li></ul><p>Access tokens expire after 15 minutes. The durable grant expires after 30 days and can be revoked in Settings.</p><form method="post" action="/authorize">${hidden}<button name="decision" value="allow" type="submit">Authorize</button><button name="decision" value="deny" type="submit">Cancel</button></form></main></body></html>`);
   },
 
   async challengeForAuthorizationCode(clientInfo, authorizationCode) {

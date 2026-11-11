@@ -451,8 +451,25 @@ async function reopenShareV1(code: string): Promise<ReopenSharedResultV1 | null>
  * wallet connectors and the font host the page loads, which the static copy of
  * the same file has never been subject to. Same bytes, same rules.
  */
+/**
+ * What the document itself may do (audit AUTH-7, 2026-11-10). The page signs loans, and had no policy of
+ * its own at all. Two rules are in force, because nothing on the page can meet them: no plugin content
+ * and no `<base>` that points its relative addresses elsewhere. The rule for scripts (the page's own
+ * files only) is sent as report-only: wallet connectors are third-party code, and a rule that stops one
+ * of them stops a person signing, so it is watched in real browsers before it is enforced.
+ *
+ * Who may frame the page is left alone on purpose: a Farcaster client opens a mini app in a frame of its
+ * own page, and any client may be one.
+ *
+ * nginx sends the same two headers with the static index.html (ops/nginx/miorail-app.conf).
+ */
+export const DOCUMENT_CSP_V1 = "object-src 'none'; base-uri 'self'";
+export const DOCUMENT_CSP_REPORT_ONLY_V1 = "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:";
+
 export function sendDocumentV1(res: Response, status: number, html: string): void {
   res.removeHeader('Content-Security-Policy');
+  res.setHeader('Content-Security-Policy', DOCUMENT_CSP_V1);
+  res.setHeader('Content-Security-Policy-Report-Only', DOCUMENT_CSP_REPORT_ONLY_V1);
   // Nor its frame guard: Farcaster on the web opens a mini app in a frame of
   // its own page, and the static copy has never refused one.
   res.removeHeader('X-Frame-Options');

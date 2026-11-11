@@ -144,6 +144,14 @@ function oauthErrorRedirect(code: string, returnTo = '/stream'): string {
   return `${url.pathname}${url.search}`;
 }
 
+/** Whether a browser said this request began on another site. `same-origin` is our own page (a popup it
+ * opened included), `none` an address typed or a bookmark; a client that sends no such header is not a
+ * browser following a link, and is served as before. */
+export function startedOnAnotherSiteV1(header: unknown): boolean {
+  const value = Array.isArray(header) ? header[0] : header;
+  return typeof value === 'string' && ['cross-site', 'same-site'].includes(value.trim().toLowerCase());
+}
+
 function requiredConnectConfig(): { serverUrl: URL | null; missingConfig: string[] } {
   const missingConfig: string[] = [];
   const serverUrl = baseMcpServerUrlFromEnv();
@@ -181,6 +189,14 @@ mcpBaseRouter.get('/connect', async (req, res) => {
   const returnTo = req.query.popup === '1'
     ? redirectWithParam(requestedReturnTo, 'mcpPopup', '1')
     : requestedReturnTo;
+  // This GET clears the person's stored connection before it starts a new one, and a session cookie rides
+  // along on a top-level navigation from any site: a link anywhere to this address erased the Wallet MCP
+  // connection of whoever followed it while signed in (audit AUTH-6). A browser says where a navigation
+  // came from; one started on another site clears nothing and is sent back to the page, to press Connect there.
+  if (startedOnAnotherSiteV1(req.headers['sec-fetch-site'])) {
+    mcpBaseRouteRuntime.logger.info('base-mcp-oauth-start-refused', { event: 'base-mcp-oauth-start-refused', provider: 'base-mcp', reason: 'started_on_another_site' });
+    return res.redirect(oauthErrorRedirect('started_elsewhere', returnTo));
+  }
   try {
     const { serverUrl, missingConfig } = requiredConnectConfig();
     if (missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config', returnTo));

@@ -8,6 +8,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
 import {
   MCP_OAUTH_SCOPES_V1,
+  consentDestinationV1,
   consentFormActionPolicyV1,
   mcpOAuthProviderV1,
   mcpOAuthResourceUrlV1,
@@ -155,6 +156,23 @@ describe('MCP OAuth consent', () => {
     assert.ok(insert.values.includes(TENANT));
     assert.ok(insert.values.includes(REDIRECT));
     assert.equal(insert.values.includes(code), false, 'the raw code is never stored');
+  });
+
+  // Audit AUTH-4 (2026-11-10): registration is open and the name is the client's own word, so anybody could
+  // send a signed-in person "Authorize Claude" with a callback of their own. The page says where the code goes.
+  test('the consent page names where the authorization goes, and what Miorail knows of that address', async () => {
+    const clientId = await registerClientV1();
+    const page = await request.agent(appV1()).get(`/authorize?${authorizeQueryV1(clientId)}`);
+    const destination = consentDestinationV1(REDIRECT);
+    assert.ok(page.text.includes(`The client chose that name itself. The authorization goes to <strong>${destination.where}</strong>. `), page.text.slice(0, 600));
+    assert.deepEqual(consentDestinationV1('https://claude.ai/api/mcp/auth_callback'), { where: 'claude.ai', note: 'That is Claude’s own address.' });
+    assert.deepEqual(consentDestinationV1('https://chatgpt.com/connector_platform_oauth_redirect').note, 'That is ChatGPT’s own address.');
+    const stranger = consentDestinationV1('https://claude.ai.example.org/cb');
+    assert.equal(stranger.where, 'claude.ai.example.org');
+    assert.match(stranger.note, /^Miorail has not checked who runs that address: authorize only if you started this connection yourself/);
+    assert.match(consentDestinationV1('http://127.0.0.1:53211/callback').where, /^an app on this device \(127\.0\.0\.1:53211\)$/);
+    assert.match(consentDestinationV1('http://claude.ai/cb').note, /^Miorail has not checked/);
+    assert.match(consentDestinationV1('not a url').where, /could not read/);
   });
 
   test('the consent response admits its own redirect target in form-action', async () => {
