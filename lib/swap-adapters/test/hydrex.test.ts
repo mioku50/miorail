@@ -132,15 +132,20 @@ describe('Hydrex quote adapter', () => {
       pinReader: pin,
       fetchImpl: (async (url: string | URL | Request) => {
         observed = String(url);
-        return new Response(JSON.stringify(response()), { status: 200 });
+        // The router API answers the quote itself, with no envelope around it.
+        return new Response(JSON.stringify(response().data), { status: 200 });
       }) as typeof fetch,
     });
     const intent = makeIntent({ from: 'USDC', to: 'WETH', amount: '100' });
     const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'hydrex-quote', now: NOW });
     assert.equal(result.outcome, 'quoted');
     if (result.outcome !== 'quoted') return;
-    assert.equal(new URL(observed).origin, 'https://hydrex-agent.com');
+    // 2026-11-11: hydrex-agent.com, the host this asked before, had accepted no connection for two days.
+    assert.equal(new URL(observed).origin, 'https://router.api.hydrex.fi');
     assert.equal(new URL(observed).pathname, HYDREX_QUOTE_PATH_V1);
+    assert.deepEqual(Object.fromEntries(new URL(observed).searchParams), {
+      fromTokenAddress: USDC, toTokenAddress: WETH, amount: AMOUNT_IN.toString(), taker: WALLET, slippage: '50',
+    });
     assert.equal(result.candidate.provider.id, 'hydrex');
     assert.equal(result.candidate.priceImpact, null);
     assert.equal(result.candidate.estimatedGas.gasUnits, '0');
@@ -159,7 +164,7 @@ describe('Hydrex quote adapter', () => {
     const quote = (measure: () => Promise<typeof measured | null>) => new HydrexSwapRouteAdapter({
       pinReader: pin,
       gasMeter: { async measure(input) { asked.push(input); return measure(); } },
-      fetchImpl: (async () => new Response(JSON.stringify(response()), { status: 200 })) as typeof fetch,
+      fetchImpl: (async () => new Response(JSON.stringify(response().data), { status: 200 })) as typeof fetch,
     }).quote({ intent: makeIntent({ from: 'USDC', to: 'WETH', amount: '100' }), walletAddress: WALLET, requestId: 'gas', now: NOW });
 
     const priced = await quote(async () => measured);
@@ -183,12 +188,36 @@ describe('Hydrex quote adapter', () => {
   test('does not accept an upstream that fails the independent code pin', async () => {
     const adapter = new HydrexSwapRouteAdapter({
       pinReader: { ...pin, async verifyUpstream() { return { ok: false, reason: 'mismatch' }; } },
-      fetchImpl: (async () => new Response(JSON.stringify(response()), { status: 200 })) as typeof fetch,
+      fetchImpl: (async () => new Response(JSON.stringify(response().data), { status: 200 })) as typeof fetch,
     });
     const intent = makeIntent({ from: 'USDC', to: 'WETH', amount: '100' });
     const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'pin-mismatch', now: NOW });
     assert.equal(result.outcome, 'rejected');
     assert.equal('errorCode' in result ? result.errorCode : null, 'provider_router_mismatch');
+  });
+});
+
+describe('what the Hydrex API says when it has no quote', () => {
+  const answer = (status: number, body: unknown) =>
+    new HydrexSwapRouteAdapter({
+      pinReader: pin,
+      fetchImpl: (async () => new Response(JSON.stringify(body), { status })) as typeof fetch,
+    }).quote({ intent: makeIntent({ from: 'USDC', to: 'WETH', amount: '100' }), walletAddress: WALLET, requestId: 'hydrex-none', now: NOW });
+
+  test('"No valid quotes" is an answer about the route, not an unreachable router', async () => {
+    // The API's own 400, seen 2026-11-11 when its 0x source was throttled. Read as unreachable, two of
+    // these in a row would rest Hydrex for five minutes for every pair.
+    const result = await answer(400, { message: 'No valid quotes received from any source (ZEROX: {"error":"0x API error: Too Many Requests"})', error: 'Bad Request', statusCode: 400 });
+    assert.equal('errorCode' in result ? result.errorCode : null, 'provider_no_route');
+  });
+
+  test('any other refusal of the request stays a failure', async () => {
+    const wrong = await answer(400, { message: 'fromTokenAddress, toTokenAddress, and amount are required', error: 'Bad Request', statusCode: 400 });
+    assert.equal('errorCode' in wrong ? wrong.errorCode : null, 'provider_unreachable');
+    const down = await answer(502, 'bad gateway');
+    assert.equal('errorCode' in down ? down.errorCode : null, 'provider_unreachable');
+    const throttled = await answer(429, { message: 'slow down' });
+    assert.equal('errorCode' in throttled ? throttled.errorCode : null, 'provider_rate_limited');
   });
 });
 

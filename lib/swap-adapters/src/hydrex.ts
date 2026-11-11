@@ -94,7 +94,8 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
     }
     if (transport.outcome !== 'response') {
       return providerFailure(this.id, transport.outcome === 'timeout' ? 'provider_timeout' :
-        transport.outcome === 'rate_limited' ? 'provider_rate_limited' : 'provider_unreachable', transport.status ?? undefined);
+        transport.outcome === 'rate_limited' ? 'provider_rate_limited' :
+          transport.outcome === 'no_route' ? 'provider_no_route' : 'provider_unreachable', transport.status ?? undefined);
     }
     const parsed = parseHydrexQuoteV1({
       payload: transport.payload, request, inputAsset: input.intent.fromAsset!,

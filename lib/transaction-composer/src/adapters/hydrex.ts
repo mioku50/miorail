@@ -8,7 +8,7 @@ import {
   canonicalResponseHash,
   createHydrexRouterPinReaderV1,
   hydrexQuoteRequestFromIntentV1,
-  parseHydrexPrepareSwapV1,
+  parseHydrexQuoteV1,
   type HydrexClientV1Options,
   type HydrexRouterPinReaderV1,
   type HydrexSourceV1,
@@ -82,16 +82,12 @@ export class HydrexSwapBuildAdapter implements SwapBuildAdapter {
         outerPin.reason === 'unavailable',
       );
     }
-    const request = {
-      tokenIn: quoteRequest.tokenIn,
-      tokenOut: quoteRequest.tokenOut,
-      amount: input.intent.amount.amountDecimal,
-      decimals: input.intent.fromAsset!.decimals,
-      recipient: input.walletAddress,
-      slippage: input.intent.slippageConstraint.maxBps,
-      source,
-    } as const;
-    const transport = await this.client.prepareSwap(request);
+    // The same question the comparison asked, now naming the upstream the
+    // reviewed route used. Hydrex's router API has no separate prepare step:
+    // a quote already carries the call. Its approval is never taken from the
+    // provider; the exact one is written below.
+    const request = { ...quoteRequest, source } as const;
+    const transport = await this.client.quote(request);
     if (transport.outcome !== 'response') {
       return failure(
         transport.outcome === 'timeout' ? 'timeout' :
@@ -100,12 +96,11 @@ export class HydrexSwapBuildAdapter implements SwapBuildAdapter {
         true,
       );
     }
-    const parsed = parseHydrexPrepareSwapV1({
+    const parsed = parseHydrexQuoteV1({
       payload: transport.payload,
       request,
       inputAsset: input.intent.fromAsset!,
       outputAsset: input.intent.toAsset!,
-      amountInAtomic: input.intent.amount.amountAtomic,
       now: input.now,
     });
     if (!parsed.ok) return failure('invalid_response', parsed.errorCode, false);

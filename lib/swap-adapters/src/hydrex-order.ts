@@ -1,4 +1,4 @@
-import { decodeFunctionData, erc20Abi, keccak256, type Hex } from 'viem';
+import { decodeFunctionData, keccak256, type Hex } from 'viem';
 import type { AssetRefV1, LiquiditySourceRefV1 } from '@mioagent/route-domain';
 import {
   HYDREX_BASE_ROUTER_PROXY_V1,
@@ -7,12 +7,7 @@ import {
   hydrexSourceForRouterV1,
   type HydrexPinnedSourceV1,
 } from './hydrex-pinned.js';
-import {
-  HydrexPrepareSwapResponseV1Schema,
-  HydrexQuoteResponseV1Schema,
-  type HydrexPrepareSwapRequestV1,
-  type HydrexQuoteRequestV1,
-} from './hydrex-client.js';
+import { HydrexQuoteResponseV1Schema, type HydrexQuoteRequestV1 } from './hydrex-client.js';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MAX_INNER_CALLDATA_CHARS = 32_770;
@@ -178,63 +173,6 @@ export function parseHydrexQuoteV1(input: {
     slippageBps: input.request.slippage,
     responseMinimumOutputAtomic: response.minOutputAmount,
     recipient: response.recipient,
-    now: input.now,
-  });
-}
-
-export function parseHydrexPrepareSwapV1(input: {
-  payload: unknown;
-  request: HydrexPrepareSwapRequestV1;
-  inputAsset: AssetRefV1;
-  outputAsset: AssetRefV1;
-  amountInAtomic: string;
-  now: Date;
-}): ParseHydrexSwapResultV1 {
-  const parsed = HydrexPrepareSwapResponseV1Schema.safeParse(input.payload);
-  if (!parsed.success) return { ok: false, errorCode: 'hydrex_prepare_invalid_schema' };
-  const response = parsed.data;
-  if (
-    !sameAddress(response.quote.tokenIn, input.request.tokenIn) ||
-    !sameAddress(response.quote.tokenOut, input.request.tokenOut) ||
-    response.quote.amountIn !== input.amountInAtomic ||
-    !sameAddress(response.approval.token, input.request.tokenIn) ||
-    !sameAddress(response.approval.spender, HYDREX_BASE_ROUTER_PROXY_V1) ||
-    response.approval.amount !== input.amountInAtomic
-  ) return { ok: false, errorCode: 'hydrex_prepare_echo_mismatch' };
-  const swapTransactions = response.transactions.filter((transaction) => transaction.step === 'swap');
-  const approvalTransactions = response.transactions.filter((transaction) => transaction.step === 'approve-tokenIn');
-  if (swapTransactions.length !== 1 || approvalTransactions.length > 1) {
-    return { ok: false, errorCode: 'hydrex_prepare_call_count_invalid' };
-  }
-  if (response.approval.required !== (approvalTransactions.length === 1)) {
-    return { ok: false, errorCode: 'hydrex_prepare_approval_mismatch' };
-  }
-  if (approvalTransactions.length === 1) {
-    const approval = approvalTransactions[0]!;
-    try {
-      const decoded = decodeFunctionData({ abi: erc20Abi, data: approval.data.toLowerCase() as Hex });
-      if (
-        decoded.functionName !== 'approve' ||
-        !sameAddress(decoded.args[0], HYDREX_BASE_ROUTER_PROXY_V1) ||
-        decoded.args[1].toString() !== input.amountInAtomic ||
-        !sameAddress(approval.to, input.request.tokenIn) ||
-        BigInt(approval.value) !== 0n
-      ) return { ok: false, errorCode: 'hydrex_provider_approval_invalid' };
-    } catch {
-      return { ok: false, errorCode: 'hydrex_provider_approval_invalid' };
-    }
-  }
-  const swap = swapTransactions[0]!;
-  return parseOuter({
-    data: swap.data,
-    to: swap.to,
-    value: swap.value,
-    inputAsset: input.inputAsset,
-    outputAsset: input.outputAsset,
-    amountInAtomic: input.amountInAtomic,
-    expectedOutputAtomic: response.quote.amountOut,
-    slippageBps: input.request.slippage,
-    recipient: input.request.recipient,
     now: input.now,
   });
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { decodeFunctionData, encodeFunctionData, erc20Abi, maxUint256, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, erc20Abi, type Hex } from 'viem';
 import {
   HYDREX_BASE_ROUTER_PROXY_V1,
   HYDREX_EXECUTE_SWAPS_ABI_V1,
@@ -60,21 +60,12 @@ function quotePayload(upstream: `0x${string}` = HYDREX_KYBER_META_ROUTER_V1) {
   };
 }
 
-function preparePayload(upstream: `0x${string}` = HYDREX_KYBER_META_ROUTER_V1, approval = AMOUNT_IN) {
-  return {
-    ok: true,
-    quote: { tokenIn: USDC, tokenOut: WETH, amountIn: AMOUNT_IN.toString(), amountOut: EXPECTED_OUT.toString() },
-    approval: { required: true, token: USDC, spender: HYDREX_BASE_ROUTER_PROXY_V1, amount: AMOUNT_IN.toString() },
-    transactions: [
-      { step: 'approve-tokenIn', to: USDC, value: '0x0', chainId: 8453,
-        data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [HYDREX_BASE_ROUTER_PROXY_V1, approval] }) },
-      { step: 'swap', to: HYDREX_BASE_ROUTER_PROXY_V1, value: '0x0', chainId: 8453, data: swapData(upstream) },
-    ],
-  };
-}
-
-function fetchJson(payload: unknown): typeof fetch {
-  return (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
+/** Hydrex's router API answers the quote itself; the client puts the envelope the parser reads around it. */
+function fetchJson(payload: { data: unknown }, observe?: (url: string) => void): typeof fetch {
+  return (async (url: string | URL | Request) => {
+    observe?.(String(url));
+    return new Response(JSON.stringify(payload.data), { status: 200 });
+  }) as typeof fetch;
 }
 
 async function candidate() {
@@ -89,12 +80,18 @@ async function candidate() {
 describe('Hydrex build adapter', () => {
   test('rebuilds an exact approval and retains the pinned selected upstream', async () => {
     const fixture = await candidate();
-    const result = await new HydrexSwapBuildAdapter({ pinReader: pin, fetchImpl: fetchJson(preparePayload()) }).build({
+    let asked = '';
+    const result = await new HydrexSwapBuildAdapter({ pinReader: pin, fetchImpl: fetchJson(quotePayload(), (url) => { asked = url; }) }).build({
       intent: fixture.intent, selectedCandidate: fixture.candidate, reviewedCandidate: fixture.candidate,
       walletAddress: WALLET, requestId: 'hydrex-build', now: NOW,
     });
     assert.equal(result.outcome, 'built');
     if (result.outcome !== 'built') return;
+    // The build asks the one quote endpoint again, naming the upstream the reviewed route used.
+    assert.equal(new URL(asked).pathname, '/quote');
+    assert.equal(new URL(asked).searchParams.get('source'), 'KYBERSWAP');
+    assert.equal(new URL(asked).searchParams.get('amount'), AMOUNT_IN.toString());
+    assert.equal(new URL(asked).searchParams.get('taker'), WALLET);
     assert.equal(result.calls.length, 2);
     assert.equal(result.calls[1]?.to, HYDREX_BASE_ROUTER_PROXY_V1);
     const approval = decodeFunctionData({ abi: erc20Abi, data: result.calls[0]!.data });
@@ -107,22 +104,24 @@ describe('Hydrex build adapter', () => {
     assert.equal(result.hydrex?.upstreamSource, 'KYBERSWAP');
   });
 
-  test('rejects provider unlimited approval rather than trusting or forwarding it', async () => {
+  test('a build for another wallet’s recipient or another amount is refused by the parser', async () => {
+    // The router API returns no approval at all, so there is none to trust or forward: the exact one
+    // above is written here. What the answer can still get wrong is whose swap it is.
     const fixture = await candidate();
-    const result = await new HydrexSwapBuildAdapter({
-      pinReader: pin, fetchImpl: fetchJson(preparePayload(HYDREX_KYBER_META_ROUTER_V1, maxUint256)),
-    }).build({
+    const quoted = quotePayload();
+    const other = { data: { ...quoted.data, recipient: '0x4444444444444444444444444444444444444444' } };
+    const result = await new HydrexSwapBuildAdapter({ pinReader: pin, fetchImpl: fetchJson(other) }).build({
       intent: fixture.intent, selectedCandidate: fixture.candidate, walletAddress: WALLET,
-      requestId: 'hydrex-unlimited', now: NOW,
+      requestId: 'hydrex-other-recipient', now: NOW,
     });
     assert.equal(result.outcome, 'invalid_response');
-    assert.equal(result.errorCode, 'hydrex_provider_approval_invalid');
+    assert.equal(result.errorCode, 'hydrex_quote_echo_mismatch');
   });
 
-  test('requires a fresh comparison when prepare switches from Kyber to 0x', async () => {
+  test('requires a fresh comparison when the build’s quote switches from Kyber to 0x', async () => {
     const fixture = await candidate();
     const result = await new HydrexSwapBuildAdapter({
-      pinReader: pin, fetchImpl: fetchJson(preparePayload(HYDREX_ZEROX_ALLOWANCE_HOLDER_V1)),
+      pinReader: pin, fetchImpl: fetchJson(quotePayload(HYDREX_ZEROX_ALLOWANCE_HOLDER_V1)),
     }).build({
       intent: fixture.intent, selectedCandidate: fixture.candidate, walletAddress: WALLET,
       requestId: 'hydrex-route-changed', now: NOW,

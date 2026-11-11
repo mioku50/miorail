@@ -1,8 +1,22 @@
 import { z } from 'zod';
 
-export const HYDREX_API_ORIGIN_V1 = 'https://hydrex-agent.com' as const;
-export const HYDREX_QUOTE_PATH_V1 = '/state/quote' as const;
-export const HYDREX_PREPARE_SWAP_PATH_V1 = '/prepare/swap' as const;
+/**
+ * Hydrex's own router API. Until 2026-11-11 this client asked
+ * `hydrex-agent.com`, the host Hydrex's Wallet MCP plugin names; from the
+ * evening of 2026-11-09 that host accepted no connection, from the server or
+ * from anywhere else, and every comparison waited out its timeout for a
+ * router that could not answer. That host was a wrapper: its `/state/quote`
+ * returned, inside `{ ok, data }`, exactly what this API's `/quote` returns,
+ * a call on the same pinned Hydrex router. The reviewed parser reads the
+ * answer unchanged (checked against live answers the same day).
+ *
+ * The host is not what is trusted. The call it returns is decoded and held
+ * against the pinned router, the pinned upstream and the intent, whichever
+ * host sent it. This API is not described in Hydrex's public documents, so a
+ * change in it will show as a refusal by the parser, not as a wrong swap.
+ */
+export const HYDREX_API_ORIGIN_V1 = 'https://router.api.hydrex.fi' as const;
+export const HYDREX_QUOTE_PATH_V1 = '/quote' as const;
 
 const AddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const AtomicSchema = z.string().regex(/^(0|[1-9][0-9]*)$/);
@@ -32,35 +46,6 @@ export const HydrexQuoteResponseV1Schema = z
   .passthrough();
 export type HydrexQuoteResponseV1 = z.infer<typeof HydrexQuoteResponseV1Schema>;
 
-const HydrexPreparedTransactionSchema = HydrexTransactionSchema.extend({
-  step: z.enum(['approve-tokenIn', 'swap']),
-  chainId: z.literal(8453),
-}).strict();
-
-export const HydrexPrepareSwapResponseV1Schema = z
-  .object({
-    ok: z.literal(true),
-    quote: z
-      .object({
-        tokenIn: AddressSchema,
-        tokenOut: AddressSchema,
-        amountIn: AtomicSchema,
-        amountOut: AtomicSchema,
-      })
-      .strict(),
-    approval: z
-      .object({
-        required: z.boolean(),
-        token: AddressSchema,
-        spender: AddressSchema,
-        amount: AtomicSchema,
-      })
-      .strict(),
-    transactions: z.array(HydrexPreparedTransactionSchema).min(1).max(2),
-  })
-  .passthrough();
-export type HydrexPrepareSwapResponseV1 = z.infer<typeof HydrexPrepareSwapResponseV1Schema>;
-
 export type HydrexSourceV1 = 'ZEROX' | 'KYBERSWAP';
 
 export interface HydrexQuoteRequestV1 {
@@ -72,18 +57,11 @@ export interface HydrexQuoteRequestV1 {
   source?: HydrexSourceV1;
 }
 
-export interface HydrexPrepareSwapRequestV1 {
-  tokenIn: `0x${string}`;
-  tokenOut: `0x${string}`;
-  amount: string;
-  decimals: number;
-  recipient: `0x${string}`;
-  slippage: number;
-  source: HydrexSourceV1;
-}
-
 export type HydrexTransportResultV1<TRequest> =
   | { outcome: 'response'; status: number; payload: unknown; safeRequest: TRequest }
+  /** The API answered that none of its sources has a quote for this pair and
+   * amount. It is an answer about the route, not a failure to reach Hydrex. */
+  | { outcome: 'no_route'; status: number }
   | { outcome: 'timeout' | 'rate_limited' | 'unavailable'; status: number | null };
 
 export interface HydrexClientV1Options {
@@ -99,6 +77,14 @@ function query(input: Record<string, string | number | undefined>): string {
   return params.toString();
 }
 
+/** The API's own words for "no source quoted this": HTTP 400 with a message
+ * that begins this way (seen 2026-11-11). Any other 400 is our request being
+ * wrong, and stays a failure. */
+function noQuoteAnswerV1(payload: unknown): boolean {
+  const message = (payload as { message?: unknown } | null)?.message;
+  return typeof message === 'string' && message.startsWith('No valid quotes');
+}
+
 export class HydrexClientV1 {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -108,26 +94,15 @@ export class HydrexClientV1 {
     this.timeoutMs = options.timeoutMs ?? 12_000;
   }
 
+  /** One quote, with the call that would execute it. A build asks again with
+   * the `source` the reviewed route used; there is no separate prepare step. */
   quote(request: HydrexQuoteRequestV1): Promise<HydrexTransportResultV1<HydrexQuoteRequestV1>> {
     return this.get(HYDREX_QUOTE_PATH_V1, request, {
-      tokenIn: request.tokenIn,
-      tokenOut: request.tokenOut,
+      fromTokenAddress: request.tokenIn,
+      toTokenAddress: request.tokenOut,
       amount: request.amount,
-      recipient: request.recipient,
-      slippage: request.slippage,
-      source: request.source,
-    });
-  }
-
-  prepareSwap(
-    request: HydrexPrepareSwapRequestV1,
-  ): Promise<HydrexTransportResultV1<HydrexPrepareSwapRequestV1>> {
-    return this.get(HYDREX_PREPARE_SWAP_PATH_V1, request, {
-      tokenIn: request.tokenIn,
-      tokenOut: request.tokenOut,
-      amount: request.amount,
-      decimals: request.decimals,
-      recipient: request.recipient,
+      // The API calls the final recipient the taker.
+      taker: request.recipient,
       slippage: request.slippage,
       source: request.source,
     });
@@ -153,10 +128,13 @@ export class HydrexClientV1 {
         // The typed parser rejects an unreadable response.
       }
       if (response.status === 429) return { outcome: 'rate_limited', status: 429 };
+      if (response.status === 400 && noQuoteAnswerV1(payload)) return { outcome: 'no_route', status: 400 };
       if (response.status < 200 || response.status >= 300) {
         return { outcome: 'unavailable', status: response.status };
       }
-      return { outcome: 'response', status: response.status, payload, safeRequest };
+      // The reviewed parser reads the shape the first host wrapped this
+      // answer in, so the same wrapper is put back around it here.
+      return { outcome: 'response', status: response.status, payload: { ok: true, data: payload }, safeRequest };
     } catch (error) {
       return {
         outcome:
