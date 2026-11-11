@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { WAD } from '../src/math.js';
-import { TERMS, earningsWindow, earningsWindowOf, marketDate, safetyFromHealthFactor, stillShareBps, weekendWindow } from '../src/policy.js';
+import { TERMS, earningsWindow, earningsWindowOf, marketDate, openMarketMsSince, safetyFromHealthFactor, stillShareBps, stockPriceStale, weekendWindow } from '../src/policy.js';
 import { assertMatches } from './matches.js';
 
 const at = (iso: string) => new Date(iso);
@@ -145,5 +145,40 @@ describe('the earnings window', () => {
     assert.equal(marketDate(at('2026-10-28T03:59:59Z')), '2026-10-27');
     assert.equal(marketDate(at('2026-10-28T04:00:00Z')), '2026-10-28');
     assert.equal(marketDate(at('2026-11-02T04:59:59Z')), '2026-11-01');
+  });
+});
+
+describe('a stock price that was not refreshed (audit BASE-7, terms of 2026-11-11)', () => {
+  const HOUR = 3_600_000;
+
+  it('counts only the hours Wall Street was open since the price', () => {
+    // Wednesday to Thursday, no closed window between them: all of it.
+    assert.equal(openMarketMsSince(at('2026-10-21T15:00:00Z'), at('2026-10-22T15:00:00Z')), 24 * HOUR);
+    // Friday 19:00 New York to Monday 10:00: one hour before the close, fourteen after Sunday's reopening.
+    assert.equal(openMarketMsSince(at('2026-10-23T23:00:00Z'), at('2026-10-26T14:00:00Z')), 15 * HOUR);
+    // Entirely inside the weekend: none.
+    assert.equal(openMarketMsSince(at('2026-10-24T12:00:00Z'), at('2026-10-25T12:00:00Z')), 0);
+    // Across Thanksgiving: Wednesday 19:00 to Friday 09:00 New York is 1 + 13 hours, not 38.
+    assert.equal(openMarketMsSince(at('2026-11-26T00:00:00Z'), at('2026-11-27T14:00:00Z')), 14 * HOUR);
+    // A price from after the reading, or at it, has been open for nothing.
+    assert.equal(openMarketMsSince(at('2026-10-22T15:00:00Z'), at('2026-10-21T15:00:00Z')), 0);
+    assert.equal(openMarketMsSince(at('2026-10-21T15:00:00Z'), at('2026-10-21T15:00:00Z')), 0);
+  });
+
+  it('is stale after more than 25 hours of open market, and a quiet weekend is not that', () => {
+    assert.equal(TERMS.stockPriceStaleAfterHours, 25);
+    const wednesday = at('2026-10-21T15:00:00Z');
+    assert.equal(stockPriceStale(wednesday, at('2026-10-22T15:59:59Z')), false, 'a day and under an hour');
+    assert.equal(stockPriceStale(wednesday, at('2026-10-22T16:00:00Z')), false, 'exactly 25 hours');
+    assert.equal(stockPriceStale(wednesday, at('2026-10-22T16:00:01Z')), true, 'a second over');
+    // Friday's last print, read all weekend and on Monday morning: nothing was due.
+    const fridayClose = at('2026-10-23T23:55:00Z');
+    for (const read of ['2026-10-24T22:00:00Z', '2026-10-25T23:59:00Z', '2026-10-26T14:00:00Z']) {
+      assert.equal(stockPriceStale(fridayClose, at(read)), false, read);
+    }
+    // Still Friday's on Tuesday morning: Monday's whole session passed without a print.
+    assert.equal(stockPriceStale(fridayClose, at('2026-10-27T14:00:00Z')), true);
+    // A feed dead for a year is stale, however many weekends it slept through.
+    assert.equal(stockPriceStale(at('2025-10-21T15:00:00Z'), at('2026-10-21T15:00:00Z')), true);
   });
 });

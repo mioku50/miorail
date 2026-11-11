@@ -391,3 +391,49 @@ describe('what a year of a Morpho loan costs', () => {
     assert.equal(morpho.borrowRateBps, 540);
   });
 });
+
+describe('a stock whose price the feed stopped refreshing (audit BASE-7)', () => {
+  // Thursday 15:00Z. The example wallet's stocks are priced an hour before the reading unless a test says otherwise.
+  const THURSDAY = BigInt(Date.parse('2026-10-22T15:00:00Z') / 1000);
+  const withPriceAt = (id: string, seconds: bigint | null, timestamp = THURSDAY) => {
+    const s = snapshot(EXAMPLE, timestamp);
+    const reserve = s.aave!.reserves.find((row) => row.info.role.kind === 'stock' && row.info.role.asset.id === id)!;
+    reserve.priceUpdatedAt = seconds === null ? reverted() : ok(seconds);
+    return s;
+  };
+
+  it('counts at the closed-market share and says so, without closing the stock', () => {
+    const fresh = run(snapshot(EXAMPLE, THURSDAY));
+    assert.equal(line(fresh, 'NVDAc').stillFactorBps, 3500);
+    assert.deepEqual(line(fresh, 'NVDAc').limits, []);
+
+    // NVDAc last printed Tuesday 15:00Z: two sessions passed without a price.
+    const stale = run(withPriceAt('NVDAc', THURSDAY - 48n * 3_600n));
+    assert.equal(line(stale, 'NVDAc').stillFactorBps, 2800, '40% of the protocol factor, as while the market is closed');
+    assert.deepEqual(line(stale, 'NVDAc').limits, ['price_stale']);
+    assert.notEqual(line(stale, 'NVDAc').capacityCents, '0', 'lowered, not closed');
+    assert.ok(BigInt(line(stale, 'NVDAc').capacityCents!) < BigInt(line(fresh, 'NVDAc').capacityCents!));
+    assert.equal(line(stale, 'NVDAc').priceUpdatedAt, '2026-10-20T15:00:00.000Z', 'and the report says how old the price is');
+    // The other stocks, priced an hour ago, keep the open rate.
+    assert.equal(line(stale, 'AAPLc').stillFactorBps, line(fresh, 'AAPLc').stillFactorBps);
+    assert.ok(BigInt(stale.headline.availableCents!) < BigInt(fresh.headline.availableCents!));
+  });
+
+  it('a day-old price is not stale, and an age that could not be read changes nothing', () => {
+    assert.deepEqual(line(run(withPriceAt('NVDAc', THURSDAY - 24n * 3_600n)), 'NVDAc').limits, []);
+    const unread = run(withPriceAt('NVDAc', null));
+    assert.equal(line(unread, 'NVDAc').stillFactorBps, 3500);
+    assert.equal(line(unread, 'NVDAc').priceUpdatedAt, null);
+    assert.deepEqual(line(unread, 'NVDAc').limits, []);
+  });
+
+  it('on a weekend the closed-market share applies as before, and a quiet feed is not called stale', () => {
+    // Sunday 15:00Z, priced at Friday's close.
+    const r = run(withPriceAt('NVDAc', BigInt(Date.parse('2026-10-23T23:55:00Z') / 1000), SUNDAY));
+    assert.equal(r.terms.weekend.active, true);
+    assert.equal(line(r, 'NVDAc').stillFactorBps, 2800);
+    assert.deepEqual(line(r, 'NVDAc').limits, []);
+    // And what a weekday would give is the open rate: Friday's price is not stale on Sunday.
+    assert.equal(r.headline.weekdayAvailableCents, run(snapshot(EXAMPLE, SUNDAY)).headline.weekdayAvailableCents);
+  });
+});

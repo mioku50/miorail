@@ -357,6 +357,19 @@ describe('the mobile', () => {
 });
 
 describe('Assets', () => {
+  it('a stock whose price went a day of open market without a refresh says so on its row (audit BASE-7)', () => {
+    const s = snapshot(EXAMPLE, BigInt(Date.parse('2026-10-22T15:00:00Z') / 1000));
+    const nvda = s.aave!.reserves.find((row) => row.info.role.kind === 'stock' && row.info.role.asset.id === 'NVDAc')!;
+    nvda.priceUpdatedAt = { ok: true, value: BigInt(Date.parse('2026-10-20T15:00:00Z') / 1000) };
+    const stale: MirrorReport = JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: s, calendar: calendar(), subject, assembledAt: new Date('2026-10-22T15:00:01Z') })));
+    const said = 'Its reference price has not been refreshed for over a day of open market, so it counts as while the market is closed';
+    const rowOf = (view: ReturnType<typeof assetsViewV1>, name: string) => view.rows.find((row) => row.name === name)!;
+    assert.ok(rowOf(assetsViewV1({ report: stale }), 'NVIDIA').lines.some((line) => line.text === said));
+    // The other stocks, and the same stock with a fresh price, say nothing of the kind.
+    assert.ok(!rowOf(assetsViewV1({ report: stale }), 'Apple').lines.some((line) => line.text === said));
+    assert.ok(!rowOf(assetsViewV1({ report: report() }), 'NVIDIA').lines.some((line) => line.text === said));
+  });
+
   it('says what holds up the loan, what is free, and the dividends, as the report and the calendar say', () => {
     const view = assetsViewV1({ report: report(), dividends });
     const nvda = view.rows.find((r) => r.id === 'NVDAc')!;

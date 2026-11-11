@@ -6,7 +6,7 @@ import { nextWeekendStartV1, weekendWindowV1 } from '@mioagent/rwa-market-realit
 import { BPS, WAD, mulDiv } from './math.js';
 
 export const TERMS = {
-  version: '2026-10-26',
+  version: '2026-11-11',
   /** Still lends at half the protocol's collateral factor: a fresh draw starts 50% from liquidation. */
   shareOfProtocolBps: 5_000n,
   /**
@@ -15,6 +15,14 @@ export const TERMS = {
    * (operator, 2026-10-26). See `weekendWindow`.
    */
   weekendStockShareOfProtocolBps: 4_000n,
+  /**
+   * A stock whose reference price was not refreshed for longer than this while Wall Street was open
+   * counts as it does while the market is closed. The feeds' heartbeat is a day, and Base's guidance
+   * for them is to read `updatedAt` and bound its age before relying on the price. Hours inside a
+   * closed-market window do not count: the feeds stand still there by design, and that window has
+   * its own share already (audit BASE-7, 2026-11-11).
+   */
+  stockPriceStaleAfterHours: 25,
   /** The stock market's clock, which the closed-market and earnings windows run on. */
   marketZone: 'America/New_York',
   /** Past the reviewed market calendar only: Friday 20:00 to Sunday 20:00. */
@@ -190,6 +198,36 @@ function fixedWeekendWindow(at: Date, zone: string): WeekendWindow {
   if (at >= current.startsAt && at < current.endsAt) return { active: true, ...current };
   const ahead = at < current.startsAt ? current : windowFrom(localDate(7 - back));
   return { active: false, ...ahead };
+}
+
+/**
+ * How long Wall Street has been open since an instant, in milliseconds: the time from then to now,
+ * less whatever of it fell inside a closed-market window.
+ */
+export function openMarketMsSince(since: Date, now: Date, zone: string = TERMS.marketZone): number {
+  const from = since.getTime();
+  const to = now.getTime();
+  if (!(to > from)) return 0;
+  let closed = 0;
+  let window = weekendWindow(since, zone);
+  // A window a week, holidays besides: two years of them is far past any price worth asking about.
+  for (let seen = 0; seen < 160 && window.startsAt.getTime() < to; seen += 1) {
+    const start = Math.max(window.startsAt.getTime(), from);
+    const end = Math.min(window.endsAt.getTime(), to);
+    if (end > start) closed += end - start;
+    if (window.endsAt.getTime() >= to) break;
+    // At the instant a window ends it is over, so this is the next one.
+    window = weekendWindow(window.endsAt, zone);
+  }
+  return to - from - closed;
+}
+
+/**
+ * Whether a stock's reference price has gone unrefreshed for longer than the terms allow while the
+ * market was open. A Friday-evening price on a Sunday is not stale: nothing was due.
+ */
+export function stockPriceStale(updatedAt: Date, now: Date, zone: string = TERMS.marketZone): boolean {
+  return openMarketMsSince(updatedAt, now, zone) > TERMS.stockPriceStaleAfterHours * 3_600_000;
 }
 
 /** The New York calendar day of an instant, as 'YYYY-MM-DD'. */

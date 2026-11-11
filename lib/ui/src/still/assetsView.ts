@@ -182,8 +182,12 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       });
     } else if (!unread && line.capacityCents !== null && line.capacityCents !== '0') {
       lines.push({ text: `Modelled room · up to ${formatCents(line.capacityCents)} on ${venueNameV1(line.venue)}` });
-    } else if (!unread && line.limits.length > 0) {
+    } else if (!unread && line.limits.some((limit) => limit !== 'price_stale')) {
       lines.push({ text: 'Not counted now: the venue limits it' });
+    }
+    // Lowered, not closed, and for a reason of its own: said whatever else the row says (audit BASE-7).
+    if (!unread && line.limits.includes('price_stale')) {
+      lines.push({ text: 'Its reference price has not been refreshed for over a day of open market, so it counts as while the market is closed' });
     }
     if (unread) lines.push({ text: UNREAD_V1 });
     const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());

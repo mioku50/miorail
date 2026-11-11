@@ -32,6 +32,10 @@ describe('How Still keeps a loan safe', () => {
     assert.match(text, /from 8 PM New York time before a day without a session to 8 PM on the evening before the next one/);
     assert.match(text, /from midnight the day before the report date to 8 PM the day after it, New York time/);
     assert.match(text, /The two never stack\. At 40% of the protocol’s limit, the collateral could lose about 60% before liquidation could start\./);
+    // A price the feed stopped refreshing (audit BASE-7): the hours the engine waits, and the share it then lends at.
+    assert.ok(text.includes(`If one has gone more than ${TERMS.stockPriceStaleAfterHours} hours of open market without a new price`));
+    assert.ok(text.includes(`it lends at most ${pct(TERMS.weekendStockShareOfProtocolBps)} against that stock until a new price arrives`));
+    assert.match(text, /Hours while the market is closed do not count, since no price is due then\./);
     assert.match(text, /Collateral on Morpho \(cbBTC, WETH or ETH, and PAXG gold\) stays at 50% at all times\./);
     // The bands, as the margin and the health factor where each begins.
     assert.ok(text.includes(`a margin of ${pct(TERMS.watchBelowBps)} or more, a health factor of 1.6 or above`));

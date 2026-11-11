@@ -25,6 +25,7 @@ export type AssetLimit =
   | 'spoke_halted' // the hub halted this spoke for the asset
   | 'issuer_paused' // Coinbase's registry marks the token paused
   | 'supply_cap' // Aave's collateral cap leaves room for only part of the wallet's tokens
+  | 'price_stale' // the stock's reference price was not refreshed for over a day of open market: it counts at the closed-market share
   | 'gas_reserve' // part of the native ETH stays in the wallet for network fees
   | 'not_listed'; // the venue lists no market for this asset now
 

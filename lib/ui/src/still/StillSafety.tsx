@@ -83,6 +83,12 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           long as that takes, not for two days. The line under the sky names the stocks this holds for now.
         </p>
         <p className="still-note">
+          While the market is open, a stock’s reference price is refreshed at least once a day. If one has gone more than{' '}
+          {TERMS.stockPriceStaleAfterHours} hours of open market without a new price, Still does not rely on it at the open rate: it lends at
+          most {percentV1(closed)} against that stock until a new price arrives, and Assets says so on that stock’s row. Hours while the
+          market is closed do not count, since no price is due then.
+        </p>
+        <p className="still-note">
           The windows change what you can borrow, not a loan you already have: Still never repays or sells for you. Collateral on Morpho
           (cbBTC, WETH or ETH, and PAXG gold) stays at {percentV1(share)} at all times.
         </p>

@@ -380,6 +380,7 @@ function limitAnswerV1(reading: StillAgentReadingV1, w: Words, change: StillRead
     const reasons: string[] = [];
     if (line.earnings?.lowered) reasons.push(t(w, `окно отчётности: ${STILL_SHARES_V1.earnings}%`, `earnings window: ${STILL_SHARES_V1.earnings}%`));
     if (line.limits.includes('supply_cap')) reasons.push(t(w, 'упёрлось в лимит Aave', 'held back by Aave’s cap'));
+    if (line.limits.includes('price_stale')) reasons.push(t(w, 'цена не обновлялась больше суток торгов: зачёт как при закрытом рынке', 'price not refreshed for over a day of open market: counted as while the market is closed'));
     if (line.limits.some((l) => ['reserve_paused', 'reserve_frozen', 'spoke_halted', 'issuer_paused', 'not_listed'].includes(l))) reasons.push(t(w, 'рынок закрыт для займов', 'the market is closed to loans'));
     steps.push(t(w, `${line.name}: цена ${formatCents(line.priceCents)}, зачёт Still ${formatPercentBps(line.stillFactorBps, 2)} → ${formatCents(line.capacityCents)}${reasons.length ? ` (${reasons.join('; ')})` : ''}.`, `${line.name}: price ${formatCents(line.priceCents)}, Still counts ${formatPercentBps(line.stillFactorBps, 2)} → ${formatCents(line.capacityCents)}${reasons.length ? ` (${reasons.join('; ')})` : ''}.`));
   }

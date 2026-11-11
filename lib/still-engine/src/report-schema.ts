@@ -41,7 +41,7 @@ const LINE = z
       })
       .strict()
       .nullable(),
-    limits: z.array(z.enum(['reserve_paused', 'reserve_frozen', 'spoke_halted', 'issuer_paused', 'supply_cap', 'gas_reserve', 'not_listed'])),
+    limits: z.array(z.enum(['reserve_paused', 'reserve_frozen', 'spoke_halted', 'issuer_paused', 'supply_cap', 'price_stale', 'gas_reserve', 'not_listed'])),
     failed: z.array(z.string()),
   })
   .strict();

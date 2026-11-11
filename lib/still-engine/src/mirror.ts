@@ -20,7 +20,7 @@ import {
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
 import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
 import type { CalendarRead } from './calendar.js';
-import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, weekendWindow } from './policy.js';
+import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceStale, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
 import { ADDRESSES, CRYPTO, STOCKS, type CryptoAsset, type StockAsset } from './registry.js';
 import type {
@@ -136,7 +136,7 @@ function stockLine(asset: StockAsset): AssetLine {
   };
 }
 
-function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: boolean, earningsOf: EarningsOf, ledger: Ledger): Computed {
+function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: boolean, earningsOf: EarningsOf, ledger: Ledger, at: Date): Computed {
   const lines: AssetLine[] = [];
   let complete = true;
   const aave: AaveSnapshot | null = snapshot.aave;
@@ -148,14 +148,15 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
   // read "at least $0.00" on every page, and nothing said the limit was in use).
   const unpublished = new Set<string>();
   // The share Still lends at for this stock now, with its earnings note on the line.
-  const shareOf = (asset: StockAsset, line: AssetLine): bigint => {
+  // `closedLike`: the stock counts as while the market is closed for a reason of its own (a price not refreshed).
+  const shareOf = (asset: StockAsset, line: AssetLine, closedLike = false): bigint => {
     const { note, failed } = earningsOf(asset);
     line.earnings = note;
     if (failed !== null) {
       ledger.need(undefined, failed.what, line.failed, failed.owner);
       if (failed.owner === 'protocol') unpublished.add(failed.what);
     }
-    return stillShareBps('stock', weekend, note.lowered);
+    return stillShareBps('stock', weekend || closedLike, note.lowered);
   };
 
   // Wallet balances are read even when the venue is closed, so a holder sees why nothing counts.
@@ -222,7 +223,12 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     const wallet = walletOf(asset, line);
     const supplied = ledger.need(reserve.supplied, `${asset.id} supplied on Aave`, line.failed);
     if (wallet === 0n && supplied === 0n) continue; // measured: nothing here
-    const share = shareOf(asset, line);
+    const updatedAt = reserve.priceUpdatedAt.ok ? reserve.priceUpdatedAt.value : undefined;
+    // A price the feed has not refreshed for over a day of open market is not relied on at the open
+    // rate (audit BASE-7). Inside a closed-market window the feed is quiet by design and the window's
+    // own share applies; an age that could not be read changes nothing, as before.
+    const stale = !weekend && updatedAt !== undefined && stockPriceStale(new Date(Number(updatedAt) * 1000), at);
+    const share = shareOf(asset, line, stale);
     line.wallet = wallet === undefined ? null : amount(wallet, asset.decimals);
     line.pledged = supplied === undefined ? null : amount(supplied, asset.decimals);
 
@@ -237,7 +243,6 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     const config = ledger.need(reserve.config, `${asset.id} reserve status`, line.failed);
     const spoke = ledger.need(reserve.spokeConfig, `${asset.id} Aave cap`, line.failed);
     const added = ledger.need(reserve.spokeAdded, `${asset.id} Aave supplied total`, line.failed);
-    const updatedAt = reserve.priceUpdatedAt.ok ? reserve.priceUpdatedAt.value : undefined;
 
     if (price !== undefined) line.priceCents = divide(price, centsPerPriceUnit, 'down').toString();
     if (updatedAt !== undefined) line.priceUpdatedAt = iso(updatedAt);
@@ -254,6 +259,8 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     if (spoke && (!spoke.active || spoke.halted)) line.limits.push('spoke_halted');
     if (registry?.ok && registry.value.paused) line.limits.push('issuer_paused');
     const blocked = line.limits.length > 0;
+    // Said after the blockers: it lowers what the stock counts for, it does not close it.
+    if (stale) line.limits.push('price_stale');
 
     // The wallet's tokens count only up to the room left under Aave's collateral cap. Whatever
     // could not be read counts as nothing, so the line is a floor and says which read failed.
@@ -541,10 +548,10 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
   };
 }
 
-function computeAll(universe: Universe, snapshot: WalletSnapshot, weekend: boolean, earningsOf: EarningsOf): Computed & { failures: FailedRead[] } {
+function computeAll(universe: Universe, snapshot: WalletSnapshot, weekend: boolean, earningsOf: EarningsOf, at: Date): Computed & { failures: FailedRead[] } {
   const ledger = new Ledger();
   const parts = [
-    computeAave(universe, snapshot, weekend, earningsOf, ledger),
+    computeAave(universe, snapshot, weekend, earningsOf, ledger, at),
     ...CRYPTO.map((asset) => computeMorpho(asset, snapshot.morpho.get(asset.id) ?? null, snapshot, ledger)),
   ];
   return {
@@ -572,7 +579,7 @@ function headlineOf(computed: Computed, weekdayAvailable: bigint | null): Headli
     const eligible = computed.lines.filter((l) => l.capacityCents !== null && BigInt(l.capacityCents) > 0n);
     if (!anything) reason = 'no_eligible_assets';
     else if (eligible.length > 0) reason = 'limit_in_use';
-    else if (computed.lines.some((l) => l.limits.some((x) => x !== 'supply_cap'))) reason = 'paused';
+    else if (computed.lines.some((l) => l.limits.some((x) => x !== 'supply_cap' && x !== 'price_stale'))) reason = 'paused';
     else reason = 'no_eligible_assets';
   }
   return {
@@ -596,11 +603,11 @@ export function computeMirror({ universe, snapshot, calendar, subject, assembled
   const blockTime = new Date(Number(snapshot.block.timestamp) * 1000);
   const window = weekendWindow(blockTime);
   const earningsOf = earningsFrom(calendar, blockTime);
-  const actual = computeAll(universe, snapshot, window.active, earningsOf);
+  const actual = computeAll(universe, snapshot, window.active, earningsOf, blockTime);
   let weekdayAvailable: bigint | null = null;
   if (window.active) {
     // Earnings windows hold on weekdays too, so the comparison keeps them.
-    const weekday = computeAll(universe, snapshot, false, earningsOf);
+    const weekday = computeAll(universe, snapshot, false, earningsOf, blockTime);
     const known = weekday.venues.filter((v) => v.availableCents !== null);
     weekdayAvailable = known.length === 0 ? null : known.reduce((sum, v) => sum + BigInt(v.availableCents!), 0n);
   }

@@ -137,7 +137,9 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
       factorBps: ok(stock ? FACTORS[stock.id] : 0n),
       userFactorBps: ok(stock ? FACTORS[stock.id] : 0n),
       price: ok(stock ? STOCK_PRICES[stock.id] : E8),
-      priceUpdatedAt: stock ? ok(1_792_598_400n) : reverted(),
+      // An hour before the reading, whatever day it is taken on: one fixed day made every later
+      // scenario a stale price once the terms began to bound a price's age (BASE-7, 2026-11-11).
+      priceUpdatedAt: stock ? ok(timestamp - 3_600n) : reverted(),
       supplied: ok(supplied),
       status: ok({ usingAsCollateral: supplied > 0n, borrowing: stock === null && (h.aaveDebt ?? 0n) > 0n }),
       spokeConfig: ok(stock ? { addCap: 24_000n, drawCap: 0n, active: true, halted: false } : { addCap: 32_000_000n, drawCap: 21_000_000n, active: true, halted: false }),

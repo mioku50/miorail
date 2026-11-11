@@ -52,6 +52,11 @@ export function stillTerms(read: CalendarRead, now: Date) {
         };
       }),
     },
+    stalePrice: {
+      stockSharePercentOfProtocol: Number(TERMS.weekendStockShareOfProtocolBps) / 100,
+      afterOpenMarketHours: Number(TERMS.stockPriceStaleAfterHours),
+      rule: 'a stock whose reference price was not refreshed for longer than this while Wall Street was open counts as it does while the market is closed; hours inside a closed-market window do not count',
+    },
     safety: { watchBelowMarginPercent: Number(TERMS.watchBelowBps) / 100, actBelowMarginPercent: Number(TERMS.actBelowBps) / 100 },
     gasReserveEth: formatTokenAmount(TERMS.ethGasReserveWei, 18, 4),
     assets: ASSETS.map((asset) => ({
@@ -99,6 +104,7 @@ export const StillTermsSchema = z
         ),
       })
       .strict(),
+    stalePrice: z.object({ stockSharePercentOfProtocol: z.number(), afterOpenMarketHours: z.number(), rule: z.string() }).strict(),
     safety: z.object({ watchBelowMarginPercent: z.number(), actBelowMarginPercent: z.number() }).strict(),
     gasReserveEth: z.string(),
     assets: z.array(
