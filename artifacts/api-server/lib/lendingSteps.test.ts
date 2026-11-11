@@ -271,6 +271,30 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
   }
   const receipts = new Map([1, 2, 3, 4].map((n) => [hash(n), receipt(n)] as const));
   const at = (record: LoanExecutionV1) => ({ owner: OWNER, executionId: record.executionId });
+  /** The stop, with its moment of waiting before the second read passed at once. */
+  const stopNowV1 = (input: Parameters<typeof stopSequentialLoanExecutionV1>[0], deps: LoanExecutionStatusDepsV1, options: Parameters<typeof stopSequentialLoanExecutionV1>[2] = {}) =>
+    stopSequentialLoanExecutionV1(input, deps, { wait: async () => undefined, ...options });
+
+  // Audit BASE-2 (2026-11-10): since Denim, Base's nodes answer `pending` with the latest block, so a step
+  // sent as the person pressed Stop was invisible, and the loan was stopped under it.
+  it('reads the wallet’s count a second time a moment later, and does not stop a loan whose next step lands meanwhile', async () => {
+    const { store, record } = await twoLanded();
+    const count = { latest: 9, pending: 9 };
+    const waited: number[] = [];
+    // The step lands while the stop waits: the node still said "nothing pending" a moment before.
+    const landsMeanwhile = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts), { wait: async (ms) => { waited.push(ms); count.latest = 10; count.pending = 10; } });
+    assert.deepEqual([landsMeanwhile?.ok, landsMeanwhile && !landsMeanwhile.ok ? landsMeanwhile.refusal : null, waited], [false, 'loan_steps_later_transaction', [1_200]]);
+    assert.equal((await store.get(at(record)))!.state, 'awaiting_wallet');
+    // A second read that fails stops nothing either.
+    count.latest = 9; count.pending = 9;
+    const unread = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts), { wait: async () => { count.latest = Number.NaN; } });
+    assert.equal(unread && !unread.ok ? unread.refusal : null, 'loan_steps_count_unread');
+    // Nothing moved: stopped, with the count both reads agreed on.
+    count.latest = 9;
+    const stopped = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts), { settleMs: 400, wait: async (ms) => { waited.push(ms); } });
+    assert.ok(stopped?.ok);
+    assert.deepEqual([proofOf(stopped.record), waited.at(-1)], [[2, 2, 'person', 9], 400]);
+  });
   async function twoLanded() {
     const armedLoan = await armed();
     for (const index of [0, 1]) {
@@ -290,7 +314,7 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
     assert.equal(waiting.state, 'awaiting_wallet');
     assert.deepEqual(loanStepsStandingV1(waiting), { landed: 2, total: 3, stoppable: true });
     // Step 2 was the wallet's transaction 8; with nothing sent since, it has sent 9 and holds nothing pending.
-    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    const result = await stopNowV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
     assert.ok(result?.ok);
     const stopped = result.record;
     assert.deepEqual([stopped.state, stopped.errorCode, stopped.transactionHash, sequentialHashesV1(stopped.batchId!)], ['failed', 'loan_steps_stopped', hash(2), [hash(1), hash(2)]]);
@@ -299,7 +323,7 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
     // Read again from Base (the page's Check), it stays stopped by its owner; pressed again, it is the same stop.
     const reread = await refreshSequentialLoanExecutionV1(at(record), stopped, stopDeps(store, null, receipts));
     assert.deepEqual([reread.state, reread.errorCode, ...proofOf(reread)], ['failed', 'loan_steps_stopped', 2, 2, 'person', 9]);
-    const again = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 12, pending: 12 }, receipts));
+    const again = await stopNowV1(at(record), stopDeps(store, { latest: 12, pending: 12 }, receipts));
     assert.ok(again?.ok);
     assert.equal(again.record.version, reread.version);
     // Repay arms in the same market now.
@@ -320,10 +344,10 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
       [null, 'loan_steps_count_unread'],
     ];
     for (const [count, refusal] of cases) {
-      const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts));
+      const result = await stopNowV1(at(record), stopDeps(store, count, receipts));
       assert.deepEqual(result && !result.ok ? result.refusal : 'stopped', refusal);
     }
-    const later = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 11, pending: 11 }, receipts));
+    const later = await stopNowV1(at(record), stopDeps(store, { latest: 11, pending: 11 }, receipts));
     assert.equal(later && !later.ok ? later.detail : null,
       'Your wallet sent another transaction after step 2. Still cannot tell from Base whether it was step 3 of 3, so this loan was not stopped. If it was, paste its hash below.');
     const after = (await store.get(at(record)))!;
@@ -340,7 +364,7 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
     const read = await refreshSequentialLoanExecutionV1(at(record), hinted!, stopDeps(store, null, receipts));
     assert.deepEqual([read.state, read.errorCode], ['unknown', 'loan_steps_incomplete']);
     assert.deepEqual(loanStepsStandingV1(read), { landed: 2, total: 3, stoppable: true });
-    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    const result = await stopNowV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
     assert.ok(result?.ok);
     assert.deepEqual([result.record.transactionHash, sequentialHashesV1(result.record.batchId!)], [hash(2), [hash(1), hash(2)]]);
   });
@@ -348,7 +372,7 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
   it('refuses a loan with no step recorded, one whose every step landed, a hash that is not its step, and a batch', async () => {
     const count = { latest: 9, pending: 9 };
     const refusalOf = async (store: MemoryLoanExecutionStoreV1, record: LoanExecutionV1) => {
-      const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts));
+      const result = await stopNowV1(at(record), stopDeps(store, count, receipts));
       return result && !result.ok ? result.refusal : result ? 'stopped' : 'missing';
     };
     const none = await armed();
@@ -365,12 +389,12 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
     const store = new MemoryLoanExecutionStoreV1();
     const batch = await store.putReady({ owner: OWNER, draftId: 'batch', run: loanReadyFixture(), now: NOW });
     assert.equal(await refusalOf(store, batch), 'lending_attempt_changed');
-    assert.equal(await stopSequentialLoanExecutionV1({ owner: OWNER, executionId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34' }, stopDeps(store, count, receipts)), null);
+    assert.equal(await stopNowV1({ owner: OWNER, executionId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34' }, stopDeps(store, count, receipts)), null);
   });
 
   it('takes back a step the wallet sent after the stop only when it is exactly the next one, landed', async () => {
     const { store, record } = await twoLanded();
-    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    const result = await stopNowV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
     assert.ok(result?.ok);
     const stopped = await refreshSequentialLoanExecutionV1(at(record), result.record, stopDeps(store, null, receipts));
     const reader = stopDeps(store, null, receipts).reader;

@@ -280,7 +280,8 @@ export function loanStepsStandingV1(record: LoanExecutionV1): { landed: number; 
 
 /** Stops a loan in steps after the steps that landed, when Base shows the wallet sent nothing since and has
  * nothing waiting. It sends nothing; a refusal records nothing. */
-export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string }, deps: LoanExecutionStatusDepsV1):
+export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string }, deps: LoanExecutionStatusDepsV1,
+  options: { settleMs?: number; wait?: (ms: number) => Promise<void> } = {}):
   Promise<{ ok: true; record: LoanExecutionV1 } | { ok: false; refusal: LoanStepsStopRefusalV1; detail: string } | null> {
   const record = await deps.store.get(input);
   if (!record) return null;
@@ -310,6 +311,18 @@ export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1;
   if (nonce === undefined || !Number.isSafeInteger(nonce) || latest === null || pending === null || latest < nonce + 1 || pending < latest) return refuse('loan_steps_count_unread', landed);
   if (latest > nonce + 1) return refuse('loan_steps_later_transaction', landed);
   if (pending > latest) return refuse('loan_steps_transaction_pending', landed);
+  // Since Denim (2026-11-05) Base's nodes answer `pending` with the latest block, so the line above no longer
+  // sees a step on its way (audit BASE-2), and the wallet's own node, where such a step waits, was never
+  // ours to ask. So the count is read once more a moment later: a step sent as the person pressed Stop lands
+  // within a few of Base's 200 ms blocks, and then this loan is not stopped under it.
+  const settleMs = options.settleMs ?? 1_200;
+  if (settleMs > 0) {
+    await (options.wait ?? ((ms: number) => new Promise<void>((done) => { setTimeout(done, ms); })))(settleMs);
+    let again: number | null = null;
+    try { again = deps.reader.getTransactionCount ? await deps.reader.getTransactionCount(record.walletAddress, 'latest') : null; } catch { /* unread below */ }
+    if (again === null || !Number.isSafeInteger(again) || again < latest) return refuse('loan_steps_count_unread', landed);
+    if (again > latest) return refuse('loan_steps_later_transaction', landed);
+  }
   const last = read.steps.at(-1)!;
   const stopped = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state: 'failed', transactionHash: last.hash,
     proof: { callsHash: record.run.callsHash, steps: read.hashes, stepsLanded: landed, receiptFingerprint: read.fingerprint, stoppedAt: landed,

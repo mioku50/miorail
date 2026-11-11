@@ -202,7 +202,7 @@ async function tail() {
   await marketTail.recordPass({
     tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
     chainId: 8453,
-    toBlock: 5_000,
+    toBlock: 25_000,
     observedAt: NOW.toISOString(),
     logCalls: 2,
     identityCalls: 1,
@@ -225,7 +225,7 @@ async function tail() {
         direction: 'out_of_venue',
         counterparty: COUNTERPARTY,
         amountAtomic: '2500000000000000000',
-        blockNumber: 4_999,
+        blockNumber: 24_999,
         transactionHash: `0x${'02'.repeat(32)}`,
         logIndex: 3,
         observedAt: '2026-08-25T11:59:58.000Z',
@@ -241,7 +241,7 @@ async function tailWithNoIdentifiedVenue() {
   await marketTail.recordPass({
     tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
     chainId: 8453,
-    toBlock: 5_000,
+    toBlock: 25_000,
     observedAt: NOW.toISOString(),
     logCalls: 1,
     identityCalls: 0,
@@ -446,7 +446,9 @@ describe('official asset dossier assembly', () => {
       first.dossier.marketTopology.venues.map((venue) => venue.address),
       [POOL],
     );
-    assert.equal(first.dossier.recentMarketActivity.windowFromBlock, 3_001);
+    // The window is 20,000 blocks: a little over an hour of Base's 200 ms blocks (audit BASE-3). The tail has
+    // read to block 25,000; the transfer at block 100 is outside it, the one at 24,999 inside.
+    assert.equal(first.dossier.recentMarketActivity.windowFromBlock, 5_001);
     assert.equal(first.dossier.recentMarketActivity.movementCount, 1);
     assert.equal(first.dossier.recentMarketActivity.confirmedSwapCount, null);
     assert.equal(

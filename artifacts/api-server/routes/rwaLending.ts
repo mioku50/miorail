@@ -41,6 +41,8 @@ export const rwaLendingRuntimeV1 = {
   walletPayments: spendWalletStoreRuntimeV1.store,
   // A loan in steps: how long to wait between reads of a step the read RPC has not seen yet.
   stepReadDelayMs: 1_500,
+  // Stopping a loan in steps: how long to wait before the wallet's transaction count is read a second time.
+  stopSettleMs: 1_200,
   // The network fee of a loan sent as one batch, offered to Still's fee sponsor (2026-11-08).
   sponsorship: offerSponsorshipV1,
   // A new loan is not offered in the United States or to US persons; a repayment always is (lib/stillRegion.ts).
@@ -487,7 +489,8 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/release', async (req, res) =>
 rwaLendingRouter.post('/rwa/lending/executions/:id/stop', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   if (!id.safeParse(req.params.id).success || !z.object({}).strict().safeParse(req.body ?? {}).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const result = await stopSequentialLoanExecutionV1({ owner, executionId: String(req.params.id) }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
+  const result = await stopSequentialLoanExecutionV1({ owner, executionId: String(req.params.id) }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()),
+    { settleMs: rwaLendingRuntimeV1.stopSettleMs });
   if (!result) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
   if (!result.ok) { res.status(409).json({ error: result.refusal, detail: result.detail }); return; }
   res.json(executionAnswerV1(result.record));

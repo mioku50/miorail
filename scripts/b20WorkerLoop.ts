@@ -56,9 +56,9 @@ export const B20_DISCOVER_CADENCE_V1: WorkerCadenceV1 = {
   // between bursts moves the chain faster than fifteen hundred milliseconds of
   // impatience — measured, not assumed.
   catchUpMs: 5_000,
-  // Base produces a block every two seconds, so a minute of rest is thirty
-  // blocks — well inside one pass, and it keeps `blocksBehind` visibly near
-  // zero on the status surface rather than sawtoothing.
+  // Base produces a block every 200 ms since Denim (2026-11-05; every two seconds before it), so a
+  // minute of rest is three hundred blocks — still inside one pass of 800, and it keeps `blocksBehind`
+  // visibly near zero on the status surface rather than sawtoothing.
   idleMs: 60_000,
   backoffMs: 30_000,
   maxBackoffMs: 10 * 60_000,

@@ -103,7 +103,7 @@ function app() {
 beforeEach(() => {
   store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; morphoAsked = []; sent = new Map(); count = { latest: 0, pending: 0 };
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW });
-  Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0,
+  Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0, stopSettleMs: 0,
     runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => review(input),
     runBorrow: async (input: { collateralSupplyAssets?: bigint; borrowAssets: bigint; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => morphoReview(input),
     reader: () => ({

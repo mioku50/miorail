@@ -106,6 +106,12 @@ export const B20_QUOTE_ASSETS_V1 = [
  * minutes after a launch is a separate event, and calling it the launch's pool
  * would be a claim about intent that nothing here measures.
  *
+ * Those were blocks of two seconds. Since Denim (2026-11-05 18:00 UTC, block 53,556,127) a block takes
+ * 200 ms, and forty-eight of them are under ten seconds: for a launch after it, this window is a tenth
+ * of the time it was chosen for, and a pool created half a minute after the launch reads as "no pool"
+ * (audit BASE-3). Left as it is while the launch feed is frozen, for the reason in the next paragraph;
+ * when the feed is read again the window becomes a time, and every stored miss is resolved once more.
+ *
  * Widening this also RETIRES every cached miss for free. A stored row answers
  * only the window it searched (`launchPoolCoversWindowV1` requires its
  * `searchToBlock` to reach the asked-for `toBlock`), so every row written at

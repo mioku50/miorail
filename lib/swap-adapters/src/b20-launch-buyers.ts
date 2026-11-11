@@ -196,9 +196,16 @@ export async function b20LaunchBuyersV1(input: {
 /**
  * How far past the launch to look.
  *
- * 10,000 blocks is about five and a half hours of Base, and `mainnet.base.org`
+ * 10,000 blocks was about five and a half hours of Base, and `mainnet.base.org`
  * serves that range in ONE `eth_getLogs` — Alchemy's free tier would need a
  * thousand. The window is part of every claim this produces, because
  * "concentration" without a window is not a measurement.
+ *
+ * Since Denim (2026-11-05 18:00 UTC, block 53,556,127) a block takes 200 ms, so for a launch after it
+ * these 10,000 blocks are thirty-three minutes, not five and a half hours (audit BASE-3). The number is
+ * left as it is on purpose: every stored reading names this window, the corpus it was measured on is
+ * from before Denim, and the launch feed has been frozen since. A reading of a launch after Denim must
+ * not be compared with one before it as if both covered the same time; when the feed is read again,
+ * the window becomes a time (the block at launch + 5.5 h), and the stored readings are measured again.
  */
 export const B20_BUYER_WINDOW_BLOCKS_V1 = 10_000;

@@ -43,7 +43,11 @@ import { PER_TOKEN_PRICE_DECIMALS_V1 } from './contracts.js';
 const USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
-const ACTIVITY_WINDOW_BLOCKS_V1 = 2_000;
+// A little over an hour of Base. It was 2,000 blocks when a block took two seconds; since Denim
+// (2026-11-05 18:00 UTC, block 53,556,127) a block takes 200 ms, and 2,000 of them were under seven
+// minutes: "no movements in the window" became the usual answer for a market that trades all day
+// (audit BASE-3). The window is read from the stored tail, not from logs, so its width costs nothing.
+const ACTIVITY_WINDOW_BLOCKS_V1 = 20_000;
 const LATEST_MOVEMENTS_V1 = 20;
 
 const CONTROL_KEYS_V1: readonly B20ControlFieldKeyV1[] = [

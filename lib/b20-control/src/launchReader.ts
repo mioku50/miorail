@@ -47,7 +47,11 @@ import { B20_FACTORY_V1 } from './pinned.js';
 export const LAUNCH_MAX_RANGE_V1 = 800;
 
 /** Blocks left between the chain head and anything this reader will accept.
- * Base finality is fast; this is about reorg depth, not latency. */
+ * Base finality is fast; this is about reorg depth, not latency. Twelve blocks were twenty-four seconds
+ * when a block took two; since Denim (2026-11-05, 200 ms blocks) they are 2.4 seconds (audit BASE-3).
+ * A reorg is counted in blocks, so the depth guarded against is the same; the time margin is a tenth.
+ * Left at twelve while the launch feed is frozen: a reorg below it is still caught by the stored block
+ * hashes, and the reader's own arithmetic is tested against this number. */
 export const LAUNCH_CONFIRMATIONS_V1 = 12;
 
 /** Default soft ceiling on launches committed by one run, applied at block
