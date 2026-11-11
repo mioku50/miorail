@@ -468,6 +468,34 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
     assert.doesNotMatch(render({ body: borrow, execution }), /Stop here|has not seen step/);
   });
 
+  // Audit LEND-1, 2026-11-10: an attempt the wallet never sent held its market for ever.
+  it('offers to release an attempt the wallet never sent, saying what Still checks first, and only on the server’s offer', () => {
+    const execution = { executionId: 'execution_1', state: 'unknown' as const, transactionHash: null, errorCode: null, release: { offered: true, from: '2026-10-29T03:57:30.000Z' } };
+    const html = render({ body: ready(), execution, onRelease: NOOP });
+    assert.match(html, /Still has found no transaction for this review on Base, and while it waits this market takes no other loan or repayment from your wallet\./);
+    assert.match(html, /If your wallet never sent it, release it\. Still first checks on Base that your wallet has sent nothing since this review and has nothing\s+waiting; only then is the review recorded as not sent/);
+    assert.match(html, /decline or cancel it there first\./);
+    assert.match(html, />It was not sent: release it</);
+    assert.doesNotMatch(render({ body: ready(), execution }), /release it/);
+    // The wire carries the offer as the server gave it, and nothing malformed.
+    assert.deepEqual(parseLendingExecutionWireV1(execution, 'execution_1')?.release, { offered: true, from: '2026-10-29T03:57:30.000Z' });
+    assert.equal(parseLendingExecutionWireV1({ ...execution, release: null }, 'execution_1')?.release, null);
+    for (const release of [{ offered: 'yes', from: '2026-10-29T03:57:30.000Z' }, { offered: true }, { offered: true, from: 'soon' }, 'now']) {
+      assert.equal(parseLendingExecutionWireV1({ ...execution, release }, 'execution_1'), null);
+    }
+  });
+
+  it('a released attempt is said as not sent, never as a revert, and still takes its transaction by hash', () => {
+    const execution = { executionId: 'execution_1', state: 'failed' as const, transactionHash: null, errorCode: 'loan_wallet_sent_nothing', release: null };
+    assert.equal(lendingExecutionCopyV1('failed', 'loan_wallet_sent_nothing'),
+      'Released as not sent: Base shows your wallet has sent nothing since this review, so it borrowed and repaid nothing. You can start a new review now.');
+    const html = render({ body: ready(), execution, onFindTransaction: NOOP });
+    assert.match(html, /Released as not sent:/);
+    assert.doesNotMatch(html, /reverted onchain|release it</);
+    assert.match(html, /Your wallet sent it after all\?/);
+    assert.match(html, /Still takes this repayment back only if that transaction is exactly this review’s, landed on Base; it will not send anything\./);
+  });
+
   it('a stopped loan in steps takes a step the wallet sent after all, by its hash', () => {
     const execution = { executionId: 'execution_1', state: 'failed' as const, transactionHash: null, errorCode: 'loan_steps_stopped', steps: { landed: 2, total: 3, stoppable: false } };
     const html = render({ body: { ...stepsBody(), facts: { ...stepsBody().facts, operation: 'borrow' as const } }, execution, onFindTransaction: NOOP });

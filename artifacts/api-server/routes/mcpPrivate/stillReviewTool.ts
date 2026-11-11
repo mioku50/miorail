@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { LoanExecutionStoreV1, LoanExecutionV1, LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
+import { LOAN_WALLET_SENT_NOTHING_V1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendInvoiceDisplayV1 } from '../../lib/stillSpendInvoiceReads.js';
@@ -85,6 +85,8 @@ const WALLET_NEXT_V1: Readonly<Record<z.infer<typeof StillReviewStatusOutputV1Sc
 };
 
 /** A loan in steps that stopped on purpose: final with what landed, and not a failed transaction. */
+/** Released by its owner as never sent (lib/loanRelease.ts): no transaction exists, so nothing failed onchain. */
+const RELEASED_NEXT_V1 = 'The user released this review as never sent, after Base showed their wallet had sent nothing since it: nothing was borrowed, repaid or paid by it, and no transaction failed. Prepare a new one if they still want it.';
 const STOPPED_NEXT_V1 = 'Stopped part way: the steps that landed are on Base and the rest was never sent, so nothing more happens from this review. Where the loan step landed, the USDC is in the wallet: the user can repay it, or open a new invoice from Spend.';
 
 function usdcTextV1(atomic: string): string {
@@ -131,7 +133,8 @@ export async function stillReviewStatusV1(
     ...(returned === null ? {} : { collateralReturned: returned }),
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
     ...(purchase ? { purchase } : {}),
-    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
+    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1
+      : record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1 ? RELEASED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
       record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}`,
   };
 }

@@ -673,6 +673,13 @@
       "when": 1793728800000,
       "tag": "0095_spend_wallet_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1794381600000,
+      "tag": "0096_lending_release_unsent",
+      "breakpoints": true
     }
   ]
 }

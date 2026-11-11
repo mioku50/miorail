@@ -7,6 +7,26 @@ import { recordBlueprintSubmissionV1, routeProofIdV1 } from '@mioagent/transacti
 const WALLET_STATUS_RPC_V1 = 'https://rpc.wallet.coinbase.com';
 const MAX_RESPONSE_BYTES_V1 = 128 * 1024;
 
+/** The wallet's own status code for a batch (EIP-5792: 1xx still on its way, 2xx included, 4xx failed
+ * before it was sent and will not be tried again, 5xx and 6xx reverted). Null when the wallet's service
+ * did not answer for this batch on Base. Like the hashes below, a hint and never proof. */
+export async function readBaseWalletBatchStatusV1(batchId: string, fetcher: typeof fetch = fetch): Promise<number | null> {
+  try {
+    const response = await fetcher(WALLET_STATUS_RPC_V1, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'wallet_getCallsStatus', params: [batchId] }),
+    });
+    if (!response.ok) return null;
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_BYTES_V1) return null;
+    const reply = JSON.parse(text);
+    const result = reply?.result;
+    return reply?.error || reply?.id !== 1 || result?.id !== batchId || result?.chainId !== '0x2105'
+      || !Number.isInteger(result?.status) || result.status < 100 || result.status > 699 ? null : result.status as number;
+  } catch { return null; }
+}
+
 export async function readBaseWalletBatchHashesV1(
   batchId: string,
   fetcher: typeof fetch = fetch,

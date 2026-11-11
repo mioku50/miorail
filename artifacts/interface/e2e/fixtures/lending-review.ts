@@ -44,6 +44,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     // A loan in steps left part way, as the server reads it, and its answers to Stop here, in order.
     stepsStanding: null as Record<string, unknown> | null, errorCode: null as string | null, refusedFacts: ready().facts as Record<string, unknown>,
     stopAnswers: [] as Array<{ status: number; json: Record<string, unknown> }>,
+    // An attempt sent as one batch that its wallet may never have sent: the server's offer to release it, and its answers, in order.
+    release: null as { offered: boolean; from: string } | null,
+    releaseAnswers: [] as Array<{ status: number; json: Record<string, unknown> }>,
     // Holds the arm's answer until it settles, as a slow server would.
     armHeld: null as Promise<void> | null,
     // What the arm says about the network fee: Still's offer to pay it (2026-11-08), or nothing.
@@ -100,11 +103,21 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       }
       return route.fulfill({ status: answer.status, json: answer.json });
     }
+    if (path.endsWith('/executions/execution_1/release') && request.method() === 'POST') {
+      state.order.push('release');
+      expect(request.postDataJSON()).toEqual({});
+      const answer = state.releaseAnswers.shift() ?? { status: 503, json: { error: 'fixture_unavailable' } };
+      if (answer.status === 200) {
+        state.executionState = String(answer.json.state); state.errorCode = answer.json.errorCode as string | null; state.release = null;
+      }
+      return route.fulfill({ status: answer.status, json: answer.json });
+    }
     if (path.endsWith('/executions/execution_1') && request.method() === 'GET') {
       state.order.push('result');
       return route.fulfill({ json: { executionId: 'execution_1', state: state.executionState,
         transactionHash: state.executionState === 'confirmed' ? `0x${'9'.repeat(64)}` : state.stoppedOnPurpose ? state.lastStepHash : null,
-        errorCode: state.errorCode ?? (state.stoppedOnPurpose ? 'loan_steps_stopped' : null), ...(state.stepsStanding ? { steps: state.stepsStanding } : {}) } });
+        errorCode: state.errorCode ?? (state.stoppedOnPurpose ? 'loan_steps_stopped' : null), ...(state.stepsStanding ? { steps: state.stepsStanding } : {}),
+        ...(state.release ? { release: state.release } : {}) } });
     }
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });

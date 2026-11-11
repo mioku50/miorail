@@ -41,6 +41,12 @@ export interface BaseChainReaderV1 extends BaseReceiptReader {
    * empty list when none landed; null for any other account, or when it cannot be read.
    */
   findOwnTransactionsAfter?(address: string, afterBlock: bigint): Promise<HashV1[] | null>;
+  /** What this account is now: a plain one, one delegated by EIP-7702, or a contract. Null when unread. */
+  getAccountKind?(address: string): Promise<'eoa' | 'eip7702' | 'contract' | null>;
+  /** How many transactions this address had sent as of a block. Null when unread. */
+  getTransactionCountAt?(address: string, blockNumber: bigint): Promise<number | null>;
+  /** An ERC-4337 account's next nonce at one EntryPoint, key 0, as of a block or now. Null when unread. */
+  getEntryPointNonce?(entryPoint: string, sender: string, at: bigint | 'latest'): Promise<bigint | null>;
 }
 
 /** An EIP-7702 delegation designator: the account's code is 0xef0100 followed by its delegate. */
@@ -116,6 +122,9 @@ export async function findOwnTransactionsAfterV1(client: {
   }
 }
 
+const ENTRY_POINT_NONCE_ABI_V1 = [{ type: 'function', name: 'getNonce', stateMutability: 'view',
+  inputs: [{ name: 'sender', type: 'address' }, { name: 'key', type: 'uint192' }], outputs: [{ name: 'nonce', type: 'uint256' }] }] as const;
+
 export function createViemBaseReceiptReader(): BaseChainReaderV1 {
   const publicClient = createPublicClient({ chain: base, transport: http(baseRpcUrl()) });
   return {
@@ -136,6 +145,30 @@ export function createViemBaseReceiptReader(): BaseChainReaderV1 {
     async getTransactionCount(address: string, blockTag: 'latest' | 'pending'): Promise<number | null> {
       try {
         return await publicClient.getTransactionCount({ address: address as `0x${string}`, blockTag });
+      } catch {
+        return null;
+      }
+    },
+    async getAccountKind(address: string): Promise<'eoa' | 'eip7702' | 'contract' | null> {
+      try {
+        const code = await publicClient.getCode({ address: address as `0x${string}` });
+        if (!code || code === '0x') return 'eoa';
+        return isDelegatedAccountCodeV1(code) ? 'eip7702' : 'contract';
+      } catch {
+        return null;
+      }
+    },
+    async getTransactionCountAt(address: string, blockNumber: bigint): Promise<number | null> {
+      try {
+        return await publicClient.getTransactionCount({ address: address as `0x${string}`, blockNumber });
+      } catch {
+        return null;
+      }
+    },
+    async getEntryPointNonce(entryPoint: string, sender: string, at: bigint | 'latest'): Promise<bigint | null> {
+      try {
+        return await publicClient.readContract({ address: entryPoint as `0x${string}`, abi: ENTRY_POINT_NONCE_ABI_V1, functionName: 'getNonce',
+          args: [sender as `0x${string}`, 0n], ...(at === 'latest' ? {} : { blockNumber: at }) });
       } catch {
         return null;
       }

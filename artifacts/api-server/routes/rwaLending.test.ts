@@ -135,7 +135,59 @@ describe('session-owned lending HTTP boundary', () => {
     const refused = await request(app()).post(`${base}/lending/executions/${second.body.executionId}/arm`)
       .send({ callsHash: second.body.callsHash, signingTermsHash: second.body.signingTermsHash }).expect(409);
     assert.equal(refused.body.error, 'execution_active');
-    assert.match(refused.body.detail, /^Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked\./);
+    // It promises no reading that may never come (audit LEND-1), and says what its owner can do.
+    assert.match(refused.body.detail, /^Another loan or repayment in this market has not settled yet, so this one was not sent and your wallet was not asked\./);
+    assert.match(refused.body.detail, /If your wallet never sent that one, its review lets you release it\.$/);
+    assert.doesNotMatch(refused.body.detail, /still being read/);
+  });
+  it('an attempt its wallet never sent is released by its owner once Base bears that out (audit LEND-1)', async () => {
+    let clock = now;
+    const chain = { latest: 41, pending: 41 };
+    Object.assign(rwaLendingRuntimeV1, { now: () => clock, readBatchStatus: async () => null,
+      reader: () => ({ getTransaction: async () => null, getTransactionReceipt: async () => null, getAccountKind: async () => 'eoa', getTransactionCountAt: async () => 41,
+        getTransactionCount: async (_address: string, tag: 'latest' | 'pending') => (tag === 'latest' ? chain.latest : chain.pending) }) });
+    const first = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    await arm(first);
+    const second = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    const path = `${base}/lending/executions/${first.body.executionId}`, from = new Date(Date.parse(first.body.expiresAt) + 10 * 60_000);
+    // While the wallet may still send it, the release is named with its time and not granted.
+    assert.deepEqual((await request(app()).get(path)).body.release, { offered: false, from: from.toISOString() });
+    assert.equal((await request(app()).post(`${path}/release`).send({})).body.error, 'loan_release_too_early');
+    clock = from;
+    assert.deepEqual((await request(app()).get(path)).body.release, { offered: true, from: from.toISOString() });
+    // Its owner's alone, and nothing rides in with the request.
+    await request(app(other)).post(`${path}/release`).send({}).expect(404);
+    await request(app(null)).post(`${path}/release`).send({}).expect(401);
+    await request(app()).post(`${path}/release`).send({ force: true }).expect(400);
+    // The wallet sent something since the review: refused in the server's own words, and still held.
+    Object.assign(chain, { latest: 42, pending: 42 });
+    const refused = await request(app()).post(`${path}/release`).send({}).expect(409);
+    assert.equal(refused.body.error, 'loan_release_later_transaction');
+    assert.match(refused.body.detail, /Still cannot tell from Base whether it was this one, so the review was not released\. If it was, paste its hash below\.$/);
+    assert.equal((await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId })).length, 1);
+    Object.assign(chain, { latest: 41, pending: 41 });
+    const released = await request(app()).post(`${path}/release`).send({}).expect(200);
+    assert.deepEqual([released.body.state, released.body.errorCode, released.body.transactionHash, released.body.release], ['failed', 'loan_wallet_sent_nothing', null, null]);
+    assert.deepEqual(released.body.verification, { callsHash: first.body.callsHash, releasedBy: 'person', reviewBlock: '53100000', account: 'eoa', transactionCount: 41 });
+    // Nothing holds the market now, and a later read does not put the released review back.
+    assert.deepEqual(await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId }), []);
+    assert.equal((await request(app()).get(path)).body.state, 'failed');
+    assert.equal(simulations, 2);
+  });
+  it('a released review takes back only a transaction that is its own, and never a wrong paste', async () => {
+    let clock = now;
+    Object.assign(rwaLendingRuntimeV1, { now: () => clock, readBatchStatus: async () => null,
+      reader: () => ({ getTransaction: async () => null, getTransactionReceipt: async () => null, getAccountKind: async () => 'eoa', getTransactionCountAt: async () => 41,
+        getTransactionCount: async () => 41 }) });
+    const first = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    await arm(first);
+    const path = `${base}/lending/executions/${first.body.executionId}`;
+    clock = new Date(Date.parse(first.body.expiresAt) + 10 * 60_000);
+    await request(app()).post(`${path}/release`).send({}).expect(200);
+    const wrong = await request(app()).post(`${path}/transaction`).send({ transactionHash: `0x${'55'.repeat(32)}` }).expect(409);
+    assert.equal(wrong.body.error, 'loan_receipt_not_matched');
+    assert.match(wrong.body.detail, /so the released review was left as it is\.$/);
+    assert.equal((await request(app()).get(path)).body.errorCode, 'loan_wallet_sent_nothing');
   });
   it('does not accept status or a receipt supplied by the browser', async () => {
     const read = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`), path = `${base}/lending/executions/${read.body.executionId}`;

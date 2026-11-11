@@ -68,6 +68,36 @@ test('an unknown lending submission stays locked after reload and is not called 
   await page.getByRole('button', { name: 'Check onchain result', exact: true }).click(); await expect(page.locator('body')).toContainText('submission result is unknown');
   expect(await attempts(page)).toBe(0); await expect(page.locator('body')).not.toContainText('Confirmed onchain:');
 });
+// Audit LEND-1, 2026-11-10: an attempt the wallet never sent held its market for ever, and nothing could end it.
+test('an attempt the wallet never sent is released by its owner, on the server’s word alone', async ({ page }) => {
+  const state = await install(page, 'timeout'); await page.goto('/lending/fixture-lending');
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect.poll(() => attempts(page)).toBe(1); expect(state.executionState).toBe('unknown');
+  const release = page.getByRole('button', { name: 'It was not sent: release it', exact: true });
+  // Not offered until the server offers it: ten minutes after the review's own time ran out.
+  state.release = { offered: false, from: '2026-10-29T03:57:30.000Z' };
+  await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
+  await expect(page.locator('body')).toContainText('submission result is unknown');
+  await expect(release).toHaveCount(0);
+  state.release = { offered: true, from: '2026-10-29T03:57:30.000Z' };
+  await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
+  await expect(page.getByText(/If your wallet never sent it, release it\. Still first checks on Base that your wallet has sent nothing since this review/)).toBeVisible();
+  // Refused, the server's own reason is what the page says, and the offer stays.
+  state.releaseAnswers.push({ status: 409, json: { error: 'loan_release_later_transaction',
+    detail: 'Your wallet sent a transaction after this review. Still cannot tell from Base whether it was this one, so the review was not released. If it was, paste its hash below.' } });
+  state.releaseAnswers.push({ status: 200, json: { executionId: 'execution_1', state: 'failed', transactionHash: null, errorCode: 'loan_wallet_sent_nothing', release: null } });
+  await release.click();
+  await expect(page.getByText(/^Your wallet sent a transaction after this review\. Still cannot tell from Base whether it was this one/)).toBeVisible();
+  await release.click();
+  await expect(page.getByText(/^Released as not sent: Base shows your wallet has sent nothing since this review/)).toBeVisible();
+  await expect(release).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open in your wallet', exact: true })).toHaveCount(0);
+  // A transaction that landed after all is still taken, by its hash.
+  await expect(page.getByText('Your wallet sent it after all?')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('reverted onchain');
+  expect(state.order.filter(entry => entry === 'release')).toHaveLength(2);
+  expect(await attempts(page)).toBe(1);
+});
 test('only an explicit wallet rejection permits a repeat lending attempt', async ({ page }) => {
   const state = await install(page, 'rejected'); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();

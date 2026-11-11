@@ -89,6 +89,8 @@ export interface LendingReviewConsoleModelV1 {
   onFindTransaction?: (() => void) | null;
   /** A loan in steps left part way: stop it after the steps that landed (the server checks Base first). */
   onStop?: (() => void) | null;
+  /** Releases an attempt its wallet never sent, when the server offers it. */
+  onRelease?: (() => void) | null;
   /** A loan in steps, while it is being sent. */
   step?: LendingStepProgressV1 | null;
   /** The page that asked this review, offered when it is refused or cannot be read. */
@@ -198,7 +200,7 @@ export function useLendingReviewConsoleV1(input: {
       update({ execution: checked });
     } catch (error) {
       // A stopped loan in steps is not locked by a hash that is not its next step; the server says so.
-      update({ walletError: serverDetailV1(error, /^(?:loan_step_not_matched|lending_market_held)$/) ?? 'The transaction could not be verified. No new wallet request was made; this review remains locked.' });
+      update({ walletError: serverDetailV1(error, /^(?:loan_step_not_matched|loan_receipt_not_matched|lending_market_held)$/) ?? 'The transaction could not be verified. No new wallet request was made; this review remains locked.' });
     }
     finally { update({ checking: false }); }
   }, [active.checking, active.transactionHint, eligible, executionId, identity, request, update]);
@@ -364,7 +366,26 @@ export function useLendingReviewConsoleV1(input: {
     } finally { opening.current = false; update({ walletBusy: false, step: null }); }
   }, [active, eligible, identity, input, read, request, session, update]);
 
+  // Released only when Base bears out that the wallet sent nothing since the review; the server says why not.
+  const onRelease = useCallback(async () => {
+    if (!eligible || !executionId || active.checking || active.walletBusy || current.current !== identity) return;
+    update({ checking: true, walletError: null });
+    try {
+      const released = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}/release`, {
+        method: 'POST', body: JSON.stringify({}),
+      }), executionId);
+      if (!released) throw new Error('lending_execution_unreadable');
+      update({ execution: released });
+    } catch (error) {
+      update({ walletError: serverDetailV1(error, /^(?:lending_attempt_changed|loan_release_[a-z_]+)$/)
+        ?? 'Still could not release this review just now. Nothing was changed; check the onchain result.' });
+    }
+    finally { update({ checking: false }); }
+  }, [active.checking, active.walletBusy, eligible, executionId, identity, request, update]);
+
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
+  // A review released as never sent still takes a transaction its wallet sent after all, by that transaction's hash.
+  const releasedUnsent = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_wallet_sent_nothing';
   // A loan in steps stopped part way still takes a step its wallet sent after all, by that step's hash.
   const stoppedInSteps = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_steps_stopped' && Boolean(active.execution.steps);
   // A Spend loan in steps that stopped before its payment because Bitrefill could not be read just then:
@@ -384,8 +405,9 @@ export function useLendingReviewConsoleV1(input: {
     onCheck: eligible && executionId ? () => void onCheck() : null,
     transactionHint: eligible ? active.transactionHint : '',
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
-    onFindTransaction: eligible && executionId && locked && (!['confirmed','failed'].includes(active.execution?.state ?? '') || stoppedInSteps) ? () => void onFindTransaction() : null,
+    onFindTransaction: eligible && executionId && locked && (!['confirmed','failed'].includes(active.execution?.state ?? '') || stoppedInSteps || releasedUnsent) ? () => void onFindTransaction() : null,
     onStop: eligible && executionId && active.execution?.steps?.stoppable && !active.walletBusy && !active.step ? () => void onStop() : null,
+    onRelease: eligible && executionId && active.execution?.release?.offered && !active.walletBusy && !active.step ? () => void onRelease() : null,
     step: eligible ? active.step : null,
     back: lendingBackLinkV1(input.draft),
     // A wallet that sends in steps pays each step's fee itself, so it is told nothing about a sponsor.

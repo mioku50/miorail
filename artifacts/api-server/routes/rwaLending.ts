@@ -14,7 +14,8 @@ import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
 import { loanExecutionRuntimeV1, type LoanExecutionV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
 import { refreshLoanExecutionV1, loanExecutionWireV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
-import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
+import { readBaseWalletBatchHashesV1, readBaseWalletBatchStatusV1 } from '../lib/stockExecutionStatus.js';
+import { LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1 } from '../lib/loanRelease.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { spendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
@@ -31,7 +32,7 @@ export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
   readRepay: readRepayStandingV1, readAave: readAaveStandingV1, runRepay: runMorphoRepayV1, runAave: runAaveLendingV1, runBorrow: runMorphoBorrowV1, runNativeBorrow: runNativeMorphoBorrowV1,
   store: loanExecutionRuntimeV1.store, reader: createViemBaseReceiptReader,
-  readBatchHashes: readBaseWalletBatchHashesV1, verifyEffectPosition: verifyLendingEffectsAtReceiptV1,
+  readBatchHashes: readBaseWalletBatchHashesV1, readBatchStatus: readBaseWalletBatchStatusV1, verifyEffectPosition: verifyLendingEffectsAtReceiptV1,
   secret: () => (process.env.SESSION_SECRET ?? '').trim(), now: () => new Date(),
   // Still Spend: the open invoices, Bitrefill's own reading of one, and the payment call.
   spendOrders: spendOrderStoreV1, spendEnabled: () => stillSpendPayEnabledV1(),
@@ -233,6 +234,8 @@ async function settleStoppedStepsV1(store: Awaited<ReturnType<typeof rwaLendingR
 function executionAnswerV1(record: LoanExecutionV1) {
   return { ...loanExecutionWireV1(record), facts: record.run.facts,
     transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode, steps: loanStepsStandingV1(record),
+    // One sent as a single batch that its wallet may never have sent: whether its owner can ask to release it, and from when.
+    release: loanReleaseStandingV1(record, rwaLendingRuntimeV1.now()),
     // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
     share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) };
 }
@@ -278,8 +281,8 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
 });
 /** Why an arm was refused while another attempt holds the market (2026-11-09: a repayment said only
  * "could not be armed" while the loan before it, landed, was still being read). */
-const EXECUTION_ACTIVE_DETAIL_V1 = 'Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked. '
-  + 'Open that review and check its onchain result; once Still has read it, this one can be sent.';
+const EXECUTION_ACTIVE_DETAIL_V1 = 'Another loan or repayment in this market has not settled yet, so this one was not sent and your wallet was not asked. '
+  + 'Open that review and check its onchain result: once Base shows how it ended, this one can be sent. If your wallet never sent that one, its review lets you release it.';
 /** The network fee of a loan or repayment sent as one batch, offered to Still's fee sponsor for this
  * wallet and exactly the calls just armed, as a stock swap's is (operator, 2026-11-08). A loan in steps
  * is a plain transaction per step, which cannot carry a sponsor. An offer that cannot be worked out is
@@ -322,13 +325,22 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/transaction', async (req, res
   if (stopped && !reopened) {
     res.status(409).json({ error: 'loan_step_not_matched', detail: 'This transaction is not the next step of this loan, landed on Base, so the stopped loan was left as it is.' }); return;
   }
-  if (!record || (!reopened && !['awaiting_wallet','submitted','unknown'].includes(record.state))) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
+  // A review released as never sent takes back a transaction its wallet sent after all, and nothing else:
+  // the hash must be this review's own calls from this wallet, landed, before it holds its market again.
+  const released = record?.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1;
+  if (released && !(await releasedLoanLandedV1(record, hash, rwaLendingRuntimeV1.reader()))) {
+    res.status(409).json({ error: 'loan_receipt_not_matched', detail: 'This transaction is not this review’s, landed on Base, so the released review was left as it is.' }); return;
+  }
+  if (!record || (!reopened && !released && !['awaiting_wallet','submitted','unknown'].includes(record.state))) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
   // A pasted hash is only a lookup hint. The ordinary exact-call, own-operation,
   // protocol-event and receipt-block position verifier is still mandatory.
   const saved = await store.recordVerification({ owner, executionId, expectedVersion: record.version, state: 'unknown',
     transactionHash: hash, proof: null, errorCode: 'loan_transaction_hint_unverified', ...(reopened ? { batchId: reopened.batchId } : {}), now: rwaLendingRuntimeV1.now() });
   if (!saved && reopened) {
     res.status(409).json({ error: 'lending_market_held', detail: 'Another loan or repayment in this market was opened after this one stopped, so Still cannot add this step to it until that one is finished.' }); return;
+  }
+  if (!saved && released) {
+    res.status(409).json({ error: 'lending_market_held', detail: 'Another loan or repayment in this market was opened after this one was released, so Still cannot read this transaction into it until that one is finished.' }); return;
   }
   if (!saved) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
   res.json({ ...loanExecutionWireV1(saved), facts: saved.run.facts });
@@ -411,6 +423,18 @@ rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   const record = await refreshLoanExecutionV1({ owner, executionId: String(req.params.id), refresh: true }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
   if (!record) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
   res.json(executionAnswerV1(record));
+});
+/** A loan or repayment sent as one batch that its wallet never sent: its owner releases it, once Base shows
+ * the wallet has sent nothing since the review and has nothing waiting (lib/loanRelease.ts, audit LEND-1).
+ * It sends and signs nothing, and a refusal changes nothing. */
+rwaLendingRouter.post('/rwa/lending/executions/:id/release', async (req, res) => {
+  const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
+  if (!id.safeParse(req.params.id).success || !z.object({}).strict().safeParse(req.body ?? {}).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  const result = await releaseUnsentLoanExecutionV1({ owner, executionId: String(req.params.id) },
+    { ...lendingStatusDepsV1(await rwaLendingRuntimeV1.store()), readBatchStatus: rwaLendingRuntimeV1.readBatchStatus });
+  if (!result) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
+  if (!result.ok) { res.status(409).json({ error: result.refusal, detail: result.detail }); return; }
+  res.json(executionAnswerV1(result.record));
 });
 /** A loan in steps left part way: its owner stops it after the steps that landed, once Base shows that the
  * wallet sent nothing since and has nothing waiting (lendingSteps). It sends and signs nothing. */

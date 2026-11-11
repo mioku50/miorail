@@ -78,6 +78,7 @@ describe('a wallet payment’s record', () => {
     assert.match(migration, /'facts', jsonb_build_object\('payment', jsonb_build_object\('orderId', order_id\)\)/);
     assert.match(migration, /ALTER TABLE spend_wallet_payments OWNER TO miorail_user;/);
     const journal = JSON.parse(readFileSync(repo('lib/db/drizzle/meta/_journal.json'), 'utf8')) as { entries: Array<{ idx: number; tag: string }> };
-    assert.deepEqual(journal.entries.at(-1), { ...journal.entries.at(-1), idx: 95, tag: '0095_spend_wallet_payments' });
+    const entry = journal.entries.find((row) => row.tag === '0095_spend_wallet_payments');
+    assert.deepEqual(entry, { ...entry, idx: 95, tag: '0095_spend_wallet_payments' });
   });
 });

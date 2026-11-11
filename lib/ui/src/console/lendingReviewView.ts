@@ -36,6 +36,9 @@ export interface LendingExecutionWireV1 {
   share?: { path: string } | null;
   /** A loan in steps: how many landed, of how many, and whether its owner can stop it there. */
   steps?: { landed: number; total: number; stoppable: boolean } | null;
+  /** One sent as a single batch that its wallet may never have sent: whether its owner can ask to
+   * release it now, and from when (ten minutes after the review's own time ran out). */
+  release?: { offered: boolean; from: string } | null;
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2000;
@@ -111,7 +114,8 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
   if (!object(value) || value.executionId !== executionId || !id(value.executionId) ||
       !['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.state)) ||
       (value.transactionHash !== null && (typeof value.transactionHash !== 'string' || !/^0x[0-9a-f]{64}$/i.test(value.transactionHash))) ||
-      (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps))) return null;
+      (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps)) ||
+      (value.release != null && !(object(value.release) && typeof value.release.offered === 'boolean' && text(value.release.from) && Number.isFinite(Date.parse(value.release.from))))) return null;
   return value as unknown as LendingExecutionWireV1;
 }
 function stepsStanding(value: unknown): boolean {
@@ -121,6 +125,8 @@ function stepsStanding(value: unknown): boolean {
 export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null): string {
   // A loan in steps that stopped on purpose is final with what landed, not a revert.
   if (state === 'failed' && errorCode === 'loan_steps_stopped') return 'Stopped part way: the steps that landed are in place on Base, and the rest was never sent. You can repay or start a new review now.';
+  // Released by its owner: no transaction exists, so nothing reverted (audit LEND-1).
+  if (state === 'failed' && errorCode === 'loan_wallet_sent_nothing') return 'Released as not sent: Base shows your wallet has sent nothing since this review, so it borrowed and repaid nothing. You can start a new review now.';
   switch (state) {
     case 'ready': return 'The review is ready. Nothing has been submitted.';
     case 'awaiting_wallet': return 'A wallet request was armed. Its outcome is not yet confirmed. This review will not be sent again.';

@@ -4,7 +4,7 @@ import { ENTRY_POINT_ADDRESSES_V1, USER_OPERATION_EVENT_TOPIC_V1, type VerifiedR
 import { sameCallDataV1, stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
 import { createViemBaseReceiptReader, type BaseChainReaderV1, type BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from './stockExecutionStatus.js';
-import { loanExecutionRuntimeV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
+import { LOAN_WALLET_SENT_NOTHING_V1, loanExecutionRuntimeV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
 import { refreshSequentialLoanExecutionV1 } from './lendingSteps.js';
 
 const HANDLE_OPS_ABI = parseAbi([
@@ -143,6 +143,9 @@ export function receiptFingerprintV1(receipt: VerifiedReceiptSourceV1): string {
 export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string; refresh: boolean }, deps: LoanExecutionStatusDepsV1): Promise<LoanExecutionV1 | null> {
   const record = await deps.store.get(input);
   if (!record || !input.refresh || record.state === 'ready' || record.errorCode === 'conflicting_batch_hints') return record;
+  // Released by its owner as never sent (lib/loanRelease.ts): there is no transaction to read, and a
+  // reading that finds none must not hold the market again. One that landed after all comes back by its hash.
+  if (record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1) return record;
   // A loan in steps is read step by step, and not while its steps are still being sent.
   if (record.run.delivery === 'sequential') return refreshSequentialLoanExecutionV1(input, record, deps);
   if (record.state === 'awaiting_wallet' && !record.batchId) return record;

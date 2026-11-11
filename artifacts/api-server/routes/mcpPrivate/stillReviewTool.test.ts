@@ -122,6 +122,22 @@ test('a forgotten order or a spent limit leaves Bitrefill unread, and says so', 
   assert.deepEqual(limited.invoiceReads, []);
 });
 
+test('a review its owner released as never sent is not called a failed transaction', async () => {
+  const { deps } = await fixture({ payment: null });
+  const store = await deps.store();
+  const base = deps.refresh;
+  // As the release leaves it: final, with no transaction.
+  deps.refresh = async (input) => {
+    const record = await base(input);
+    return record && { ...record, state: 'failed' as const, errorCode: 'loan_wallet_sent_nothing', transactionHash: null };
+  };
+  void store;
+  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.deepEqual([status.state, status.errorCode, status.transactionHash], ['failed', 'loan_wallet_sent_nothing', null]);
+  assert.match(status.next, /^The user released this review as never sent, after Base showed their wallet had sent nothing since it: nothing was borrowed, repaid or paid by it, and no transaction failed\./);
+  assert.doesNotMatch(status.next, /Base shows the transaction failed/);
+});
+
 test('a reading Bitrefill could not give again stays, named as its last word and with the reason', async () => {
   const { deps, invoiceReads } = await fixture({ state: 'confirmed', allowRead: false, lastRead: 'payment_confirmed' });
   const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);

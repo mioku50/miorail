@@ -30,6 +30,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const standing = model.execution?.steps ?? null;
   const inPlace = standing ? standing.landed === 1 ? `Step 1 of ${standing.total} is in place on Base` : `Steps 1–${standing.landed} of ${standing.total} are in place on Base` : '';
   const stoppedInSteps = standing !== null && knownState === 'failed' && model.execution?.errorCode === 'loan_steps_stopped' && standing.landed < standing.total;
+  const releasedUnsent = knownState === 'failed' && model.execution?.errorCode === 'loan_wallet_sent_nothing';
   return (
     <div className="still-section still-lending-review">
       <div className="still-eyebrow">{facts ? facts.venue === 'aave-v4' ? 'Aave V4 · Base' : 'Morpho · Base' : 'Base lending'}</div>
@@ -141,10 +142,18 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           still asks you to approve step {standing.landed + 1}.</p>
         <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onStop}>{model.checking ? 'Checking Base…' : 'Stop here'}</button>
       </> : null}
+      {model.onRelease ? <>
+        <p className="still-note" role="status">Still has found no transaction for this review on Base, and while it waits this market takes no other loan or repayment from your wallet.</p>
+        <p className="still-note">If your wallet never sent it, release it. Still first checks on Base that your wallet has sent nothing since this review and has nothing
+          waiting; only then is the review recorded as not sent, and the market works again. If your wallet still shows this request, or a transaction of it waiting,
+          decline or cancel it there first.</p>
+        <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onRelease}>{model.checking ? 'Checking Base…' : 'It was not sent: release it'}</button>
+      </> : null}
       {model.onFindTransaction ? <details className="still-lending-details">
-        <summary>{stoppedInSteps ? `Your wallet sent step ${standing.landed + 1} after all?` : 'Wallet sent it, but the result is still unknown?'}</summary>
+        <summary>{stoppedInSteps ? `Your wallet sent step ${standing.landed + 1} after all?` : releasedUnsent ? 'Your wallet sent it after all?' : 'Wallet sent it, but the result is still unknown?'}</summary>
         <p className="still-note">{stoppedInSteps
           ? `Paste its hash from your wallet activity. Still adds it to this ${repay ? 'repayment' : 'loan'} only if it is exactly step ${standing.landed + 1}, landed on Base; it will not send anything.`
+          : releasedUnsent ? `Paste its hash from your wallet activity. Still takes this ${repay ? 'repayment' : 'loan'} back only if that transaction is exactly this review’s, landed on Base; it will not send anything.`
           : 'Paste the transaction hash from your wallet activity. Still will check that transaction against this exact action; it will not send anything.'}</p>
         <label className="still-borrow-label">Transaction hash
           <input className="still-borrow-stock-select mono" type="text" autoComplete="off" spellCheck={false} value={model.transactionHint ?? ''}

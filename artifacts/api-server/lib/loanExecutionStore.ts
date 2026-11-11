@@ -43,6 +43,9 @@ export interface LoanExecutionStoreV1 {
   recordStep(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; index: number; transactionHash: HashV1; stop?: boolean; now: Date }): Promise<LoanExecutionV1 | null>;
 }
 
+/** An attempt its owner released because the wallet never sent it (lib/loanRelease.ts): final, with no transaction. */
+export const LOAN_WALLET_SENT_NOTHING_V1 = 'loan_wallet_sent_nothing';
+
 type SqlV1 = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 const active = (state: LoanExecutionStateV1) => ['awaiting_wallet', 'submitted', 'unknown'].includes(state);
 const validId = (value: string) => /^[A-Za-z0-9:_.-]{1,200}$/.test(value);
@@ -175,9 +178,11 @@ function validateSubmission(input: Parameters<LoanExecutionStoreV1['recordSubmis
       (input.batchId != null && (typeof input.batchId !== 'string' || input.batchId.length < 1 || input.batchId.length > 2000))) throw new Error('loan_execution_submission_invalid');
 }
 function validateVerification(input: Parameters<LoanExecutionStoreV1['recordVerification']>[0]): void {
+  // One final result names no transaction: an attempt released as never sent, with what bore that out.
+  const released = input.state === 'failed' && input.errorCode === LOAN_WALLET_SENT_NOTHING_V1 && input.transactionHash === null && input.proof !== null;
   if (!['confirmed', 'failed', 'unknown'].includes(input.state) || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0 ||
       (input.transactionHash !== null && !/^0x[0-9a-f]{64}$/.test(input.transactionHash)) ||
-      (input.state !== 'unknown' && (input.transactionHash === null || input.proof === null)) ||
+      (input.state !== 'unknown' && !released && (input.transactionHash === null || input.proof === null)) ||
       (input.batchId !== undefined && sequentialHashesV1(input.batchId) === null)) throw new Error('loan_execution_verification_invalid');
 }
 function rowFromDb(row: Record<string, unknown>): LoanExecutionV1 {
