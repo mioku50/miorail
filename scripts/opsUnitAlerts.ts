@@ -155,7 +155,8 @@ function forV1(ms: number): string {
 /** What systemd's Result means, in a few words. */
 export function opsFailureReasonV1(result: string, exitStatus: number | null): string {
   switch (result) {
-    case 'exit-code': return exitStatus === null ? 'exited with an error' : `exit code ${exitStatus}`;
+    // 75 is how a pass says its provider throttled it out of most of its work (scripts/rwaCashExitPacer.ts).
+    case 'exit-code': return exitStatus === null ? 'exited with an error' : exitStatus === 75 ? 'exit code 75: the provider it works through was rate limiting it' : `exit code ${exitStatus}`;
     case 'timeout': return 'timed out';
     case 'signal': return 'killed by a signal';
     case 'core-dump': return 'crashed';

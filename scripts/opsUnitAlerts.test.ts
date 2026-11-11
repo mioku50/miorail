@@ -11,6 +11,7 @@ import {
   opsAlertHtmlV1,
   parseOpsAlertStateV1,
   parseSystemctlShowV1,
+  opsFailureReasonV1,
   planOpsAlertsV1,
   unheardOpsAlertsV1,
   type OpsAlertStateV1,
@@ -141,4 +142,12 @@ test('the copy of the chats is renewed when missing or six hours old, the age th
     condition.includes(`! find /var/lib/miorail-ops-alerts/chats.json -mmin -${OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1 / MIN} `),
     condition,
   );
+});
+
+// Audit OPS-3 (2026-11-10): a pass its provider throttled out of most of its work exits 75, and the alert says what that is.
+test('a pass that was rate limited out of its work is reported in words, not as a bare exit code', () => {
+  assert.equal(opsFailureReasonV1('exit-code', 75), 'exit code 75: the provider it works through was rate limiting it');
+  assert.equal(opsFailureReasonV1('exit-code', 1), 'exit code 1');
+  const pass = planOpsAlertsV1({ units: [failed('miorail-rwa-cash-exit.service', T0, { exitStatus: 75 })], state: { episodes: [] }, nowMs: T0 });
+  assert.match(opsAlertHtmlV1(pass, T0)!, /<code>miorail-rwa-cash-exit\.service<\/code> — exit code 75: the provider it works through was rate limiting it/);
 });

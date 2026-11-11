@@ -67,6 +67,13 @@ import {
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
+  QUOTE_PACER_DEFAULTS_V1,
+  THROTTLED_PASS_EXIT_CODE_V1,
+  createQuotePacerV1,
+  errorCodeSummaryV1,
+  throttledPassV1,
+} from './rwaCashExitPacer.js';
+import {
   CORPUS_PAGE_LIMIT_V1,
   corpusV1,
   mergeTargetsV1,
@@ -155,6 +162,9 @@ async function main(): Promise<void> {
   const limit = numericArgV1('--limit', 500);
   const underlyingLimit = numericArgV1('--underlying-limit', CORPUS_PAGE_LIMIT_V1);
   const gapMs = numericArgV1('--gap-ms', DEFAULT_GAP_MS_V1);
+  // Every quote of the pass waits its turn, and a 429 is waited out and asked once more
+  // (./rwaCashExitPacer.ts, audit OPS-3).
+  const pacer = createQuotePacerV1({ ...QUOTE_PACER_DEFAULTS_V1, minGapMs: numericArgV1('--quote-gap-ms', QUOTE_PACER_DEFAULTS_V1.minGapMs) });
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
   const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
@@ -300,6 +310,7 @@ async function main(): Promise<void> {
   // failure under the asset's name.
   const byStatus = new Map<string, number>();
   const emitted: string[] = [];
+  const errorCodes: string[] = [];
 
   for (const [index, entry] of universe.entries()) {
     const { target, symbol, decimals } = entry;
@@ -326,12 +337,18 @@ async function main(): Promise<void> {
       tenantId: MEASUREMENT_TENANT_V1,
       scope: 'public_ladder',
       captureMarketRealitySnapshots,
+      pacing: pacer.pacing,
     });
     measured += 1;
     const now = new Date();
     const status = routeStatusFromPreviewV1(previewLadderFromRunV1(next));
     byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
-    console.log(`${label} ${status}`);
+    // Why its rungs were not finished, by the router's own code: "measurement_failed" alone hid four
+    // days of 429s behind a word that also means "no route" (audit OPS-3).
+    const codes = next.observations.map((observation) => observation.errorCode);
+    for (const code of codes) if (code) errorCodes.push(code);
+    const why = errorCodeSummaryV1(codes);
+    console.log(`${label} ${status}${why ? ` (${why})` : ''}`);
 
     // Signals stay inside the vocabulary that owns them: an
     // `official_asset_*` transition may only name a member of the official
@@ -360,6 +377,20 @@ async function main(): Promise<void> {
     console.log(`  ${String(count).padStart(4)}  ${status}`);
   }
   console.log(`signals recorded: ${emitted.length}`);
+  if (dry) return;
+  const quotes = pacer.counts();
+  const share = quotes.quotes === 0 ? 0 : Math.round((quotes.rateLimited / quotes.quotes) * 1000) / 10;
+  console.log(`rungs not finished, by code: ${errorCodeSummaryV1(errorCodes) || 'none'}`);
+  console.log(
+    `quotes: ${quotes.quotes} answered, ${quotes.throttled} rate limited at first, ${quotes.retried} asked again after ` +
+      `${Math.round(quotes.waitedMs / 1000)}s of waiting, ${quotes.rateLimited} still rate limited (${share}%)`,
+  );
+  // A pass the router throttled out of most of its work did not do its work. The exit code says so, and
+  // the service alerts carry a failed unit to Telegram and say when it recovers.
+  if (throttledPassV1(quotes)) {
+    console.error(`cash-exit pass was rate limited: ${share}% of its quotes ended in 429. What it could measure is stored; the rest reads "did not finish".`);
+    process.exitCode = THROTTLED_PASS_EXIT_CODE_V1;
+  }
 }
 
 main()

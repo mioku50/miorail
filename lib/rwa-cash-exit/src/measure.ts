@@ -236,7 +236,54 @@ function defaultMarketRealitySnapshotsV1(input: {
   );
 }
 
+/**
+ * How a pass paces itself against the router (audit OPS-3, 2026-11-10).
+ *
+ * A ladder is a dozen quotes for one asset, and a pass over the reviewed universe is thousands. Sent
+ * as fast as they are answered they pass the router's public limit, and it answers 429 to most of
+ * them: for days the ladder of most assets was never finished, and the screen said "did not finish"
+ * under the asset's name. The caller owns the clock; the measurement only says when a quote is about
+ * to be asked and how it ended.
+ *
+ * Nothing here is set by the page's own measurements, which ask for one position at a time.
+ */
+export interface CashExitQuotePacingV1 {
+  /** Awaited before every quote is asked, a retry included. */
+  beforeQuote?: () => Promise<void>;
+  /** The router said it is rate limiting. Resolves true when the quote should be asked once more. */
+  rateLimited?: () => Promise<boolean>;
+  /** Every quote's final answer: whether it ended rate limited. */
+  answered?: (rateLimited: boolean) => void;
+}
+
+const rateLimitedV1 = (result: SwapAdapterResult): boolean => result.outcome !== 'quoted' && result.errorCode === 'provider_rate_limited';
+
 async function quoteV1(
+  adapter: SwapRouteAdapter,
+  input: {
+    tenantId: string;
+    walletAddress: `0x${string}`;
+    from: AssetRefV1;
+    to: AssetRefV1;
+    amountAtomic: string;
+    requestId: string;
+    now: Date;
+  },
+  pacing?: CashExitQuotePacingV1,
+): Promise<SwapAdapterResult> {
+  if (!pacing) return askQuoteV1(adapter, input);
+  await pacing.beforeQuote?.();
+  let result = await askQuoteV1(adapter, input);
+  // A throttle is ours and it passes: asked once more after the wait the caller chose, never a third time.
+  if (rateLimitedV1(result) && pacing.rateLimited && (await pacing.rateLimited())) {
+    await pacing.beforeQuote?.();
+    result = await askQuoteV1(adapter, input);
+  }
+  pacing.answered?.(rateLimitedV1(result));
+  return result;
+}
+
+async function askQuoteV1(
   adapter: SwapRouteAdapter,
   input: {
     tenantId: string;
@@ -284,6 +331,8 @@ export async function measureOfficialCashExitV1(input: {
   captureMarketRealitySnapshots?: (
     run: CashExitMeasurementRunV1,
   ) => Promise<MarketRealityEvidenceSnapshotV1[]>;
+  /** The background pass paces its quotes and waits out a throttle; a page's own measurement sets none. */
+  pacing?: CashExitQuotePacingV1;
 }): Promise<CashExitMeasurementRunV1> {
   if (input.adapters.length === 0)
     throw new TypeError('cash-exit measurement requires an explicit approved-router set');
@@ -339,7 +388,7 @@ export async function measureOfficialCashExitV1(input: {
           amountAtomic: size,
           requestId: `${runId}:buy:${size}:${adapter.id}`,
           now: quoteNow,
-        });
+        }, input.pacing);
         if (buy.outcome === 'quoted') testedTokenAtomic = buy.candidate.expectedOutput.amountAtomic;
       }
       for (const destination of destinations) {
@@ -363,7 +412,7 @@ export async function measureOfficialCashExitV1(input: {
             amountAtomic: testedTokenAtomic!,
             requestId: `${runId}:sell:${size}:${destination}:${adapter.id}`,
             now: observedAt,
-          });
+          }, input.pacing);
           if (sell.outcome === 'quoted') status = 'full';
           else if (explicitNoRouteV1(sell)) {
             status = input.scope === 'public_ladder' ? 'buy_only' : 'unavailable';

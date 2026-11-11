@@ -257,3 +257,63 @@ describe('official cash-exit ladder', () => {
     assert.ok(stale.rungs.every((rung) => rung.status === 'not_measured'));
   });
 });
+
+// Audit OPS-3 (2026-11-10): the hourly pass was throttled by the router for days. A pass that paces
+// itself is told when each quote is about to be asked, and waits a 429 out once.
+describe('a paced measurement', () => {
+  /** The first `throttled` quotes are answered 429; everything after as the plain adapter answers. */
+  function throttling(throttled: number): { adapter: SwapRouteAdapter; asked: () => number } {
+    const plain = adapterV1();
+    let asked = 0;
+    return {
+      asked: () => asked,
+      adapter: {
+        ...plain,
+        async quote(input) {
+          asked += 1;
+          if (asked <= throttled) return { outcome: 'unavailable', provider: 'kyberswap', errorCode: 'provider_rate_limited', retryable: true };
+          return plain.quote(input);
+        },
+      },
+    };
+  }
+  const run = (adapter: SwapRouteAdapter, pacing?: Parameters<typeof measureOfficialCashExitV1>[0]['pacing']) => measureOfficialCashExitV1({
+    repository: createMemoryOfficialCashExitRepository(), adapters: [adapter], token: { address: TOKEN, symbol: 'AAPLc', decimals: 8 },
+    walletAddress: WALLET, tenantId: `eip155:8453:${WALLET}`, scope: 'public_ladder', now: () => NOW, cashSizesAtomic: ['100000000'], ...(pacing ? { pacing } : {}),
+  });
+
+  test('waits its turn before every quote, asks a throttled one once more, and reports how each ended', async () => {
+    const events: string[] = [];
+    const router = throttling(1);
+    const measured = await run(router.adapter, {
+      beforeQuote: async () => { events.push('turn'); },
+      rateLimited: async () => { events.push('throttled'); return true; },
+      answered: (limited) => { events.push(limited ? 'ended limited' : 'ended'); },
+    });
+    // One size: a buy and two sells. The buy was throttled, waited out and asked again.
+    assert.deepEqual(events, ['turn', 'throttled', 'turn', 'ended', 'turn', 'ended', 'turn', 'ended']);
+    assert.equal(router.asked(), 4);
+    assert.deepEqual(measured.observations.map((row) => [row.status, row.errorCode]), [['full', null], ['full', null]]);
+  });
+
+  test('a quote still throttled after its one more ask is recorded as that, and never asked a third time', async () => {
+    const router = throttling(2);
+    const ended: boolean[] = [];
+    const measured = await run(router.adapter, { rateLimited: async () => true, answered: (limited) => { ended.push(limited); } });
+    assert.equal(router.asked(), 2);
+    assert.deepEqual(ended, [true]);
+    assert.deepEqual(measured.observations.map((row) => [row.status, row.errorCode]),
+      [['measurement_failed', 'provider_rate_limited'], ['measurement_failed', 'provider_rate_limited']]);
+    // A pass that has spent its waiting says no, and the quote is recorded as it came.
+    const spent = throttling(1);
+    await run(spent.adapter, { rateLimited: async () => false });
+    assert.equal(spent.asked(), 1);
+  });
+
+  test('a measurement that sets no pace is asked exactly as before: no wait, no second ask', async () => {
+    const router = throttling(1);
+    const measured = await run(router.adapter);
+    assert.equal(router.asked(), 1);
+    assert.equal(measured.observations.every((row) => row.errorCode === 'provider_rate_limited'), true);
+  });
+});

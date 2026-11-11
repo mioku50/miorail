@@ -24,6 +24,12 @@ ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx script
 # two-thirds of the way through the corpus and left the tail carrying whatever
 # it was carrying before, which reads on a card exactly like an asset nobody
 # has measured.
+#
+# Since 2026-11-11 every quote of the pass waits its turn (at most one every
+# 400 ms: KyberSwap's public limit is three a second) and a 429 is waited out
+# once, so a pass over about 390 representations takes most of an hour. A pass
+# that still ends mostly rate limited exits 75; miorail-ops-alerts then reports
+# this unit as failed, and as recovered after the next pass that got through.
 TimeoutStartSec=5400
 NoNewPrivileges=true
 PrivateTmp=true
