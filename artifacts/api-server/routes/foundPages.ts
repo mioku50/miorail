@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { isFoundShareCodeV1, type FoundShareV1 } from '@mioagent/route-storage';
 
-import { logger } from '@mioagent/utils';
+import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { renderCardPngV1 } from '../lib/cardImage.js';
 import { cardFileSuffixV1, type CardShapeV1 } from '../lib/cardShape.js';
 import { foundCardSvgV1, foundCardV1, foundShareRuntimeV1, foundShareTextV1 } from '../lib/foundShare.js';
@@ -12,6 +12,7 @@ import {
   stockPagesRuntime,
   type StockPageMetaV1,
 } from './stockPages.js';
+import { createPublicReadCacheV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
 // Found's share pages: `/found/<code>` is the app under a head drawn from the
@@ -20,6 +21,12 @@ import {
 //
 // A card never changes once made, so its picture may be held a day. An
 // unknown code is a real 404, sent with the app and a noindex head.
+//
+// Drawing a picture is the costly part: the SVG is rasterised in this process,
+// which serves nothing else meanwhile. Every request used to draw it again
+// (audit AUTH-2, 2026-11-10). A picture is now drawn once and kept a day, by
+// code and shape, and one address may have twenty new ones drawn a minute; a
+// picture already kept is served to anyone, drawn or not by them.
 // ---------------------------------------------------------------------------
 
 export const foundPagesRouter = Router();
@@ -28,7 +35,23 @@ export const publicFoundRouter = Router();
 export const foundPagesRuntime = {
   card: (code: string): Promise<FoundShareV1 | null> => foundShareRuntimeV1.shares().byCode(code),
   renderPng: renderCardPngV1,
+  /** New pictures one address may have drawn in a minute. */
+  drawLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 20 }),
 };
+
+/** Two hundred pictures of about a hundred kilobytes each, at most. */
+const foundPictureCacheV1 = createPublicReadCacheV1({ ttlMs: 24 * 60 * 60_000, max: 200 });
+/** Testing seam. */
+export function resetFoundPictureCacheV1(): void {
+  foundPictureCacheV1.clear();
+}
+
+/** Why a picture was not made; never kept, so the next request tries again. */
+class FoundPictureErrorV1 extends Error {
+  constructor(readonly reason: 'unread' | 'absent' | 'limited' | 'undrawn', readonly retryAfterSeconds = 60) {
+    super(reason);
+  }
+}
 
 export function foundShareMetaV1(origin: string, share: FoundShareV1): StockPageMetaV1 {
   const card = foundCardV1(share);
@@ -62,26 +85,41 @@ foundPagesRouter.get('/found/:file', async (req: Request, res: Response) => {
   if (picture) {
     const shape: CardShapeV1 = picture[2] ? 'embed' : 'link';
     const fallback = `${origin}/og-stocks${cardFileSuffixV1(shape)}.png`;
-    let share: FoundShareV1 | null;
+    const code = picture[1]!;
+    const address = req.ip || req.socket.remoteAddress || 'unknown';
     try {
-      share = await foundPagesRuntime.card(picture[1]!);
-    } catch (error) {
-      logger.warn('Found card could not be read', { errorName: error instanceof Error ? error.name : typeof error });
-      res.redirect(302, fallback);
-      return;
-    }
-    if (!share) {
-      res.status(404).type('text/plain').send('no Found card under that code');
-      return;
-    }
-    try {
-      const png = Buffer.from(await foundPagesRuntime.renderPng(foundCardSvgV1(foundCardV1(share), shape)));
+      const png = await foundPictureCacheV1.read(`${code}|${shape}`, async () => {
+        let share: FoundShareV1 | null;
+        try {
+          share = await foundPagesRuntime.card(code);
+        } catch (error) {
+          logger.warn('Found card could not be read', { errorName: error instanceof Error ? error.name : typeof error });
+          throw new FoundPictureErrorV1('unread');
+        }
+        if (!share) throw new FoundPictureErrorV1('absent');
+        const allowed = await foundPagesRuntime.drawLimiter.consume(`found-picture:${address}`);
+        if (!allowed.success) throw new FoundPictureErrorV1('limited', Math.max(1, Math.ceil((allowed.resetTime - Date.now()) / 1000)));
+        try {
+          return Buffer.from(await foundPagesRuntime.renderPng(foundCardSvgV1(foundCardV1(share), shape)));
+        } catch (error) {
+          logger.warn('Found card could not be drawn', { errorName: error instanceof Error ? error.name : typeof error });
+          throw new FoundPictureErrorV1('undrawn');
+        }
+      });
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.status(200).type('png').send(png);
     } catch (error) {
-      logger.warn('Found card could not be drawn', { errorName: error instanceof Error ? error.name : typeof error });
-      res.redirect(302, fallback);
+      const reason = error instanceof FoundPictureErrorV1 ? error.reason : 'undrawn';
+      if (!(error instanceof FoundPictureErrorV1)) logger.warn('Found card picture failed', { errorName: error instanceof Error ? error.name : typeof error });
+      if (reason === 'absent') {
+        res.status(404).type('text/plain').send('no Found card under that code');
+      } else if (reason === 'limited') {
+        res.setHeader('Retry-After', String((error as FoundPictureErrorV1).retryAfterSeconds));
+        res.status(429).type('text/plain').send('too many new Found pictures from this address; try again in a minute');
+      } else {
+        res.redirect(302, fallback);
+      }
     }
     return;
   }

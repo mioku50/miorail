@@ -4,13 +4,16 @@ import express from 'express';
 import request from 'supertest';
 import type { FoundShareV1 } from '@mioagent/route-storage';
 
-import { foundPagesRouter, foundPagesRuntime, publicFoundRouter } from './foundPages.js';
+import { InMemoryRateLimiter } from '@mioagent/utils';
+
+import { foundPagesRouter, foundPagesRuntime, publicFoundRouter, resetFoundPictureCacheV1 } from './foundPages.js';
 import { resetStockPagesTemplateV1, stockPagesRuntime } from './stockPages.js';
 
 const original = { ...foundPagesRuntime };
 const originalStock = { ...stockPagesRuntime };
 afterEach(() => {
   Object.assign(foundPagesRuntime, original);
+  resetFoundPictureCacheV1();
   Object.assign(stockPagesRuntime, originalStock);
   resetStockPagesTemplateV1();
 });
@@ -60,10 +63,53 @@ test('the picture is a PNG in both shapes, held a day', async () => {
     assert.equal(res.headers['cache-control'], 'public, max-age=86400');
     assert.match(drawn.at(-1)!, new RegExp(`height="${height}"`));
   }
+  // A picture that could not be drawn is never kept: the next request draws it.
+  resetFoundPictureCacheV1();
   foundPagesRuntime.renderPng = async () => { throw new Error('wasm'); };
   const fallback = await request(server).get(`/found/${CARD.code}.png`);
   assert.equal(fallback.status, 302);
   assert.equal(fallback.headers.location, 'https://miorail.xyz/og-stocks.png');
+  foundPagesRuntime.renderPng = async () => new Uint8Array([137, 80, 78, 71]);
+  assert.equal((await request(server).get(`/found/${CARD.code}.png`)).status, 200);
+});
+
+// Audit AUTH-2 (2026-11-10): every request rasterised the card again, in the process that serves the API.
+test('a picture is drawn once and kept: asked for again, nothing is read or drawn', async () => {
+  const server = app();
+  let reads = 0, draws = 0;
+  foundPagesRuntime.card = async (code) => { reads++; return code === CARD.code ? CARD : null; };
+  foundPagesRuntime.renderPng = async () => { draws++; return new Uint8Array([137, 80, 78, 71]); };
+  const answers = await Promise.all(Array.from({ length: 10 }, () => request(server).get(`/found/${CARD.code}.png`)));
+  assert.ok(answers.every((answer) => answer.status === 200 && answer.headers['content-type'] === 'image/png'));
+  for (let index = 0; index < 5; index++) assert.equal((await request(server).get(`/found/${CARD.code}.png`)).status, 200);
+  assert.deepEqual([reads, draws], [1, 1]);
+  // The other shape is another picture, and a card nobody made is not kept at all.
+  assert.equal((await request(server).get(`/found/${CARD.code}-3x2.png`)).status, 200);
+  assert.deepEqual([reads, draws], [2, 2]);
+  for (let index = 0; index < 3; index++) assert.equal((await request(server).get('/found/ZZZZZZZZZZZZ.png')).status, 404);
+  assert.deepEqual([reads, draws], [5, 2]);
+});
+
+test('one address has twenty new pictures drawn a minute; a kept picture is still served to it', async () => {
+  const server = app();
+  server.set('trust proxy', 1);
+  let draws = 0;
+  foundPagesRuntime.drawLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
+  foundPagesRuntime.card = async (code) => ({ ...CARD, code });
+  foundPagesRuntime.renderPng = async () => { draws++; return new Uint8Array([137, 80, 78, 71]); };
+  const code = (index: number) => `card${String(index).padStart(8, '0')}`;
+  const from = (address: string, path: string) => request(server).get(path).set('X-Forwarded-For', address);
+  for (let index = 0; index < 20; index++) assert.equal((await from('198.51.100.7', `/found/${code(index)}.png`)).status, 200);
+  const refused = await from('198.51.100.7', `/found/${code(20)}.png`);
+  assert.equal(refused.status, 429);
+  assert.ok(Number(refused.headers['retry-after']) >= 1 && Number(refused.headers['retry-after']) <= 60);
+  assert.equal(draws, 20);
+  // What is already drawn costs nothing, so it is not refused; and another address draws its own.
+  assert.equal((await from('198.51.100.7', `/found/${code(3)}.png`)).status, 200);
+  assert.equal((await from('198.51.100.8', `/found/${code(20)}.png`)).status, 200);
+  // Drawn for that address, it is now there for the first one too.
+  assert.equal((await from('198.51.100.7', `/found/${code(20)}.png`)).status, 200);
+  assert.equal(draws, 21);
 });
 
 test('the public figures are what the picture shows, nothing more', async () => {
