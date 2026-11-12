@@ -10,12 +10,40 @@ import type { MorphoPlanStepV1 } from '@mioagent/rwa-issuer/morphoBorrowPlan';
 // withdraw was read in the same verified source on 2026-11-03: it takes
 // min(amount, what the supplied shares are worth), sends that to its caller,
 // and checks the account's health when the reserve is collateral.
-export const AAVE_V4_DEPLOYMENT_PIN_V1 = {
+const AAVE_V4_CURRENT_IMPLEMENTATION_V1 = {
   implementation: '0x81a73c282faa932de3b2541cee19549f4bf13b19',
   implementationCodeHash: '0x919242697bc12c3081610e470b50011f50312fedd852ea04282a1ee5294c3881',
   proxyCodeHash: '0x57db7d2196b3603cef54f6fdeae8332584be1e54b2bd9c2a7c827a89f5482e61',
+} as const;
+
+/** The pin a NEW loan or repayment is written and simulated against: the newest reviewed implementation. */
+export const AAVE_V4_DEPLOYMENT_PIN_V1 = {
+  ...AAVE_V4_CURRENT_IMPLEMENTATION_V1,
   implementationSlot: '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc',
 } as const;
+
+export interface AaveV4ReviewedImplementationV1 {
+  implementation: string;
+  implementationCodeHash: string;
+  proxyCodeHash: string;
+}
+
+/**
+ * Every Spoke implementation that was reviewed, oldest first. The last one is the pin above.
+ *
+ * When Aave upgrades the Spoke, the new implementation is reviewed and ADDED here; nothing is replaced
+ * (audit LEND-4, 2026-11-10). A loan or repayment sent before the upgrade has its receipt at a block where
+ * the Spoke still ran the older code, and the position at that block is trusted only against the code that
+ * was there. With a single pin, swapping it would have left every such receipt unreadable for good: the old
+ * block never matches the new pin, the record stays `unknown`, and `unknown` holds the wallet's market.
+ *
+ * Adding an entry is a review, not a formality: the position reads and the events decoded in
+ * lendingReceiptEffects.ts are used for every entry, so an implementation whose getters or events differ
+ * needs its own reading there before it is listed.
+ */
+export const AAVE_V4_REVIEWED_IMPLEMENTATIONS_V1: readonly AaveV4ReviewedImplementationV1[] = [
+  AAVE_V4_CURRENT_IMPLEMENTATION_V1,
+];
 
 export const aaveV4WriteAbiV1 = parseAbi([
   'function supply(uint256 reserveId,uint256 amount,address onBehalfOf) returns (uint256,uint256)',
@@ -61,6 +89,25 @@ export function classifyAaveV4DeploymentReadV1(expectedBlockNumber: number, valu
 
 export function matchesAaveV4DeploymentV1(value: AaveV4DeploymentReadV1): boolean {
   return classifyAaveV4DeploymentReadV1(value.blockNumber, value) === 'matched';
+}
+
+/**
+ * For a block in the past only: the Spoke there ran an implementation that was reviewed, the current one or
+ * an earlier one. This reads what a receipt left behind; it never clears a new loan, which is written for the
+ * current pin alone (`matchesAaveV4DeploymentV1`).
+ */
+export function wasReviewedAaveV4DeploymentV1(
+  value: AaveV4DeploymentReadV1,
+  reviewed: readonly AaveV4ReviewedImplementationV1[] = AAVE_V4_REVIEWED_IMPLEMENTATIONS_V1,
+): boolean {
+  if (value.chainId !== 8453 || !Number.isSafeInteger(value.blockNumber) || value.blockNumber <= 0) return false;
+  const implementation = value.implementationAddress.toLowerCase();
+  const implementationCodeHash = value.implementationCodeHash.toLowerCase();
+  const proxyCodeHash = value.proxyCodeHash.toLowerCase();
+  return reviewed.some((pin) =>
+    pin.implementation.toLowerCase() === implementation
+    && pin.implementationCodeHash.toLowerCase() === implementationCodeHash
+    && pin.proxyCodeHash.toLowerCase() === proxyCodeHash);
 }
 
 /** Identity comes from the registered Spoke's getReserve at the same read block. */

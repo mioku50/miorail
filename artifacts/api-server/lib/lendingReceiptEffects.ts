@@ -5,7 +5,7 @@ import { aaveSpokeAbi, morphoAbi } from '@mioagent/still-engine/abi';
 import { toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import { STILL_AAVE_MAX_RESERVES_V1, readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
-import { matchesAaveV4DeploymentV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.js';
+import { wasReviewedAaveV4DeploymentV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.js';
 import type { LoanEffectPositionCheckV1 } from './loanExecutionStatus.js';
 import type { LendingFactsV1 } from './lendingReview.js';
 import type { VerifiedReceiptLogV1 } from '@mioagent/route-proof';
@@ -43,8 +43,10 @@ let providers: Provider[] | null = null;
 async function positionAt(f: LendingFactsV1, wallet: Address, at: bigint): Promise<LendingReceiptPositionV1 | null> {
   providers ??= createProviders(stillRpcUrlsV1(), 'miorail-loan-receipts/1');
   if (f.venue === 'aave-v4') {
+    // The receipt's own block, so the implementation that was there: after an upgrade of the Spoke an
+    // earlier receipt still reads against the code it ran on, as long as that code was reviewed.
     const pin = await readAaveV4DeploymentAtV1(Number(at));
-    if (!pin || !matchesAaveV4DeploymentV1(pin)) return null;
+    if (!pin || !wasReviewedAaveV4DeploymentV1(pin)) return null;
   }
   for (const { client } of providers) {
     try {

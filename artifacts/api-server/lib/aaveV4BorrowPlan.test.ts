@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { decodeFunctionData } from 'viem';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
-import { aaveV4BorrowPlanV1, aaveV4RepayPlanV1, aaveV4WriteAbiV1, matchesAaveV4CanonicalCallsV1, matchesAaveV4DeploymentV1 } from './aaveV4BorrowPlan.js';
+import { AAVE_V4_DEPLOYMENT_PIN_V1, AAVE_V4_REVIEWED_IMPLEMENTATIONS_V1, aaveV4BorrowPlanV1, aaveV4RepayPlanV1, aaveV4WriteAbiV1, matchesAaveV4CanonicalCallsV1, matchesAaveV4DeploymentV1,
+  wasReviewedAaveV4DeploymentV1 } from './aaveV4BorrowPlan.js';
 import { aaveStandingFixture } from './aaveV4BorrowFixtures.testhelper.js';
 
 async function input() {
@@ -35,6 +36,38 @@ describe('Aave V4 code-owned atomic plan', () => {
       assert(!matchesAaveV4DeploymentV1({ ...i.deployment, ...change }));
       assert(!aaveV4BorrowPlanV1({ ...i, deployment: { ...i.deployment, ...change } }).ok);
     }
+  });
+  // Audit LEND-4: with one pin, an upgrade of the Spoke would have left every receipt sent before it unreadable
+  // for good. The pin is now the newest entry of a list, and a past block is read against the whole list.
+  it('writes a new loan for the newest reviewed implementation only, and reads a past receipt against any reviewed one', async () => {
+    const i = await input();
+    const newest = AAVE_V4_REVIEWED_IMPLEMENTATIONS_V1[AAVE_V4_REVIEWED_IMPLEMENTATIONS_V1.length - 1]!;
+    assert.equal(newest.implementation, AAVE_V4_DEPLOYMENT_PIN_V1.implementation);
+    assert.equal(newest.implementationCodeHash, AAVE_V4_DEPLOYMENT_PIN_V1.implementationCodeHash);
+    assert.equal(newest.proxyCodeHash, AAVE_V4_DEPLOYMENT_PIN_V1.proxyCodeHash);
+    assert(matchesAaveV4DeploymentV1(i.deployment));
+    assert(wasReviewedAaveV4DeploymentV1(i.deployment));
+
+    // The day after an upgrade: the list holds the implementation that was live before it, then the new one.
+    const before = { implementation: `0x${'ab'.repeat(20)}`, implementationCodeHash: `0x${'cd'.repeat(32)}`, proxyCodeHash: newest.proxyCodeHash };
+    const reviewed = [before, newest];
+    const atAnEarlierBlock = { ...i.deployment, blockNumber: i.deployment.blockNumber - 1000,
+      implementationAddress: before.implementation.toUpperCase().replace('0X', '0x'), implementationCodeHash: before.implementationCodeHash };
+    // A receipt from before the upgrade still reads…
+    assert(wasReviewedAaveV4DeploymentV1(atAnEarlierBlock, reviewed));
+    // …and that older code clears no new loan.
+    assert(!matchesAaveV4DeploymentV1(atAnEarlierBlock));
+    assert(!aaveV4BorrowPlanV1({ ...i, deployment: atAnEarlierBlock }).ok);
+    // Without its entry the same receipt is unread, which is what a swapped single pin would have done.
+    assert(!wasReviewedAaveV4DeploymentV1(atAnEarlierBlock));
+
+    // Nothing but the exact reviewed triple on Base counts, at any block.
+    for (const change of [{ chainId: 1 }, { blockNumber: 0 }, { implementationAddress: ADDRESSES.usdc }, { proxyCodeHash: `0x${'00'.repeat(32)}` },
+      { implementationCodeHash: `0x${'00'.repeat(32)}` }, { implementationCodeHash: '0x' }]) {
+      assert(!wasReviewedAaveV4DeploymentV1({ ...atAnEarlierBlock, ...change }, reviewed));
+    }
+    // One entry's address with another's code is neither of them.
+    assert(!wasReviewedAaveV4DeploymentV1({ ...atAnEarlierBlock, implementationCodeHash: newest.implementationCodeHash }, reviewed));
   });
   it('refuses a copied symbol, changed reserve/hub/decimals and duplicate loan reserve', async () => {
     const i = await input();
