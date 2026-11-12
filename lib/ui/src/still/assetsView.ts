@@ -32,6 +32,8 @@ export interface AssetRowV1 {
    * says. For USDC it buys ETH. Absent for nothing free (what is pledged holds up a loan) and for a
    * row not read. */
   sell?: { goal: string; href: string; label: string };
+  /** Where a stock this page does not price is priced: its own page. */
+  page?: { href: string; label: string };
 }
 
 export interface LoanRowV1 {
@@ -60,10 +62,9 @@ export interface AssetsViewV1 {
   /** What the total is made of: "$0.00 reviewed for loans · $1.35 USDC". */
   totalNote: string;
   count: number;
-  /** USDC when it was read beside the report, ETH, cbBTC and PAXG, then the stocks by value. */
+  /** USDC when it was read beside the report, ETH, cbBTC and PAXG, the stocks by value, then the
+   * Coinbase stocks Still does not lend against, by name. */
   rows: AssetRowV1[];
-  /** Coinbase stocks outside Still's reviewed set: an amount, priced on their own page. */
-  others: Array<{ symbol: string; amount: string; href: string }>;
   /** The report's block: "53,000,000". */
   block: string;
   /** The block USDC was read at, when it is another one: it is read on its own (re-audit R7, 2026-11-04). */
@@ -134,6 +135,26 @@ export function lenderPriceTimeLineV1(
 function decimalTextV1(value: string): string {
   const [whole = '0', fraction = ''] = value.split('.');
   return tokenTextV1(BigInt(`${whole}${fraction}`), fraction.length);
+}
+
+/** "1.250000" as "1.25": the same amount, exactly, without the zeros at its end. */
+function exactDecimalV1(value: string): string {
+  return value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value;
+}
+
+/** What the dividend calendar says about one holding: reinvested so far, and the next one ahead. */
+function dividendLinesV1(dividend: DividendWalletResponseV1['holdings'][number] | undefined): AssetRowV1['lines'] {
+  if (!dividend) return [];
+  const lines: AssetRowV1['lines'] = [];
+  const received = sumDividendMoneyV1(dividend.received.map(event => event.usd));
+  if (received && received !== '$0.00') lines.push({ text: `Dividends reinvested so far: ${received}` });
+  const next = dividend.upcoming[0];
+  if (next && next.usd !== null) {
+    const estimate = next.kind === 'estimate';
+    const amount = dividendMoneyV1(next.usd);
+    if (amount) lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
+  }
+  return lines;
 }
 
 /** USDC counts at $1, what a loan pays out and a repayment takes: cents are its base units over 10^(decimals − 2). */
@@ -223,17 +244,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     const priceTime = unread ? null : lenderPriceTimeLineV1(line, report.reading.blockTime);
     if (priceTime) lines.push({ text: priceTime });
     if (unread) lines.push({ text: UNREAD_V1 });
-    const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());
-    if (dividend) {
-      const received = sumDividendMoneyV1(dividend.received.map(event => event.usd));
-      if (received && received !== '$0.00') lines.push({ text: `Dividends reinvested so far: ${received}` });
-      const next = dividend.upcoming[0];
-      if (next && next.usd !== null) {
-        const estimate = next.kind === 'estimate';
-        const amount = dividendMoneyV1(next.usd);
-        if (amount) lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
-      }
-    }
+    lines.push(...dividendLinesV1(input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase())));
     const row: AssetRowV1 = {
       id: line.asset,
       kind: line.kind,
@@ -263,11 +274,28 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
   stocks.sort((a, b) => (a.cents === b.cents ? a.row.name.localeCompare(b.row.name) : a.cents > b.cents ? -1 : 1));
   rows.push(...stocks.map((stock) => stock.row));
 
+  // The Coinbase stocks the wallet holds that Still does not lend against: rows like the others, with
+  // what they are and the way to sell them. They were one line under the list, "Also in the wallet:
+  // HIMSc 0.0505", which the operator read as missing (2026-11-12: «купил hims … и ее нет отображения
+  // в assets»). This page prices what a lender's oracle prices, so such a stock is priced on its own
+  // page and stays out of the total, which says so.
   const reviewed = new Set([...STOCKS.map((stock) => stock.token), ...report.assets.map((line) => line.token)].map((token) => token.toLowerCase()));
   const others = (input.dividends?.holdings ?? [])
     .filter((holding) => !reviewed.has(holding.tokenAddress.toLowerCase()) && /[1-9]/.test(holding.tokens))
-    .map((holding) => ({ symbol: holding.tokenSymbol, amount: decimalTextV1(holding.tokens), href: `/stocks/${holding.symbol.toLowerCase()}` }))
-    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    .sort((a, b) => a.company.localeCompare(b.company));
+  for (const holding of others) {
+    const goal = swapTokenGoalV1(holding.tokenAddress, exactDecimalV1(holding.tokens));
+    rows.push({
+      id: holding.tokenAddress,
+      kind: 'stock',
+      name: holding.company,
+      amount: `${decimalTextV1(holding.tokens)} ${holding.tokenSymbol}`,
+      value: '—',
+      lines: [{ text: 'Still does not lend against it' }, ...dividendLinesV1(holding)],
+      sell: { goal, href: `/routes?goal=${encodeURIComponent(goal)}`, label: SELL_LABEL_V1 },
+      page: { href: `/stocks/${holding.symbol.toLowerCase()}`, label: `Its price is on the ${holding.symbol} page →` },
+    });
+  }
 
   /** The names of what a loan is pledged against: every stock deposited in Aave's spoke, or the one
    * collateral of a Morpho market. */
@@ -318,14 +346,14 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       : usdcTotal === 'unread' ? 'USDC not read just now, so not in the total'
         : `${usdcTotal} USDC`;
   const reviewedNote = reviewedTotal === null ? 'Reviewed holdings not priced this time' : `${reviewedTotal} reviewed for loans`;
+  const othersNote = others.length === 0 ? null : `${others.map((holding) => holding.tokenSymbol).join(', ')} not priced here`;
   return {
     total: priced ? formatCents(total + usdcCents) : null,
     reviewedTotal,
     usdcTotal,
-    totalNote: [reviewedNote, usdcNote, owedNote].filter((part): part is string => part !== null).join(' · '),
+    totalNote: [reviewedNote, usdcNote, othersNote, owedNote].filter((part): part is string => part !== null).join(' · '),
     count,
     rows,
-    others,
     block: Number(report.reading.block).toLocaleString('en-US'),
     usdcBlock: typeof input.usdc === 'object' && input.usdc.block !== undefined && /^\d+$/.test(input.usdc.block) && input.usdc.block !== String(report.reading.block)
       ? Number(input.usdc.block).toLocaleString('en-US') : null,

@@ -81,23 +81,16 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                             <StillLink href={row.sell.href} onClick={() => stageGoalHandoffV1(row.sell!.goal)}>{row.sell.label}</StillLink>
                           </div>
                         ) : null}
+                        {row.page ? (
+                          <div className="line">
+                            <StillLink href={row.page.href}>{row.page.label}</StillLink>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="mono val">{row.value ?? 'Not read'}</div>
                     </li>
                   ))}
                 </ul>
-                {view.others.length > 0 ? (
-                  <p className="still-section still-note still-assets-others">
-                    Also in the wallet:{' '}
-                    {view.others.map((other, i) => (
-                      <React.Fragment key={other.href}>
-                        {i > 0 ? ' · ' : null}
-                        <StillLink href={other.href}>{other.symbol} {other.amount}</StillLink>
-                      </React.Fragment>
-                    ))}
-                    . Each is priced on its stock’s page.
-                  </p>
-                ) : null}
                 <p className="still-section still-note still-assets-foot">Read from Base at block {view.block}{view.usdcBlock ? `; USDC at block ${view.usdcBlock}` : ''}. ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
               </div>
               <aside className="still-assets-aside still-section">

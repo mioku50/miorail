@@ -332,7 +332,6 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-dot.stock { background: var(--sm-stock); color: var(--sm-stock-text); }
 .still-dot.crypto { background: var(--sm-crypto-fill); color: var(--sm-ink); border: 2px solid var(--sm-wire); }
 .still-dot.cash { background: var(--sm-ink2); color: var(--sm-card); }
-.still-assets-others { margin-top: 12px; }
 .still-assets-foot { margin-top: 8px; font-size: 12px; }
 
 .still-links { list-style: none; margin: 2px 20px 0; padding: 0; }

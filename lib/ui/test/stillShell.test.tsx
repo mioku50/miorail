@@ -427,8 +427,8 @@ describe('what the wallet holds, on Assets', () => {
     assert.equal(view.total, formatCents(reviewedCents + BigInt(1234)));
     // Audit UI-10: holdings are gross, and a loan's USDC makes them grow: what is owed is said beside them.
     assert.equal(view.totalNote, `${formatCents(reviewedCents)} reviewed for loans · $12.34 USDC · $240.17 owed, not subtracted`);
-    // Apple is one of Still's reviewed stocks: it is a row, not an "also".
-    assert.deepEqual(view.others, []);
+    // Apple is one of Still's reviewed stocks: its row is a reviewed one, priced here, with no page to go to for a price.
+    assert.equal(view.rows.some((row) => row.page !== undefined), false);
   });
 
   // Re-audit R7, 2026-11-04: USDC is read on its own, and the page named the holdings' block for it.
@@ -459,9 +459,21 @@ describe('what the wallet holds, on Assets', () => {
     assert.equal(partial.total, null);
     assert.equal(partial.count, 3);
     const none = { ...sony, symbol: 'KO', tokenAddress: `0x${'6'.repeat(40)}`, tokenSymbol: 'KOc', tokens: '0' };
-    assert.deepEqual(assetsViewV1({ report: r, dividends: { ...dividends, holdings: [...dividends.holdings, sony, none] } }).others, [
-      { symbol: 'SONYc', amount: '1.25', href: '/stocks/sony' },
-    ]);
+    // Another Coinbase stock the wallet holds is a row of its own after the reviewed ones, with the way to
+    // sell all of it and the page that prices it (operator, 2026-11-12: «купил hims … и ее нет отображения в
+    // assets»); one it holds none of is not shown.
+    const withOthers = assetsViewV1({ report: r, dividends: { ...dividends, holdings: [...dividends.holdings, sony, none] } });
+    const goal = `swap my 1.25 0x${'5'.repeat(40)} to USDC`;
+    assert.deepEqual(withOthers.rows.at(-1), {
+      id: `0x${'5'.repeat(40)}`, kind: 'stock', name: 'Sony', amount: '1.25 SONYc', value: '—',
+      lines: [{ text: 'Still does not lend against it' }],
+      sell: { goal, href: `/routes?goal=${encodeURIComponent(goal)}`, label: 'Sell for USDC on Swap →' },
+      page: { href: '/stocks/sony', label: 'Its price is on the SONY page →' },
+    });
+    assert.equal(withOthers.rows.some((row) => row.amount.endsWith(' KOc')), false);
+    // It is not in the total, and the note under the total says so.
+    assert.equal(withOthers.total, assetsViewV1({ report: r, dividends }).total);
+    assert.match(withOthers.totalNote, / · SONYc not priced here/);
   });
 
   it('sits on Assets; Home reads the modelled room before Spend, and the other two doors sit in the rail on a desktop', () => {
@@ -471,7 +483,10 @@ describe('what the wallet holds, on Assets', () => {
     const assets = renderToStaticMarkup(<StillAssets model={{ sky, view, loading: false, failed: null, onRetry: () => {}, signedIn: true, signInHref: '/signin' }} />);
     assert.match(assets, /<span class="still-dot cash" aria-hidden="true">\$<\/span><div[^>]*><div class="name">USD Coin<\/div><div class="mono amt">12\.3456 USDC<\/div>/);
     assert.match(assets, /<div class="name">Ether<\/div><div class="mono amt">0 ETH<\/div>/);
-    assert.match(assets, /Also in the wallet: <a href="\/stocks\/sony">SONYc 1\.25<\/a>\. Each is priced on its stock’s page\./);
+    assert.match(assets, /<div class="name">Sony<\/div><div class="mono amt">1\.25 SONYc<\/div><div class="line">Still does not lend against it<\/div>/);
+    assert.match(assets, /<a href="\/stocks\/sony">Its price is on the SONY page →<\/a>/);
+    assert.match(assets, /<div class="mono val">—<\/div>/);
+    assert.doesNotMatch(assets, /Also in the wallet/);
     assert.match(assets, /Read from Base at block 53,000,000\. ETH includes WETH\. Prices are the venues’ own oracles at that block; USDC counts at \$1\./);
     const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {} }} />);
     assert.doesNotMatch(html, /In your wallet|USD Coin/);
