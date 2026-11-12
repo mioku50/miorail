@@ -1,15 +1,18 @@
 [Unit]
-# Every six hours.
+# Every three hours.
 #
 # Supply selects the current comparison denominator; issuer-specific ratios
-# normalize the representations inside it. Six hours, plus the engine's one
-# hour jitter allowance, bounds both facts without treating an RPC failure as
-# zero supply or an absent ratio as one-to-one.
+# normalize the representations inside it. The engine trusts a supply reading
+# for seven hours, so at three hours one pass that read nothing is followed by
+# another before any reading lapses. At six hours it was not: on 2026-11-12 a
+# pass throttled out of its block anchor left every stock on the board without
+# a price from 04:51 UTC until the next one. An RPC failure is still never
+# zero supply, nor an absent ratio one-to-one.
 Description=Read reviewed representation supply and ratios
 
 [Timer]
 OnBootSec=9min
-OnUnitActiveSec=6h
+OnUnitActiveSec=3h
 Persistent=true
 RandomizedDelaySec=10min
 

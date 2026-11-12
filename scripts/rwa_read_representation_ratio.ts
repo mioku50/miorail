@@ -33,6 +33,7 @@ import {
   decodeUint8V1,
   decodeUintV1,
   encodeNoArgsV1,
+  withCallFailoverV1,
 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
@@ -52,6 +53,7 @@ import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 
 import { recordDividendSuppliesV1 } from './dividendRecordSupply.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import { anchorPatientlyV1, blockAnchorExitCodeV1, rpcEndpointsV1 } from './rwaBlockAnchor.js';
 
 const CHAIN_ID_V1 = 8453 as const;
 /** Two reads per representation against an endpoint the measurement workers
@@ -110,15 +112,17 @@ async function main(): Promise<void> {
   const lanes = numericArgV1('--lanes', DEFAULT_LANES_V1);
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
-  const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
-  if (!rpcUrl) throw new Error('BASE_MAINNET_RPC_URL is required to read a multiplier');
+  // Its own endpoint first, then the deployment's others, each asked only when the one before it
+  // did not answer: one throttled answer must not cost a whole pass (see ./rwaBlockAnchor.ts).
+  const rpcUrls = rpcEndpointsV1([process.env.BASE_MAINNET_RPC_URL, process.env.BASE_RPC_URL, process.env.MIORAIL_POOLS_RPC_URL]);
+  if (rpcUrls.length === 0) throw new Error('BASE_MAINNET_RPC_URL is required to read a multiplier');
 
   const official = createDatabaseOfficialAssetRepository(client);
   const ratios = createDatabaseRepresentationRatioRepository(client);
   const supplies = createDatabaseRepresentationSupplyRepository(client);
   const issuers = createDatabaseIssuerRepresentationRepository(client);
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
-  const reader = createB20ReaderV1({ rpcUrl });
+  const readers = rpcUrls.map((rpcUrl) => createB20ReaderV1({ rpcUrl }));
 
   // A reviewed issuer adapter selects its own corpus. Backed is also an
   // OFFICIAL source now, but calling the B20 multiplier selectors on a Backed
@@ -153,16 +157,30 @@ async function main(): Promise<void> {
   );
   if (coinbaseB20.length === 0 && dinari.length === 0 && reviewedBindings.length === 0) return;
 
-  const anchorRead = await reader.readBlockAnchor();
-  if (!anchorRead.ok) {
+  const anchored = await anchorPatientlyV1(readers);
+  if (!anchored.ok) {
     // Every read is pinned to one block so the thirteen values describe one
     // moment. Without an anchor there is nothing to pin them to, and a mixed
     // set is worse than none.
-    console.log(`  no block anchor (${anchorRead.reason}) — nothing read, nothing stored`);
+    //
+    // And a pass that read nothing failed. This line used to exit 0: supply is
+    // trusted for seven hours, so on 2026-11-12 one throttled answer here left
+    // every stock on the board without a price for hours and no unit failed.
+    console.error(
+      `  no block anchor (${anchored.refusals.join(', ')}) from ${readers.length} endpoint(s) in ${anchored.rounds} round(s) — ` +
+        'nothing read, nothing stored',
+    );
+    process.exitCode = blockAnchorExitCodeV1(anchored.refusals);
     return;
   }
-  const anchor = anchorRead.value;
-  console.log(`  anchored at block ${anchor.blockNumber}`);
+  const { anchor } = anchored;
+  // A pinned call the anchoring endpoint does not answer is asked of the ones
+  // after it. Not the ones before: they have just refused the anchor.
+  const reader = withCallFailoverV1(anchored.reader, readers.slice(anchored.position + 1));
+  console.log(
+    `  anchored at block ${anchor.blockNumber}` +
+      (anchored.refusals.length > 0 ? ` (after ${anchored.refusals.join(', ')}; round ${anchored.rounds})` : ''),
+  );
 
   if (dry) {
     console.log('  --dry: nothing read, nothing stored');
