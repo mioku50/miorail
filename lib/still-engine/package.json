@@ -29,7 +29,7 @@
     "@mioagent/rwa-issuer": "workspace:*",
     "@mioagent/rwa-market-reality": "workspace:*",
     "viem": "^2.53.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

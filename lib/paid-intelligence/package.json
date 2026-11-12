@@ -16,7 +16,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

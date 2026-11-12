@@ -21,7 +21,7 @@
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
     "viem": "^2.53.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@mioagent/intent-engine": "workspace:*",

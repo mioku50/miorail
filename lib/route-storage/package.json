@@ -21,7 +21,7 @@
     "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-outcomes": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@mioagent/db": "workspace:*",

@@ -7,6 +7,6 @@
   "main": "index.ts",
   "dependencies": {
     "@mioagent/api-zod": "workspace:*",
-    "zod": "3"
+    "zod": "4"
   }
 }

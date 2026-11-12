@@ -23,7 +23,7 @@
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
     "viem": "^2.53.1",
-    "zod": "^3.25.76",
+    "zod": "^4.6.6",
     "@noble/hashes": "^1.8.0"
   },
   "devDependencies": {

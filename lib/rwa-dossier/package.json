@@ -22,7 +22,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/rwa-cash-exit": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
