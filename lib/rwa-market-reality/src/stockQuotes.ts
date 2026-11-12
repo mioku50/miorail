@@ -13,8 +13,9 @@ import { z } from 'zod';
 // price ON BASE, said as one, and never a Wall Street price.
 //
 // One stray quote must not become a headline. Measured over 1,692 quiet-period
-// quotes, 0.8% sat more than 1% away from their neighbours, so a price is the
-// median of the last three runs inside a window, never a single run.
+// quotes, 0.8% sat more than 1% away from their neighbours, so with three runs
+// inside the window a price is the run in the middle of them. It is always one
+// run's own number, and the time it carries is that run's (`stockQuoteRunV1`).
 //
 // A price is also only as good as the market behind it. On 2026-10-10 eight
 // stocks showed 1.2 to 70 times the share's own price (CAKEc $7,641 against
@@ -140,6 +141,31 @@ function medianV1(values: readonly number[]): number {
   return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
+/**
+ * The one run a shown number is, out of the runs it may come from.
+ *
+ * With three runs it is the one whose price is the middle of the three, so a
+ * stray quote is not the headline. With fewer there is no middle: the median of
+ * two is their average, a price no run measured, and it was captioned with the
+ * time of the newer one. On 2026-11-10 the board said NVDAc was $175.13 "1 h
+ * ago" while the run an hour old had read $173.7 and the token traded at $169
+ * (audit DATA-1). With fewer than three, the run given as `otherwise` is taken.
+ *
+ * The time returned is that run's own, so a caption beside the number states
+ * the age of the number and of nothing else.
+ */
+export function stockQuoteRunV1<T extends { at: number; mid: number }>(
+  runs: readonly T[],
+  otherwise: (runs: readonly T[]) => T,
+): T | null {
+  if (runs.length === 0) return null;
+  if (runs.length < STOCK_QUOTE_MEDIAN_RUNS_V1) return otherwise(runs);
+  const middle = medianV1(runs.map((run) => run.mid));
+  // Runs that read the same price are one reading: the newest of them dates it.
+  const same = runs.filter((run) => run.mid === middle);
+  return same.length > 0 ? same.reduce((a, b) => (b.at > a.at ? b : a)) : otherwise(runs);
+}
+
 /** The depth the price's own runs measured: the median $1,000 round trip. */
 export function stockQuoteDepthV1(
   runs: readonly { at: number; mid: number; buyAt1k?: number | null; sellAt1k?: number | null }[],
@@ -193,8 +219,11 @@ export function stockQuotesV1(input: {
       .filter((run) => Math.abs(run.at - dayAgo) <= STOCK_QUOTE_DAY_AGO_SLACK_MS_V1)
       .sort((a, b) => Math.abs(a.at - dayAgo) - Math.abs(b.at - dayAgo))
       .slice(0, STOCK_QUOTE_MEDIAN_RUNS_V1);
-    const price = current.length > 0 ? medianV1(current.map((run) => run.mid)) : null;
-    const before = earlier.length > 0 ? medianV1(earlier.map((run) => run.mid)) : null;
+    // `current` is oldest first and `earlier` is nearest to a day ago first.
+    const shown = stockQuoteRunV1(current, (runs) => runs[runs.length - 1]!);
+    const compared = stockQuoteRunV1(earlier, (runs) => runs[0]!);
+    const price = shown?.mid ?? null;
+    const before = compared?.mid ?? null;
     return {
       underlyingKey: stock.underlyingKey,
       tokenAddress: stock.tokenAddress.toLowerCase(),
@@ -202,9 +231,9 @@ export function stockQuotesV1(input: {
       companyName: stock.companyName,
       iconPath: stock.iconPath,
       priceUsd: price,
-      priceAt: price === null ? null : new Date(current[current.length - 1]!.at).toISOString(),
+      priceAt: shown ? new Date(shown.at).toISOString() : null,
       change24h: price !== null && before !== null ? price / before - 1 : null,
-      changeFromAt: price !== null && before !== null ? new Date(earlier[0]!.at).toISOString() : null,
+      changeFromAt: shown && compared ? new Date(compared.at).toISOString() : null,
       depth: stockQuoteDepthV1(current),
     };
   });

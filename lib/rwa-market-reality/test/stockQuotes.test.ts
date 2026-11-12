@@ -27,7 +27,43 @@ test('a price is the median of the last three runs, so one stray quote is not th
     ],
   }).rows;
   assert.equal(row!.priceUsd, 236);
-  assert.equal(row!.priceAt, hoursAgo(0.5));
+  // The number is the run of an hour and a half ago, and that is the time it carries.
+  assert.equal(row!.priceAt, hoursAgo(1.5));
+});
+
+// Audit DATA-1, 2026-11-10: NVDAc read $175.13 "1 h ago" on the board. Only two runs were in the
+// window; $175.13 was their average, the newer of them had read about $173.7, the token traded at $169.
+test('with two runs the price is the newer run, never their average, and it carries that run\'s time', () => {
+  const [row] = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [
+      { token: TOKEN, at: hoursAgo(2.2), mid: 176.56 },
+      { token: TOKEN, at: hoursAgo(1.2), mid: 173.7 },
+    ],
+  }).rows;
+  assert.equal(row!.priceUsd, 173.7);
+  assert.equal(row!.priceAt, hoursAgo(1.2));
+});
+
+test('the time beside a price is the time of the run that price is', () => {
+  const at = (mids: [number, number, number]) =>
+    stockQuotesV1({
+      now: NOW,
+      stocks: [stock()],
+      prices: [
+        { token: TOKEN, at: hoursAgo(2.5), mid: mids[0] },
+        { token: TOKEN, at: hoursAgo(1.5), mid: mids[1] },
+        { token: TOKEN, at: hoursAgo(0.5), mid: mids[2] },
+      ],
+    }).rows[0]!;
+  // A falling market: the middle of three is the run an hour and a half old.
+  assert.deepEqual([at([177.66, 174.72, 173.69]).priceUsd, at([177.66, 174.72, 173.69]).priceAt], [174.72, hoursAgo(1.5)]);
+  // The oldest run can be the middle one, and then the price is two and a half hours old.
+  assert.deepEqual([at([174, 170, 178]).priceUsd, at([174, 170, 178]).priceAt], [174, hoursAgo(2.5)]);
+  // Runs that read the same price are one reading, dated by the newest of them.
+  assert.deepEqual([at([174, 174, 180]).priceUsd, at([174, 174, 180]).priceAt], [174, hoursAgo(1.5)]);
+  assert.deepEqual([at([170, 174, 174]).priceUsd, at([170, 174, 174]).priceAt], [174, hoursAgo(0.5)]);
 });
 
 test('the 24-hour change is taken against runs near 24 hours ago, and is null without them', () => {
@@ -38,7 +74,8 @@ test('the 24-hour change is taken against runs near 24 hours ago, and is null wi
   ];
   const [row] = stockQuotesV1({ now: NOW, stocks: [stock()], prices }).rows;
   assert.equal(row!.priceUsd, 210);
-  assert.ok(Math.abs(row!.change24h! - (210 / 201 - 1)) < 1e-12);
+  // Two runs near a day ago: the nearer one is compared with, not the average of the two.
+  assert.ok(Math.abs(row!.change24h! - (210 / 202 - 1)) < 1e-12);
   assert.equal(row!.changeFromAt, hoursAgo(23.8));
 
   const [fresh] = stockQuotesV1({

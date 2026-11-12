@@ -46,6 +46,24 @@ describe('a week on the stock card', () => {
     assert.equal(chart.points[chart.points.length - 1]!.at, now.toISOString());
   });
 
+  // Audit DATA-1: with two runs in the window the card showed their average. The line follows the card.
+  test('with two runs behind a point it is the newer run, as on the card, never their average', () => {
+    const now = et('2026-10-07', '12:00');
+    const prices = [
+      { token: TOKEN, at: new Date(now.getTime() - 130 * 60_000).toISOString(), mid: 176.56 },
+      { token: TOKEN, at: new Date(now.getTime() - 70 * 60_000).toISOString(), mid: 173.7 },
+    ];
+    const chart = stockChartV1({ now, tokenAddress: TOKEN, prices });
+    assert.deepEqual(chart.points.map((point) => point.mid), [176.56, 173.7]);
+    const card = stockQuotesV1({
+      now,
+      prices,
+      stocks: [{ tokenAddress: TOKEN, underlyingKey: 'k', tokenSymbol: null, companyName: null, iconPath: null }],
+    }).rows[0]!;
+    assert.equal(card.priceUsd, 173.7);
+    assert.equal(card.priceAt, prices[1]!.at);
+  });
+
   test('one stray quote does not become a spike', () => {
     const now = et('2026-10-07', '12:00');
     const prices = runs(new Date(now.getTime() - 86_400_000), now, 20, (index) => (index === 30 ? 140 : 100));

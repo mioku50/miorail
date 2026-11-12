@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   STOCK_QUOTE_CURRENT_WINDOW_MS_V1,
   STOCK_QUOTE_MEDIAN_RUNS_V1,
+  stockQuoteRunV1,
 } from './stockQuotes.js';
 import { weekendWindowV1 } from './weekendMarket.js';
 
@@ -10,8 +11,9 @@ import { weekendWindowV1 } from './weekendMarket.js';
 // A week of one stock's price on Base, for the small chart on its card.
 //
 // Every point is the price the card itself would have shown at the end of
-// that hour: the median of the last three ladder runs inside three hours, the
-// rule `stockQuotesV1` uses for the headline. So the chart's last point is the
+// that hour: the middle of the last three ladder runs inside three hours, or
+// the newest of fewer, the rule `stockQuotesV1` uses for the headline
+// (`stockQuoteRunV1`). So the chart's last point is the
 // card's price, and one stray quote (0.8% of quiet-period quotes sat more than
 // 1% from their neighbours) never becomes a spike.
 //
@@ -59,12 +61,6 @@ export const StockChartResponseV1Schema = z
   })
   .strict();
 
-function medianV1(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
-}
-
 /** Four decimals: a cent is the smallest step the card shows, and a sub-dollar
  * stock still draws a line. */
 function roundV1(value: number): number {
@@ -110,8 +106,10 @@ export function stockChartV1(input: {
     const window = runs
       .filter((run) => run.at <= end && run.at > end - STOCK_QUOTE_CURRENT_WINDOW_MS_V1)
       .slice(-STOCK_QUOTE_MEDIAN_RUNS_V1);
-    if (window.length === 0) continue;
-    points.push({ at: new Date(end).toISOString(), mid: roundV1(medianV1(window.map((run) => run.mid))) });
+    // The card's own rule, so the line ends on the number the card shows.
+    const shown = stockQuoteRunV1(window, (runs) => runs[runs.length - 1]!);
+    if (!shown) continue;
+    points.push({ at: new Date(end).toISOString(), mid: roundV1(shown.mid) });
   }
 
   return {
