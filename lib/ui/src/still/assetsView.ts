@@ -99,6 +99,37 @@ function venueNameV1(venue: string): string {
   return venue === 'aave-v4' ? 'Aave' : 'Morpho';
 }
 
+const PRICE_WEEKDAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' });
+
+/** How old a lender's price must be, against the reading, before a row says when it was read. */
+export const LENDER_PRICE_TIME_AFTER_MS_V1 = 3_600_000;
+
+/**
+ * When Morpho's oracle last read the price a gold, bitcoin or ether row is counted at, once that
+ * is an hour or more before the reading: "Fri 21:00 UTC".
+ *
+ * Bitcoin's and ether's feeds answer every few minutes, so their rows say nothing. Gold's stood
+ * for three hours on a Tuesday afternoon (2026-11-10) and seven on a Thursday morning (11-12),
+ * and stands from Friday evening to Sunday evening, while PAXG itself keeps trading on Base; the
+ * row showed "Gold $4,042" and a limit drawn from it with no time (audit DATA-3). Within a week
+ * the weekday is enough; older than that, the date is said.
+ */
+export function lenderPriceTimeLineV1(
+  line: { kind: 'stock' | 'crypto'; asset: string; priceUpdatedAt: string | null },
+  readAt: string,
+): string | null {
+  if (line.kind !== 'crypto' || !line.priceUpdatedAt) return null;
+  const at = Date.parse(line.priceUpdatedAt);
+  const read = Date.parse(readAt);
+  if (!Number.isFinite(at) || !Number.isFinite(read) || read - at < LENDER_PRICE_TIME_AFTER_MS_V1) return null;
+  const iso = new Date(at).toISOString();
+  const day = read - at < 6 * 86_400_000 ? PRICE_WEEKDAY_V1.format(new Date(at)) : iso.slice(0, 10);
+  const when = `${day} ${iso.slice(11, 16)} UTC`;
+  return line.asset === 'PAXG'
+    ? `Counted at the gold price of ${when}, the latest Morpho's oracle has: its gold feed can stand for hours, and stands all weekend`
+    : `Counted at the price Morpho's oracle last read, ${when}`;
+}
+
 /** "1.23456789" as base units with its own places, so it is shown like every other amount. */
 function decimalTextV1(value: string): string {
   const [whole = '0', fraction = ''] = value.split('.');
@@ -189,6 +220,8 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     if (!unread && line.limits.includes('price_stale')) {
       lines.push({ text: 'Its reference price has not been refreshed for over a day of open market, so it counts as while the market is closed' });
     }
+    const priceTime = unread ? null : lenderPriceTimeLineV1(line, report.reading.blockTime);
+    if (priceTime) lines.push({ text: priceTime });
     if (unread) lines.push({ text: UNREAD_V1 });
     const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());
     if (dividend) {

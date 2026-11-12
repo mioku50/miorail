@@ -217,6 +217,30 @@ describe('gold on Morpho (PAXG, 2026-11-07)', () => {
     assert.equal(gold.liquidityCents, '188962');
   });
 
+  // Audit DATA-3: the gold feed stands for hours on a weekday and from Friday to Sunday evening,
+  // and the price was shown with no time. The line now carries the feed's own time, and nothing
+  // Still counts changes with it.
+  it('carries the time its gold price was read by the feed, and counts the same with or without it', () => {
+    const friday = SATURDAY - 25n * 3_600n; // Friday 21:00 UTC, when the gold market shut
+    const timed = run(snapshot({ wallet: { PAXG: ONE }, morphoPriceAt: { PAXG: friday } }, SATURDAY));
+    const untimed = run(snapshot({ wallet: { PAXG: ONE } }, SATURDAY));
+    assert.equal(line(timed, 'PAXG').priceUpdatedAt, '2026-10-23T21:00:00.000Z');
+    assert.equal(line(untimed, 'PAXG').priceUpdatedAt, null, 'a feed that was not read is no time, never the reading\'s');
+    assert.deepEqual({ ...line(timed, 'PAXG'), priceUpdatedAt: null }, line(untimed, 'PAXG'));
+    assert.deepEqual(timed.headline, untimed.headline);
+    assert.equal(line(timed, 'PAXG').failed.length, 0);
+    assert.equal(timed.headline.complete, untimed.headline.complete);
+  });
+
+  it('a feed clock of zero or ahead of the block is not a time', () => {
+    for (const at of [0n, WEEKDAY + 1n]) {
+      const r = run(snapshot({ wallet: { PAXG: ONE }, morphoPriceAt: { PAXG: at } }));
+      assert.equal(line(r, 'PAXG').priceUpdatedAt, null, String(at));
+    }
+    const exact = run(snapshot({ wallet: { cbBTC: 100_000_000n }, morphoPriceAt: { cbBTC: WEEKDAY } }));
+    assert.equal(line(exact, 'cbBTC').priceUpdatedAt, '2026-10-21T15:00:00.000Z');
+  });
+
   it('never offers more than the market has left to lend, and says how much that held back', () => {
     // 2 PAXG would allow $3,128.93, but the market had $1,889.62 left.
     const gold = venue(run(snapshot({ wallet: { PAXG: 2n * ONE } })), 'PAXG');

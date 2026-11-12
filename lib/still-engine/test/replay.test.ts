@@ -58,6 +58,23 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
     assert.deepEqual(universe.morpho.map((m) => (m.ok ? m.market.params.lltv : m.problem)), [860_000_000_000_000_000n, 860_000_000_000_000_000n, 'market_mismatch']);
   });
 
+  // Recaptured there on 2026-11-12, when the read gained the time of each Morpho price (audit
+  // DATA-3): all 147 earlier calls answered as recorded, and six were new. Both oracles hold their
+  // feed themselves (BASE_FEED_1 answers, currentOracle reverts), and each feed gave its round.
+  it('finds the feed behind each Morpho price, and reads its time in the wallet\'s own block', async () => {
+    const { universe, snapshot, report } = await replay();
+    assert.deepEqual([...universe.morphoPriceFeeds!.entries()], [
+      ['cbBTC', { feed: '0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F', through: null }], // Chainlink BTC / USD
+      ['ETH', { feed: '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70', through: null }], // Chainlink ETH / USD
+    ]);
+    assert.deepEqual(snapshot.morpho.get('cbBTC')!.priceUpdatedAt, { ok: true, value: 1_792_940_779n });
+    assert.deepEqual(snapshot.morpho.get('ETH')!.priceUpdatedAt, { ok: true, value: 1_792_940_439n });
+    // The block is 15:11:19 UTC: bitcoin's price was five minutes old and ether's eleven.
+    const byAsset = Object.fromEntries(report.assets.map((l) => [l.asset, l]));
+    assert.equal(byAsset.ETH!.priceUpdatedAt, '2026-10-25T15:00:39.000Z');
+    assert.equal(byAsset.cbBTC!.priceUpdatedAt, '2026-10-25T15:06:19.000Z');
+  });
+
   it('reads one block for everything', async () => {
     const { snapshot } = await replay();
     assert.equal(snapshot.block.number.toString(), fixture.block);

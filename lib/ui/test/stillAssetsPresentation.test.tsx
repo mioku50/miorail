@@ -7,7 +7,7 @@ import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
 import { EXAMPLE, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
-import { assetsViewV1 } from '../src/still/assetsView';
+import { assetsViewV1, lenderPriceTimeLineV1 } from '../src/still/assetsView';
 import { StillAssets } from '../src/still/StillPages';
 import { skyStateV1 } from '../src/still/skyState';
 
@@ -189,5 +189,62 @@ describe('selling a holding on Swap, from Assets', () => {
     const view = assetsViewV1({ report: report({ pledged: { NVDAc: 340_000_000n }, aaveDebt: 100_000_000n, wallet: { ETH: 10n ** 16n } }) });
     assert.equal(goalOf(view, 'NVDAc'), null);
     assert.equal(goalOf(view, 'ETH'), 'swap my ETH to USDC');
+  });
+});
+
+// Audit DATA-3: "Gold $4,042" and a limit drawn from it stood with no time, while the gold feed
+// behind Morpho's oracle stands for hours on a weekday and from Friday to Sunday evening.
+describe('when the lender read the price a gold, bitcoin or ether row is counted at', () => {
+  const SATURDAY = '2026-10-24T22:00:00.000Z';
+  const gold = (priceUpdatedAt: string | null) => ({ kind: 'crypto' as const, asset: 'PAXG', priceUpdatedAt });
+
+  it('gold on a Saturday says it is Friday’s price, and that the feed stands', () => {
+    assert.equal(
+      lenderPriceTimeLineV1(gold('2026-10-23T21:00:00.000Z'), SATURDAY),
+      "Counted at the gold price of Fri 21:00 UTC, the latest Morpho's oracle has: its gold feed can stand for hours, and stands all weekend",
+    );
+  });
+
+  it('bitcoin and ether say it only when their feed fell behind, and do not speak of gold', () => {
+    const btc = (priceUpdatedAt: string | null) => ({ kind: 'crypto' as const, asset: 'cbBTC', priceUpdatedAt });
+    assert.equal(lenderPriceTimeLineV1(btc('2026-10-24T21:56:00.000Z'), SATURDAY), null, 'four minutes old');
+    assert.equal(lenderPriceTimeLineV1(btc('2026-10-24T21:00:01.000Z'), SATURDAY), null, 'a second under an hour');
+    assert.equal(lenderPriceTimeLineV1(btc('2026-10-24T21:00:00.000Z'), SATURDAY), "Counted at the price Morpho's oracle last read, Sat 21:00 UTC");
+  });
+
+  it('a price older than six days carries its date, and one with no time says nothing', () => {
+    assert.match(lenderPriceTimeLineV1(gold('2026-10-16T21:00:00.000Z'), SATURDAY)!, /of 2026-10-16 21:00 UTC, the latest/);
+    assert.equal(lenderPriceTimeLineV1(gold(null), SATURDAY), null);
+    assert.equal(lenderPriceTimeLineV1(gold('not a time'), SATURDAY), null);
+    // A stock's row has its own rule (the stale-price line), and never this one.
+    assert.equal(lenderPriceTimeLineV1({ kind: 'stock', asset: 'NVDAc', priceUpdatedAt: '2026-10-23T21:00:00.000Z' }, SATURDAY), null);
+  });
+
+  it('the row of a gold holder shows the line, under what the row already says', () => {
+    const at = BigInt(Date.parse(SATURDAY) / 1000);
+    const read = JSON.parse(JSON.stringify(computeMirror({
+      universe: universe(),
+      snapshot: snapshot({ wallet: { PAXG: 10n ** 18n }, morphoPriceAt: { PAXG: at - 25n * 3_600n } }, at),
+      calendar: calendar(),
+      subject: { address: '0x00000000000000000000000000000000000b0b0b', name: null, input: 'example' },
+      assembledAt: new Date(SATURDAY),
+    }))) as MirrorReport;
+    const row = assetsViewV1({ report: read }).rows.find((entry) => entry.id === 'PAXG')!;
+    assert.deepEqual(row.lines.map((entry) => entry.text), [
+      'Modelled room · up to $1,564.46 on Morpho',
+      "Counted at the gold price of Fri 21:00 UTC, the latest Morpho's oracle has: its gold feed can stand for hours, and stands all weekend",
+    ]);
+    // Without the feed's time the row is what it was.
+    const untimed = JSON.parse(JSON.stringify(computeMirror({
+      universe: universe(),
+      snapshot: snapshot({ wallet: { PAXG: 10n ** 18n } }, at),
+      calendar: calendar(),
+      subject: { address: '0x00000000000000000000000000000000000b0b0b', name: null, input: 'example' },
+      assembledAt: new Date(SATURDAY),
+    }))) as MirrorReport;
+    assert.deepEqual(
+      assetsViewV1({ report: untimed }).rows.find((entry) => entry.id === 'PAXG')!.lines.map((entry) => entry.text),
+      ['Modelled room · up to $1,564.46 on Morpho'],
+    );
   });
 });

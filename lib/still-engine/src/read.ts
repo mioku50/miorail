@@ -18,6 +18,7 @@ import {
   morphoAbi,
   morphoIrmAbi,
   morphoOracleAbi,
+  morphoOracleFeedAbi,
   multicall3Abi,
 } from './abi.js';
 import type { MorphoMarketTotalsV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
@@ -59,11 +60,25 @@ export type MorphoUniverse =
   | { ok: true; market: MorphoMarketInfo }
   | { ok: false; asset: CryptoAsset; problem: 'unreadable' | 'market_mismatch' };
 
+/**
+ * The Chainlink feed behind a Morpho market's collateral price.
+ *
+ * `through` is the oracle a meta-oracle read when the universe was loaded (PAXG's reads gold,
+ * and moves to a PAXG feed only after the two have differed for days); null for an oracle that
+ * holds its feed itself. The wallet reading asks the meta-oracle again, at its own block.
+ */
+export interface MorphoPriceFeed {
+  feed: Address;
+  through: Address | null;
+}
+
 export interface Universe {
   loadedAt: Date;
   provider: string;
   aave: AaveUniverse;
   morpho: MorphoUniverse[];
+  /** Absent or without an entry: that market's price is shown without its time. No figure needs it. */
+  morphoPriceFeeds?: ReadonlyMap<CryptoId, MorphoPriceFeed>;
 }
 
 /** The same immutable-market decoder serves Mirror and the execution review. */
@@ -92,6 +107,51 @@ export async function loadMorphoUniverse(providers: readonly Provider[], assetId
   return { provider, morpho: read() };
 }
 
+/**
+ * Which feed prices each Morpho market's collateral (audit DATA-3, 2026-11-10: gold was shown
+ * at $4,042 with no time while its feed had stood for three hours, and stands from Friday to
+ * Sunday evening every week).
+ *
+ * Nothing Still computes depends on it, so a read that fails here leaves the map short and the
+ * price without a time; it never fails the universe.
+ */
+export async function loadMorphoPriceFeeds(
+  providers: readonly Provider[],
+  morpho: readonly MorphoUniverse[],
+): Promise<Map<CryptoId, MorphoPriceFeed>> {
+  const feeds = new Map<CryptoId, MorphoPriceFeed>();
+  const markets = morpho.flatMap((entry) => (entry.ok ? [entry.market] : []));
+  if (markets.length === 0) return feeds;
+  const named = (slot: Slot<Address>): Address | null =>
+    slot.outcome.ok && !same(slot.outcome.value, ZERO_ADDRESS) ? slot.outcome.value : null;
+  try {
+    const first = new Batch();
+    const asked = markets.map((market) => ({
+      market,
+      feed: first.add(market.params.oracle, morphoOracleFeedAbi, 'BASE_FEED_1', []),
+      current: first.add(market.params.oracle, morphoOracleFeedAbi, 'currentOracle', []),
+    }));
+    await first.run(providers);
+    const second = new Batch();
+    const behind = asked.flatMap(({ market, feed, current }) => {
+      const through = named(feed) ? null : named(current);
+      return through ? [{ market, through, feed: second.add(through, morphoOracleFeedAbi, 'BASE_FEED_1', []) }] : [];
+    });
+    if (second.size > 0) await second.run(providers);
+    for (const { market, feed } of asked) {
+      const address = named(feed);
+      if (address) feeds.set(market.asset.id, { feed: address, through: null });
+    }
+    for (const { market, through, feed } of behind) {
+      const address = named(feed);
+      if (address) feeds.set(market.asset.id, { feed: address, through });
+    }
+  } catch {
+    // Left short on purpose: see above.
+  }
+  return feeds;
+}
+
 export async function loadUniverse(providers: readonly Provider[]): Promise<Universe> {
   const first = new Batch();
   const oracle = first.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'ORACLE', []);
@@ -101,8 +161,9 @@ export async function loadUniverse(providers: readonly Provider[]): Promise<Univ
   const readMorpho = morphoUniversePlan(first, CRYPTO);
   const { provider } = await first.run(providers);
   const morpho = readMorpho();
+  const morphoPriceFeeds = await loadMorphoPriceFeeds(providers, morpho);
 
-  const base = { loadedAt: new Date(), provider, morpho };
+  const base = { loadedAt: new Date(), provider, morpho, morphoPriceFeeds };
   if (!oracle.outcome.ok || !count.outcome.ok || !oracleDecimals.outcome.ok || !noCap.outcome.ok) {
     return { ...base, aave: { ok: false, problem: 'unreadable' } };
   }
@@ -182,6 +243,9 @@ export interface MorphoSnapshot {
   position: Outcome<{ borrowShares: bigint; collateral: bigint }>;
   /** Collateral price in loan-token units, scaled by 1e36. */
   price: Outcome<bigint>;
+  /** When the feed behind `price` last answered, in seconds; failed when it was not read, or
+   * when a meta-oracle no longer reads the oracle the universe saw. No figure depends on it. */
+  priceUpdatedAt: Outcome<bigint>;
   borrowRatePerSecond: Outcome<bigint>;
 }
 
@@ -205,6 +269,21 @@ function map<T, U>(outcome: Outcome<T>, f: (value: T) => U): Outcome<U> {
 function decodeRegistry(data: Hex): { multiplier: bigint; paused: boolean } {
   const [multiplier, paused] = decodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }], data);
   return { multiplier, paused };
+}
+
+/**
+ * The time of a Morpho price: the feed's own, and only while the oracle still reads the feed
+ * that was asked. A meta-oracle that moved to its backup since the universe was loaded prices
+ * from another feed, so the time of the first one is not said.
+ */
+export function morphoPriceUpdatedAt(input: {
+  round: Outcome<readonly [bigint, bigint, bigint, bigint, bigint]> | null;
+  through: Address | null;
+  current: Outcome<Address> | null;
+}): Outcome<bigint> {
+  if (!input.round) return failed();
+  if (input.through !== null && !(input.current?.ok === true && same(input.current.value, input.through))) return failed();
+  return map(input.round, (round) => round[3]);
 }
 
 export async function readWallet(providers: readonly Provider[], universe: Universe, user: Address, atBlock?: bigint): Promise<WalletSnapshot> {
@@ -271,6 +350,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
   const morphoPlans = universe.morpho.map((entry) => {
     if (!entry.ok) return { asset: entry.asset, plan: null };
     const { market } = entry;
+    const priceFeed = universe.morphoPriceFeeds?.get(market.asset.id) ?? null;
     return {
       asset: entry.market.asset,
       plan: {
@@ -278,6 +358,10 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
         market: batch.add(ADDRESSES.morpho, morphoAbi, 'market', [market.id]),
         position: batch.add(ADDRESSES.morpho, morphoAbi, 'position', [market.id, user]),
         price: batch.add(market.params.oracle, morphoOracleAbi, 'price', []),
+        // The price's own time, in the same batch and so at the same block as the price.
+        round: priceFeed ? batch.add(priceFeed.feed, chainlinkFeedAbi, 'latestRoundData', []) : null,
+        through: priceFeed?.through ?? null,
+        current: priceFeed?.through ? batch.add(market.params.oracle, morphoOracleFeedAbi, 'currentOracle', []) : null,
       },
     };
   });
@@ -371,6 +455,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
       })),
       position: map(plan.position.outcome, ([, borrowShares, collateral]) => ({ borrowShares, collateral })),
       price: plan.price.outcome,
+      priceUpdatedAt: morphoPriceUpdatedAt({ round: plan.round?.outcome ?? null, through: plan.through, current: plan.current?.outcome ?? null }),
       borrowRatePerSecond: rateOutcome,
     });
   }

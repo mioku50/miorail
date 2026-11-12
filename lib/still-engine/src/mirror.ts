@@ -459,6 +459,11 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
   line.protocolFactorBps = Number(mulDiv(lltv, BPS, WAD, 'down'));
   line.stillFactorBps = Number(mulDiv(mulDiv(lltv, BPS, WAD, 'down'), share, BPS, 'down'));
   const unit = 10n ** BigInt(asset.decimals);
+  // The time of that price, when the feed behind it was read: said beside the price and used
+  // for nothing (audit DATA-3). A feed's clock ahead of the block is not a time.
+  if (price !== undefined && market.priceUpdatedAt.ok && market.priceUpdatedAt.value > 0n && market.priceUpdatedAt.value <= snapshot.block.timestamp) {
+    line.priceUpdatedAt = iso(market.priceUpdatedAt.value);
+  }
   if (price !== undefined) {
     line.priceCents = mulDiv(price, unit, PRICE_SCALE_MORPHO * 10n ** 4n, 'down').toString();
     if (wallet !== undefined && collateral !== undefined) {

@@ -98,6 +98,8 @@ export interface Holdings {
   /** The risk premium Aave stored for the position, in bps; null for one that was not read. Default 0. */
   aaveRiskPremium?: bigint | null;
   morpho?: Partial<Record<CryptoId, { collateral: bigint; borrowShares: bigint }>>;
+  /** Seconds the feed behind a Morpho market's price last answered at; a market without one was not read. */
+  morphoPriceAt?: Partial<Record<CryptoId, bigint>>;
 }
 
 const seconds = (iso: string): bigint => BigInt(Date.parse(iso) / 1000);
@@ -168,6 +170,7 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
       }),
       position: ok(position),
       price: ok(id === 'cbBTC' ? CBBTC_PRICE : id === 'PAXG' ? PAXG_PRICE : WETH_PRICE),
+      priceUpdatedAt: h.morphoPriceAt?.[id] === undefined ? reverted() : ok(h.morphoPriceAt[id]),
       borrowRatePerSecond: ok(1_665_852_318n),
     });
   }

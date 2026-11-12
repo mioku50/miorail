@@ -54,6 +54,14 @@ export const morphoAbi = parseAbi([
 
 export const morphoOracleAbi = parseAbi(['function price() view returns (uint256)']);
 
+// Where a Morpho market's price comes from, so the time of that price can be read beside it.
+// A MorphoChainlinkOracleV2 names the feed that prices its collateral (BASE_FEED_1, immutable);
+// a meta-oracle (PAXG's) names the oracle it reads now, and can move to its backup.
+export const morphoOracleFeedAbi = parseAbi([
+  'function BASE_FEED_1() view returns (address)',
+  'function currentOracle() view returns (address)',
+]);
+
 export const morphoIrmAbi = parseAbi([
   'function borrowRateView((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, (uint128 totalSupplyAssets, uint128 totalSupplyShares, uint128 totalBorrowAssets, uint128 totalBorrowShares, uint128 lastUpdate, uint128 fee) market) view returns (uint256)',
 ]);
