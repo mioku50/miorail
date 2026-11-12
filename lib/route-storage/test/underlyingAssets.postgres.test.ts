@@ -70,8 +70,10 @@ if (!throwaway) {
   });
 } else {
   underlyingAssetContractV1('postgres', async () => {
+    // CASCADE: the supply tables of 0060 reference `representation_underlying`,
+    // and Postgres refuses to truncate a referenced table on its own.
     await sql!.unsafe(
-      'TRUNCATE underlying_identity_observation, representation_underlying, underlying_asset',
+      'TRUNCATE underlying_identity_observation, representation_underlying, underlying_asset CASCADE',
     );
     const executor: SqlTemplateExecutor = (strings, ...values) =>
       (

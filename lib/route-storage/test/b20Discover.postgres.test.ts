@@ -106,6 +106,8 @@ before(async () => {
     '0028_t69a_b20_discover_ingestion.sql',
     // T69-C.1 — adds the nullable block_timestamp the launch rows now carry.
     '0030_t69c1_b20_launch_block_timestamp.sql',
+    // Every launch the repository writes names where it came from.
+    '0045_b20_launch_ingestion_source.sql',
   ]) {
     const step = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(step.replaceAll('--> statement-breakpoint', ''));

@@ -17,4 +17,15 @@ CREATE TABLE IF NOT EXISTS still_wallet_readings (
 CREATE INDEX IF NOT EXISTS still_wallet_readings_latest
   ON still_wallet_readings (wallet_address, block_time DESC);
 --> statement-breakpoint
-ALTER TABLE still_wallet_readings OWNER TO miorail_user;
+-- Production runs migrations as `miorail_user`, and the table must be its own.
+-- A database without that role (a fresh clone, CI) has nobody to hand it to:
+-- naming the role outright stopped the whole chain there with "role does not
+-- exist". Editing an applied migration is safe: drizzle applies a file by its
+-- journal time and never compares its text.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'miorail_user') THEN
+    EXECUTE 'ALTER TABLE still_wallet_readings OWNER TO miorail_user';
+  END IF;
+END
+$$;

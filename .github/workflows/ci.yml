@@ -66,6 +66,15 @@ jobs:
       - name: Unit tests (database disabled)
         run: pnpm test:unit
 
+      # The repositories' SQL and the migrations' constraints, tested by writing rows: each file
+      # alone, in an empty database of its own on the service above. These files skip unless this
+      # variable names a local Postgres, and for months nothing set it; when they were run at
+      # last, six had rotted and five more skipped anyway. Here a file that skips fails the job.
+      - name: Storage tests on Postgres (one empty database per file)
+        env:
+          MIOAGENT_MIGRATION_TEST_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: pnpm test:storage
+
       - name: Install Chromium for frontend checks
         working-directory: artifacts/interface
         run: pnpm exec playwright install --with-deps chromium

@@ -45,6 +45,32 @@ const NOW = new Date('2026-08-06T12:00:00.000Z');
 
 let sql: ReturnType<typeof postgres> | null = null;
 
+// 0031 creates the table; 0063 and 0064 add the two columns the repository
+// writes with every row (`client_kind`, `expires_at`). Applying 0031 alone left
+// three of these cases failing on a missing column, unseen, because nothing ran
+// this file.
+const MIGRATIONS = [
+  '0031_t72c_mcp_execution_audit.sql',
+  '0063_mcp_handoff_client_kind.sql',
+  '0064_connected_apps_oauth.sql',
+] as const;
+
+/**
+ * 0064 also creates the browser-session and OAuth tables, which reference
+ * `users`: a table this file does not build. Only its statements about the
+ * audit table are applied, and they are taken from the migration's own text.
+ */
+function auditStatementsV1(file: string, migration: string): string {
+  if (file !== '0064_connected_apps_oauth.sql') return migration;
+  const statements = migration
+    // Comments first: one of them holds a semicolon of its own.
+    .replace(/--.*$/gm, '')
+    .split(';')
+    .filter((statement) => statement.includes('"mcp_execution_audit'));
+  assert.ok(statements.length > 0, '0064 no longer touches the audit table');
+  return `${statements.join(';')};`;
+}
+
 function drizzleDir(): string {
   const cwd = process.cwd();
   if (cwd.endsWith('lib/db')) return resolve(cwd, 'drizzle');
@@ -57,8 +83,10 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS mcp_execution_audit, mcp_handoff_revocations CASCADE');
   await sql.unsafe('DROP FUNCTION IF EXISTS mcp_execution_audit_append_only() CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0031_t72c_mcp_execution_audit.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  for (const file of MIGRATIONS) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(auditStatementsV1(file, migration).replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {

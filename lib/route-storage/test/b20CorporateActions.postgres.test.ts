@@ -47,6 +47,9 @@ before(async () => {
   await applyV1('0051_market_tail.sql');
   await applyV1('0055_rwa_signals.sql');
   await applyV1('0069_b20_corporate_actions.sql');
+  // The repository writes `effective_at`, which 0070 adds. Without it seven of
+  // these cases failed on a missing column, unseen, because nothing ran them.
+  await applyV1('0070_b20_multiplier_schedule.sql');
 });
 
 after(async () => {

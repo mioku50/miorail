@@ -145,7 +145,13 @@ if (!throwaway) {
       await asset(id, { token_address: '0xb200000000000000000000397293cb8cda9a10c5', ticker: 'SNDKc' });
       // ON DELETE RESTRICT. Deleting the evidence would leave a claim of
       // officialness with nothing behind it.
-      await assert.rejects(sql!`DELETE FROM official_asset_sources WHERE id = ${id}::bigint`, /violates foreign key/);
+      // Matched by the constraint's name: Postgres 18 words the refusal as
+      // "violates RESTRICT setting of foreign key constraint", older majors as
+      // "violates foreign key constraint", and this had read only the old words.
+      await assert.rejects(
+        sql!`DELETE FROM official_asset_sources WHERE id = ${id}::bigint`,
+        /official_assets_source_id_fkey/,
+      );
     });
 
     test('last seen cannot precede first seen', async () => {

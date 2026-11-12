@@ -1,8 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { assertSafeTestDatabaseEnvironment } from '../lib/db/testDatabaseGuard';
+import {
+  connectThrowawayAdminV1,
+  parseTapTallyV1,
+  readsThrowawayUrlV1,
+  THROWAWAY_APP_ROLE_V1,
+  THROWAWAY_URL_ENV_V1,
+  throwawayDatabaseNameV1,
+  throwawayDatabaseUrlV1,
+  throwawayRefusalV1,
+  throwawayServerV1,
+} from '../lib/db/throwawayDatabases';
 
 const root = resolve(process.cwd());
 const suite = process.argv[2];
@@ -57,6 +68,23 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv, cwd = root
   });
 }
 
+/** Like `run`, with the child's output also kept, to read what it says it did. */
+function runCaptured(command: string, args: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; output: string }> {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'], shell: false });
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      output += chunk;
+    });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (signal) reject(new Error(`${command} terminated by ${signal}`));
+      else resolveRun({ code: code ?? 1, output });
+    });
+  });
+}
+
 function packageDirectory(file: string): string {
   const parts = file.split('/');
   if ((parts[0] === 'lib' || parts[0] === 'artifacts') && parts.length > 2) {
@@ -94,6 +122,10 @@ async function runUnitTests(): Promise<number> {
   delete env.MIOAGENT_TEST_RUN_ID;
   delete env.MIOAGENT_TEST_TENANT_ID;
   delete env.MIOAGENT_TEST_WALLET;
+  // The storage files are also listed here, where they skip. Left set, this
+  // variable would start all of them in one shared database, which is not a
+  // run of them: `test:storage` gives each its own.
+  delete env[THROWAWAY_URL_ENV_V1];
   const files = (await testFiles(root)).filter((file) => !DB_TEST_FILES.has(file));
   console.log(`Running ${files.length} unit test files with database access disabled.`);
   return runGroupedTests(files, env, 4);
@@ -128,14 +160,102 @@ async function runDatabaseTests(): Promise<number> {
   return exitCode;
 }
 
+/**
+ * The repositories' SQL and the migrations' constraints, each file alone in an
+ * empty database of its own on a local Postgres. See lib/db/throwawayDatabases.ts
+ * for why a skipped file fails this run.
+ */
+async function runStorageTests(): Promise<number> {
+  const server = throwawayServerV1(process.env[THROWAWAY_URL_ENV_V1]);
+  if (!server) {
+    console.error(
+      `${THROWAWAY_URL_ENV_V1} must name a Postgres on this machine, for example\n`
+      + '  docker run -d --rm --name mio-pg18-test -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 postgres:18-alpine\n'
+      + `  ${THROWAWAY_URL_ENV_V1}=postgres://postgres:postgres@127.0.0.1:55432/postgres pnpm test:storage`,
+    );
+    return 2;
+  }
+  // Found by the variable they read, not by a list: a new file joins by itself.
+  const files: Array<{ file: string; source: string }> = [];
+  for (const file of await testFiles(root)) {
+    if (DB_TEST_FILES.has(file)) continue;
+    const source = await readFile(resolve(root, file), 'utf8');
+    if (readsThrowawayUrlV1(source)) files.push({ file, source });
+  }
+  if (files.length === 0) {
+    console.error('No storage test file was found; refusing to call that a pass.');
+    return 1;
+  }
+  console.log(`Running ${files.length} storage test files, each in its own empty database.`);
+
+  const runId = `${Date.now().toString(36)}${randomUUID().slice(0, 4)}`;
+  const admin = connectThrowawayAdminV1(server);
+  const refused: string[] = [];
+  let passed = 0;
+  try {
+    for (const [index, { file, source }] of files.entries()) {
+      const database = throwawayDatabaseNameV1(source, runId, index + 1);
+      const directory = packageDirectory(file);
+      const roleWasThere = await admin.roleExists(THROWAWAY_APP_ROLE_V1);
+      await admin.create(database);
+      let refusal: string | null;
+      try {
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          NODE_ENV: 'test',
+          MIOAGENT_TEST_SUITE: 'unit',
+          [THROWAWAY_URL_ENV_V1]: throwawayDatabaseUrlV1(server, database),
+        };
+        delete env.DATABASE_URL;
+        delete env.TEST_DATABASE_URL;
+        const { code, output } = await runCaptured(
+          'node',
+          ['--import', 'tsx', '--test', '--test-reporter=tap', directory === '.' ? file : file.slice(directory.length + 1)],
+          env,
+          resolve(root, directory),
+        );
+        const tally = parseTapTallyV1(output);
+        refusal = throwawayRefusalV1(code, tally, await admin.tableCount(database));
+        if (refusal) {
+          process.stdout.write(output);
+          console.log(`REFUSED ${file}: ${refusal}`);
+          refused.push(`${file}: ${refusal}`);
+        } else {
+          passed += tally!.pass;
+          console.log(`ok ${file} (${tally!.pass} passed)`);
+        }
+      } finally {
+        await admin.drop(database);
+        // A file that made the production role leaves the server as it found
+        // it, so the next file again starts where a fresh clone does: with no
+        // such role.
+        if (!roleWasThere) await admin.dropRole(THROWAWAY_APP_ROLE_V1);
+      }
+    }
+  } finally {
+    await admin.end();
+  }
+  if (refused.length > 0) {
+    console.error(`\n${refused.length} of ${files.length} storage test files did not pass:`);
+    for (const line of refused) console.error(`  ${line}`);
+    return 1;
+  }
+  console.log(`All ${files.length} storage test files passed (${passed} tests).`);
+  return 0;
+}
+
 async function main(): Promise<void> {
-  if (suite !== 'unit' && suite !== 'db') {
-    console.error('Usage: node --import tsx scripts/run-tests.ts <unit|db>');
+  if (suite !== 'unit' && suite !== 'db' && suite !== 'storage') {
+    console.error('Usage: node --import tsx scripts/run-tests.ts <unit|db|storage>');
     process.exitCode = 2;
     return;
   }
 
-  process.exitCode = suite === 'unit' ? await runUnitTests() : await runDatabaseTests();
+  process.exitCode = suite === 'unit'
+    ? await runUnitTests()
+    : suite === 'db'
+      ? await runDatabaseTests()
+      : await runStorageTests();
 }
 
 void main();

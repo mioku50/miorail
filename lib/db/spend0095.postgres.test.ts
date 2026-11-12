@@ -35,7 +35,7 @@ describe('wallet payment SQL in an isolated temporary schema', { skip: !enabled 
     sql = postgres(safe.url!, { max: 4, prepare: false, connection: { search_path: schema }, onnotice: () => {} });
     await sql.unsafe('CREATE TABLE users (id text PRIMARY KEY)');
     await sql`INSERT INTO users (id) VALUES (${OWNER.tenantId}), (${`eip155:8453:${OTHER}`})`;
-    const migration = (await readFile(migrationUrl, 'utf8')).replaceAll('--> statement-breakpoint', '').replace('ALTER TABLE spend_wallet_payments OWNER TO miorail_user;', '');
+    const migration = (await readFile(migrationUrl, 'utf8')).replaceAll('--> statement-breakpoint', '');
     await sql.unsafe(migration);
     store = createDatabaseSpendWalletStoreV1(async (strings, ...values) => await sql(strings, ...(values as never[])) as unknown as Record<string, unknown>[]);
   });

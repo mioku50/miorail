@@ -9,6 +9,7 @@
     "typecheck": "pnpm -r exec tsc --noEmit",
     "test:unit": "node --import tsx scripts/run-tests.ts unit",
     "test:db": "node --import tsx scripts/run-tests.ts db",
+    "test:storage": "node --import tsx scripts/run-tests.ts storage",
     "test": "pnpm test:unit && pnpm test:db",
     "validate:tasks": "node scripts/validate_tasks.js",
     "lint": "eslint . && node scripts/lint-markdown.mjs",
