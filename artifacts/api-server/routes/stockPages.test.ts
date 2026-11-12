@@ -11,7 +11,6 @@ import type { ReopenSharedResultV1 } from '@mioagent/rwa-market-reality/reopen-g
 // Farcaster's own schema for an embed, as its clients parse one.
 import { miniAppEmbedNextSchema } from '@farcaster/miniapp-core/dist/schemas/embeds.js';
 import {
-  DOCUMENT_CSP_REPORT_ONLY_V1,
   DOCUMENT_CSP_V1,
   renderStockPageHtmlV1,
   resetStockPagesPreviewCacheV1,
@@ -102,19 +101,19 @@ test('the document leaves with the static server’s rules, not the API’s', as
   stubV1(t);
   const response = await request(appV1()).get('/stocks/nvda').expect(200);
   // Helmet's CSP would block the wallet connectors and fonts the page loads. The document has its own
-  // (audit AUTH-7): two rules nothing on the page can meet are in force, the script rule only reports,
-  // and nothing says who may frame it. nginx sends the same two with the static file.
-  assert.equal(response.headers['content-security-policy'], "object-src 'none'; base-uri 'self'");
-  // It names where to report to: without that there was nothing to watch (2026-11-12).
+  // (audit AUTH-7): no plugins, no <base>, and only its own scripts, enforced since the operator's wallets
+  // reported nothing (2026-11-12); nothing says who may frame it. nginx sends the same with the static file.
   assert.equal(
-    response.headers['content-security-policy-report-only'],
-    "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; report-uri /api/public/csp-report",
+    response.headers['content-security-policy'],
+    "object-src 'none'; base-uri 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; report-uri /api/public/csp-report",
   );
+  // Enforced, and still reporting: a wallet the rule stops is seen the day it happens.
+  assert.equal(response.headers['content-security-policy-report-only'], undefined);
   assert.doesNotMatch(String(response.headers['content-security-policy']), /default-src|frame-ancestors|connect-src|style-src|img-src/);
   const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
   const nginx = readFileSync(repo('ops/nginx/miorail-app.conf'), 'utf8');
   assert.ok(nginx.includes(`add_header Content-Security-Policy "${DOCUMENT_CSP_V1}" always;`));
-  assert.ok(nginx.includes(`add_header Content-Security-Policy-Report-Only "${DOCUMENT_CSP_REPORT_ONLY_V1}" always;`));
+  assert.ok(!nginx.includes('Content-Security-Policy-Report-Only'));
   assert.equal(response.headers['referrer-policy'], 'strict-origin-when-cross-origin');
   assert.match(String(response.headers['cache-control']), /no-cache/);
   assert.match(String(response.headers['content-type']), /text\/html/);

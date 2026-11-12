@@ -453,27 +453,27 @@ async function reopenShareV1(code: string): Promise<ReopenSharedResultV1 | null>
  */
 /**
  * What the document itself may do (audit AUTH-7, 2026-11-10). The page signs loans, and had no policy of
- * its own at all. Two rules are in force, because nothing on the page can meet them: no plugin content
- * and no `<base>` that points its relative addresses elsewhere. The rule for scripts (the page's own
- * files only) is sent as report-only: wallet connectors are third-party code, and a rule that stops one
- * of them stops a person signing, so it is watched in real browsers before it is enforced. Watching
- * needs somewhere to look: until 2026-11-12 the rule named no address to report to, so a violation
- * showed only in the console of the person it happened to. It now reports to /api/public/csp-report
- * (lib/cspReports.ts), which is where the one violation of our own was found: the Base Account
- * library's inline telemetry script, since turned off.
+ * its own at all. No plugin content, and no `<base>` that points its relative addresses elsewhere. And
+ * scripts: the page's own files only (with WebAssembly, and workers from its own files or blobs).
+ *
+ * The script rule was sent as report-only first: wallet connectors are third-party code, and a rule that
+ * stops one of them stops a person signing, so it was watched in real browsers before it was enforced.
+ * Its reports go to /api/public/csp-report (lib/cspReports.ts). They found one violation of our own, the
+ * Base Account library's inline telemetry script, since turned off; then the operator's own session of
+ * 2026-11-12 with Rabby, MetaMask and Base Account (connect, swaps, a repay, a buy and a sale) reported
+ * nothing, and the rule is enforced. It still reports, so a wallet it stops is seen the day it happens.
  *
  * Who may frame the page is left alone on purpose: a Farcaster client opens a mini app in a frame of its
  * own page, and any client may be one.
  *
- * nginx sends the same two headers with the static index.html (ops/nginx/miorail-app.conf).
+ * nginx sends the same header with the static index.html (ops/nginx/miorail-app.conf).
  */
-export const DOCUMENT_CSP_V1 = "object-src 'none'; base-uri 'self'";
-export const DOCUMENT_CSP_REPORT_ONLY_V1 = "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; report-uri /api/public/csp-report";
+export const DOCUMENT_CSP_V1 = "object-src 'none'; base-uri 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; report-uri /api/public/csp-report";
 
 export function sendDocumentV1(res: Response, status: number, html: string): void {
   res.removeHeader('Content-Security-Policy');
+  res.removeHeader('Content-Security-Policy-Report-Only');
   res.setHeader('Content-Security-Policy', DOCUMENT_CSP_V1);
-  res.setHeader('Content-Security-Policy-Report-Only', DOCUMENT_CSP_REPORT_ONLY_V1);
   // Nor its frame guard: Farcaster on the web opens a mini app in a frame of
   // its own page, and the static copy has never refused one.
   res.removeHeader('X-Frame-Options');

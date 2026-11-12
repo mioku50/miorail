@@ -6,7 +6,7 @@ import request from 'supertest';
 import type { CspReportFactV1 } from '../lib/cspReports.js';
 import { boundedBody, bodyMembersV1, REQUEST_BODY_MAX_MEMBERS_V1 } from '../middleware/bodyBounds.js';
 import { cspReportRouter, cspReportRuntime } from './cspReport.js';
-import { DOCUMENT_CSP_REPORT_ONLY_V1 } from './stockPages.js';
+import { DOCUMENT_CSP_V1 } from './stockPages.js';
 
 const originalWrite = cspReportRuntime.write;
 
@@ -31,7 +31,7 @@ afterEach(() => {
 
 describe('POST /api/public/csp-report', () => {
   it('is the address the page\'s rule reports to', () => {
-    assert.match(DOCUMENT_CSP_REPORT_ONLY_V1, /; report-uri \/api\/public\/csp-report$/);
+    assert.match(DOCUMENT_CSP_V1, /; report-uri \/api\/public\/csp-report$/);
   });
 
   it('takes a browser\'s report in the media type a browser sends, and writes what identifies the script', async () => {
