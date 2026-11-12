@@ -10,6 +10,7 @@ import App from './app/App';
 import { AuthProvider } from './app/AuthProvider';
 import { AppErrorBoundary } from './app/AppErrorBoundary';
 import { detectBaseAppEarly } from './lib/detectBaseAppEarly';
+import { BASE_ACCOUNT_PREFERENCE_V1 } from './lib/baseAccountPreference';
 import { detectFarcasterHostV1, type FarcasterHostV1 } from './lib/miniAppHost';
 import { isMobileBrowserV1 } from './lib/walletChoices';
 import { viewportForScreenV1 } from './lib/phoneScale';
@@ -74,7 +75,7 @@ function start(farcaster: FarcasterHostV1 | null): void {
     chains: [base, baseSepolia],
     connectors: inBaseApp || farcaster
       ? [injected()]
-      : [injected(), baseAccount({ appName: 'Miorail' }), ...pairedWalletsV1()],
+      : [injected(), baseAccount({ appName: 'Miorail', preference: BASE_ACCOUNT_PREFERENCE_V1 }), ...pairedWalletsV1()],
     transports: {
       [base.id]: http(),
       [baseSepolia.id]: http(),

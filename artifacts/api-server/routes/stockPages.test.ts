@@ -105,7 +105,11 @@ test('the document leaves with the static server’s rules, not the API’s', as
   // (audit AUTH-7): two rules nothing on the page can meet are in force, the script rule only reports,
   // and nothing says who may frame it. nginx sends the same two with the static file.
   assert.equal(response.headers['content-security-policy'], "object-src 'none'; base-uri 'self'");
-  assert.equal(response.headers['content-security-policy-report-only'], "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:");
+  // It names where to report to: without that there was nothing to watch (2026-11-12).
+  assert.equal(
+    response.headers['content-security-policy-report-only'],
+    "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; report-uri /api/public/csp-report",
+  );
   assert.doesNotMatch(String(response.headers['content-security-policy']), /default-src|frame-ancestors|connect-src|style-src|img-src/);
   const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
   const nginx = readFileSync(repo('ops/nginx/miorail-app.conf'), 'utf8');

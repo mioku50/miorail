@@ -30,6 +30,7 @@ import { publicStillRouter } from './stillPublic';
 import { publicStillEligibilityRouter, stillEligibilityRouter } from './stillEligibility';
 import { stillMineRouter } from './stillMine';
 import { stillSpendRouter } from './stillSpend';
+import { cspReportRouter } from './cspReport';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -44,6 +45,8 @@ routes.use('/public', publicGiftRouter);
 // A Found card's figures, for the page a shared card opens.
 routes.use('/public', publicFoundRouter);
 routes.use('/public', publicMetricsRouter);
+// A browser reports a script the page's rule stopped. It has no session to send.
+routes.use('/public', cspReportRouter);
 // "Is this the real one" opens with no session for the same reason a proof
 // does: the reader holding an unknown address is the reader with no account.
 routes.use('/public', publicIdentityRouter);
