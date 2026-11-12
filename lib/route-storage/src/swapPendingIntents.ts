@@ -17,7 +17,10 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-byte address');
-const AssetSymbol = z.enum(['USDC', 'ETH', 'WETH']).nullable();
+// The trusted registry's symbols (lib/intent-core TRUSTED_ASSET_SYMBOLS), and
+// the same list as the table's CHECK constraint (migration 0098).
+export const SWAP_PENDING_ASSET_SYMBOLS_V1 = ['USDC', 'ETH', 'WETH', 'PAXG'] as const;
+const AssetSymbol = z.enum(SWAP_PENDING_ASSET_SYMBOLS_V1).nullable();
 const ExactDecimal = z
   .string()
   .regex(/^\d+(?:\.\d+)?$/, 'expected an exact decimal amount')

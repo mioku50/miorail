@@ -3,9 +3,9 @@ import { getAddress, isAddress } from 'viem';
 // ---------------------------------------------------------------------------
 // Who a token is, read from the chain.
 //
-// The three trusted assets are known by address and always were. Everything
-// beyond them has to be identified before it can be routed, and there is
-// exactly one honest source for that: the contract itself.
+// The trusted assets (USDC, ETH, WETH and, since 2026-11-12, PAXG) are known
+// by address. Everything beyond them has to be identified before it can be
+// routed, and there is exactly one honest source for that: the contract itself.
 //
 // The rule this module exists to enforce: **an address comes from the user or
 // from the chain, never from a model.** A language model asked for "the MIO

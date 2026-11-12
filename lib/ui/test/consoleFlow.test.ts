@@ -613,6 +613,28 @@ describe('a swap that the server answered with a question is terminal', () => {
     assert.equal(failure!.detail, 'How much MIO do you want to swap?');
   });
 
+  test('the answer field shows the shape of the answer the question asks for', () => {
+    // 2026-11-12: under every question the empty field said "USDC", and a
+    // question about the token received was answered "120".
+    const placeholder = (code: string, missingFields: string[]) =>
+      swapTerminalFailureV1({
+        outcome: 'needs_clarification',
+        clarification: { message: 'A question.', code, missingFields },
+      })!.answerPlaceholder;
+    assert.equal(placeholder('amount_required', ['amount']), 'An amount, such as 100');
+    assert.equal(placeholder('exact_amount_required', ['amount']), 'An amount, such as 100');
+    assert.equal(placeholder('to_asset_required', ['toAsset']), 'A token, such as USDC, ETH or PAXG');
+    assert.equal(placeholder('from_asset_required', ['fromAsset']), 'A token, such as USDC, ETH or PAXG');
+    assert.equal(placeholder('asset_unknown', ['toAsset']), 'A token name, or its 0x… contract address');
+    // A question with no field of its own gets no example to misread.
+    assert.equal(placeholder('protocol_conflict', ['protocolConstraint']), 'Your answer');
+    // An older server sends neither: no example either.
+    assert.equal(
+      swapTerminalFailureV1({ outcome: 'needs_clarification', clarification: { message: 'A question.' } })!.answerPlaceholder,
+      'Your answer',
+    );
+  });
+
   test('a rejection lists every issue, not just the first', () => {
     // A goal can be short an amount AND name an asset Miorail will not route.
     // Fixing one leaves the other, and a user told only about the first would

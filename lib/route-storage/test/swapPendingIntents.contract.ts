@@ -65,6 +65,20 @@ export function swapPendingIntentContractV1(
       assert.equal(read?.executionRequested, true);
     });
 
+    test('gold (PAXG) is kept on either side, as the registry names it', async () => {
+      // "Swap USDC to PAXG" is answered with "120" on the next turn. Refused
+      // here (or by the CHECK of 0036), the pair was lost before the answer.
+      const { repository } = await makeRepository();
+      await repository.upsertPendingIntent(
+        pendingFixtureV1({ amountDecimal: null, fromAssetSymbol: 'USDC', toAssetSymbol: 'PAXG' }),
+      );
+      assert.equal((await repository.readPendingIntent(binding, during))?.toAssetSymbol, 'PAXG');
+      await repository.upsertPendingIntent(
+        pendingFixtureV1({ amountDecimal: '0.01', fromAssetSymbol: 'PAXG', toAssetSymbol: null }),
+      );
+      assert.equal((await repository.readPendingIntent(binding, during))?.fromAssetSymbol, 'PAXG');
+    });
+
     test('an unstated constraint stays null rather than becoming a default', async () => {
       // The difference between "asked for 0.5%" and "never mentioned slippage"
       // is the whole reason these columns are nullable: a later turn inherits
@@ -157,6 +171,9 @@ export function swapPendingIntentContractV1(
         ['an untrusted asset', { fromAssetSymbol: 'DOGE' }],
         // A swap between one asset and itself is not a swap.
         ['the same asset twice', { fromAssetSymbol: 'ETH', toAssetSymbol: 'ETH' }],
+        ['gold twice', { fromAssetSymbol: 'PAXG', toAssetSymbol: 'PAXG' }],
+        // Only the registry's own symbol is stored, never an alias.
+        ['an alias of gold', { toAssetSymbol: 'GOLD' }],
         // Nothing grounded means nothing to continue.
         ['nothing grounded', { amountDecimal: null, fromAssetSymbol: null, toAssetSymbol: null }],
         ['an uppercase wallet', { walletAddress: WALLET.toUpperCase() }],

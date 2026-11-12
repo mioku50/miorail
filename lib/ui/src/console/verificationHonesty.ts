@@ -64,12 +64,14 @@ export interface VerificationHonestyInputV1 {
   simulation: { state: string; detail?: string | null } | null;
 }
 
-/** The three assets this repo pins. An identified token is described by what
+/** The contracts the trusted swap registry pins (lib/intent-core; native ETH
+ * has none): USDC, WETH and PAXG. An identified token is described by what
  * was READ; a canonical one by the fact that it is pinned, which is a stronger
  * statement and a different one. */
 const CANONICAL_ADDRESSES_V1 = new Set([
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
   '0x4200000000000000000000000000000000000006',
+  '0xe904aea5e1b110c9174728fa2effc8aed19e98ef',
 ]);
 
 /**

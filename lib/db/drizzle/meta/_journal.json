@@ -687,6 +687,13 @@
       "when": 1794477600000,
       "tag": "0097_market_venue_activity_totals",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1794520800000,
+      "tag": "0098_swap_pending_intents_paxg",
+      "breakpoints": true
     }
   ]
 }

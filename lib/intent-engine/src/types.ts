@@ -1,4 +1,4 @@
-import type { SemanticConversationMessage } from '@mioagent/intent-core';
+import type { SemanticConversationMessage, TrustedAssetSymbol } from '@mioagent/intent-core';
 import type { RouteIntentV1 } from '@mioagent/route-domain';
 
 export type IntentLocaleV1 = 'en' | 'ru';
@@ -84,8 +84,10 @@ export interface PendingSwapIntentV2 extends CarriedSwapConstraintsV2 {
   createdAt: string;
   expiresAt: string;
   amountDecimal: string | null;
-  fromAssetSymbol: 'USDC' | 'ETH' | 'WETH' | null;
-  toAssetSymbol: 'USDC' | 'ETH' | 'WETH' | null;
+  /** A registry symbol, and only for the registry's own asset: a token named by
+   * address is never stored by the name its contract answers. */
+  fromAssetSymbol: TrustedAssetSymbol | null;
+  toAssetSymbol: TrustedAssetSymbol | null;
 }
 
 export interface IntentRuntimeContextV2 {

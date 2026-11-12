@@ -508,3 +508,52 @@ describe('a router that stopped answering rests', () => {
     assert.deepEqual(rest.resting(), ['hydrex']);
   });
 });
+
+// 2026-11-12, Swap AI: "Swap USDC to PAXG", then "120". Both turns through the
+// real resolver and the pending-intent store, as the page drives them.
+test('gold over two turns: the pair is kept, and the answer finishes the goal', async () => {
+  const pendingIntents = createMemorySwapPendingIntentRepository();
+  const answers = [
+    { goal: 'swap', amount: null, fromAsset: 'USDC', toAsset: 'PAXG', chainId: null },
+    { goal: 'swap', amount: '120', fromAsset: null, toAsset: null, chainId: null },
+  ];
+  let evaluated: { fromAsset: unknown; toAsset: unknown; amount: { amountAtomic: string } } | null = null;
+  const coordinator = new RoutePlanCoordinator({
+    llm: { generate: async () => ({ message: { role: 'assistant', content: JSON.stringify(answers.shift()) } }) } as never,
+    engine: {
+      evaluate: async (request: { intent: typeof evaluated }) => {
+        evaluated = request.intent;
+        throw new Error('stop after the intent');
+      },
+    } as never,
+    adapters: [],
+    repository: new InMemoryRouteStorageRepository(),
+    pendingIntents,
+  });
+  const first = await coordinator.evaluate({ ...input, message: 'Swap USDC to PAXG', requestId: 'gold-1' });
+  assert.equal(first.outcome, 'needs_clarification');
+  const stored = await pendingIntents.readPendingIntent({ tenantId: input.tenantId, walletAddress: WALLET }, NOW);
+  assert.equal(stored?.fromAssetSymbol, 'USDC');
+  assert.equal(stored?.toAssetSymbol, 'PAXG');
+
+  await assert.rejects(
+    () => coordinator.evaluate({ ...input, message: '120', requestId: 'gold-2', now: new Date(NOW.getTime() + 30_000) }),
+    /stop after the intent/,
+  );
+  assert.equal((evaluated as { amount: { amountAtomic: string } } | null)?.amount.amountAtomic, '120000000');
+  assert.equal((evaluated as { toAsset: { address: string } } | null)?.toAsset.address, '0xe904aea5e1b110c9174728fa2effc8aed19e98ef');
+});
+
+test('the registry, the pending-intent row and the table name the same assets', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { resolve } = await import('node:path');
+  const { TRUSTED_ASSET_SYMBOLS } = await import('@mioagent/intent-core');
+  const { SWAP_PENDING_ASSET_SYMBOLS_V1 } = await import('@mioagent/route-storage');
+  assert.deepEqual([...SWAP_PENDING_ASSET_SYMBOLS_V1], [...TRUSTED_ASSET_SYMBOLS]);
+  // The runner starts this package's tests in artifacts/api-server.
+  const root = process.cwd().endsWith('artifacts/api-server') ? resolve(process.cwd(), '../..') : process.cwd();
+  const sql = await readFile(resolve(root, 'lib/db/drizzle/0098_swap_pending_intents_paxg.sql'), 'utf8');
+  const lists = [...sql.matchAll(/IN \(([^)]*)\)/g)].map((match) => match[1]!.split(',').map((item) => item.trim().replace(/'/g, '')));
+  assert.equal(lists.length, 2);
+  for (const list of lists) assert.deepEqual(list, [...TRUSTED_ASSET_SYMBOLS]);
+});

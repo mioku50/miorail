@@ -206,7 +206,7 @@ export function routeSideV1(asset: AssetRefV1 | null | undefined): string | null
 const BASE_WETH_ADDRESS_V1 = '0x4200000000000000000000000000000000000006';
 
 /**
- * An asset a provider may be ASKED about — the canonical three, or any
+ * An asset a provider may be ASKED about — a trusted registry asset, or any
  * well-formed Base ERC-20.
  *
  * This is not a claim that the token is safe. It says the asset is well enough
@@ -254,9 +254,9 @@ function wellFormedSwapIntentV1(intent: RouteIntentV1): boolean {
   );
 }
 
-/** The canonical three only. Aerodrome keeps this: its route search is pinned
- * to a known pool set, so asking it about an arbitrary token would produce a
- * "no route" that says nothing. */
+/** Both sides in the trusted registry (USDC, ETH, WETH, PAXG). Only the
+ * manifested, not-yet-released providers still use this gate. Aerodrome left
+ * it for `supportsRoutableSwapIntentV1`: it asks the Router about any pair. */
 export function supportsSwapIntent(intent: RouteIntentV1): boolean {
   return (
     wellFormedSwapIntentV1(intent) &&

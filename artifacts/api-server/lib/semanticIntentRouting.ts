@@ -17,6 +17,7 @@ import {
   type StreamToolTrace,
 } from './streamReadRouting.js';
 import { screenPartnerToolResult } from './partnerResultTrust.js';
+import { STILL_PUBLIC_ORIGIN_V1 } from './stillOrigin.js';
 import {
   extractSemanticIntent,
   isFinancialLanguage,
@@ -59,6 +60,39 @@ function direct(
   toolCalls: StreamToolTrace[] = [],
 ): SemanticDirectResult {
   return { kind, content, toolCalls, ...(errorCode ? { errorCode } : {}) };
+}
+
+/**
+ * The tokens this chat's own quote and swap paths were built for.
+ *
+ * They name tokens by SYMBOL to Uniswap's quote tool, to Base MCP's swap tool
+ * and to the Base App runner, and only these three are checked there: Base
+ * MCP's tool would resolve any other symbol by its own list, against a verdict
+ * read for the input alone. The trusted registry is wider since PAXG joined it
+ * (2026-11-12), and that width belongs to Swap AI, where the address is pinned
+ * and both sides are judged before anything is prepared.
+ */
+type ChatSwapSymbolV1 = 'USDC' | 'ETH' | 'WETH';
+
+function chatSwapSymbolV1(symbol: string | undefined): ChatSwapSymbolV1 | null {
+  return symbol === 'USDC' || symbol === 'ETH' || symbol === 'WETH' ? symbol : null;
+}
+
+/** The pair, when this chat's own paths can carry it; null sends it to Swap AI. */
+function chatSwapPairV1(
+  normalized: NormalizedSemanticIntent,
+): { tokenIn: ChatSwapSymbolV1; tokenOut: ChatSwapSymbolV1 } | null {
+  const tokenIn = chatSwapSymbolV1(normalized.fromAsset?.symbol);
+  const tokenOut = chatSwapSymbolV1(normalized.toAsset?.symbol);
+  return tokenIn && tokenOut ? { tokenIn, tokenOut } : null;
+}
+
+function chatSwapElsewhereV1(): SemanticDirectResult {
+  return direct(
+    'semantic_clarification',
+    `This chat swaps USDC, ETH and WETH. Gold (PAXG) and other Base tokens are swapped in Swap AI: ${STILL_PUBLIC_ORIGIN_V1}/routes`,
+    'chat_swap_asset_unsupported',
+  );
 }
 
 function displayScreened(content: string): string {
@@ -270,13 +304,15 @@ export async function routeSemanticIntent(input: {
   if (normalized.intent === 'quote') {
     const clarification = semanticWriteClarification({ ...normalized, intent: 'swap' });
     if (clarification) return decision(direct('semantic_clarification', clarification, 'quote_parameters_required'));
+    const pair = chatSwapPairV1(normalized);
+    if (!pair) return decision(chatSwapElsewhereV1());
     const result = await runDirectQuoteRead({
       message: input.message,
       normalizedIntent: {
         quoteOnly: true,
         amountIn: normalized.amount!.kind === 'exact' ? normalized.amount!.value : undefined,
-        tokenIn: normalized.fromAsset!.symbol,
-        tokenOut: normalized.toAsset!.symbol,
+        tokenIn: pair.tokenIn,
+        tokenOut: pair.tokenOut,
       },
       walletAddress: input.walletAddress,
       tools: input.tools,
@@ -318,13 +354,15 @@ export async function routeSemanticIntent(input: {
     return decision(result || direct('base_mcp_send', 'Base MCP send is unavailable.', 'base_mcp_send_unavailable'));
   }
   if (normalized.intent === 'swap') {
+    const pair = chatSwapPairV1(normalized);
+    if (!pair) return decision(chatSwapElsewhereV1());
     const result = input.walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSwap({
       signal: input.signal,
       message: input.message,
       normalizedIntent: {
         amount: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',
-        tokenIn: normalized.fromAsset!.symbol,
-        tokenOut: normalized.toAsset!.symbol,
+        tokenIn: pair.tokenIn,
+        tokenOut: pair.tokenOut,
       },
       walletAddress: input.walletAddress,
       userConfirmedEnabled: input.userConfirmedEnabled,
@@ -333,8 +371,8 @@ export async function routeSemanticIntent(input: {
       message: input.message,
       normalizedIntent: {
         amount: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',
-        tokenIn: normalized.fromAsset!.symbol,
-        tokenOut: normalized.toAsset!.symbol,
+        tokenIn: pair.tokenIn,
+        tokenOut: pair.tokenOut,
       },
       walletAddress: input.walletAddress,
       tools: input.tools,

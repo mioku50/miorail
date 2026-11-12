@@ -465,7 +465,7 @@ export interface ComparingScreenModelV1 {
    * becomes terminal: no spinner survives, Candidates says it is finished
    * rather than "updating live", and the user gets a way out.
    */
-  failure: { title: string; detail: string; answerable?: boolean } | null;
+  failure: { title: string; detail: string; answerable?: boolean; answerPlaceholder?: string } | null;
   onEditGoal: () => void;
   /** Answers the server's question in place. Absent means the only way forward
    * is Edit goal — which is what a question with no answer field looked like. */
@@ -564,7 +564,7 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
                     id="mio-clarification-answer"
                     className="goalinput"
                     style={{ flex: 1, minWidth: 160 }}
-                    placeholder="USDC"
+                    placeholder={model.failure.answerPlaceholder ?? 'Your answer'}
                     value={answer}
                     disabled={model.answerPending}
                     onChange={(event) => model.onAnswerChange?.(event.target.value)}

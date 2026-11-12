@@ -1,7 +1,18 @@
 import { getAddress, isAddress } from 'viem';
 
+/**
+ * Every symbol the trusted Base registry holds, in one list.
+ *
+ * Other lists must agree with it: the pending-intent row (route-storage), its
+ * CHECK constraint (migration 0098), and the guard of a stored intent in the
+ * intent engine. That guard reads this list. The other two are kept equal by
+ * their tests.
+ */
+export const TRUSTED_ASSET_SYMBOLS = ['USDC', 'ETH', 'WETH', 'PAXG'] as const;
+export type TrustedAssetSymbol = (typeof TRUSTED_ASSET_SYMBOLS)[number];
+
 export interface TrustedAsset {
-  symbol: 'USDC' | 'ETH' | 'WETH';
+  symbol: TrustedAssetSymbol;
   address: string | null;
   decimals: number;
   native: boolean;
@@ -66,6 +77,20 @@ const TRUSTED_ASSETS: Record<string, TrustedAsset> = {
   WETH: {
     symbol: 'WETH',
     address: getAddress('0x4200000000000000000000000000000000000006'),
+    decimals: 18,
+    native: false,
+    source: 'trusted_base_registry',
+  },
+  // Paxos Gold, one token per fine troy ounce, the gold Still lends against
+  // (lib/still-engine registry, since 2026-11-07). Pinned so a person can say
+  // "gold" in Swap AI: on 2026-11-12, "Swap USDC to PAXG" got "Which exact
+  // token should be received?". Pinning does not skip any check: the
+  // token-security verdict and the Safety Kernel judge PAXG on every swap, as
+  // they judge USDC. Paxos can pause the token and freeze a holder, as Circle
+  // can freeze a USDC holder, so neither power is grounds to refuse it.
+  PAXG: {
+    symbol: 'PAXG',
+    address: getAddress('0xe904AEA5E1b110c9174728fA2efFc8aeD19E98Ef'),
     decimals: 18,
     native: false,
     source: 'trusted_base_registry',
@@ -180,6 +205,16 @@ const TRUSTED_ASSET_ALIASES: Record<string, keyof typeof TRUSTED_ASSETS> = {
   WRAPPEDETHER: 'WETH',
   ЮСДС: 'USDC',
   ЮСДЦ: 'USDC',
+  // Gold means PAXG, the one gold token this registry pins. The Russian
+  // entries are the noun's cases only. "Золотой" is an adjective and names
+  // nothing here.
+  GOLD: 'PAXG',
+  PAXOSGOLD: 'PAXG',
+  ЗОЛОТО: 'PAXG',
+  ЗОЛОТА: 'PAXG',
+  ЗОЛОТУ: 'PAXG',
+  ЗОЛОТОМ: 'PAXG',
+  ЗОЛОТЕ: 'PAXG',
 };
 
 export function resolveTrustedAsset(raw: string | null): TrustedAsset | null {

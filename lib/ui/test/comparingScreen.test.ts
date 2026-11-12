@@ -126,6 +126,29 @@ describe('Comparing ends instead of spinning', () => {
     assert.equal(answered, 'USDC');
   });
 
+  test('the empty answer field shows the answer the question asks for, never a stray token', () => {
+    const rendered = JSON.stringify(
+      ComparingScreen(
+        comparing({
+          failure: {
+            title: 'This goal needs one more detail',
+            detail: 'What exact amount should be swapped?',
+            answerable: true,
+            answerPlaceholder: 'An amount, such as 100',
+          },
+          onAnswer: () => {},
+        }),
+      ),
+    );
+    assert.match(rendered, /"placeholder":"An amount, such as 100"/);
+    assert.doesNotMatch(rendered, /"placeholder":"USDC"/);
+
+    const unnamed = JSON.stringify(
+      ComparingScreen(comparing({ failure: { title: 'Needs detail', detail: 'Which one?', answerable: true }, onAnswer: () => {} })),
+    );
+    assert.match(unnamed, /"placeholder":"Your answer"/);
+  });
+
   test('a rejection offers no answer field, because it asked nothing', () => {
     const rendered = JSON.stringify(
       ComparingScreen(

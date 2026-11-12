@@ -1,8 +1,10 @@
 import {
   normalizeSemanticAmount,
   resolveTrustedAsset,
+  TRUSTED_ASSET_SYMBOLS,
   trustedBaseAssets,
   type TrustedAsset,
+  type TrustedAssetSymbol,
 } from '@mioagent/intent-core';
 import type { AssetRefV1, RouteIntentV1 } from '@mioagent/route-domain';
 import type {
@@ -74,21 +76,27 @@ const CLARIFICATION_MESSAGES: Record<ClarificationCodeV1, Record<IntentLocaleV1,
     en: 'Please provide one exact token amount instead of a percentage or estimate.',
     ru: 'Укажите одну точную сумму токена, а не процент или приблизительное значение.',
   },
+  // A question about a TOKEN says so, and says what an answer looks like. On
+  // 2026-11-12 "Which exact token should be received?" under an input showing
+  // "USDC" was read as a question about the amount, and answered "120".
   from_asset_required: {
-    en: 'Which exact Base token should be swapped?',
-    ru: 'Какой именно токен в сети Base нужно обменять?',
+    en: 'Which token do you want to swap? Name it, such as USDC, ETH or PAXG (gold), or paste its Base contract address.',
+    ru: 'Какой токен вы отдаёте? Назовите его, например USDC, ETH или PAXG (золото), или вставьте адрес его контракта в Base.',
   },
   to_asset_required: {
-    en: 'Which exact token should be received?',
-    ru: 'Какой именно токен нужно получить?',
+    en: 'Which token do you want to receive? Name it, such as USDC, ETH or PAXG (gold), or paste its Base contract address.',
+    ru: 'Какой токен вы хотите получить? Назовите его, например USDC, ETH или PAXG (золото), или вставьте адрес его контракта в Base.',
   },
   asset_pair_invalid: {
     en: 'The source and destination assets must be different.',
     ru: 'Исходный и получаемый токены должны отличаться.',
   },
+  // The name was not recognised. That is a limit of the names Miorail knows,
+  // not a verdict on the token, so the answer offers the other way to name
+  // one: its address, which is read off the contract and judged like any other.
   asset_unknown: {
-    en: 'Which trusted Base token do you mean? Supported Swap V1 assets are USDC, ETH, and WETH.',
-    ru: 'Какой доверенный токен Base вы имеете в виду? Swap V1 поддерживает USDC, ETH и WETH.',
+    en: 'Miorail did not recognise that token name. By name it knows USDC, ETH, WETH and PAXG (gold). For any other Base token, paste its contract address.',
+    ru: 'Miorail не узнал название токена. По названию он знает USDC, ETH, WETH и PAXG (золото). Любой другой токен в Base укажите адресом его контракта.',
   },
   chain_unsupported: {
     en: 'Swap Intent V2 supports Base mainnet only.',
@@ -192,9 +200,10 @@ interface AssetOccurrenceV1 {
 }
 
 // Ticker or plain name. The Cyrillic forms need lookarounds rather than \b,
-// which is ASCII-only; the alias table decides what each spelling resolves to.
+// which is ASCII-only; the alias table decides what each spelling resolves to,
+// so "золотой" matches here and resolves to nothing.
 const ASSET_SYMBOL_PATTERN_V1 =
-  /(?<![\p{L}\p{N}])(?:USDC|WETH|ETH|ETHER|ЭФИР\p{L}*|ЮСД[СЦ])(?![\p{L}\p{N}])/giu;
+  /(?<![\p{L}\p{N}])(?:USDC|WETH|ETH|ETHER|PAXG|GOLD|ЭФИР\p{L}*|ЮСД[СЦ]|ЗОЛОТ\p{L}*)(?![\p{L}\p{N}])/giu;
 
 function assetOccurrences(message: string, identified: IdentifiedAssetsV1 = []): AssetOccurrenceV1[] {
   const found: AssetOccurrenceV1[] = [];
@@ -808,6 +817,26 @@ function carriedConstraintsAreValidV2(pending: CarriedSwapConstraintsV2): boolea
   );
 }
 
+function storableSymbolV2(symbol: unknown): boolean {
+  return symbol === null || (TRUSTED_ASSET_SYMBOLS as readonly unknown[]).includes(symbol);
+}
+
+/**
+ * The registry symbol a stored intent may carry for this asset, or null.
+ *
+ * A stored intent names its assets by SYMBOL, and the next turn resolves that
+ * symbol against the registry. So only an asset that IS the registry's asset
+ * may be stored by name. A token named by address is stored as nothing: the
+ * name its contract answers is a label anyone can choose, and a contract that
+ * calls itself "PAXG" or "USDC" would otherwise come back on the next turn as
+ * the real one. The person then names it again, which costs one message.
+ */
+function registrySymbolV2(asset: AssetRefV1 | null): TrustedAssetSymbol | null {
+  if (!asset) return null;
+  const pinned = resolveTrustedAsset(asset.symbol);
+  return pinned && toAssetRef(pinned).assetId === asset.assetId ? pinned.symbol : null;
+}
+
 function validPendingIntents(
   context: IntentRuntimeContextV2,
   walletAddress: string,
@@ -825,8 +854,8 @@ function validPendingIntents(
       typeof pending.expiresAt !== 'string' ||
       typeof pending.sourceRequestId !== 'string' ||
       (pending.amountDecimal !== null && typeof pending.amountDecimal !== 'string') ||
-      ![null, 'USDC', 'ETH', 'WETH'].includes(pending.fromAssetSymbol) ||
-      ![null, 'USDC', 'ETH', 'WETH'].includes(pending.toAssetSymbol) ||
+      !storableSymbolV2(pending.fromAssetSymbol) ||
+      !storableSymbolV2(pending.toAssetSymbol) ||
       !carriedConstraintsAreValidV2(pending)
     ) {
       return false;
@@ -990,6 +1019,10 @@ export function buildPendingSwapIntentV2(input: {
   ) {
     return null;
   }
+  const fromAssetSymbol = registrySymbolV2(input.fields.fromAsset);
+  const toAssetSymbol = registrySymbolV2(input.fields.toAsset);
+  // Only tokens named by address were grounded, and those are not stored.
+  if (!input.fields.amountDecimal && !fromAssetSymbol && !toAssetSymbol) return null;
   const createdAt = new Date(input.context.requestedAt);
   return {
     schemaVersion: 'pending-swap-intent/v2',
@@ -1000,9 +1033,8 @@ export function buildPendingSwapIntentV2(input: {
     createdAt: createdAt.toISOString(),
     expiresAt: new Date(createdAt.getTime() + PENDING_INTENT_TTL_MS_V2).toISOString(),
     amountDecimal: input.fields.amountDecimal,
-    fromAssetSymbol:
-      (input.fields.fromAsset?.symbol as PendingSwapIntentV2['fromAssetSymbol']) ?? null,
-    toAssetSymbol: (input.fields.toAsset?.symbol as PendingSwapIntentV2['toAssetSymbol']) ?? null,
+    fromAssetSymbol,
+    toAssetSymbol,
     // Carried verbatim: these are already "stated or inherited", never defaults.
     ...input.fields.carried,
   };

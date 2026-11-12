@@ -96,6 +96,22 @@ describe('what a token is, is stated as an address', () => {
     assert.equal(pay?.tone, 'good');
   });
 
+  test('gold named by name is pinned PAXG, not a contract that called itself so', () => {
+    // Since 2026-11-12 "gold" in Swap AI means the registry's PAXG, so its
+    // address came from this build, not from the request.
+    const paxg = { kind: 'erc20' as const, address: '0xe904aea5e1b110c9174728fa2effc8aed19e98ef', symbol: 'PAXG', decimals: 18 };
+    const view = verificationHonestyViewV1(input({ outputAsset: paxg }));
+    const receive = view.verified.find((fact) => fact.label === 'You receive');
+    assert.equal(receive?.detail, '0xe904aea5e1b110c9174728fa2effc8aed19e98ef — pinned in this build as PAXG, not taken from the request.');
+    assert.equal(receive?.tone, 'good');
+
+    // The same name on another contract is what that contract says, and no more.
+    const impostor = { ...paxg, address: '0x9999999999999999999999999999999999999999' };
+    const other = verificationHonestyViewV1(input({ outputAsset: impostor })).verified.find((fact) => fact.label === 'You receive');
+    assert.doesNotMatch(String(other?.detail), /pinned/);
+    assert.match(String(other?.detail), /the contract answers "PAXG"/);
+  });
+
   test('native ETH has no contract, and says so rather than showing a blank', () => {
     const view = verificationHonestyViewV1(
       input({ inputAsset: { kind: 'native', address: null, symbol: 'ETH', decimals: 18 } }),

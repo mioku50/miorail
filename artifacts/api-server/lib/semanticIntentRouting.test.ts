@@ -193,3 +193,31 @@ test('missing recipient, amount over policy, wallet mismatch, low confidence, pr
   assert.equal(mismatch.result?.errorCode, 'base_mcp_wallet_mismatch');
   assert.equal(mismatched.calls.some((call) => call.name === 'send'), false);
 });
+
+// PAXG is in the trusted registry since 2026-11-12, for Swap AI. This chat's
+// quote and swap paths hand symbols to Uniswap, Base MCP and the Base App
+// runner, and were never built to judge a fourth token, so gold is sent to
+// Swap AI before any tool or provider is asked.
+test('a gold swap or quote in this chat is sent to Swap AI, and no tool is called', async () => {
+  await readyPolicy();
+  for (const item of [
+    { message: 'swap 10 USDC to PAXG', output: base({ intent: 'swap', amount: '10', fromAsset: 'USDC', toAsset: 'PAXG', executionRequested: true }) },
+    { message: 'обменяй 10 USDC на золото', output: base({ intent: 'swap', amount: '10', fromAsset: 'USDC', toAsset: 'золото', executionRequested: true }) },
+    { message: 'quote 0.01 PAXG to USDC', output: base({ intent: 'quote', amount: '0.01', fromAsset: 'PAXG', toAsset: 'USDC' }) },
+  ]) {
+    for (const walletEnvironment of ['baseapp', 'web'] as const) {
+      const provider = new BaseProvider();
+      const tools = new ToolAggregator();
+      tools.registerProvider(provider);
+      const result = await routeSemanticIntent({
+        llm: new IntentLlm(item.output), message: item.message, context: context(),
+        walletAddress: WALLET, tools, userConfirmedEnabled: true, userId: 'default-user',
+        walletEnvironment,
+      });
+      assert.equal(result.result?.errorCode, 'chat_swap_asset_unsupported', `${item.message} ${walletEnvironment}`);
+      assert.match(result.result?.content || '', /Swap AI: https:\/\/miorail\.xyz\/routes$/);
+      assert.deepEqual(result.result?.toolCalls, []);
+      assert.deepEqual(provider.calls, [], `${item.message} ${walletEnvironment}`);
+    }
+  }
+});

@@ -855,6 +855,12 @@ export interface ConsoleTerminalFailureV1 {
    */
   answerable?: boolean;
   /**
+   * What the answer field shows while empty: the shape of the answer the
+   * question asks for. It was "USDC" under every question, and on 2026-11-12 a
+   * question about the token received, under "USDC", was answered "120".
+   */
+  answerPlaceholder?: string;
+  /**
    * True when a NEW COMPARISON is what fixes this, so the screen can offer it
    * directly. Route Cards expire with the shortest quote they display — around
    * twenty seconds — and "Back to routes" returned the user to that same
@@ -939,8 +945,38 @@ export function swapPrepareNoticeV1(
 /** The swap evaluation as it crosses the wire, structurally. */
 export type SwapEvaluationLikeV1 =
   | { outcome: 'evaluated' }
-  | { outcome: 'needs_clarification'; clarification: { message: string } }
+  | {
+      outcome: 'needs_clarification';
+      clarification: { message: string; code?: string; missingFields?: readonly string[] };
+    }
   | { outcome: 'rejected'; issues: readonly { message: string }[] };
+
+/**
+ * The answer field's placeholder for one question, from the code and fields
+ * the server sent with it. A question about an amount shows an amount, and a
+ * question about a token shows tokens. Anything else shows no example, because
+ * a wrong example is read as the question.
+ */
+export function clarificationAnswerPlaceholderV1(clarification: {
+  code?: string;
+  missingFields?: readonly string[];
+}): string {
+  const fields = clarification.missingFields ?? [];
+  const code = clarification.code ?? '';
+  if (code === 'asset_unknown') return 'A token name, or its 0x… contract address';
+  if (code === 'amount_required' || code === 'exact_amount_required' || fields[0] === 'amount') {
+    return 'An amount, such as 100';
+  }
+  if (
+    code === 'from_asset_required' ||
+    code === 'to_asset_required' ||
+    fields[0] === 'fromAsset' ||
+    fields[0] === 'toAsset'
+  ) {
+    return 'A token, such as USDC, ETH or PAXG';
+  }
+  return 'Your answer';
+}
 
 /**
  * The swap family's terminal outcomes.
@@ -964,6 +1000,7 @@ export function swapTerminalFailureV1(
       title: 'This goal needs one more detail',
       detail: data.clarification.message,
       answerable: true,
+      answerPlaceholder: clarificationAnswerPlaceholderV1(data.clarification),
     };
   }
   if (data.outcome === 'rejected') {

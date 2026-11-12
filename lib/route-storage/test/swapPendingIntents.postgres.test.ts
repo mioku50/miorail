@@ -46,6 +46,9 @@ before(async () => {
   await sql.unsafe(providerExpansion.replaceAll('--> statement-breakpoint', ''));
   const gmgnExpansion = await readFile(resolve(drizzleDir(), '0084_swap_pending_gmgn.sql'), 'utf8');
   await sql.unsafe(gmgnExpansion.replaceAll('--> statement-breakpoint', ''));
+  // PAXG joins the assets a half-finished goal may name (2026-11-12).
+  const goldExpansion = await readFile(resolve(drizzleDir(), '0098_swap_pending_intents_paxg.sql'), 'utf8');
+  await sql.unsafe(goldExpansion.replaceAll('--> statement-breakpoint', ''));
 });
 
 after(async () => {
@@ -80,7 +83,10 @@ if (!throwaway) {
       ['expiry before creation', at(5, `'2026-08-11T11:00:00Z'`)],
       ['an inexact amount', at(6, `'50%'`)],
       ['an untrusted asset', at(7, `'DOGE'`)],
+      // Only the registry's symbol, never an alias a person may type.
+      ['an alias of gold', at(7, `'GOLD'`)],
       ['the same asset twice', `${at(7, `'ETH'`).replace(/, NULL, NULL, NULL, NULL, NULL, NULL, NULL$/, `, 'ETH', NULL, NULL, NULL, NULL, NULL, NULL`)}`],
+      ['gold twice', `${at(7, `'PAXG'`).replace(/, NULL, NULL, NULL, NULL, NULL, NULL, NULL$/, `, 'PAXG', NULL, NULL, NULL, NULL, NULL, NULL`)}`],
       ['nothing grounded', at(6, 'NULL').replace(`'USDC'`, 'NULL')],
       ['an unknown optimization mode', at(9, `'cheapest_possible'`)],
       ['the default verification depth', at(10, `'standard'`)],
@@ -111,6 +117,27 @@ if (!throwaway) {
       await sql!.unsafe(`INSERT INTO swap_pending_intents (${columns}) VALUES (${valid.join(', ')})`);
       const rows = await sql!.unsafe('SELECT count(*)::int AS total FROM swap_pending_intents');
       assert.equal(rows[0]?.total, 1);
+    });
+
+    test('accepts gold on either side, as 0098 allows', async () => {
+      for (const values of [
+        at(7, `'PAXG'`),
+        `${at(7, `'USDC'`).replace(/, NULL, NULL, NULL, NULL, NULL, NULL, NULL$/, `, 'PAXG', NULL, NULL, NULL, NULL, NULL, NULL`)}`,
+      ]) {
+        await sql!.unsafe('TRUNCATE swap_pending_intents');
+        await sql!.unsafe(`INSERT INTO swap_pending_intents (${columns}) VALUES (${values})`);
+        const rows = await sql!.unsafe('SELECT count(*)::int AS total FROM swap_pending_intents');
+        assert.equal(rows[0]?.total, 1);
+      }
+    });
+
+    test('0098 runs twice without changing what it allows', async () => {
+      // The deploy may meet a database where it already ran.
+      const again = await readFile(resolve(drizzleDir(), '0098_swap_pending_intents_paxg.sql'), 'utf8');
+      await sql!.unsafe(again.replaceAll('--> statement-breakpoint', ''));
+      await sql!.unsafe('TRUNCATE swap_pending_intents');
+      await sql!.unsafe(`INSERT INTO swap_pending_intents (${columns}) VALUES (${at(7, `'PAXG'`)})`);
+      await assert.rejects(() => sql!.unsafe(`INSERT INTO swap_pending_intents (${columns}) VALUES (${at(7, `'DOGE'`)})`));
     });
   });
 
