@@ -16,7 +16,91 @@ export interface LendingFactsWireV1 {
   payment?: { merchant: 'bitrefill'; orderId: string; payTo: string; assets: string; productName: string; packageValue: string; faceCurrency: string | null; expiresAt: string };
   /** Repay all and take the collateral back: what returns to the wallet. */
   collateralReturnAssets?: string;
+  /** A new loan: what a fall at once and a pause of the collateral's transfers would do to it. */
+  stress?: LendingStressWireV1;
 }
+
+// ---------------------------------------------------------------------------
+// What a new loan would face if prices fell at once, and if its collateral's
+// transfers were paused (operator, 2026-11-13: «да сделать пункты 1 и 3, а
+// пункт 2 после проверки на контракте»). Base's Stocks Maxxing brief asks a
+// stock-backed loan to "model overnight price gaps and paused collateral
+// transfers". The server reads every figure from the simulated position at the
+// review's block (api-server lib/lendingStress.ts); this page only prints it.
+// ---------------------------------------------------------------------------
+
+export interface LendingStressWireV1 {
+  /** What falls in each row: this collateral, the account's only one, or all the collateral it counts. */
+  scope: 'collateral' | 'all_collateral';
+  scenarios: { fallBps: number; healthWad: string; liquidatable: boolean }[];
+  /** How far the collateral can fall at once before liquidation can start, in tenths of a percent; rounded down. */
+  marginTenths: number;
+  /** One collateral: its price per whole token as the venue reads it, and the price below which liquidation can start, in cents. */
+  priceCents: string | null;
+  liquidationPriceCents: string | null;
+  /** Whether its transfers can be paused, whether they are (read at the review's block; null unread), and whether a liquidation waits for them. */
+  transfers: { pausable: boolean; paused: boolean | null; liquidationMovesToken: boolean };
+}
+
+/** The stress as the server sent it, or null. An informational block that is not one is not shown, and it
+ * never stands between the person and the review it sits on. */
+export function lendingStressWireV1(value: unknown): LendingStressWireV1 | null {
+  if (!object(value) || (value.scope !== 'collateral' && value.scope !== 'all_collateral')) return null;
+  const rows = value.scenarios, t = value.transfers;
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 6 || !rows.every(row => object(row) && Number.isInteger(row.fallBps) &&
+      (row.fallBps as number) > 0 && (row.fallBps as number) < 10_000 && atomic(row.healthWad) && typeof row.liquidatable === 'boolean')) return null;
+  if (!Number.isInteger(value.marginTenths) || (value.marginTenths as number) < 0 || (value.marginTenths as number) > 1000) return null;
+  if (!(value.priceCents === null || atomic(value.priceCents)) || !(value.liquidationPriceCents === null || atomic(value.liquidationPriceCents))) return null;
+  if (value.scope === 'all_collateral' && (value.priceCents !== null || value.liquidationPriceCents !== null)) return null;
+  if (!object(t) || typeof t.pausable !== 'boolean' || !(t.paused === null || typeof t.paused === 'boolean') || typeof t.liquidationMovesToken !== 'boolean') return null;
+  return {
+    scope: value.scope, marginTenths: value.marginTenths as number,
+    scenarios: (rows as LendingStressWireV1['scenarios']).map(row => ({ fallBps: row.fallBps, healthWad: row.healthWad, liquidatable: row.liquidatable })),
+    priceCents: value.priceCents as string | null, liquidationPriceCents: value.liquidationPriceCents as string | null,
+    transfers: { pausable: t.pausable, paused: t.paused as boolean | null, liquidationMovesToken: t.liquidationMovesToken },
+  };
+}
+
+/** A health ratio to the hundredth, rounded down: the way that does not flatter the loan. */
+export function lendingHealthHundredthsV1(wad: string): string {
+  const value = BigInt(wad), unit = BigInt(10) ** BigInt(18);
+  return `${value / unit}.${((value % unit) * BigInt(100) / unit).toString().padStart(2, '0')}`;
+}
+
+function stressDollarsV1(cents: string): string {
+  const value = BigInt(cents), hundred = BigInt(100);
+  return `$${(value / hundred).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${(value % hundred).toString().padStart(2, '0')}`;
+}
+
+/** How far the collateral can fall at once before liquidation can start, and at what price. */
+export function lendingStressMarginTextV1(facts: Pick<LendingFactsWireV1, 'collateralSymbol' | 'venue'>, stress: LendingStressWireV1): string {
+  const margin = `${Math.floor(stress.marginTenths / 10)}.${stress.marginTenths % 10}%`;
+  if (stress.scope === 'all_collateral') return `Liquidation can start only after all your collateral here falls more than ${margin} together.`;
+  const price = stress.liquidationPriceCents !== null && stress.priceCents !== null
+    ? `: below ${stressDollarsV1(stress.liquidationPriceCents)} per ${facts.collateralSymbol} (now ${stressDollarsV1(stress.priceCents)}, on the price ${facts.venue === 'aave-v4' ? 'Aave' : 'Morpho'} reads)`
+    : '';
+  return `Liquidation can start only after ${facts.collateralSymbol} falls more than ${margin} at once${price}.`;
+}
+
+/** Why a fall can come at once, and what Still does about it. */
+export function lendingStressGapTextV1(facts: Pick<LendingFactsWireV1, 'venue'>): string {
+  return facts.venue === 'aave-v4'
+    ? 'Stock prices can jump: after a weekend, a holiday or a night, the first new price can be far from the last one, with no moment between to repay. Still lends at most half of what Aave would, and less while Wall Street is closed or around earnings, so that a jump like these leaves room.'
+    : 'A price can fall faster than anyone can repay. Still lends at most half of what Morpho would, so that a fall like these leaves room.';
+}
+
+/** What a pause of the collateral's transfers would do to this loan, as the contracts were read. */
+export function lendingStressPauseTextV1(facts: Pick<LendingFactsWireV1, 'collateralSymbol' | 'venue' | 'blockNumber'>, stress: LendingStressWireV1): string {
+  const s = facts.collateralSymbol, t = stress.transfers, block = facts.blockNumber.toLocaleString('en-US');
+  if (!t.pausable) return `${s} has no pause: nobody can stop its transfers.`;
+  const now = t.paused === null ? 'Still could not read whether they are paused now.'
+    : t.paused ? `They are paused now (Base block ${block}).` : `They are not paused now (Base block ${block}).`;
+  const liquidation = t.liquidationMovesToken
+    ? `So does a liquidation, because ${facts.venue === 'aave-v4' ? 'Aave' : 'Morpho'} hands ${s} to the liquidator; once transfers resume, one can follow at once if the price has fallen far enough.`
+    : 'A liquidation does not wait: Aave lets a liquidator take your deposit inside Aave, with no transfer.';
+  return `${s}’s issuer can pause its transfers onchain. ${now} During a pause, repaying still works, because it moves only USDC, and taking ${s} back waits until transfers resume. ${liquidation}`;
+}
+
 export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
   state: 'ready'; facts: LendingFactsWireV1; executionId: string;
   calls: { to: string; value: string; data: string }[];
@@ -136,7 +220,10 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
   const deliverTo = value.facts.payment ? spendDeliveryWireV1(value.deliverTo) : null;
   const { deliverTo: _given, ...rest } = value as Record<string, unknown>;
   void _given;
-  return { ...(rest as unknown as LendingReadyWireV1), ...(deliverTo ? { deliverTo } : {}) };
+  // The stress of a new loan, only in the shape the server writes it; any other is left out, not the review.
+  const { stress: given, ...facts } = value.facts;
+  const stress = value.facts.operation === 'borrow' && given !== undefined ? lendingStressWireV1(given) : null;
+  return { ...(rest as unknown as LendingReadyWireV1), facts: { ...facts, ...(stress ? { stress } : {}) }, ...(deliverTo ? { deliverTo } : {}) };
 }
 export function parseLendingExecutionWireV1(value: unknown, executionId: string): LendingExecutionWireV1 | null {
   if (!object(value) || value.executionId !== executionId || !id(value.executionId) ||

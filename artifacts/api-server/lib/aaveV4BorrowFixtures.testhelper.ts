@@ -1,4 +1,4 @@
-import { decodeFunctionData, encodeAbiParameters, encodeFunctionResult, parseAbi, type Abi, type Address, type Hex } from 'viem';
+import { decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, parseAbi, type Abi, type Address, type Hex } from 'viem';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
@@ -72,13 +72,23 @@ export interface AavePhaseFixture {
   healthFactor: bigint;
   changeInfo?: boolean;
   priceChange?: boolean;
+  /** B20 `isPaused(TRANSFER)` on the pledged stock; false unless set. */
+  transfersPaused?: boolean;
+  /** The pledged stock does not answer `isPaused`: its optional getter fails. */
+  pauseUnread?: boolean;
+  /** The selected stock reserve lets a liquidator take shares (`receiveSharesEnabled`); false unless set. */
+  receiveShares?: boolean;
+  /** The Spoke's own collateral count after the action; 1 unless set. */
+  activeCollateralCount?: bigint;
 }
 const extras = parseAbi([
   'function getUserLastRiskPremium(address) view returns (uint256)',
   'function getAssetDrawnIndex(uint256) view returns (uint256)',
   'function previewAddByAssets(uint256,uint256) view returns (uint256)',
   'function allowance(address,address) view returns (uint256)',
+  'function isPaused(uint8 feature) view returns (bool)',
 ]);
+const IS_PAUSED_SELECTOR = '0x' + encodeFunctionData({ abi: extras, functionName: 'isPaused', args: [0] }).slice(2, 10);
 const allAbi = [...aaveSpokeAbi, ...aaveOracleAbi, ...aaveHubAbi, ...erc20Abi, ...multicall3Abi, ...extras] as Abi;
 const encode = encodeFunctionResult as (v: { abi: Abi; functionName: string; result: unknown }) => Hex;
 const ceil = (n: bigint, d: bigint) => (n + d - BigInt(1)) / d;
@@ -150,10 +160,12 @@ export function aavePoststateFixture(standing: StillAaveStandingV1, operation: '
       case 'allowance': result = phase.allowance; break;
       case 'previewAddByAssets': result = standing.collateralSupplyAssets; break;
       case 'getUserAccountData': result = { riskPremium: phase.riskPremium, avgCollateralFactor: BigInt(7000), healthFactor: phase.healthFactor,
-        totalCollateralValue: BigInt(42_000_000_000), totalDebtValueRay: phase.debts.get(standing.loanReserve.reserveId)! * RAY, activeCollateralCount: BigInt(1), borrowCount: BigInt(1) }; break;
+        totalCollateralValue: BigInt(42_000_000_000), totalDebtValueRay: phase.debts.get(standing.loanReserve.reserveId)! * RAY, activeCollateralCount: phase.activeCollateralCount ?? BigInt(1), borrowCount: BigInt(1) }; break;
       case 'getReserve': result = { underlying: phase.changeInfo ? ADDRESSES.usdc : info!.underlying as Address, hub: ADDRESSES.aaveHub,
         assetId: info!.hubAssetId, decimals: info!.decimals, collateralRisk: 100, flags: 0, dynamicConfigKey: info!.dynamicConfigKey }; break;
-      case 'getReserveConfig': result = { collateralRisk: 100, paused: false, frozen: false, borrowable: source!.info.role.kind === 'usdc', receiveSharesEnabled: false }; break;
+      case 'getReserveConfig': result = { collateralRisk: 100, paused: false, frozen: false, borrowable: source!.info.role.kind === 'usdc',
+        receiveSharesEnabled: phase.receiveShares === true && id === standing.collateralReserve?.reserveId }; break;
+      case 'isPaused': result = phase.transfersPaused === true; break;
       case 'getSpokeConfig': result = { addCap: Number(standing.universe.aave.ok ? standing.universe.aave.noCap : ZERO), drawCap: Number(standing.universe.aave.ok ? standing.universe.aave.noCap : ZERO), riskPremiumThreshold: 0, active: true, halted: false }; break;
       case 'getDynamicReserveConfig': result = { collateralFactor: Number(source!.factorBps.ok ? source!.factorBps.value : ZERO), maxLiquidationBonus: 10500, liquidationFee: 1000 }; break;
       case 'getReservePrice': result = (source!.price.ok ? source!.price.value : ZERO) + (phase.priceChange ? BigInt(1) : ZERO); break;
@@ -168,7 +180,8 @@ export function aavePoststateFixture(standing: StillAaveStandingV1, operation: '
   const results = (['before', 'after'] as const).flatMap(phase => probes.observations[phase].map(probe => {
     const calls = decodeFunctionData({ abi: aaveV4PoststateAggregateAbiV1, data: probe.data as Hex }).args[0];
     const model = phase === 'before' ? before : after;
-    const returnData = encodeFunctionResult({ abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', result: calls.map(call => ({ success: true, returnData: output(model, call.callData, call.target) })) });
+    const returnData = encodeFunctionResult({ abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', result: calls.map(call =>
+      model.pauseUnread && call.callData.startsWith(IS_PAUSED_SELECTOR) ? { success: false, returnData: '0x' as Hex } : { success: true, returnData: output(model, call.callData, call.target) }) });
     return { ...probe, phase, status: 'success' as const, returnData };
   }));
   const callsHash = `0x${'ab'.repeat(32)}`;

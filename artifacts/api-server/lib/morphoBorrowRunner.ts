@@ -28,6 +28,7 @@ import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDi
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingFactsV1 } from './lendingReview.js';
+import { collateralTransfersPausedWordsV1, morphoLendingStressV1 } from './lendingStress.js';
 
 // ---------------------------------------------------------------------------
 // The whole borrow, from a measured market to a reviewed batch — or to the one
@@ -304,6 +305,8 @@ export async function runMorphoBorrowV1(
   // Still's ceiling is half the TOTAL protocol limit minus accrued debt,
   // never half the remaining headroom. The same helper computes the Mirror.
   let stillPolicy: Extract<MorphoBorrowRunV1, { state: 'ready' }>['stillPolicy'];
+  /** Whether cbBTC's or PAXG's transfers are paused, read in the simulated state; null when unread or WETH. */
+  let collateralTransfersPaused: boolean | null = null;
   if (stillAsset) {
     let draw: ReturnType<typeof morphoStillDrawV1>;
     try {
@@ -528,6 +531,12 @@ export async function runMorphoBorrowV1(
       limitAtomic: draw.capacity.limitAssets.toString(), debtBeforeAtomic: draw.capacity.debtAssets.toString(),
       availableAtomic: draw.capacity.availableAssets.toString(),
     };
+    // A new loan against cbBTC or PAXG that cannot move: it could not be taken back (2026-11-13).
+    if (measured.collateralTransfersPaused === true) {
+      return refusedV1('simulation', 'collateral_transfers_paused', collateralTransfersPausedWordsV1({
+        symbol: stillAsset!.symbol, venue: 'morpho', blockNumber: answer.response.blockNumber }), marketId, render(standing.position, null, 'collateral_transfers_paused'));
+    }
+    collateralTransfersPaused = measured.collateralTransfersPaused;
     standing = { ...standing, market: { ...market, state: measured.before.market },
       position: measured.before.position, health: measured.before.health, liquidationPrice: measured.before.liquidationPrice };
     marketWire.blockNumber = answer.response.blockNumber;
@@ -578,6 +587,13 @@ export async function runMorphoBorrowV1(
       debtAfterShares: after.position.borrowShares.toString(), blockNumber: simulation.blockNumber,
       healthBeforeWad: standing.health!.healthFactorWad?.toString() ?? null, healthAfterWad: after.health.healthFactorWad?.toString() ?? null,
       ...(stillPolicy ? { policyLimitAssets: stillPolicy.limitAtomic, termsVersion: stillPolicy.termsVersion } : {}),
+      ...(() => {
+        // The same price and liquidation price as the review's own risk note, so the two say one margin.
+        const stress = morphoLendingStressV1({ healthAfterWad: after.health.healthFactorWad, collateralPrice: standing.market.state.collateralPrice,
+          liquidationPrice: after.liquidationPrice, collateralDecimals: stillAsset.decimals, loanDecimals: loanDecimals ?? 6,
+          pausable: stillAsset.id !== 'ETH', transfersPaused: collateralTransfersPaused });
+        return stress ? { stress } : {};
+      })(),
       warnings: [...review.warnings],
     } } : {}),
     ...(supply > 0n ? { funding: { type: 'erc20' as const, token: request.collateralTokenAddress.toLowerCase(), amountAtomic: supply.toString() } } : {}),

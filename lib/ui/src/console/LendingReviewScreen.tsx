@@ -1,6 +1,9 @@
 import React from 'react';
 import { tokenDecimalV1 } from './stockSellAmount';
-import { formatLendingHealthRatioV1, labelLendingTargetV1, lendingExecutionCopyV1 } from './lendingReviewView';
+import {
+  formatLendingHealthRatioV1, labelLendingTargetV1, lendingExecutionCopyV1, lendingHealthHundredthsV1,
+  lendingStressGapTextV1, lendingStressMarginTextV1, lendingStressPauseTextV1, type LendingFactsWireV1, type LendingStressWireV1,
+} from './lendingReviewView';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
 import { spendConfirmByNoteV1 } from '../still/spendView';
 
@@ -16,6 +19,32 @@ function LendingInvoiceDeadlineV1({ expiresAt, orderId }: { expiresAt: string; o
   }, []);
   const note = spendConfirmByNoteV1({ expiresAt, orderId, now, withLoan: true });
   return note ? <p className="still-note" role="status">{note}</p> : null;
+}
+
+/** A new loan's stress, as the server measured it (2026-11-13): each fall at once and where it leaves the
+ * health ratio, how far the collateral can fall before liquidation can start, why a fall can come at once,
+ * what a pause of its transfers would do, and what repaying does. */
+function LendingStressV1({ facts, stress }: { facts: LendingFactsWireV1; stress: LendingStressWireV1 }) {
+  const what = stress.scope === 'collateral' ? facts.collateralSymbol : 'All your collateral here';
+  return (
+    <div className="still-card still-lending-stress" role="group" aria-label="If prices fall at once">
+      <p className="still-sub"><strong>If prices fall at once</strong></p>
+      <table className="mr-borrow-table" aria-label="Health ratio after a fall at once">
+        <thead><tr><th scope="col">{what}</th><th scope="col">Health ratio</th><th scope="col">Liquidation</th></tr></thead>
+        <tbody>
+          {stress.scenarios.map(row => <tr key={row.fallBps}>
+            <th scope="row">{row.fallBps / 100}% lower</th>
+            <td className="mono">{lendingHealthHundredthsV1(row.healthWad)}</td>
+            <td>{row.liquidatable ? 'Can start' : 'Not reached'}</td>
+          </tr>)}
+        </tbody>
+      </table>
+      <p className="still-note">{lendingStressMarginTextV1(facts, stress)}</p>
+      <p className="still-note">{lendingStressGapTextV1(facts)}</p>
+      <p className="still-note">{lendingStressPauseTextV1(facts, stress)}</p>
+      <p className="still-note">Repaying part of the loan raises the health ratio. Repay takes an exact amount or all of it, and can give {facts.collateralSymbol} back after.</p>
+    </div>
+  );
 }
 
 /** One review for both web and Base App. Values and verdicts belong to the
@@ -100,6 +129,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             </span></div> : null}
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>
             {shareRoundingExtra ? <p className="still-note">Your wallet receives {usdc(facts.requestedAssets!)} ({facts.requestedAssets} atomic USDC). Onchain debt-share rounding records {usdc(debtIncrease.toString())} ({debtIncrease.toString()} atomic USDC) of new debt.</p> : null}
+            {facts.stress ? <LendingStressV1 facts={facts} stress={facts.stress} /> : null}
           </>}
           {facts.warnings.length > 0 ? <div className="still-warn" role="note">
             <p style={{ margin: 0, fontWeight: 600 }}>Key risks &amp; execution terms</p>

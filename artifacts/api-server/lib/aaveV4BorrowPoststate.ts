@@ -16,6 +16,8 @@ const extraHubAbi = parseAbi([
   'function previewAddByAssets(uint256 assetId,uint256 assets) view returns (uint256)',
 ]);
 const allowanceAbi = parseAbi(['function allowance(address owner,address spender) view returns (uint256)']);
+/** B20's own pause, by feature; TRANSFER is feature 0 (Base's B20 spec, Roles and Pause §3). */
+export const b20PauseAbiV1 = parseAbi(['function isPaused(uint8 feature) view returns (bool)']);
 const ZERO = BigInt(0), RAY = BigInt(10) ** BigInt(27), BPS = BigInt(10_000), WAD = BigInt(10) ** BigInt(18);
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const ceil = (a: bigint, d: bigint) => (a + d - BigInt(1)) / d;
@@ -29,7 +31,8 @@ export interface AaveV4PoststateRefusedV1 {
 }
 const refuse = (refusal: AaveV4PoststateRefusedV1['refusal'], detail: string): AaveV4PoststateRefusedV1 => ({ ok: false, refusal, detail });
 type Observation = NonNullable<SimulationProviderRequestV1['observations']>;
-interface Getter { id: string; to: Address; data: Hex; abi?: Abi; functionName?: string }
+/** `optional`: a getter whose failure leaves its value unread instead of refusing the whole phase. */
+interface Getter { id: string; to: Address; data: Hex; abi?: Abi; functionName?: string; optional?: boolean }
 type Position = Omit<AaveV4UserPositionV1, 'reserveId'>;
 interface Reserve {
   info: { underlying: Address; hub: Address; assetId: number; decimals: number; collateralRisk: number; flags: number; dynamicConfigKey: number };
@@ -56,6 +59,8 @@ export interface AaveV4MeasuredPhaseV1 {
   healthFactorWad: bigint | null;
   usdcLiquidityAssets: bigint;
   usdcSpokeOwedAssets: bigint;
+  /** A borrow: B20 `isPaused(TRANSFER)` for the stock it pledges. Null when unread, and for a repayment. */
+  selectedTransfersPaused: boolean | null;
   walletStocks: Map<string, bigint>;
   reserves: Map<number, Reserve>;
   drawnIndex: bigint;
@@ -86,6 +91,10 @@ function getters(standing: StillAaveStandingV1, operation: 'borrow' | 'repay'): 
   const approvalToken = operation === 'repay' ? ADDRESSES.usdc : standing.selectedStock!.token;
   add('allowance', approvalToken, allowanceAbi, 'allowance', [user, ADDRESSES.aaveSpoke]);
   if (operation === 'borrow' && standing.collateralSupplyAssets > ZERO) add('supply_shares', ADDRESSES.aaveHub, extraHubAbi, 'previewAddByAssets', [BigInt(standing.collateralReserve!.hubAssetId), standing.collateralSupplyAssets]);
+  // Whether the stock being pledged can move at all (2026-11-13). A token that does not answer leaves it
+  // unread: the review says so, and nothing else about the loan depends on it.
+  if (operation === 'borrow') rows.push({ id: 'selected_transfers_paused', to: standing.selectedStock!.token, abi: b20PauseAbiV1, functionName: 'isPaused',
+    data: encode({ abi: b20PauseAbiV1, functionName: 'isPaused', args: [0] }), optional: true });
   for (const r of standing.reserves) {
     const id = BigInt(r.reserveId), prefix = `reserve_${r.reserveId}`;
     add(`${prefix}_info`, ADDRESSES.aaveSpoke, aaveSpokeAbi, 'getReserve', [id]);
@@ -130,7 +139,7 @@ export function buildAaveV4PoststateProbesV1(standing: StillAaveStandingV1, oper
   const groups = chunks(getters(standing, operation));
   if (groups.length > 8) return refuse('aave_poststate_inputs_invalid', 'The reviewed account exceeds the bounded observation contract.');
   const probes = groups.map((group, i) => ({ id: `aave_${i}`, to: ADDRESSES.multicall3.toLowerCase(), data: encodeFunctionData({
-    abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', args: [group.map(g => ({ target: g.to, allowFailure: false, callData: g.data }))],
+    abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', args: [group.map(g => ({ target: g.to, allowFailure: g.optional === true, callData: g.data }))],
   }) }));
   const parsed = SimulationObservationRequestV1Schema.safeParse({ before: probes, after: probes.map(p => ({ ...p })) });
   if (!parsed.success) return refuse('aave_poststate_inputs_invalid', 'The exact account getters do not fit the bounded observation transport.');
@@ -147,8 +156,11 @@ function decodePhase(groups: readonly Getter[][], rows: readonly Hex[], standing
       const decoded = decodeFunctionResult({ abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', data });
       if (decoded.length !== group.length || encodeFunctionResult({ abi: aaveV4PoststateAggregateAbiV1, functionName: 'aggregate3', result: decoded }).toLowerCase() !== data.toLowerCase()) return null;
       for (const [n, entry] of decoded.entries()) {
-        if (!entry.success) return null;
         const getter = group[n]!;
+        if (!entry.success) {
+          if (getter.optional) continue;
+          return null;
+        }
         if (!getter.abi || !getter.functionName) {
           const v = decodeAbiParameters(registryParams, entry.returnData);
           if (encodeAbiParameters(registryParams, v).toLowerCase() !== entry.returnData.toLowerCase()) return null;
@@ -183,6 +195,7 @@ function decodePhase(groups: readonly Getter[][], rows: readonly Hex[], standing
       debtAssets, selectedSuppliedAssets: standing.collateralReserve ? reserves.get(standing.collateralReserve.reserveId)!.supplied : ZERO,
       walletCollateralAssets: standing.selectedStock ? take<bigint>(`wallet_${standing.selectedStock.id}`) : ZERO, healthFactorWad,
       usdcLiquidityAssets: values.has('loan_liquidity') ? take('loan_liquidity') : ZERO, usdcSpokeOwedAssets: values.has('loan_owed') ? take('loan_owed') : ZERO,
+      selectedTransfersPaused: typeof values.get('selected_transfers_paused') === 'boolean' ? values.get('selected_transfers_paused') as boolean : null,
       walletStocks: new Map(STOCKS.map(s => [s.id, take<bigint>(`wallet_${s.id}`)])), reserves,
       drawnIndex: take('drawn_index'), riskPremium: take('risk_premium'), allowance: take('allowance'),
       projectedSupplyShares: values.has('supply_shares') ? take('supply_shares') : null, account };

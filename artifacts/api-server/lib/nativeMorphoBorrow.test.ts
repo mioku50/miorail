@@ -52,6 +52,9 @@ describe('explicit native ETH collateral',()=>{
     assert.equal(r.facts.nativeFunding!.authorizedBefore,authorized);
     assert.match(r.facts.warnings.join(' '),/Your wallet calls Morpho Blue itself, so no contract is given the right to act for it\./);
     assert.equal(r.expiresAt,new Date(NATIVE_NOW.getTime()+30_000).toISOString());
+    // WETH cannot pause: it is never asked, and a fall at once is read like any other loan's (2026-11-13).
+    assert.deepEqual(r.facts.stress!.transfers,{pausable:false,paused:false,liquidationMovesToken:true});
+    assert.equal(r.facts.stress!.scenarios.length,3);
   });
   it('in steps, wraps first and then sends the same pledge and loan as a WETH loan, with no clearing calls',async()=>{
     const h=nativeMorphoHarness(),r=await runNativeMorphoBorrowV1({...h.q,delivery:'sequential'},h.deps);

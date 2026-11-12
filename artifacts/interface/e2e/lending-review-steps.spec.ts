@@ -14,6 +14,11 @@ for (const width of [390, 1366]) {
     await page.goto('/lending/miorail-lending-v2.steps.fixture');
     await expect(page.getByText('Steps in your wallet (3 transactions)', { exact: false })).toBeVisible();
     await expect(page.getByText(/reviews each next step again, from the chain as it is then/)).toBeVisible();
+    // A new loan says what a fall at once and a paused stock would do, before anything is signed (2026-11-13).
+    const stress = page.getByRole('group', { name: 'If prices fall at once' });
+    await expect(stress.getByRole('row', { name: /20% lower 1\.68 Not reached/ })).toBeVisible();
+    await expect(stress).toContainText('Liquidation can start only after NVDAc falls more than 52.3% at once: below $118.15 per NVDAc (now $248.10, on the price Aave reads)');
+    await expect(stress).toContainText('They are not paused now (Base block 53,200,000).');
     await page.getByRole('button', { name: 'Open step 1 of 3 in your wallet', exact: true }).click();
     await expect(page.getByText(/^Submitted from your wallet\./)).toBeVisible();
     // After the last step the page reads the result by itself (2026-11-12): nothing is pressed.

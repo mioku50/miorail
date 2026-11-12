@@ -6,6 +6,7 @@ import { stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProvider } from '@mioagent/paid-intelligence';
 
 import { runMorphoBorrowV1 } from './morphoBorrowRunner.js';
+import { morphoPauseProbeAbiV1 } from './morphoBorrowPoststate.js';
 import { ACTIONS_NOW, preparedActionV1, signedActionsFixtureV1 } from '../../../lib/rwa-issuer/test/fixtures/morphoActions.js';
 import type { SimulationChainV1 } from './swapSimulation.js';
 import { morphoAfterBorrowV1, morphoBorrowCapacityV1, morphoHealthV1, morphoLiquidationPriceV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
@@ -131,7 +132,7 @@ const CBBTC_PARAMS = { loanToken: USDC, collateralToken: CRYPTO[0]!.token.toLowe
 const NO_VENUE = { fetchImpl: (async () => { throw new Error('a Still loan must not ask the venue'); }) as typeof fetch };
 const BLUE_BUNDLES = '0x4d28d900e381ece4b351302f1abe588496793a2b';
 
-function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, supply = 0n, borrowedAssets = ASK.borrowAssets): SimulationChainV1 {
+function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, supply = 0n, borrowedAssets = ASK.borrowAssets, paused: boolean | 'unanswered' = false): SimulationChainV1 {
   const standing = cryptoStanding();
   const pre = standing.market.state;
   const interest = 12_000n;
@@ -148,6 +149,8 @@ function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, s
         : probe.id === 'oracle_price' ? encodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', result: price })
           : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: [0n, isAfter ? projected.position.borrowShares : standing.position.borrowShares, standing.position.collateral + (isAfter ? supply : 0n)] })
             : probe.id === 'collateral_wallet_balance' ? encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: 5_000_000_000n - (isAfter ? supply : 0n) })
+            : probe.id === 'collateral_transfers_paused' ? encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', result: [paused === 'unanswered'
+              ? { success: false, returnData: '0x' as `0x${string}` } : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: paused }) }] })
             : encodeFunctionResult({ abi: morphoAbi, functionName: 'market', result: isAfter
               ? [accrued.totalSupplyAssets, 1_000_000_000_000_000_000n, accrued.totalBorrowAssets + borrowedAssets, pre.totalBorrowShares + projected.position.borrowShares - standing.position.borrowShares, 1001n, 0n]
               : [pre.totalSupplyAssets, 1_000_000_000_000_000_000n, pre.totalBorrowAssets, pre.totalBorrowShares, 1000n, 0n] });
@@ -617,5 +620,42 @@ describe('which market, and whose choice that is', () => {
     assert.equal(run.state, 'refused');
     if (run.state !== 'refused') return;
     assert.equal(run.refusal, 'no_such_market_here');
+  });
+});
+
+describe('a Still loan on Morpho says what a fall at once and a paused collateral would do', () => {
+  const borrow = (paused: boolean | 'unanswered' = false) => {
+    const asset = CRYPTO[0]!, supply = 1_000_000_000n, ask = 200_000_000n;
+    return runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: NO_VENUE, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask, paused),
+    }));
+  };
+  test('the stress is read from the simulated position, with the same margin as the risk note', async () => {
+    const run = await borrow();
+    assert.equal(run.state, 'ready', run.state === 'refused' ? `${run.refusal}: ${run.detail}` : '');
+    if (run.state !== 'ready') return;
+    const stress = run.lendingFacts!.stress!;
+    assert.equal(stress.scope, 'collateral');
+    assert.deepEqual(stress.scenarios.map(row => row.fallBps), [1_000, 2_000, 3_000]);
+    assert.equal(stress.scenarios[0]!.healthWad, (BigInt(run.lendingFacts!.healthAfterWad!) * 9_000n / 10_000n).toString());
+    const said = `${Math.floor(stress.marginTenths / 10)}.${stress.marginTenths % 10}%`;
+    assert(run.review.warnings.some(line => line.startsWith(`A ${said} fall in the cbBTC price`)), `${said}: ${run.review.warnings.join(' | ')}`);
+    assert.deepEqual(stress.transfers, { pausable: true, paused: false, liquidationMovesToken: true });
+    assert.notEqual(stress.liquidationPriceCents, null);
+  });
+  test('a paused cbBTC takes no new loan, and the words keep repaying open', async () => {
+    const run = await borrow(true);
+    assert.equal(run.state, 'refused');
+    if (run.state !== 'refused') return;
+    assert.equal(run.refusal, 'collateral_transfers_paused');
+    assert.match(run.detail!, /^cbBTC transfers are paused onchain \(Base block [\d,]+\)\./);
+    assert.match(run.detail!, /Repaying works\.$/);
+    assert.equal('calls' in run, false);
+  });
+  test('a pause that was not answered stays unread, and the loan is still reviewed', async () => {
+    const run = await borrow('unanswered');
+    assert.equal(run.state, 'ready', run.state === 'refused' ? `${run.refusal}: ${run.detail}` : '');
+    if (run.state === 'ready') assert.equal(run.lendingFacts!.stress!.transfers.paused, null);
   });
 });

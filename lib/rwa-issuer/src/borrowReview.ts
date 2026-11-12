@@ -148,6 +148,8 @@ export const BORROW_REVIEW_REFUSALS_V1 = {
     'The simulated wallet spending does not match the collateral you chose. Nothing is offered for approval.',
   simulation_delivered_something_else:
     'The calls execute, what reaches this wallet was read, and it is not what this review describes. Nothing is being offered for approval on that basis.',
+  collateral_transfers_paused:
+    'The collateral’s transfers are paused onchain, so it could not be taken back while they are. No new loan is offered against it; repaying works.',
 } as const;
 export type BorrowReviewRefusalV1 = keyof typeof BORROW_REVIEW_REFUSALS_V1;
 

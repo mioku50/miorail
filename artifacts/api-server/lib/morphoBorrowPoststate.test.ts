@@ -6,7 +6,7 @@ import { morphoAfterBorrowV1, toSharesDownV1, wMulDownV1 } from '@mioagent/rwa-i
 import { erc20Abi, morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import {
-  buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1,
+  buildMorphoBorrowPoststateProbesV1, morphoPauseProbeAbiV1, verifyMorphoBorrowPoststateV1,
   type MorphoBorrowPoststateRefusalV1,
 } from './morphoBorrowPoststate.js';
 
@@ -27,6 +27,8 @@ interface RawPhaseV1 {
   market: [bigint, bigint, bigint, bigint, bigint, bigint];
   price: bigint;
   collateralWalletBalance: bigint;
+  /** cbBTC's `paused()` through Multicall3: an answer, or a failed inner call. */
+  paused?: boolean | 'unanswered';
 }
 
 function fixture(index = 0, fee = 0n, collateralSupplyAssets?: bigint) {
@@ -69,7 +71,10 @@ function fixture(index = 0, fee = 0n, collateralSupplyAssets?: bigint) {
           : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: state.position })
             : probe.id === 'market' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'market', result: state.market })
               : probe.id === 'oracle_price' ? encodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', result: state.price })
-                : encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: state.collateralWalletBalance });
+                : probe.id === 'collateral_transfers_paused' ? encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', result: [
+                  state.paused === 'unanswered' ? { success: false, returnData: '0x' as Hex }
+                    : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: state.paused === true }) }] })
+                  : encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: state.collateralWalletBalance });
         return { ...probe, phase, status: 'success' as const, returnData };
       })),
     },
@@ -89,9 +94,20 @@ function refusal(input: Parameters<typeof verifyMorphoBorrowPoststateV1>[0], cod
 
 describe('Morpho borrowing observes the exact evolving position', () => {
   for (const index of [0, 1]) {
-    it(`uses five code-owned getters per phase for the ${index === 0 ? 'cbBTC' : 'WETH'} market`, () => {
+    it(`uses ${index === 0 ? 'six' : 'five'} code-owned getters per phase for the ${index === 0 ? 'cbBTC' : 'WETH'} market`, () => {
       const f = fixture(index);
-      assert.equal(f.request.observations.before.length, 5);
+      // cbBTC can pause its transfers, so a sixth getter reads whether it has; WETH cannot (2026-11-13).
+      assert.equal(f.request.observations.before.length, index === 0 ? 6 : 5);
+      if (index === 0) {
+        const pause = f.request.observations.before[5]!;
+        assert.equal(pause.to, ADDRESSES.multicall3.toLowerCase());
+        const call = decodeFunctionData({ abi: morphoPauseProbeAbiV1, data: pause.data as Hex });
+        assert.equal(call.functionName, 'aggregate3');
+        const [inner] = call.args![0] as readonly { target: string; allowFailure: boolean; callData: Hex }[];
+        assert.equal(inner!.target.toLowerCase(), ADDRESSES.cbbtc.toLowerCase());
+        assert.equal(inner!.allowFailure, true);
+        assert.equal(decodeFunctionData({ abi: morphoPauseProbeAbiV1, data: inner!.callData }).functionName, 'paused');
+      }
       assert.deepEqual(f.request.observations.before, f.request.observations.after);
       assert(f.request.observations.before.slice(0, 3).every((row) => row.to === ADDRESSES.morpho.toLowerCase()));
       assert.equal(f.request.observations.before[3]!.to, f.expected.oracleAddress.toLowerCase());
@@ -269,4 +285,23 @@ describe('Morpho borrowing observes the exact evolving position', () => {
       refusal({ request: f.request, expected: f.expected, response: f.response() }, code);
     });
   }
+});
+
+describe('Morpho borrowing reads whether the collateral can move', () => {
+  it('reports cbBTC’s pause from the simulated state, and an unanswered one as unread', () => {
+    for (const [paused, expected] of [[false, false], [true, true], ['unanswered', null]] as const) {
+      const f = fixture(0);
+      f.before.paused = paused; f.after.paused = paused;
+      const result = verifyMorphoBorrowPoststateV1({ request: f.request, expected: f.expected, response: f.response() });
+      assert(result.ok, `paused ${String(paused)}`);
+      assert.equal(result.collateralTransfersPaused, expected);
+    }
+  });
+  it('never asks WETH, which cannot pause', () => {
+    const f = fixture(1);
+    assert(!f.request.observations.before.some(probe => probe.id === 'collateral_transfers_paused'));
+    const result = verifyMorphoBorrowPoststateV1({ request: f.request, expected: f.expected, response: f.response() });
+    assert(result.ok);
+    assert.equal(result.collateralTransfersPaused, null);
+  });
 });

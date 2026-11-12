@@ -10,6 +10,7 @@ import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDi
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
+import { morphoLendingStressV1 } from './lendingStress.js';
 
 export interface NativeMorphoBorrowRequestV1 {
   walletAddress: string; supplyAssets: bigint; borrowAssets: bigint;
@@ -96,6 +97,9 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
     debtBeforeShares:before.position.borrowShares.toString(),debtAfterShares:after.position.borrowShares.toString(),
     healthBeforeWad:before.health.healthFactorWad?.toString() ?? null,healthAfterWad:after.health.healthFactorWad?.toString() ?? null,
     blockNumber:answer.response.blockNumber,termsVersion:TERMS.version,policyLimitAssets:freshDraw.capacity.limitAssets.toString(),
+    // WETH cannot pause its transfers; a fall at once is read from the simulated position like any other.
+    ...((stress) => stress ? {stress} : {})(morphoLendingStressV1({healthAfterWad:after.health.healthFactorWad,collateralPrice:after.market.collateralPrice,
+      liquidationPrice:after.liquidationPrice,collateralDecimals:18,loanDecimals:6,pausable:false,transfersPaused:false})),
     nativeFunding:{maximumNativeAssets:q.supplyAssets.toString(),reserveAssets:TERMS.ethGasReserveWei.toString(),
       balanceBeforeAssets:funding.balance.toString(),balanceAfterAssets:(funding.balance-q.supplyAssets).toString(),
       authorizedBefore:funding.deployment.authorized,feeQuoteState:'wallet_quote_required'},

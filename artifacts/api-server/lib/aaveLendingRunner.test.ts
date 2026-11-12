@@ -12,7 +12,7 @@ import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { StillAaveStandingV1 } from './stillAaveStanding.js';
 
 const ZERO = BigInt(0), NOW = new Date('2026-10-21T15:00:00Z');
-async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body: SimulationProviderResponseV1) => void) {
+async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body: SimulationProviderResponseV1) => void, patch?: Parameters<typeof aavePoststateFixture>[3]) {
   const s = await aaveStandingFixture(operation), amount = BigInt(4_000_000);
   const q: LendingQuestionV1 = operation === 'borrow'
     ? { operation, collateralTokenAddress: s.selectedStock!.token.toLowerCase(), borrowAssets: amount.toString(), collateralSupplyAssets: s.collateralSupplyAssets.toString() }
@@ -20,7 +20,7 @@ async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body:
   let simulations = 0;
   const provider: SimulationProvider = { providerId: 'aave-fixture', async simulate(request) {
     simulations++;
-    const f = aavePoststateFixture(s, operation, amount);
+    const f = aavePoststateFixture(s, operation, amount, patch);
     const observations = { ...f.response.observations, requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: request.walletAddress.toLowerCase(), callsHash: request.callsHash,
       before: request.observations!.before, after: request.observations!.after }) };
     const body: SimulationProviderResponseV1 = { status: 'success', blockNumber: s.blockNumber, gasUsed: '200000', stateChanges: [], revertReason: null, observations,
@@ -382,5 +382,65 @@ describe('Aave runner: repay all, then take the stock back', () => {
     assert.deepEqual([r.atomicRequired, r.delivery], [false, 'sequential']);
     assert.deepEqual(r.calls.map(c => c.callType), ['approval', 'other', 'withdraw']);
     assert.match(r.facts.warnings.at(-1)!, /Stopping after the repayment leaves the stock deposited/);
+  });
+});
+
+describe('Aave runner: what a fall at once and a paused stock would do to a new loan', () => {
+  const borrow = async (patch?: Parameters<typeof aavePoststateFixture>[3]) => {
+    const h = await harness('borrow', undefined, patch);
+    return { h, r: await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, h.deps) };
+  };
+  it('reads each fall from the simulated health ratio, with the price that starts a liquidation', async () => {
+    const { h, r } = await borrow();
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
+    if (r.state !== 'ready') return;
+    const stress = r.facts.stress!, WAD = BigInt(10) ** BigInt(18);
+    // The fixture's account reads a health ratio of 5.00 after the loan.
+    assert.equal(r.facts.healthAfterWad, (BigInt(5) * WAD).toString());
+    assert.deepEqual(stress.scenarios.map(row => [row.fallBps, row.healthWad, row.liquidatable]), [
+      [1_000, (BigInt(45) * WAD / BigInt(10)).toString(), false], [2_000, (BigInt(4) * WAD).toString(), false], [3_000, (BigInt(35) * WAD / BigInt(10)).toString(), false]]);
+    assert.equal(stress.marginTenths, 800);
+    assert.equal(stress.scope, 'collateral');
+    const reserve = h.s.snapshot.aave!.reserves.find(x => x.info.reserveId === h.s.collateralReserve!.reserveId)!;
+    const price = reserve.price.ok ? reserve.price.value : ZERO, unit = BigInt(10) ** BigInt((h.s.universe.aave.ok ? h.s.universe.aave.oracleDecimals : 8) - 2);
+    assert.equal(stress.priceCents, (price / unit).toString());
+    assert.equal(stress.liquidationPriceCents, ((price * WAD + BigInt(5) * WAD * unit - BigInt(1)) / (BigInt(5) * WAD * unit)).toString());
+    // Read at the simulation block: not paused, and this reserve gives a liquidator no shares.
+    assert.deepEqual(stress.transfers, { pausable: true, paused: false, liquidationMovesToken: true });
+    // Informational: the signing terms do not carry it.
+    assert.equal('stress' in lendingSigningTermsFactsV1(r.facts), false);
+  });
+  it('says a liquidation does not wait for a pause where the reserve lets a liquidator take shares', async () => {
+    const { r } = await borrow(phase => { phase.receiveShares = true; });
+    assert.equal(r.state, 'ready');
+    if (r.state === 'ready') assert.equal(r.facts.stress!.transfers.liquidationMovesToken, false);
+  });
+  it('refuses a new loan against a stock whose transfers are paused, and says repaying works', async () => {
+    const { r } = await borrow(phase => { phase.transfersPaused = true; });
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') {
+      assert.equal(r.refusal, 'collateral_transfers_paused');
+      assert.match(r.detail, /transfers are paused onchain \(Base block [\d,]+\)\. Still opens no new loan against it/);
+      assert.match(r.detail, /Repaying works\.$/);
+    }
+  });
+  it('a stock that does not answer leaves the pause unread, and the loan is still reviewed', async () => {
+    const { r } = await borrow(phase => { phase.pauseUnread = true; });
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
+    if (r.state === 'ready') assert.equal(r.facts.stress!.transfers.paused, null);
+  });
+  it('with more than one collateral says only how far all of it can fall together', async () => {
+    const { r } = await borrow(phase => { phase.activeCollateralCount = BigInt(2); });
+    assert.equal(r.state, 'ready');
+    if (r.state === 'ready') {
+      assert.equal(r.facts.stress!.scope, 'all_collateral');
+      assert.deepEqual([r.facts.stress!.priceCents, r.facts.stress!.liquidationPriceCents], [null, null]);
+    }
+  });
+  it('a repayment carries no stress and asks nothing about a pause', async () => {
+    const h = await harness('repay', undefined, phase => { phase.transfersPaused = true; });
+    const r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, h.deps);
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
+    if (r.state === 'ready') assert.equal(r.facts.stress, undefined);
   });
 });

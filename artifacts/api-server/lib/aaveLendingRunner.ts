@@ -9,6 +9,7 @@ import type { LendingQuestionV1 } from './lendingDraft.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 import { repayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
 import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
+import { aaveLendingStressV1, collateralTransfersPausedWordsV1 } from './lendingStress.js';
 
 export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
@@ -157,6 +158,20 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   if (q.operation === 'repay' && q.amountMode === 'assets' && -usdcNet !== ask) return fail('repay_amount_changed', 'The simulated repayment differs from the exact USDC amount requested.');
   const healthBeforeWad = beforeLoan.debt > 0n && measured.before.healthFactorWad !== null && measured.before.healthFactorWad < NO_DEBT_HEALTH_SENTINEL ? measured.before.healthFactorWad.toString() : null;
   const healthAfterWad = afterLoan.debt > 0n && measured.after.healthFactorWad !== null && measured.after.healthFactorWad < NO_DEBT_HEALTH_SENTINEL ? measured.after.healthFactorWad.toString() : null;
+  // A new loan against a stock that cannot move: it could not be taken back, and a liquidator could still
+  // take the deposit inside the Spoke (2026-11-13). Repaying and taking back are never stopped here.
+  if (q.operation === 'borrow' && measured.after.selectedTransfersPaused === true) {
+    return fail('collateral_transfers_paused', collateralTransfersPausedWordsV1({ symbol: s.selectedStock.id, venue: 'aave-v4', blockNumber: answer.response.blockNumber }));
+  }
+  const stress = q.operation === 'borrow' ? aaveLendingStressV1({
+    healthAfterWad: healthAfterWad === null ? null : BigInt(healthAfterWad),
+    activeCollateralCount: measured.after.account?.activeCollateralCount ?? null,
+    selectedIsCollateral: afterStock.usingAsCollateral && afterStock.supplied > 0n,
+    price: afterStock.price ?? null,
+    oracleDecimals: s.universe.aave.ok ? s.universe.aave.oracleDecimals : -1,
+    receiveSharesEnabled: afterStock.config.receiveSharesEnabled, frozen: afterStock.config.frozen,
+    transfersPaused: measured.after.selectedTransfersPaused,
+  }) : null;
   const facts: LendingFactsV1 = { operation: q.operation, venue: 'aave-v4', collateralTokenAddress: s.selectedStock.token.toLowerCase(),
     collateralSymbol: s.selectedStock.id, collateralDecimals: s.selectedStock.decimals, marketId: ADDRESSES.aaveSpoke.toLowerCase(),
     amountMode: q.operation === 'borrow' ? 'assets' : q.amountMode, requestedAssets: q.operation === 'borrow' || q.amountMode === 'assets' ? ask.toString() : null,
@@ -168,6 +183,7 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
     ...(measured.capacity ? { policyLimitAssets: measured.capacity.limitAssets.toString(), protocolLimitAssets: measured.capacity.protocolLimitAssets.toString(), termsVersion: s.termsVersion } : {}),
     debtBeforeShares: beforeLoan.position.drawnShares.toString(), debtAfterShares: afterLoan.position.drawnShares.toString(),
     ...(back ? { collateralReturnAssets: back.assets.toString() } : {}),
+    ...(stress ? { stress } : {}),
     blockNumber: answer.response.blockNumber, warnings: q.operation === 'borrow' ? [
       ...(!s.collateralAlreadyEnabled ? ['This also enables your selected stock deposit as collateral in this Spoke.'] : []),
       'This creates USDC debt in the reviewed Aave V4 equities Spoke. Its existing collateral and USDC debt are measured together.',

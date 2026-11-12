@@ -20,8 +20,16 @@ export function stepsReady() {
     measured: { ...ready().measured, loanDeltaAssets: '180000' },
     facts: { ...ready().facts, operation: 'borrow', venue: 'aave-v4', collateralTokenAddress: stock, collateralSymbol: 'NVDAc', collateralDecimals: 18, marketId: spoke,
       requestedAssets: '180000', maximumDebitAssets: '0', collateralSupplyAssets: '1000000', debtBeforeAssets: '0', debtAfterAssets: '180000', debtBeforeShares: '0', debtAfterShares: '180000',
+      healthAfterWad: '2100000000000000000', stress: STRESS_FIXTURE,
       warnings: ['Your wallet sends this as 3 steps, one transaction each, and pays each network fee. Still reviews each next step again before your wallet asks for it.'] } };
 }
+/** A new loan's stress as the server writes it (2026-11-13): health 2.10 after the loan, one collateral, not paused. */
+export const STRESS_FIXTURE = {
+  scope: 'collateral', marginTenths: 523, priceCents: '24810', liquidationPriceCents: '11815',
+  scenarios: [{ fallBps: 1000, healthWad: '1890000000000000000', liquidatable: false }, { fallBps: 2000, healthWad: '1680000000000000000', liquidatable: false },
+    { fallBps: 3000, healthWad: '1470000000000000000', liquidatable: false }],
+  transfers: { pausable: true, paused: false, liquidationMovesToken: false },
+};
 const stepHash = (n: number) => `0x${String(n).padStart(64, '0')}`;
 export type FixtureWindow = Window & {
   lendingStepSends: string[];

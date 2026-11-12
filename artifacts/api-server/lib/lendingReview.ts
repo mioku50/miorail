@@ -1,5 +1,6 @@
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
 import type { LendingPaymentV1 } from './lendingDraft.js';
+import type { LendingStressV1 } from './lendingStress.js';
 
 /** Shared wire for risk-increasing borrowing and risk-reducing repayment.
  * Only a ready result owns calls. A batch handle is never a completion. */
@@ -36,6 +37,10 @@ export interface LendingFactsV1 {
   payment?: LendingPaymentV1;
   /** Repay all and take the stock back: the deposit that returns to the wallet, after the repayment. */
   collateralReturnAssets?: string;
+  /** A new loan: what a fall at once and a pause of the collateral's transfers would do to it, read from the
+   * simulated position (lendingStress.ts). Informational, so not bound by the signing terms: it follows the
+   * health ratio, which is bound to the hundredth, and the price, which moves by itself. */
+  stress?: LendingStressV1;
   warnings: string[];
 }
 

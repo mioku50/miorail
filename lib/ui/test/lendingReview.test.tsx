@@ -685,3 +685,60 @@ describe('the result is read without a press', () => {
     assert.equal(LENDING_FOLLOW_MS_V1.reduce((sum, wait) => sum + wait, 0), 103_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A new loan's stress (2026-11-13): what a fall at once and a paused collateral
+// would do, said on the review before anything is signed.
+// ---------------------------------------------------------------------------
+describe('a new loan says what a fall at once and a paused collateral would do', () => {
+  const WAD = BigInt(10) ** BigInt(18);
+  const stress = (patch: Record<string, unknown> = {}) => ({
+    scope: 'collateral', marginTenths: 523, priceCents: '24810', liquidationPriceCents: '11815',
+    scenarios: [1_000, 2_000, 3_000].map((fallBps, i) => ({ fallBps, healthWad: (BigInt([189, 168, 147][i]!) * WAD / BigInt(100)).toString(), liquidatable: false })),
+    transfers: { pausable: true, paused: false, liquidationMovesToken: false }, ...patch,
+  });
+  const borrow = (s: unknown, venue: 'aave-v4' | 'morpho' = 'aave-v4'): LendingReadyWireV1 => {
+    const body = ready();
+    return { ...body, measured: { ...body.measured, loanDeltaAssets: '1000000' }, facts: { ...body.facts, operation: 'borrow', venue, collateralSymbol: venue === 'aave-v4' ? 'AAPLc' : 'PAXG',
+      amountMode: 'assets', requestedAssets: '1000000', maximumDebitAssets: '0', debtBeforeAssets: '0', debtAfterAssets: '1000001',
+      healthAfterWad: (BigInt(210) * WAD / BigInt(100)).toString(), stress: s } } as LendingReadyWireV1;
+  };
+  const shown = (body: LendingReadyWireV1) => renderToStaticMarkup(<LendingReviewScreen model={model({ body: parseLendingReviewWireV1(body)! })} />);
+
+  it('lists each fall with the health ratio it leaves, and where liquidation can start', () => {
+    const html = shown(borrow(stress()));
+    assert.match(html, /If prices fall at once/);
+    for (const [fall, ratio] of [['10', '1.89'], ['20', '1.68'], ['30', '1.47']]) assert.match(html, new RegExp(`${fall}% lower</th><td class="mono">${ratio.replace('.', '\\.')}</td><td>Not reached`));
+    assert.match(html, /Liquidation can start only after AAPLc falls more than 52\.3% at once: below \$118\.15 per AAPLc \(now \$248\.10, on the price Aave reads\)\./);
+    assert.match(html, /after a weekend, a holiday or a night, the first new price can be far from the last one/);
+    // Bounded, never excluded.
+    assert.doesNotMatch(html, /no liquidation|cannot be liquidated|risk-free|guaranteed/i);
+  });
+  it('says what a pause would do, as each venue was read', () => {
+    const aave = shown(borrow(stress()));
+    assert.match(aave, /AAPLc’s issuer can pause its transfers onchain\. They are not paused now \(Base block 53,200,000\)\./);
+    assert.match(aave, /repaying still works, because it moves only USDC, and taking AAPLc back waits until transfers resume\. A liquidation does not wait/);
+    const morpho = shown(borrow(stress({ transfers: { pausable: true, paused: null, liquidationMovesToken: true } }), 'morpho'));
+    assert.match(morpho, /Still could not read whether they are paused now\./);
+    assert.match(morpho, /So does a liquidation, because Morpho hands PAXG to the liquidator/);
+    const weth = shown(borrow(stress({ transfers: { pausable: false, paused: false, liquidationMovesToken: true } }), 'morpho'));
+    assert.match(weth, /PAXG has no pause: nobody can stop its transfers\./);
+  });
+  it('with several collateral says only how far all of it can fall together', () => {
+    const html = shown(borrow(stress({ scope: 'all_collateral', priceCents: null, liquidationPriceCents: null })));
+    assert.match(html, /All your collateral here/);
+    assert.match(html, /Liquidation can start only after all your collateral here falls more than 52\.3% together\./);
+  });
+  it('a stress that is not the server’s shape is left out, and the review stays', () => {
+    for (const bad of [{ ...stress(), marginTenths: 1001 }, { ...stress(), scenarios: [] }, { ...stress(), scope: 'all_collateral' }, 'x']) {
+      const parsed = parseLendingReviewWireV1(borrow(bad));
+      assert.equal(parsed?.state, 'ready');
+      assert.equal(parsed?.state === 'ready' ? parsed.facts.stress : 'none', undefined);
+    }
+    // A repayment never carries one.
+    const repay = ready() as LendingReadyWireV1;
+    const parsed = parseLendingReviewWireV1({ ...repay, facts: { ...repay.facts, stress: stress() } });
+    assert.equal(parsed?.state === 'ready' ? parsed.facts.stress : 'none', undefined);
+    assert.doesNotMatch(render(), /If prices fall at once/);
+  });
+});
