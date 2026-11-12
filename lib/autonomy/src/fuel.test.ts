@@ -271,3 +271,39 @@ test('FuelChargeService charges an existing reservation without double-counting 
   const stored = await repository.getById('fuel-permission');
   assert.strictEqual(stored?.spent, 2);
 });
+
+// Audit BASE-5 (2026-11-10). The installed library (2.5.6) did not know `expectedPayer`, the charge
+// options went through `as never`, and the field was ignored while the comment said it was enforced.
+// Since 2.5.13 the options are the library's own type.
+test('FuelChargeService hands the payer it was given to the charge, and refuses one that is not an address', async (t) => {
+  clearFuelReservationsForTests();
+  const repository = await repositoryWithPermission();
+  const service = new FuelChargeService(repository, {});
+  const PAYER = '0x1111111111111111111111111111111111111111';
+
+  const getStatus = mock.method(base.subscription, 'getStatus', async () => ({ isSubscribed: true, remainingChargeInPeriod: '10' }));
+  const charge = mock.method(base.subscription, 'charge', async (opts: { amount: string }) => ({
+    success: true,
+    id: `charge-${opts.amount}`,
+    transactionHash: '0xabc',
+  }));
+  t.after(() => {
+    getStatus.mock.restore();
+    charge.mock.restore();
+    clearFuelReservationsForTests();
+  });
+
+  const paid = await service.charge({ permissionId: 'fuel-permission', amount: 1, category: 'inference', chainEnv: 'mainnet', expectedPayer: PAYER });
+  assert.strictEqual(paid.success, true);
+  assert.strictEqual((charge.mock.calls[0].arguments[0] as { expectedPayer?: string }).expectedPayer, PAYER);
+
+  for (const expectedPayer of ['', 'someone', '0x1234', `${PAYER}00`, 'eip155:8453:0x1111111111111111111111111111111111111111']) {
+    const refused = await service.charge({ permissionId: 'fuel-permission', amount: 1, category: 'inference', chainEnv: 'mainnet', expectedPayer });
+    assert.strictEqual(refused.success, false, expectedPayer);
+    assert.strictEqual(refused.status, 'payer_invalid', expectedPayer);
+  }
+  // Nothing was asked of the library for a payer it could not have read, and nothing stays reserved.
+  assert.strictEqual(charge.mock.calls.length, 1);
+  assert.strictEqual(listFuelReservations('fuel-permission').length, 0);
+  assert.strictEqual((await repository.getById('fuel-permission'))?.spent, 1);
+});

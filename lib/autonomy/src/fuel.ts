@@ -260,16 +260,20 @@ export class FuelChargeService {
         return { success: false, error: 'Spend permission period limit exceeded', status: 'limit_exhausted' };
       }
 
-      const charge = await base.subscription.charge({
+      // Typed against the library's own options since 2.5.13. Until then this object went through
+      // `as never`, and the installed 2.5.6 did not know `expectedPayer` at all: the comment above said
+      // Base Account rejected another payer's permission while it silently ignored the field (audit BASE-5).
+      const options: Parameters<typeof base.subscription.charge>[0] = {
         id: input.permissionId,
         amount: input.amount.toString(),
-        ...(input.expectedPayer ? { expectedPayer: input.expectedPayer } : {}),
-        ...(input.recipient ? { recipient: input.recipient } : {}),
+        ...(input.expectedPayer ? { expectedPayer: input.expectedPayer as `0x${string}` } : {}),
+        ...(input.recipient ? { recipient: input.recipient as `0x${string}` } : {}),
         ...(this.options.paymasterUrl ? { paymasterUrl: this.options.paymasterUrl } : {}),
         ...(this.options.walletName ? { walletName: this.options.walletName } : {}),
         ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
         testnet: chain.chainId === BASE_SEPOLIA_CHAIN_ID,
-      } as never) as BaseChargeResponse;
+      };
+      const charge = await base.subscription.charge(options) as BaseChargeResponse;
 
       if (charge.success === false) {
         return { success: false, error: 'Spend permission charge failed', status: 'charge_failed' };
@@ -313,6 +317,11 @@ export class FuelChargeService {
   private async validate(input: FuelChargeInput, options: { excludeReservationId?: string } = {}): Promise<FuelChargeResult> {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       return { success: false, error: 'Invalid fuel amount', status: 'invalid_amount' };
+    }
+    // A payer that is named must be an address. Anything else used to be handed on as it was, and a
+    // library that cannot read it may charge as if no payer had been named.
+    if (input.expectedPayer !== undefined && !/^0x[0-9a-fA-F]{40}$/.test(input.expectedPayer)) {
+      return { success: false, error: 'The expected payer is not an address', status: 'payer_invalid' };
     }
     const permission = await this.repository.getById(input.permissionId);
     if (!permission) return { success: false, error: 'Fuel spend permission not found', status: 'missing_permission' };

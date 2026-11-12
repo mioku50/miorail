@@ -8,7 +8,7 @@
     "test": "NODE_ENV=test tsx --test **/*.test.ts"
   },
   "dependencies": {
-    "@base-org/account": "2.5.6",
+    "@base-org/account": "2.5.13",
     "@mioagent/agent": "workspace:*",
     "@mioagent/ai-engine": "workspace:*",
     "@mioagent/api-spec": "workspace:*",

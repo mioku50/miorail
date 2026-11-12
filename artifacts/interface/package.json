@@ -13,7 +13,7 @@
     "test": "node --import tsx --test src/**/*.test.ts src/**/**/*.test.ts"
   },
   "dependencies": {
-    "@base-org/account": "^2.5.6",
+    "@base-org/account": "2.5.13",
     "@coinbase/wallet-sdk": "^4.3.7",
     "@farcaster/miniapp-sdk": "0.3.0",
     "@mioagent/api-client-react": "workspace:*",

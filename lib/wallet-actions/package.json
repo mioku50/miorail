@@ -19,7 +19,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "ox": "0.14.29",
-    "@base-org/account": "2.5.6"
+    "@base-org/account": "2.5.13"
   },
   "peerDependencies": {
     "@tanstack/react-query": ">=5",
