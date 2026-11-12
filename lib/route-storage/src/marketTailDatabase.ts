@@ -1,4 +1,5 @@
 import {
+  MARKET_TAIL_PRUNE_MAX_V1,
   MarketVenueUnidentifiedError,
   assertMarketVenueTransferV1,
   assertMarketVenueV1,
@@ -243,6 +244,55 @@ export function createDatabaseMarketTailRepository(
           lastBlock: Number(row.last_block),
         }),
       );
+    },
+
+    async venueActivityAllTime(input) {
+      const tokens = [...new Set(input.tokenAddresses.map((address) => address.toLowerCase()))];
+      if (tokens.length === 0) return [];
+      const rows = (await sql`
+        SELECT token_address, transfers, acquired, disposed, first_block, last_block
+          FROM market_venue_activity_totals
+         WHERE chain_id = ${input.chainId}
+           AND token_address = ANY(${tokens})
+         ORDER BY token_address`) as Record<string, unknown>[];
+      return rows.map(
+        (row): MarketVenueActivityV1 => ({
+          tokenAddress: String(row.token_address),
+          transfers: Number(row.transfers),
+          acquired: Number(row.acquired),
+          disposed: Number(row.disposed),
+          firstBlock: Number(row.first_block),
+          lastBlock: Number(row.last_block),
+        }),
+      );
+    },
+
+    async pruneTransfersObservedBefore(input) {
+      if (!Number.isFinite(Date.parse(input.before))) {
+        throw new RouteStorageIntegrityError('refusing to prune venue transfers before a moment that is not a time');
+      }
+      const limit = Math.max(1, Math.min(MARKET_TAIL_PRUNE_MAX_V1, Math.trunc(input.limit)));
+      // Rows are numbered as they are stored, so the lowest ids are the oldest
+      // observations and the primary key finds them without reading the table.
+      // The date is still checked on every one of them: a row is removed for
+      // its age, never for its place in the queue.
+      const [row] = (await sql`
+        WITH oldest AS (
+          SELECT id, observed_at
+            FROM market_venue_transfers
+           WHERE chain_id = ${input.chainId}
+           ORDER BY id ASC
+           LIMIT ${limit}
+        ),
+        gone AS (
+          DELETE FROM market_venue_transfers AS transfer
+           USING oldest
+           WHERE transfer.id = oldest.id
+             AND oldest.observed_at < ${input.before}::timestamptz
+          RETURNING 1
+        )
+        SELECT count(*)::int AS removed FROM gone`) as Record<string, unknown>[];
+      return { removed: Number(row?.removed ?? 0) };
     },
 
     async recentTransfers(input) {

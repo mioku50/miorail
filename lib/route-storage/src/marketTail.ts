@@ -161,6 +161,9 @@ export class MarketVenueUnidentifiedError extends RouteStorageIntegrityError {
   }
 }
 
+/** The most transfers one prune statement may remove, whatever a caller asks for. */
+export const MARKET_TAIL_PRUNE_MAX_V1 = 100_000;
+
 export interface MarketTailRepositoryV1 {
   /** Where the tail got to. Null before its first pass. */
   readCursor(input: { tailKey: string }): Promise<MarketTailCursorV1 | null>;
@@ -194,12 +197,40 @@ export interface MarketTailRepositoryV1 {
     limit: number;
   }): Promise<MarketVenueRowV1[]>;
 
-  /** What has moved through venues since a block, per token. Counts only. */
+  /**
+   * What has moved through venues since a block, per token. Counts only, and
+   * only of the transfers still stored: retention removes old ones, so a block
+   * older than what is kept counts what is left. For a window, not for history;
+   * history is `venueActivityAllTime`.
+   */
   venueActivity(input: {
     chainId: number;
     tokenAddresses: readonly string[];
     sinceBlock: number;
   }): Promise<MarketVenueActivityV1[]>;
+
+  /**
+   * Everything ever observed per token, including transfers retention has since
+   * removed. Counts only. Kept as its own total (migration 0097), added to with
+   * every stored transfer, so it costs one row per token to read and does not
+   * change when old transfers go.
+   */
+  venueActivityAllTime(input: {
+    chainId: number;
+    tokenAddresses: readonly string[];
+  }): Promise<MarketVenueActivityV1[]>;
+
+  /**
+   * Removes stored transfers observed before a moment: of the `limit` oldest
+   * stored, those older than `before`. Bounded on purpose, so one pass cannot
+   * hold the table for long; a backlog goes over several passes. The all-time
+   * totals keep counting what is removed.
+   */
+  pruneTransfersObservedBefore(input: {
+    chainId: number;
+    before: string;
+    limit: number;
+  }): Promise<{ removed: number }>;
 
   /** The newest observed events for one token, newest first, bounded. */
   recentTransfers(input: {

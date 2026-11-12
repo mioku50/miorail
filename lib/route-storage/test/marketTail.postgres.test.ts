@@ -36,9 +36,14 @@ function drizzleDir(): string {
 before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
-  await sql.unsafe('DROP TABLE IF EXISTS market_venue_transfers, market_venues, market_tail_cursors CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0051_market_tail.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  await sql.unsafe(
+    'DROP TABLE IF EXISTS market_venue_activity_totals, market_venue_transfers, market_venues, market_tail_cursors CASCADE',
+  );
+  // 0097 twice: applied by hand it must find its trigger and change nothing.
+  for (const file of ['0051_market_tail.sql', '0097_market_venue_activity_totals.sql', '0097_market_venue_activity_totals.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {
@@ -55,7 +60,10 @@ if (!throwaway) {
   // What scripts/market_tail.ts passes: each pass in one transaction.
   const transaction: MarketTailTransactionV1 = async (work) =>
     (await sql!.begin((inside) => work(asExecutor(inside)))) as unknown as Awaited<ReturnType<typeof work>>;
-  const truncate = () => sql!.unsafe('TRUNCATE market_venue_transfers, market_venues, market_tail_cursors RESTART IDENTITY CASCADE');
+  const truncate = () =>
+    sql!.unsafe(
+      'TRUNCATE market_venue_activity_totals, market_venue_transfers, market_venues, market_tail_cursors RESTART IDENTITY CASCADE',
+    );
 
   marketTailContractV1('postgres', async () => {
     await truncate();
@@ -89,8 +97,52 @@ if (!throwaway) {
         MarketVenueUnidentifiedError,
       );
       const [counts] = await sql!`SELECT (SELECT count(*) FROM market_venue_transfers)::int AS events,
-        (SELECT count(*) FROM market_venues)::int AS venues, (SELECT count(*) FROM market_tail_cursors)::int AS cursors`;
-      assert.deepEqual({ ...counts }, { events: 0, venues: 0, cursors: 0 });
+        (SELECT count(*) FROM market_venues)::int AS venues, (SELECT count(*) FROM market_tail_cursors)::int AS cursors,
+        (SELECT count(*) FROM market_venue_activity_totals)::int AS totals`;
+      // The total is added to by a trigger inside the same transaction, so the event that was
+      // rolled back is not counted either.
+      assert.deepEqual({ ...counts }, { events: 0, venues: 0, cursors: 0, totals: 0 });
+    });
+  });
+
+  describe('migration 0097 on a table that already holds transfers', () => {
+    test('counts the rows that were there, once, and every row stored after it', async () => {
+      // As production met it: millions of rows, no total, no trigger.
+      await sql!.unsafe('DROP TABLE IF EXISTS market_venue_activity_totals CASCADE');
+      await sql!.unsafe('DROP TRIGGER IF EXISTS market_venue_transfers_totals ON market_venue_transfers');
+      await sql!.unsafe('TRUNCATE market_venue_transfers, market_venues, market_tail_cursors RESTART IDENTITY CASCADE');
+      const pool = '0xa3b1e3f9747065e2073722ff4c9027d3ea4994f0';
+      const aapl = '0xb200000000000000000000c2e324d24d7eecd1fb';
+      const nvda = '0xb20000000000000000000078ee7ce2fe4908108c';
+      await sql!`INSERT INTO market_venues (chain_id, address, kind, token0, token1, first_seen_at, identified_at)
+        VALUES (8453, ${pool}, 'paired_pool', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', ${aapl}, now(), now())`;
+      const store = async (token: string, logIndex: number, direction: string, block: number) => {
+        await sql!`INSERT INTO market_venue_transfers
+          (chain_id, token_address, venue_address, direction, counterparty, amount_atomic, block_number, transaction_hash, log_index, observed_at)
+          VALUES (8453, ${token}, ${pool}, ${direction}, '0x1111111111111111111111111111111111111111', '1', ${block},
+            ${`0x${'ab'.repeat(32)}`}, ${logIndex}, now())`;
+      };
+      await store(aapl, 1, 'out_of_venue', 50_428_010);
+      await store(aapl, 2, 'into_venue', 50_428_020);
+      await store(nvda, 3, 'out_of_venue', 50_428_030);
+
+      const migration = (await readFile(resolve(drizzleDir(), '0097_market_venue_activity_totals.sql'), 'utf8'))
+        .replaceAll('--> statement-breakpoint', '');
+      await sql!.unsafe(migration);
+      // Again: it finds its trigger and counts nothing twice.
+      await sql!.unsafe(migration);
+      await store(aapl, 4, 'out_of_venue', 50_428_040);
+
+      const repository = createDatabaseMarketTailRepository(asExecutor(sql));
+      assert.deepEqual(await repository.venueActivityAllTime({ chainId: 8453, tokenAddresses: [aapl, nvda] }), [
+        { tokenAddress: nvda, transfers: 1, acquired: 1, disposed: 0, firstBlock: 50_428_030, lastBlock: 50_428_030 },
+        { tokenAddress: aapl, transfers: 3, acquired: 2, disposed: 1, firstBlock: 50_428_010, lastBlock: 50_428_040 },
+      ]);
+      // The total cannot hold a count with nothing behind it.
+      await assert.rejects(
+        sql!`UPDATE market_venue_activity_totals SET acquired = acquired + 1 WHERE token_address = ${aapl}`,
+        /market_venue_activity_totals_counts/,
+      );
     });
   });
 }

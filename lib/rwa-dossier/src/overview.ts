@@ -373,11 +373,14 @@ export async function assembleOfficialAssetsOverviewV1(
   const activity =
     cursor === null
       ? []
-      : await deps.marketTail.venueActivity({
+      : // Everything the tail has ever observed. The card shows a count, not a rate.
+        // Read from the kept total, one row per token: counting the transfers
+        // themselves read the whole table on every request (6.7 s over 10.4
+        // million rows on 2026-11-12), and would have changed the number each
+        // time retention removed old ones.
+        await deps.marketTail.venueActivityAllTime({
           chainId: 8453,
           tokenAddresses: assets.map((asset) => asset.tokenAddress),
-          // Everything the tail has stored. The card shows a count, not a rate.
-          sinceBlock: 0,
         });
   const activityByToken = new Map(activity.map((row) => [row.tokenAddress.toLowerCase(), row]));
   // Paired pools only. A singleton holds every v4 pool on Base, so counting it

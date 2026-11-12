@@ -70,6 +70,11 @@ import {
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
+  marketTailRetentionDaysV1,
+  marketTailRetentionLineV1,
+  pruneOldVenueTransfersV1,
+} from './marketTailRetention.js';
+import {
   CORPUS_PAGE_LIMIT_V1,
   listedOfficialAssetsV1,
   reviewedRepresentationTargetsV1,
@@ -574,6 +579,22 @@ async function main(): Promise<void> {
     // measured zero, and it is printed as absence rather than as a count.
     const silent = tokens.filter((token) => !activity.some((row) => row.tokenAddress === token));
     if (silent.length > 0) console.log(`  ${silent.length} tracked asset(s) not observed in these blocks`);
+  }
+
+  // Old transfers go here, after the run has read and said what it read. Off unless the deployment
+  // says how many days to keep, and a failure in it never fails the run: the run's work is the tail.
+  const keepDays = marketTailRetentionDaysV1(process.env);
+  if (keepDays !== null && !args.dry) {
+    try {
+      const outcome = await pruneOldVenueTransfersV1({
+        days: keepDays,
+        nowMs: Date.now(),
+        prune: (input) => tail.pruneTransfersObservedBefore(input),
+      });
+      if (outcome) console.log(marketTailRetentionLineV1({ days: keepDays, ...outcome }));
+    } catch (error) {
+      console.log(`retention: skipped (${error instanceof Error ? error.message.slice(0, 120) : 'unknown'}); nothing more was removed`);
+    }
   }
 }
 

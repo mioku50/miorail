@@ -680,6 +680,13 @@
       "when": 1794381600000,
       "tag": "0096_lending_release_unsent",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1794477600000,
+      "tag": "0097_market_venue_activity_totals",
+      "breakpoints": true
     }
   ]
 }

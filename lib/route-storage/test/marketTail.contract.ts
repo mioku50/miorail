@@ -278,6 +278,70 @@ export function marketTailContractV1(
       assert.equal(since[0].transfers, 1);
     });
 
+    // Retention (audit OPS-7): old transfers go, the count of what was ever
+    // observed does not, and a transfer is removed for its age only.
+    test('old transfers are removed in bounded passes, and the all-time count keeps them', async () => {
+      const { repository } = await open();
+      const pass = (toBlock: number, observedAt: string, events: MarketVenueTransferRowV1[]) =>
+        repository.recordPass({
+          tailKey: TAIL,
+          chainId: 8453,
+          toBlock,
+          observedAt,
+          logCalls: 1,
+          identityCalls: 0,
+          venues: [venueFixtureV1()],
+          events,
+        });
+      await pass(50_428_100, '2026-08-25T09:00:00.000Z', [
+        eventFixtureV1({ logIndex: 1, blockNumber: 50_428_010 }),
+        eventFixtureV1({ logIndex: 2, blockNumber: 50_428_020, direction: 'into_venue' }),
+        eventFixtureV1({ logIndex: 3, blockNumber: 50_428_030 }),
+      ]);
+      await pass(56_000_100, '2026-11-01T09:00:00.000Z', [
+        eventFixtureV1({ logIndex: 4, blockNumber: 56_000_010, observedAt: '2026-11-01T09:00:00.000Z' }),
+        // The same log again: counted once, in the rows and in the total.
+        eventFixtureV1({ logIndex: 4, blockNumber: 56_000_010, observedAt: '2026-11-01T09:00:00.000Z' }),
+      ]);
+      const everything = {
+        tokenAddress: AAPL,
+        transfers: 4,
+        acquired: 3,
+        disposed: 1,
+        firstBlock: 50_428_010,
+        lastBlock: 56_000_010,
+      };
+      assert.deepEqual(await repository.venueActivityAllTime({ chainId: 8453, tokenAddresses: [AAPL, NVDA] }), [everything]);
+      assert.deepEqual(await repository.venueActivity({ chainId: 8453, tokenAddresses: [AAPL], sinceBlock: 0 }), [everything]);
+
+      // Bounded: two of the three old ones in the first pass, the third in the next.
+      const before = '2026-10-01T00:00:00.000Z';
+      assert.deepEqual(await repository.pruneTransfersObservedBefore({ chainId: 8453, before, limit: 2 }), { removed: 2 });
+      assert.deepEqual(await repository.pruneTransfersObservedBefore({ chainId: 8453, before, limit: 2 }), { removed: 1 });
+      // The newer transfer is among the oldest stored now, and stays: age decides, not the queue.
+      assert.deepEqual(await repository.pruneTransfersObservedBefore({ chainId: 8453, before, limit: 2 }), { removed: 0 });
+      // Another chain's rows are not this call's to remove.
+      assert.deepEqual(
+        await repository.pruneTransfersObservedBefore({ chainId: 1, before: '2027-01-01T00:00:00.000Z', limit: 10 }),
+        { removed: 0 },
+      );
+
+      const kept = await repository.recentTransfers({ chainId: 8453, tokenAddress: AAPL, limit: 10 });
+      assert.deepEqual(kept.map((row) => row.blockNumber), [56_000_010]);
+      // A window now counts what is left…
+      assert.deepEqual(await repository.venueActivity({ chainId: 8453, tokenAddresses: [AAPL], sinceBlock: 0 }), [
+        { tokenAddress: AAPL, transfers: 1, acquired: 1, disposed: 0, firstBlock: 56_000_010, lastBlock: 56_000_010 },
+      ]);
+      // …and history is unchanged by the removal.
+      assert.deepEqual(await repository.venueActivityAllTime({ chainId: 8453, tokenAddresses: [AAPL] }), [everything]);
+
+      // A moment that is not a time removes nothing, loudly.
+      await assert.rejects(
+        repository.pruneTransfersObservedBefore({ chainId: 8453, before: 'yesterday', limit: 10 }),
+        /not a time/,
+      );
+    });
+
     test('the newest observations come back newest first', async () => {
       const { repository } = await open();
       await repository.recordPass({

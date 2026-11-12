@@ -1,4 +1,5 @@
 import {
+  MARKET_TAIL_PRUNE_MAX_V1,
   MarketVenueUnidentifiedError,
   assertMarketVenueTransferV1,
   assertMarketVenueV1,
@@ -23,6 +24,10 @@ export function createMemoryMarketTailRepository(): MarketTailRepositoryV1 {
   const cursors = new Map<string, MarketTailCursorV1>();
   const venues = new Map<string, MarketVenueRowV1>();
   const events = new Map<string, MarketVenueTransferRowV1>();
+  // What migration 0097's trigger keeps in Postgres: every transfer ever
+  // stored, counted when it is stored, untouched when it is removed.
+  const totals = new Map<string, MarketVenueActivityV1>();
+  const totalKey = (chainId: number, token: string) => `${chainId}:${token}`;
   const venueKey = (chainId: number, address: string) => `${chainId}:${address.toLowerCase()}`;
   const eventKey = (row: MarketVenueTransferRowV1) =>
     `${row.chainId}:${row.transactionHash}:${row.logIndex}`;
@@ -77,6 +82,21 @@ export function createMemoryMarketTailRepository(): MarketTailRepositoryV1 {
         }
         events.set(key, row);
         inserted += 1;
+        const totalAt = totalKey(row.chainId, row.tokenAddress);
+        const total = totals.get(totalAt) ?? {
+          tokenAddress: row.tokenAddress,
+          transfers: 0,
+          acquired: 0,
+          disposed: 0,
+          firstBlock: row.blockNumber,
+          lastBlock: row.blockNumber,
+        };
+        total.transfers += 1;
+        if (row.direction === 'out_of_venue') total.acquired += 1;
+        else total.disposed += 1;
+        total.firstBlock = Math.min(total.firstBlock, row.blockNumber);
+        total.lastBlock = Math.max(total.lastBlock, row.blockNumber);
+        totals.set(totalAt, total);
       }
 
       const cursor: MarketTailCursorV1 = {
@@ -128,6 +148,37 @@ export function createMemoryMarketTailRepository(): MarketTailRepositoryV1 {
       return [...byToken.values()].sort((left, right) =>
         left.tokenAddress.localeCompare(right.tokenAddress),
       );
+    },
+
+    async venueActivityAllTime(input) {
+      const rows: MarketVenueActivityV1[] = [];
+      for (const address of new Set(input.tokenAddresses.map((token) => token.toLowerCase()))) {
+        const total = totals.get(totalKey(input.chainId, address));
+        if (total) rows.push({ ...total });
+      }
+      return rows.sort((left, right) => left.tokenAddress.localeCompare(right.tokenAddress));
+    },
+
+    async pruneTransfersObservedBefore(input) {
+      const before = Date.parse(input.before);
+      if (!Number.isFinite(before)) {
+        throw new RouteStorageIntegrityError('refusing to prune venue transfers before a moment that is not a time');
+      }
+      const limit = Math.max(1, Math.min(MARKET_TAIL_PRUNE_MAX_V1, Math.trunc(input.limit)));
+      let removed = 0;
+      let looked = 0;
+      // A Map keeps the order rows were stored in, which is the order Postgres
+      // numbers them: the oldest `limit`, and of those the ones older than the
+      // moment.
+      for (const [key, row] of events) {
+        if (row.chainId !== input.chainId) continue;
+        if (looked >= limit) break;
+        looked += 1;
+        if (Date.parse(row.observedAt) >= before) continue;
+        events.delete(key);
+        removed += 1;
+      }
+      return { removed };
     },
 
     async recentTransfers(input) {
