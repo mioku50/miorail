@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingFeeNoteV1, lendingReviewReadsTheSameV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFeeNoteV1, lendingFollowsResultV1, lendingReviewReadsTheSameV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
 import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayExactCoversDebtV1, repayExactWholeDebtTextV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
@@ -181,6 +181,18 @@ describe('lending review presentation does not call a submission a repayment', (
   });
   it('a wallet batch id remains a submission handle', () => {
     const html = render({ batchId: 'batch_1' }); assert.match(html, /not a confirmed blockchain result/); assert.doesNotMatch(html, /Open in your wallet|Confirmed onchain:/);
+  });
+  // Operator, 2026-11-12: «вместо кнопки check onchain result авто результат».
+  it('while the page reads the result by itself, it says so and offers no press', () => {
+    const html = render({ batchId: 'batch_1', following: true, onCheck: null });
+    assert.match(html, /Reading the result from Base…/);
+    assert.doesNotMatch(html, /Check onchain result|Check again|Base has not shown it yet/);
+  });
+  it('when the reads end with no answer from Base, the press is offered again, as what it is', () => {
+    const html = render({ execution: { executionId: 'execution_1', state: 'submitted', transactionHash: null, errorCode: null }, followEnded: true });
+    assert.match(html, /Base has not shown it yet\. Your wallet may still be sending it; check again in a moment, and look at your wallet’s activity\./);
+    assert.match(html, />Check again</);
+    assert.doesNotMatch(html, /Reading the result from Base…|Check onchain result/);
   });
   it('shows No debt (N/A) instead of uint256.max when debt is zero, explains 0.05 -> 0.050001 USDC share rounding, and consolidates warnings into one risk block', () => {
     const body = ready();
@@ -649,5 +661,27 @@ describe('repay all and take the stock back', () => {
       const body = returned(); Object.assign(body.facts, patch);
       assert.equal(parseLendingReviewWireV1(body), null, JSON.stringify(patch));
     }
+  });
+});
+
+describe('the result is read without a press', () => {
+  it('reads by itself only while Base owes an answer and there is something to read there', () => {
+    // A submitted record always has a handle.
+    assert.equal(lendingFollowsResultV1({ state: 'submitted', batchId: null, transactionHash: null }), true);
+    // Unknown or still armed: only with a batch or a transaction the wallet named.
+    for (const state of ['unknown', 'awaiting_wallet'] as const) {
+      assert.equal(lendingFollowsResultV1({ state, batchId: null, transactionHash: null }), false, state);
+      assert.equal(lendingFollowsResultV1({ state, batchId: 'batch_1', transactionHash: null }), true, state);
+      assert.equal(lendingFollowsResultV1({ state, batchId: null, transactionHash: `0x${'5'.repeat(64)}` }), true, state);
+    }
+    // A final answer, or nothing sent, is never read again by itself.
+    for (const state of ['confirmed', 'failed', 'ready', null] as const) {
+      assert.equal(lendingFollowsResultV1({ state, batchId: 'batch_1', transactionHash: `0x${'5'.repeat(64)}` }), false, String(state));
+    }
+  });
+  it('reads quickly first, then further apart, for 103 seconds in all', () => {
+    assert.equal(LENDING_FOLLOW_MS_V1[0], 2_000);
+    assert.ok(LENDING_FOLLOW_MS_V1.every((wait, index) => index === 0 || wait >= LENDING_FOLLOW_MS_V1[index - 1]!));
+    assert.equal(LENDING_FOLLOW_MS_V1.reduce((sum, wait) => sum + wait, 0), 103_000);
   });
 });

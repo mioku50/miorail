@@ -81,6 +81,8 @@ export function StillCardSign({ host, draft, projectId, reviewHost, onSent }: {
   const review = useLendingReviewConsoleV1({
     draft: wallet ? draft : null, sessionWalletAddress: wallet?.address ?? null, walletAddress: wallet?.address ?? null,
     sendCalls: async ({ calls }) => (wallet ? wallet.sendCalls(calls) : null), steps, walletName: 'Your wallet', request,
+    // The card follows the wallet's own status below, on its own clock, through the host.
+    autoResult: false,
   });
 
   // A batch only Coinbase's wallets can name from Still's server is found by

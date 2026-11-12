@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { install, ready, attempts, OTHER, type FixtureWindow } from './fixtures/lending-review.js';
 
+// After a batch the page reads its result from Base by itself (2026-11-12), so those reads ('result')
+// come after what was sent; the order of what was sent is read without them.
+const sentOrder = (order: readonly string[]) => order.filter(entry => entry !== 'result');
+
 for (const width of [390, 1366]) {
   test(`fresh lending refusal never arms or opens a wallet (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 }); const state = await install(page);
@@ -22,11 +26,44 @@ test('calls prepared again under the same terms go to the wallet at the first pr
   await open.click();
   await expect.poll(() => attempts(page)).toBe(1); await expect(open).toHaveCount(0);
   await expect(page.getByText(/prepared again for this moment|The terms changed/)).toHaveCount(0);
-  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
-  await expect(page.locator('body')).toContainText('not a confirmed blockchain result');
+  expect(sentOrder(state.order)).toEqual(['review', 'review', 'arm', 'submission:submitted']);
   await expect(page.locator('body')).not.toContainText('Confirmed onchain:');
-  state.executionState = 'confirmed'; await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
+  // The page reads the result by itself, and offers no press while it does.
+  await expect(page.getByText('Reading the result from Base…', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Check onchain result|Check again/ })).toHaveCount(0);
+  state.executionState = 'confirmed';
   await expect(page.locator('body')).toContainText('Confirmed onchain:'); expect(await attempts(page)).toBe(1);
+  await expect(page.getByText('Reading the result from Base…', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Check onchain result|Check again/ })).toHaveCount(0);
+  expect(state.order.at(-1)).toBe('result');
+});
+// Operator, 2026-11-12: «вместо кнопки check onchain result авто результат». The press comes back only
+// when the reads end and Base has still not answered.
+test('a result Base has not shown yet is read until the reads run out, then the press is offered and reads again', async ({ page }) => {
+  const state = await install(page); await page.goto('/lending/fixture-lending');
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect.poll(() => attempts(page)).toBe(1);
+  const again = page.getByRole('button', { name: 'Check again', exact: true });
+  await expect(again).toBeVisible({ timeout: 15_000 });
+  // Every read the schedule allows, and not one more.
+  expect(state.order.filter(entry => entry === 'result')).toHaveLength(8);
+  await expect(page.getByText(/^Base has not shown it yet\. Your wallet may still be sending it/)).toBeVisible();
+  await expect(page.getByText('Reading the result from Base…', { exact: true })).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('Confirmed onchain:');
+  state.executionState = 'confirmed'; await again.click();
+  await expect(page.locator('body')).toContainText('Confirmed onchain:');
+  await expect(again).toHaveCount(0); expect(await attempts(page)).toBe(1);
+});
+test('a submitted review opened again reads its result by itself', async ({ page }) => {
+  // The server answers a review that was already sent with its attempt's state.
+  const state = await install(page); state.executionState = 'submitted';
+  await page.goto('/lending/fixture-lending');
+  await expect(page.getByText('This review has an existing wallet attempt.')).toBeVisible();
+  await expect(page.getByText('Reading the result from Base…', { exact: true })).toBeVisible();
+  state.executionState = 'confirmed';
+  await expect(page.locator('body')).toContainText('Confirmed onchain:');
+  expect(state.order[0]).toBe('review'); expect(state.order.slice(1).every(entry => entry === 'result')).toBe(true);
+  expect(await attempts(page)).toBe(0);
 });
 // 2026-11-08: Still pays a batch's network fee. The wallet is handed the arm's offer exactly, and nothing for anything else.
 const FEE_OFFER = { paymasterUrl: 'https://miorail.xyz/api/paymaster/sponsorship/fixture.token', context: { sponsorship: 'fixture.token' } };
@@ -40,7 +77,7 @@ for (const [name, made, handed] of [
     const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
     await open.click(); await expect.poll(() => attempts(page)).toBe(1);
     expect(await page.evaluate(() => (window as unknown as FixtureWindow).lendingSponsorships)).toEqual([handed]);
-    expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+    expect(sentOrder(state.order)).toEqual(['review', 'review', 'arm', 'submission:submitted']);
   });
 }
 test('changed lending terms require another explicit click, which sends that exact review', async ({ page }) => {
@@ -58,7 +95,7 @@ test('changed lending terms require another explicit click, which sends that exa
   const accept = page.getByRole('button', { name: 'Accept these terms and open your wallet', exact: true }); await expect(accept).toBeVisible();
   const reads = state.reviewReads; await accept.click();
   await expect.poll(() => attempts(page)).toBe(1); await expect(accept).toHaveCount(0);
-  expect(state.reviewReads).toBe(reads); expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+  expect(state.reviewReads).toBe(reads); expect(sentOrder(state.order)).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 // 2026-11-11, a loan against AAPL during the session: the first press answered "The terms changed" in red for a
 // debt ceiling that had followed the stock's price by a fraction of a cent, and the second press went through.
@@ -74,7 +111,7 @@ test('figures that only moved with the clock or a live price go to the wallet at
   await open.click();
   await expect.poll(() => attempts(page)).toBe(1);
   await expect(page.getByText(/The terms changed|Accept these terms/)).toHaveCount(0);
-  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+  expect(sentOrder(state.order)).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 test('a failed refresh cannot fall back to cached executable calls', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');
@@ -160,9 +197,10 @@ test('a wallet whose connection to Base failed before sending is asked once more
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();
   await expect(page.getByText(/^Your wallet could not reach Base, so nothing was sent\. Still asks it again in 2 seconds…$/)).toBeVisible();
   await expect.poll(() => attempts(page)).toBe(2);
-  await expect(page.locator('body')).toContainText('not a confirmed blockchain result');
+  // Either sentence, by when the page's own first read of the result lands: neither calls it confirmed.
+  await expect(page.locator('body')).toContainText(/not a confirmed blockchain result|The blockchain result has not been confirmed yet/);
   await expect(page.getByText(/could not reach Base/)).toHaveCount(0);
-  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+  expect(sentOrder(state.order)).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 test('an arm refused while another loan holds the market says so, and the wallet is never asked', async ({ page }) => {
   // 2026-11-09: a repayment said only "could not be armed" while the loan before it, landed, was still being read.

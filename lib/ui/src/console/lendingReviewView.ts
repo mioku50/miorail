@@ -151,6 +151,39 @@ function stepsStanding(value: unknown): boolean {
   return object(value) && Number.isSafeInteger(value.landed) && Number.isSafeInteger(value.total) && typeof value.stoppable === 'boolean' &&
     (value.landed as number) >= 0 && (value.total as number) >= 1 && (value.total as number) <= 16 && (value.landed as number) <= (value.total as number);
 }
+
+// ---------------------------------------------------------------------------
+// The result is read without a press (operator, 2026-11-12: «вместо кнопки
+// check onchain result авто результат»).
+//
+// A loan, a repayment or a take-back stayed "Submitted" until its owner pressed
+// "Check onchain result" or did the next thing in that market. On 2026-11-07 a
+// PAXG take-back that had landed was still "submitted" an hour later. Still's
+// Spend page already reads a wallet payment by itself; this page now does too.
+//
+// The reads come quickly at first, because Base lands a batch in seconds, then
+// further apart, for 103 seconds in all. If Base has not answered by then, the
+// press is offered again: what the wallet is doing is not visible from here.
+// ---------------------------------------------------------------------------
+
+/** The waits before each automatic read, in milliseconds: 103 seconds in all. */
+export const LENDING_FOLLOW_MS_V1: readonly number[] = [2_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000];
+
+/**
+ * Whether the page reads this result again by itself: Base has given no final answer yet, and
+ * Still has something to read there. A submitted record always has a handle. One unknown or
+ * still armed has one only when the wallet named a batch or a transaction: without one, a read
+ * changes nothing, and the page offers a pasted hash and the release instead.
+ */
+export function lendingFollowsResultV1(input: {
+  state: LendingExecutionStateV1 | null;
+  batchId: string | null;
+  transactionHash: string | null;
+}): boolean {
+  if (input.state === 'submitted') return true;
+  if (input.state === 'unknown' || input.state === 'awaiting_wallet') return Boolean(input.batchId || input.transactionHash);
+  return false;
+}
 export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null, remainingDebtAtomic: string | null = null): string {
   // A Repay all that landed and left a little owing (audit LEND-2): said as that, with the amount.
   if (state === 'confirmed' && remainingDebtAtomic !== null && atomic(remainingDebtAtomic) && remainingDebtAtomic !== '0') {

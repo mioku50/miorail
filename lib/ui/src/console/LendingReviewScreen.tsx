@@ -156,8 +156,11 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           : model.termsChanged ? (inSteps ? `Accept these terms and open step 1 of ${body.steps.length}` : 'Accept these terms and open your wallet')
             : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
       </button> : null}
+      {/* The result is read from Base by itself once something was sent: no press is needed while it is. */}
+      {model.following ? <p className="still-note" role="status">Reading the result from Base…</p> : null}
+      {model.followEnded && model.onCheck ? <p className="still-note" role="status">Base has not shown it yet. Your wallet may still be sending it; check again in a moment, and look at your wallet’s activity.</p> : null}
       {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onCheck}>
-        {model.checking ? 'Checking the onchain result…' : 'Check onchain result'}
+        {model.checking ? 'Checking the onchain result…' : model.followEnded ? 'Check again' : 'Check onchain result'}
       </button> : null}
       {model.onStop && standing ? <>
         <p className="still-note" role="status">{inPlace}, and Still has not seen step {standing.landed + 1} land.</p>

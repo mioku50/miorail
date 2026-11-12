@@ -16,8 +16,12 @@ for (const width of [390, 1366]) {
     await expect(page.getByText(/reviews each next step again, from the chain as it is then/)).toBeVisible();
     await page.getByRole('button', { name: 'Open step 1 of 3 in your wallet', exact: true }).click();
     await expect(page.getByText(/^Submitted from your wallet\./)).toBeVisible();
+    // After the last step the page reads the result by itself (2026-11-12): nothing is pressed.
+    state.executionState = 'confirmed';
+    await expect(page.locator('body')).toContainText('Confirmed onchain:');
+    await expect(page.getByRole('button', { name: /Check onchain result|Check again/ })).toHaveCount(0);
     expect(state.reviewQueries.every(query => query === '?delivery=sequential')).toBe(true);
-    expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0', 'step:1', 'step:2']);
+    expect(state.order.filter(entry => entry !== 'review' && entry !== 'result')).toEqual(['arm', 'step:0', 'step:1', 'step:2']);
     expect(await sends(page)).toHaveLength(3);
     expect(await page.evaluate(() => (window as unknown as FixtureWindow).lendingWalletAttempts)).toBe(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -30,7 +34,7 @@ test('declining a later step keeps what landed, says so, and asks nothing more',
   await page.getByRole('button', { name: 'Open step 1 of 3 in your wallet', exact: true }).click();
   await expect(page.getByText('You declined step 2 of 3. Step 1 is in place, and no loan was taken. Open Get money again to go on from here.')).toBeVisible();
   // Declined in the wallet, so the rest was never sent: the stop is told to the server as such.
-  expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0', 'submission:stopped']);
+  expect(state.order.filter(entry => entry !== 'review' && entry !== 'result')).toEqual(['arm', 'step:0', 'submission:stopped']);
   expect(await sends(page)).toHaveLength(2);
   await expect(page.getByText(/reverted onchain/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Open step/ })).toHaveCount(0);
@@ -43,7 +47,7 @@ test('a refused review between steps stops them, and the refusal is what the pag
   await page.getByRole('button', { name: 'Open step 1 of 3 in your wallet', exact: true }).click();
   await expect(page.getByText('The requested loan exceeds the measured Still allowance. Step 1 is in place, and no loan was taken.', { exact: false })).toBeVisible();
   expect(await sends(page)).toHaveLength(1);
-  expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0']);
+  expect(state.order.filter(entry => entry !== 'review' && entry !== 'result')).toEqual(['arm', 'step:0']);
 });
 
 // A Spend purchase from the same wallet: the loan's steps, then the exact USDC
@@ -66,7 +70,7 @@ test('a Spend purchase goes in steps too, the payment last', async ({ page }) =>
   await expect(page.getByText(/Then pay Bitrefill 0\.18 USDC for Bitrefill eSIM Germany · 1GB, 7 Days, as the last step\./)).toBeVisible();
   await page.getByRole('button', { name: 'Open step 1 of 4 in your wallet', exact: true }).click();
   await expect(page.getByText(/^Submitted from your wallet\./)).toBeVisible();
-  expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0', 'step:1', 'step:2', 'step:3']);
+  expect(state.order.filter(entry => entry !== 'review' && entry !== 'result')).toEqual(['arm', 'step:0', 'step:1', 'step:2', 'step:3']);
   expect((await sends(page)).at(-1)).toBe(USDC);
 });
 

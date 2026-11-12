@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
 import { WALLET_CONNECTION_NOT_READY_V1, sendRetryingWalletNetworkV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1,
   walletNetworkFailureSentenceV1, walletNotAskedSentenceV1 } from './walletBatchSupport';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1,
-  type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
+import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFollowsResultV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1,
+  parseLendingFeeSponsorV1, parseLendingReviewWireV1, type LendingExecutionStateV1, type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1,
+  type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
 type CallsV1 = LendingReadyWireV1['calls'];
@@ -61,10 +62,15 @@ interface StateV1 {
   stepsRefusal: string | null;
   /** The last press found the terms changed and showed the new ones: the next press accepts them. */
   termsChanged: boolean;
+  /** The page is reading the result from Base by itself (LENDING_FOLLOW_MS_V1). */
+  following: boolean;
+  /** Those reads ran out with no final answer from Base, so the press is offered. */
+  followEnded: boolean;
 }
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
   walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null, stepsRefusal: null,
-  termsChanged: false });
+  termsChanged: false, following: false, followEnded: false });
+const FINAL_STATES_V1: ReadonlySet<LendingExecutionStateV1> = new Set(['confirmed', 'failed']);
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
 /** The server's own sentence for a refusal it names (`code: detail`), or null for anything else. */
 function serverDetailV1(error: unknown, codes: RegExp): string | null {
@@ -104,6 +110,10 @@ export interface LendingReviewConsoleModelV1 {
   back?: { href: string; label: string } | null;
   /** Said beside the wallet button of a batch: Still offers to pay the network fee. */
   feeNote?: string | null;
+  /** The page is reading the result from Base by itself; nothing needs pressing. */
+  following?: boolean;
+  /** Those reads ended with no final answer from Base: the press reads it once more. */
+  followEnded?: boolean;
 }
 
 /** One signed-in session and one connected wallet own this hook's state.
@@ -135,6 +145,11 @@ export function useLendingReviewConsoleV1(input: {
   /** A new value reads the review again from the start: after the person confirmed they are not a
    * US person, a review refused for want of that confirmation (2026-11-10). */
   rereadKey?: number;
+  /** Reads the result from Base by itself once something was sent (the default). Still's card in an
+   * assistant's chat sets false: it follows the wallet's own status on its own clock (StillCardSign). */
+  autoResult?: boolean;
+  /** The waits between those reads; tests make them short. */
+  followMs?: readonly number[];
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
   const request = input.request ?? lendingRequestV1;
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
@@ -190,6 +205,46 @@ export function useLendingReviewConsoleV1(input: {
     } catch { update({ walletError: 'The onchain result could not be read. The submission remains unconfirmed, and this review will not be sent again.' }); }
     finally { update({ checking: false }); }
   }, [active.checking, eligible, executionId, request, update]);
+
+  // What was sent, as far as this page knows: the server's word, else a batch the wallet just returned,
+  // else this browser's own record of a submission (a marker survives a reload; the review does not).
+  const serverState: LendingExecutionStateV1 | undefined = active.execution?.state
+    ?? (active.body?.state === 'refused' ? active.body.executionState : undefined);
+  const sentState: LendingExecutionStateV1 | null = serverState ?? (active.batchId ? 'submitted' : active.marker ? 'unknown' : null);
+  const autoResult = input.autoResult !== false;
+  // Read by itself while Base owes an answer, and not while the wallet or a step is still under way.
+  const follows = eligible && Boolean(executionId) && autoResult && !active.walletBusy && !active.step &&
+    lendingFollowsResultV1({ state: sentState, batchId: active.batchId, transactionHash: active.execution?.transactionHash ?? null });
+  // One allowance of reads per execution on this page. A state that moves between "submitted" and
+  // "unknown" while Base catches up must not start the allowance over, or the reads would never end.
+  const followed = useRef<{ executionId: string; reads: number } | null>(null);
+  // By value: a schedule written inline is a new array on every render, and the reads would restart with each.
+  const followKey = input.followMs ? input.followMs.join(',') : '';
+  const followMs = useMemo(() => (followKey ? followKey.split(',').map(Number) : LENDING_FOLLOW_MS_V1), [followKey]);
+  useEffect(() => {
+    if (!follows || !executionId) return undefined;
+    if (followed.current?.executionId !== executionId) followed.current = { executionId, reads: 0 };
+    const allowance = followed.current;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const next = () => {
+      if (stopped) return;
+      if (allowance.reads >= followMs.length) { update({ following: false, followEnded: true }); return; }
+      timer = setTimeout(() => void (async () => {
+        allowance.reads += 1;
+        // A read that fails is followed by the next one; the press is offered when they run out.
+        const answer: LendingExecutionWireV1 | null = await request(`${ROOT}/executions/${encodeURIComponent(executionId)}`)
+          .then(value => parseLendingExecutionWireV1(value, executionId), () => null);
+        if (stopped || current.current !== identity) return;
+        if (answer) update({ execution: answer });
+        if (answer && FINAL_STATES_V1.has(answer.state)) { update({ following: false, followEnded: false }); return; }
+        next();
+      })(), followMs[allowance.reads]);
+    };
+    update({ following: true, followEnded: false });
+    next();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [executionId, followMs, follows, identity, request, update]);
 
   const onFindTransaction = useCallback(async () => {
     if (!eligible || !executionId || active.checking || current.current !== identity) return;
@@ -413,7 +468,13 @@ export function useLendingReviewConsoleV1(input: {
     walletPayPath: eligible ? walletPayPath : null,
     submissionLock: eligible && active.marker ? borrowSubmissionLockCopyV1(active.marker) : null,
     onOpen: eligible && active.body?.state === 'ready' && !locked && !input.walletBlocker ? () => void onOpen() : null,
-    onCheck: eligible && executionId ? () => void onCheck() : null,
+    // Read by itself, the result needs no press. The press is offered for what was sent and has no final
+    // answer: after the reads ran out, or where there is nothing for a read to find. Without automatic
+    // reads (the assistant's card), as before.
+    onCheck: eligible && executionId && (!autoResult || (sentState !== null && sentState !== 'ready' && !FINAL_STATES_V1.has(sentState) &&
+      !(follows && active.following) && (!follows || active.followEnded))) ? () => void onCheck() : null,
+    following: eligible && follows && active.following,
+    followEnded: eligible && follows && active.followEnded,
     transactionHint: eligible ? active.transactionHint : '',
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
     onFindTransaction: eligible && executionId && locked && (!['confirmed','failed'].includes(active.execution?.state ?? '') || stoppedInSteps || releasedUnsent) ? () => void onFindTransaction() : null,
