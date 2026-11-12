@@ -27,6 +27,9 @@ export interface OpsUnitStateV1 {
   changedAtMs: number | null;
   /** When its main process last exited. */
   lastExitAtMs: number | null;
+  /** How many times systemd started it again by itself since it was last started by hand
+   * (NRestarts); absent or null when it was not read. */
+  restarts?: number | null;
 }
 
 export interface OpsAlertEpisodeV1 {
@@ -67,8 +70,7 @@ export const OPS_ALERT_QUIET_MS_V1 = 10 * 60 * 1000;
  * renews it. The copy is what a pass falls back on when the database is the
  * thing that is down, and only a pass that sent something used to write it:
  * the first chat, subscribed on 2026-10-10, was in no copy until a failure
- * reached it. The unit's ExecCondition starts Node at the same age
- * (`-mmin -360` in miorail-ops-alerts.service). */
+ * reached it. */
 export const OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1 = 6 * 60 * 60 * 1000;
 
 /** Whether the copy of the subscribed chats is missing or old enough to renew. */
@@ -163,6 +165,7 @@ export function opsFailureReasonV1(result: string, exitStatus: number | null): s
     case 'watchdog': return 'stopped answering its watchdog';
     case 'start-limit-hit': return 'restarted too often and gave up';
     case 'oom-kill': return 'ran out of memory';
+    case 'stopped': return 'is stopped, and nothing starts it again';
     default: return result || 'failed';
   }
 }
@@ -170,10 +173,15 @@ export function opsFailureReasonV1(result: string, exitStatus: number | null): s
 /** One Telegram message for the whole pass, or null when there is nothing to say. */
 export function opsAlertHtmlV1(pass: OpsAlertPassV1, nowMs: number): string | null {
   const sections: string[] = [];
-  const unit = (name: string) => `<code>${escapeTelegramHtmlV1(name)}</code>`;
+  // An episode of a check (`unit#check`) is shown under the unit it is about.
+  const unit = (name: string) => `<code>${escapeTelegramHtmlV1(opsCheckOfV1(name).unit)}</code>`;
   const reason = (episode: OpsAlertEpisodeV1) => escapeTelegramHtmlV1(opsFailureReasonV1(episode.result, episode.exitStatus));
   if (pass.failed.length > 0) {
-    const title = pass.failed.length === 1 ? 'Miorail: a service failed' : `Miorail: ${pass.failed.length} services failed`;
+    // A service that restarts in a loop or does not answer has not "failed" in systemd's sense.
+    const trouble = pass.failed.some((episode) => opsCheckOfV1(episode.unit).check !== null || episode.result === 'stopped');
+    const title = trouble
+      ? (pass.failed.length === 1 ? 'Miorail: a service is in trouble' : `Miorail: ${pass.failed.length} services are in trouble`)
+      : (pass.failed.length === 1 ? 'Miorail: a service failed' : `Miorail: ${pass.failed.length} services failed`);
     sections.push([`<b>${title}</b>`, ...pass.failed.map((episode) =>
       `${unit(episode.unit)} — ${reason(episode)}, ${whenV1(episode.sinceMs)}`)].join('\n'));
   }
@@ -183,7 +191,9 @@ export function opsAlertHtmlV1(pass: OpsAlertPassV1, nowMs: number): string | nu
   }
   if (pass.recovered.length > 0) {
     sections.push(['<b>Back to normal</b>', ...pass.recovered.map(({ episode, how }) => {
-      const span = `failed ${whenV1(episode.sinceMs)}, ${forV1(nowMs - episode.sinceMs)} ago`;
+      const check = opsCheckOfV1(episode.unit).check;
+      const span = `${check === null ? 'failed' : 'first seen'} ${whenV1(episode.sinceMs)}, ${forV1(nowMs - episode.sinceMs)} ago`;
+      if (check !== null && how !== 'removed') return `${unit(episode.unit)}: ${escapeTelegramHtmlV1(Object.hasOwn(OPS_CHECK_CLEAR_V1, check) ? OPS_CHECK_CLEAR_V1[check]! : 'is back to normal')} (${span})`;
       if (how === 'healthy') return `${unit(episode.unit)} runs cleanly again (${span})`;
       if (how === 'cleared') return `${unit(episode.unit)} is no longer marked failed; nothing has run since (${span})`;
       return `${unit(episode.unit)} no longer exists (${span})`;
@@ -191,7 +201,7 @@ export function opsAlertHtmlV1(pass: OpsAlertPassV1, nowMs: number): string | nu
   }
   if (sections.length === 0) return null;
   if (pass.failed.length + pass.stillFailing.length > 0) {
-    const first = (pass.failed[0] ?? pass.stillFailing[0])!.unit;
+    const first = opsCheckOfV1((pass.failed[0] ?? pass.stillFailing[0])!.unit).unit;
     sections.push(`Why: <code>journalctl -u ${escapeTelegramHtmlV1(first)} -n 80</code> on the server.`);
   }
   return sections.join('\n\n');
@@ -214,6 +224,7 @@ export function parseSystemctlShowV1(output: string): OpsUnitStateV1[] {
       return match ? Number(match[1]) * 1000 : null;
     };
     const status = fields.get('ExecMainStatus');
+    const restarts = fields.get('NRestarts');
     units.push({
       unit,
       loaded: fields.get('LoadState') === 'loaded',
@@ -222,6 +233,7 @@ export function parseSystemctlShowV1(output: string): OpsUnitStateV1[] {
       exitStatus: status !== undefined && /^\d+$/.test(status) ? Number(status) : null,
       changedAtMs: time('StateChangeTimestamp'),
       lastExitAtMs: time('ExecMainExitTimestamp'),
+      restarts: restarts !== undefined && /^\d+$/.test(restarts) ? Number(restarts) : null,
     });
   }
   return units;
@@ -237,7 +249,7 @@ export function parseOpsAlertStateV1(text: string | null): OpsAlertStateV1 {
     return {
       episodes: value.episodes.filter((row): row is OpsAlertEpisodeV1 => {
         const episode = row as Partial<OpsAlertEpisodeV1> | null;
-        return !!episode && typeof episode.unit === 'string' && /^miorail-[A-Za-z0-9@._-]+$/.test(episode.unit)
+        return !!episode && typeof episode.unit === 'string' && opsEpisodeUnitIsKnownV1(episode.unit)
           && number(episode.sinceMs) && number(episode.lastSeenFailedMs) && typeof episode.result === 'string'
           && (episode.exitStatus === null || number(episode.exitStatus))
           && (episode.notifiedMs === null || number(episode.notifiedMs));
@@ -260,9 +272,8 @@ export function parseOpsAlertStateV1(text: string | null): OpsAlertStateV1 {
 // Each of those once. A date moved further away (the secret was renewed)
 // starts over quietly.
 //
-// What was said is kept in its own file, deadlines.json: the unit's
-// ExecCondition starts Node every two minutes while state.json exists, and a
-// reminder that stands for a month must not do that.
+// What was said is kept in its own file, deadlines.json, apart from the
+// episodes: a reminder stands for a month, an episode for as long as a failure.
 // ---------------------------------------------------------------------------
 
 export interface OpsDeadlineV1 {
@@ -274,6 +285,8 @@ export interface OpsDeadlineV1 {
   after: string;
   /** What the operator does about it. */
   renew: string;
+  /** Days before it at which it is said, furthest first; OPS_DEADLINE_STAGES_DAYS_V1 when absent. */
+  stages?: readonly number[];
 }
 
 export const OPS_DEADLINE_STAGES_DAYS_V1 = [30, 14, 7, 3, 1, 0] as const;
@@ -301,9 +314,10 @@ export function planOpsDeadlinesV1(input: { deadlines: readonly OpsDeadlineV1[];
   const due: OpsDeadlineDueV1[] = [], next: Record<string, number> = {}, kept: Record<string, number> = {};
   for (const deadline of input.deadlines) {
     const daysLeft = (deadline.expiresAtMs - input.nowMs) / 86_400_000;
+    const stages = deadline.stages && deadline.stages.length > 0 ? deadline.stages : OPS_DEADLINE_STAGES_DAYS_V1;
     // Further away than the first stage: nothing is said, and anything said before is forgotten.
-    if (daysLeft > OPS_DEADLINE_STAGES_DAYS_V1[0]) continue;
-    const stage = [...OPS_DEADLINE_STAGES_DAYS_V1].reverse().find((days) => daysLeft <= days) ?? 0;
+    if (daysLeft > stages[0]!) continue;
+    const stage = [...stages].reverse().find((days) => daysLeft <= days) ?? 0;
     const before = input.told[deadline.key];
     if (before !== undefined) kept[deadline.key] = before;
     if (before === undefined || stage < before) { due.push({ deadline, daysLeft, stage }); next[deadline.key] = stage; }
@@ -399,4 +413,189 @@ export function opsDiskHtmlV1(plan: OpsDiskPlanV1): string | null {
     `It is ${full}: ${gb(plan.reading.freeBytes)} free of ${gb(plan.reading.totalBytes)}. A full disk stops PostgreSQL, and the API with it; no service fails before that.`,
     'The two largest tables are official_cash_exit_runs and market_venue_transfers. Old cash-exit measurements can be removed; the nightly backups in /var/backups/miorail take space too.',
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// What `failed` does not show (audit OPS-5).
+//
+// A unit's failed state was the only thing a pass looked at, and only of
+// miorail-* units. So an API that crashes once a minute and is started again
+// each time never reached `failed` and was never reported, though every
+// session and stream broke each time; PostgreSQL stopping took the API down
+// into `inactive`, which is not `failed`; a backup timer that stopped firing
+// left a clean unit behind it; and nginx and certbot were not asked about at
+// all. Each of those is read here and handed to the same episodes as a failed
+// unit: said once, reminded once a day, and said again when it is over.
+//
+// A check that is not a unit's own state gets its own episode, named
+// `unit#check`, so a unit that also fails outright is two lines, not one
+// overwritten by the other.
+// ---------------------------------------------------------------------------
+
+/** Units outside miorail-* that Miorail stops without, asked about beside its own. */
+export const OPS_SYSTEM_UNITS_V1 = ['postgresql@18-main.service', 'nginx.service', 'certbot.service'] as const;
+/** Units that run all the time: stopped is as much an outage as failed. */
+export const OPS_ALWAYS_ON_UNITS_V1 = ['miorail-api.service', 'postgresql@18-main.service', 'nginx.service'] as const;
+/** How long one must have been stopped before it is said, so a restart in progress is not an outage. */
+export const OPS_STOPPED_AFTER_MS_V1 = 90_000;
+export const OPS_API_UNIT_V1 = 'miorail-api.service';
+/** How long the API must have been up before /health is asked: it listens a few seconds after it starts. */
+export const OPS_API_SETTLE_MS_V1 = 30_000;
+export const OPS_BACKUP_UNIT_V1 = 'miorail-db-backup.service';
+/** The backup runs nightly; a day and a half without one that finished is a missed night. */
+export const OPS_BACKUP_MAX_AGE_MS_V1 = 36 * 3_600_000;
+
+export type OpsCheckV1 = 'restarts' | 'health' | 'age';
+
+/** What a check's episode says once it is over. */
+export const OPS_CHECK_CLEAR_V1: Readonly<Record<string, string>> = {
+  restarts: 'has not been started again since',
+  health: 'answers on /health again',
+  age: 'a backup has finished',
+};
+
+/** Whether a stored episode names something a pass can open one for: a miorail-* unit or one of the
+ * system units, alone or with one of the checks. Anything else in a state file is dropped, and a
+ * name read back from a file is never handed to systemctl without passing here. */
+export function opsEpisodeUnitIsKnownV1(name: string): boolean {
+  const { unit, check } = opsCheckOfV1(name);
+  const known = /^miorail-[A-Za-z0-9@._-]+$/.test(unit) || (OPS_SYSTEM_UNITS_V1 as readonly string[]).includes(unit);
+  return known && (check === null || Object.hasOwn(OPS_CHECK_CLEAR_V1, check));
+}
+
+/** `unit#check` taken apart; a plain unit name has no check. */
+export function opsCheckOfV1(name: string): { unit: string; check: string | null } {
+  const at = name.indexOf('#');
+  return at < 0 ? { unit: name, check: null } : { unit: name.slice(0, at), check: name.slice(at + 1) };
+}
+
+const checkUnitV1 = (unit: string, check: OpsCheckV1): string => `${unit}#${check}`;
+
+/** Whether /health is worth asking: only of an API that systemd says is up, and has been for a moment.
+ * One that is down, starting or just started is the unit's own line, not a second one. */
+export function opsHealthIsAskedV1(units: readonly OpsUnitStateV1[], nowMs: number): boolean {
+  const api = units.find((unit) => unit.unit === OPS_API_UNIT_V1);
+  return api !== undefined && api.loaded && api.activeState === 'active' && api.changedAtMs !== null && nowMs - api.changedAtMs >= OPS_API_SETTLE_MS_V1;
+}
+
+export interface OpsWatchV1 {
+  /** The units as read, with a stopped always-on unit turned into a failed one, and one more entry
+   * for every check that found something or has an episode open. */
+  units: OpsUnitStateV1[];
+  /** The automatic-restart count seen for each unit, to compare with at the next pass. */
+  restartsSeen: Record<string, number>;
+}
+
+/**
+ * Reads what `failed` does not show out of the same `systemctl show` answer.
+ *
+ * `health` is what GET /health answered: null when it was not asked (see opsHealthIsAskedV1), so an
+ * open episode stays as it is. `open` is the units of the episodes that are open, so a check that
+ * found nothing wrong still says so and its episode can close.
+ */
+export function opsWatchV1(input: {
+  units: readonly OpsUnitStateV1[];
+  nowMs: number;
+  restartsSeen: Readonly<Record<string, number>>;
+  health: { ok: boolean; detail: string } | null;
+  open: readonly string[];
+}): OpsWatchV1 {
+  const { nowMs } = input;
+  const open = new Set(input.open);
+  const alwaysOn = new Set<string>(OPS_ALWAYS_ON_UNITS_V1);
+  const units: OpsUnitStateV1[] = input.units.map((unit) => {
+    const stopped = alwaysOn.has(unit.unit) && unit.loaded && unit.activeState === 'inactive'
+      && unit.changedAtMs !== null && nowMs - unit.changedAtMs >= OPS_STOPPED_AFTER_MS_V1;
+    return stopped ? { ...unit, activeState: 'failed', result: 'stopped', exitStatus: null } : unit;
+  });
+  /** One entry for a check: failed when it found something, active when it did not and an episode
+   * is open, activating (still deciding) when it could not be read. */
+  const say = (name: string, verdict: 'bad' | 'good' | 'unread', detail: string, sinceMs: number): void => {
+    if (verdict !== 'bad' && !open.has(name)) return;
+    units.push({
+      unit: name, loaded: true,
+      activeState: verdict === 'bad' ? 'failed' : verdict === 'good' ? 'active' : 'activating',
+      result: verdict === 'bad' ? detail : 'success', exitStatus: null, changedAtMs: sinceMs, lastExitAtMs: null,
+    });
+  };
+
+  // Started again by systemd since the last pass: a crash, or the kernel ending it for memory. A
+  // count that fell was reset by a start by hand (a deploy), and a unit seen for the first time has
+  // nothing to compare with; neither is a restart.
+  const restartsSeen: Record<string, number> = {};
+  for (const unit of input.units) {
+    if (!unit.loaded || unit.restarts === null || unit.restarts === undefined) continue;
+    restartsSeen[unit.unit] = unit.restarts;
+    const before = input.restartsSeen[unit.unit];
+    const more = before === undefined ? 0 : unit.restarts - before;
+    say(
+      checkUnitV1(unit.unit, 'restarts'), more > 0 ? 'bad' : 'good',
+      `its process ended and systemd started it again ${more === 1 ? 'once' : `${more} times`} since the last check`,
+      nowMs,
+    );
+  }
+
+  const health = checkUnitV1(OPS_API_UNIT_V1, 'health');
+  if (input.health === null) say(health, 'unread', '', nowMs);
+  else say(health, input.health.ok ? 'good' : 'bad', `is running but does not answer on /health (${input.health.detail})`, nowMs);
+
+  const backup = input.units.find((unit) => unit.unit === OPS_BACKUP_UNIT_V1);
+  if (backup && backup.loaded) {
+    const name = checkUnitV1(OPS_BACKUP_UNIT_V1, 'age');
+    // One that failed is the unit's own line; one that is running now is still deciding.
+    if (backup.activeState === 'failed' || SETTLING_V1.has(backup.activeState)) say(name, 'unread', '', nowMs);
+    else if (backup.result === 'success' && backup.lastExitAtMs !== null) {
+      const age = nowMs - backup.lastExitAtMs;
+      say(name, age > OPS_BACKUP_MAX_AGE_MS_V1 ? 'bad' : 'good', `no backup has finished for ${forV1(age)}; it runs every night`, backup.lastExitAtMs + OPS_BACKUP_MAX_AGE_MS_V1);
+    }
+  }
+  return { units, restartsSeen };
+}
+
+/** watch.json as read back; anything that is not one starts over empty. */
+export function parseOpsRestartsSeenV1(text: string | null): Record<string, number> {
+  if (text === null) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter((entry): entry is [string, number] => /^[A-Za-z0-9@._-]{1,120}$/.test(entry[0]) && typeof entry[1] === 'number' && Number.isInteger(entry[1]) && entry[1] >= 0));
+  } catch {
+    return {};
+  }
+}
+
+/** The public hosts whose certificate this server holds, always asked about; OPS_ALERT_TLS_HOSTS adds more. */
+export const OPS_TLS_DEFAULT_HOSTS_V1 = ['miorail.xyz', 'stills.lat'] as const;
+/** certbot renews with thirty days left, so thirty is every certificate's ordinary state: said from two weeks. */
+export const OPS_TLS_STAGES_DAYS_V1 = [14, 7, 3, 1, 0] as const;
+
+/** The hosts to ask a certificate of: the defaults, the public origins the environment names, and
+ * OPS_ALERT_TLS_HOSTS (comma separated). Lower case, each once, nothing that is not a host name. */
+export function opsTlsHostsV1(env: NodeJS.ProcessEnv): string[] {
+  const hosts: string[] = [...OPS_TLS_DEFAULT_HOSTS_V1];
+  for (const origin of [env.PUBLIC_API_BASE_URL, env.MIORAIL_PUBLIC_ORIGIN]) {
+    try {
+      const url = new URL((origin ?? '').trim());
+      if (url.protocol === 'https:') hosts.push(url.hostname);
+    } catch {
+      // Not an origin: not a host to ask about.
+    }
+  }
+  hosts.push(...(env.OPS_ALERT_TLS_HOSTS ?? '').split(','));
+  const named = hosts.map((host) => host.trim().toLowerCase())
+    .filter((host) => /^(?=.{4,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host));
+  return [...new Set(named)].slice(0, 12);
+}
+
+/** A certificate's end as a date that is coming. `notAfterMs` is what the server presented for the host. */
+export function opsTlsDeadlineV1(host: string, notAfterMs: number): OpsDeadlineV1 {
+  return {
+    key: `tls-${host.replace(/[^a-z0-9]+/g, '-')}`.slice(0, 60),
+    name: `The certificate of ${host}`,
+    expiresAtMs: notAfterMs,
+    after: 'browsers and wallets refuse the site',
+    renew: 'It renews by itself a month ahead, so it has not: run certbot renew on the server and read what it says.',
+    stages: OPS_TLS_STAGES_DAYS_V1,
+  };
 }

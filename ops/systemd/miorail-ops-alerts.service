@@ -1,6 +1,9 @@
 [Unit]
 # Service alerts: tells the subscribed Telegram chats when a miorail-* unit
-# fails, once a day while it stays failed, and when it recovers. The pass is
+# fails, once a day while it stays failed, and when it recovers; and the same
+# for what does not show as failed: PostgreSQL, nginx or the API stopped, a
+# service systemd keeps starting again, an API that runs and does not answer,
+# a backup that stopped being taken, a certificate that is not renewed. The pass is
 # scripts/ops_unit_alerts.ts and the rules scripts/opsUnitAlerts.ts; a chat
 # subscribes with a link from scripts/ops_alert_link.ts.
 #
@@ -24,10 +27,10 @@ Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/u
 # database being down is one of the things this reports.
 StateDirectory=miorail-ops-alerts
 StateDirectoryMode=0700
-# Node starts only when a unit is failed, an episode is still open, or the
-# copy of the subscribed chats is missing or six hours old (a quiet pass
-# renews it); any other pass ends here, in a shell.
-ExecCondition=/bin/sh -c 'systemctl list-units --failed --plain --no-legend "miorail-*" | grep -q . || test -s /var/lib/miorail-ops-alerts/state.json || ! find /var/lib/miorail-ops-alerts/chats.json -mmin -360 2>/dev/null | grep -q .'
+# Every pass starts Node. Until 2026-11-12 an ExecCondition ended a pass in a
+# shell unless a miorail-* unit was failed, and so nothing else was ever looked
+# at: a service that restarts in a loop or is stopped is not failed, and the
+# disk and the dates were read once in six hours (audit OPS-5).
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/ops_unit_alerts.ts
 
 TimeoutStartSec=120

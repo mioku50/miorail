@@ -124,9 +124,23 @@ once in Telegram, reminded once a day while the unit stays failed, and closed
 with one message once the unit has settled and stayed out of `failed` for ten
 minutes. Units that fail together go out as one message. The message names
 the unit, systemd's result and the time, never a journal line, so nothing a
-failing process printed can reach a chat. While nothing is failed, no
-episode is open and the copy of the chats below is fresh, the unit's
-`ExecCondition` ends the pass in a shell and Node never starts.
+failing process printed can reach a chat.
+
+The same pass reads what never shows as `failed` and says it the same way:
+
+* `postgresql@18-main`, `nginx` and `miorail-api` stopped for more than a
+  minute and a half, and `certbot` failed;
+* a unit systemd started again by itself since the last pass (a crash, or the
+  kernel ending it for memory), from `NRestarts`;
+* the API running and not answering `GET /health` on its own port, asked twice;
+* no backup finished for a day and a half;
+* the certificate the server presents for each public host, from two weeks
+  before it ends (`OPS_ALERT_TLS_HOSTS` adds hosts);
+* the disk, from 80% full, and the dates the environment names.
+
+Every pass starts Node. When `OPS_ALERT_HEARTBEAT_URL` is set, every pass asks
+for that address once, so a monitor outside the server can tell when the passes
+themselves have stopped; nothing on the server can say that.
 
 Chats subscribe with a one-time link issued on the server (node by its full
 path: a non-interactive shell does not load nvm):
