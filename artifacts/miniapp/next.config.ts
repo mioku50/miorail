@@ -83,6 +83,17 @@ const nextConfig: NextConfig = {
     // only used by the tempo connector we never import, so webpack must not try to
     // resolve it (the dynamic import's .catch handles the absence at runtime).
     config.externals.push("pino-pretty", "lokijs", "encoding", "accounts");
+    // @base-org/account's node entry reaches @coinbase/cdp-sdk, which since 1.60 can sign x402
+    // payments and loads `@x402/*` for that by dynamic import, each wrapped in its own catch. They
+    // are optional peers; this app never signs one. Webpack still tries to resolve every such
+    // import at build time, and `@x402/svm` is not installed anywhere in the workspace: the
+    // production build stopped on it (2026-11-12, the first deploy of @base-org/account 2.5.13;
+    // neither the gates nor CI run `next build`). Whatever of `@x402/*` is absent stays an import
+    // that fails at run time, which the SDK already turns into "install the peer dependencies".
+    config.externals.push(({ request }: { request?: string }, callback: (error?: Error | null, result?: string) => void) => {
+      if (request && /^@x402\/(?:svm|extensions)(?:\/|$)/.test(request)) return callback(null, `module ${request}`);
+      return callback();
+    });
     // viem 2.53's chains index re-exports the "Tempo" chain, whose ox/_esm/tempo
     // helper uses a dynamic require webpack can't statically analyze. It is never
     // evaluated at runtime (we only use base / baseSepolia) — silence just that

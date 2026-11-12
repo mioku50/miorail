@@ -60,6 +60,13 @@ jobs:
       - name: Project build
         run: pnpm -r exec tsc -b
 
+      # The mini app is a Next.js app, and `next build` resolves every import webpack can see, optional
+      # ones included. Nothing ran it before the deploy did: on 2026-11-12 a wallet library update that
+      # passed every step here stopped the production build on an optional package its new dependency
+      # imports lazily.
+      - name: Mini app production build
+        run: pnpm --filter @mioagent/miniapp build
+
       - name: Lint
         run: if [ -f package.json ] && pnpm run | grep -q lint; then pnpm lint; else echo "No lint script found, skipping"; fi
 
