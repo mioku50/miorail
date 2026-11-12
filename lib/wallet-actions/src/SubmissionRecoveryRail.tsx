@@ -82,6 +82,10 @@ export function SubmissionRecoveryRail({
           onResolved={onResolved}
           onDismissed={() => void query.refetch()}
           markerStorage={storage}
+          // A card with a batch asks what became of it by itself and closes on the chain's answer
+          // (2026-11-12). Settled that way it leaves the list; the page is not taken anywhere.
+          autoResume
+          onSettled={() => void query.refetch()}
         />
       ))}
     </>

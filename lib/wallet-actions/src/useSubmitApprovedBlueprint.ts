@@ -71,6 +71,10 @@ export const SUBMISSION_IN_DOUBT_V1 =
   'Your wallet already had this once, and what it did with it is not known yet, so it was not asked again. Check your wallet’s activity; if nothing went out, dismiss the unfinished submission and press again.';
 export const SUBMISSION_UNRECORDED_V1 =
   'This swap could not be recorded before your wallet was asked, so your wallet was not asked and nothing was sent. Press again in a moment.';
+/** The server's refusal of calls that already reached Base once (`route_already_sent`, or an NFT
+ * proof's `proof_already_final`): pressing again cannot help, a fresh comparison can (2026-11-12). */
+export const SUBMISSION_ALREADY_SENT_V1 =
+  'These calls already went to Base from your wallet once, so they are not sent again, and nothing was sent now. Compare again for a fresh quote.';
 
 export type BlueprintSubmitStatus =
   | 'idle'
@@ -486,6 +490,12 @@ export function useSubmitApprovedBlueprint({
       if (cause instanceof Error && cause.message.startsWith('submission_attempt_open')) {
         setStatus('submitted_unknown');
         setError(SUBMISSION_IN_DOUBT_V1);
+        return 'stopped';
+      }
+      // The same calls already reached Base once. Sent again they would be a swap no proof can record.
+      if (cause instanceof Error && /^(?:route_already_sent|proof_already_final)\b/.test(cause.message)) {
+        setStatus('failed');
+        setError(SUBMISSION_ALREADY_SENT_V1);
         return 'stopped';
       }
       setStatus('failed');

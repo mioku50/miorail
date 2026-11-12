@@ -43,6 +43,10 @@ export const submissionRecoveryRouter = Router();
 
 export const SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 =
   'Your wallet already had this once, and what it did with it is not known yet. Nothing was asked of it again.';
+/** Said when the calls already reached Base once (`route_already_sent`, and the NFT proof's own
+ * `proof_already_final`). Pressing again cannot help; a fresh comparison can. */
+export const SUBMISSION_ROUTE_ALREADY_SENT_DETAIL_V1 =
+  'These calls already went to Base from your wallet once, so they are not sent again, and nothing was sent now. Compare again for a fresh quote.';
 
 export const submissionRecoveryRuntime = {
   flags: getMiorailProductMigrationFlags,
@@ -195,6 +199,13 @@ export async function verifyAttemptBindingV1(
   const proofId = routeProofIdV1(stored.blueprint.id);
   const proof = await deps.route.getProofProjection(proofId, input.tenantId);
   if (!proof) return { ok: false, code: 'route_proof_missing' };
+  // These calls already reached Base once: their proof holds a transaction. Handed to a wallet again,
+  // they are a second swap that no record can hold, because one blueprint has one proof. On 2026-11-12
+  // an AAPLc sale in two steps reverted at the swap, a second press 18 s later sent the same swap, and
+  // it landed four minutes later while Still still said the sale had failed. A route that reached the
+  // chain is compared again instead: a fresh quote, a blueprint and a proof of its own. The approval
+  // already in place is then not asked for again.
+  if (proof.transactionHashes.length > 0) return { ok: false, code: 'route_already_sent' };
   return { ok: true, proofId };
 }
 
@@ -232,7 +243,12 @@ submissionRecoveryRouter.post('/submission-attempts', async (req: Request, res: 
     );
     if (!binding.ok) {
       const code = binding.code ?? 'submission_attempt_rejected';
-      res.status(code === 'approved_calls_hash_mismatch' ? 409 : 404).json({ error: code, code });
+      // Calls that already reached Base are a conflict with what exists, not a missing record.
+      const conflict = code === 'approved_calls_hash_mismatch' || code === 'route_already_sent' || code === 'proof_already_final';
+      res.status(conflict ? 409 : 404).json({
+        error: code, code,
+        ...(code === 'route_already_sent' || code === 'proof_already_final' ? { detail: SUBMISSION_ROUTE_ALREADY_SENT_DETAIL_V1 } : {}),
+      });
       return;
     }
 

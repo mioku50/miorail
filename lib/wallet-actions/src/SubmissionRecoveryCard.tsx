@@ -1,4 +1,4 @@
-import { createElement, useCallback, useState, type ReactNode } from 'react';
+import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   useAbandonSubmissionAttempt,
   useRecordBlueprintSubmission,
@@ -60,6 +60,17 @@ export function baseAccountActivityUrlV1(walletAddress: string): string {
   return `https://basescan.org/address/${walletAddress}`;
 }
 
+/**
+ * How long a card asks by itself what became of its batch, before the press is
+ * offered again (operator, 2026-11-12: «сделай автозакрытие»). A two-step swap
+ * of 1 USDC into HIMSc had landed at 13:39 and was still listed among "Wallet
+ * requests to check" hours later, because "Resume verification" was never
+ * pressed. The answer is the chain's: it closes the card only by recording
+ * what the receipts say. A card without a batch has nothing to ask about and
+ * stays as it is.
+ */
+export const RECOVERY_AUTO_RESUME_MS_V1 = 120_000;
+
 export interface SubmissionRecoveryCardProps {
   attempt: SubmissionAttemptWireV1;
   /** Shown next to the goal — a provider or blueprint label, when the surface
@@ -70,6 +81,11 @@ export interface SubmissionRecoveryCardProps {
   /** Called when the user dismisses the card. */
   onDismissed?: (attemptId: string) => void;
   markerStorage?: MarkerStorageV1 | null;
+  /** Ask about the batch at once, for RECOVERY_AUTO_RESUME_MS_V1, without a press. */
+  autoResume?: boolean;
+  /** Called when an automatic check recorded the outcome. Unlike `onResolved`, nothing is opened:
+   * the person did not ask for this card, so the page is not taken anywhere. */
+  onSettled?: (attemptId: string) => void;
 }
 
 export function SubmissionRecoveryCard({
@@ -78,14 +94,24 @@ export function SubmissionRecoveryCard({
   onResolved,
   onDismissed,
   markerStorage,
+  autoResume = false,
+  onSettled,
 }: SubmissionRecoveryCardProps): ReactNode {
   const recordSwap = useRecordBlueprintSubmission();
   const recordEarn = useRecordEarnBlueprintSubmission();
   const recordNft = useRecordNftBlueprintSubmission();
   const abandon = useAbandonSubmissionAttempt();
-  const [resuming, setResuming] = useState(false);
+  // Who asked: the page by itself, or the person's press.
+  const [resuming, setResuming] = useState<'auto' | 'manual' | null>(() => (autoResume && attempt.batchId ? 'auto' : null));
+  const mode = useRef(resuming); mode.current = resuming;
   const [outcome, setOutcome] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The automatic ask stops after its window; the press is then offered as before.
+  useEffect(() => {
+    if (resuming !== 'auto' || outcome) return undefined;
+    const timer = setTimeout(() => setResuming((current) => (current === 'auto' ? null : current)), RECOVERY_AUTO_RESUME_MS_V1);
+    return () => clearTimeout(timer);
+  }, [resuming, outcome]);
 
   const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
   const record =
@@ -124,7 +150,8 @@ export function SubmissionRecoveryCard({
           if (resolved === 'failed') {
             clearRecoveryMarkerV1(storage, attempt.walletAddress, attempt.id);
           }
-          onResolved?.({
+          if (mode.current === 'auto') onSettled?.(attempt.id);
+          else onResolved?.({
             proofId: response.proofId ?? null,
             finalStatus: response.finalStatus ?? null,
           });
@@ -133,7 +160,7 @@ export function SubmissionRecoveryCard({
         }
       })();
     },
-    [attempt, outcome, record, onResolved, storage],
+    [attempt, outcome, record, onResolved, onSettled, storage],
   );
 
   const poller: ReactNode =
@@ -197,8 +224,8 @@ export function SubmissionRecoveryCard({
 
       <div className="ctarow">
         {attempt.batchId ? (
-          <button className="btn" type="button" onClick={() => setResuming(true)} disabled={resuming}>
-            {resuming ? 'Checking with your wallet…' : 'Resume verification'}
+          <button className="btn" type="button" onClick={() => setResuming('manual')} disabled={resuming !== null}>
+            {resuming !== null ? 'Checking with your wallet…' : 'Resume verification'}
           </button>
         ) : (
           <a className="btn sec" href={baseAccountActivityUrlV1(attempt.walletAddress)} target="_blank" rel="noreferrer">

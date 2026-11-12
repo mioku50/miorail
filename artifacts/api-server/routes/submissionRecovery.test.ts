@@ -47,6 +47,8 @@ const original = { ...submissionRecoveryRuntime };
 let repository: InMemorySubmissionAttemptRepositoryV1;
 let blueprintStatus: string;
 let storedCallsHash: string;
+/** The transactions the blueprint's proof already holds: none until its calls reached Base. */
+let storedProofHashes: string[];
 
 /** Only the four methods the binding check calls. Anything else being reached
  * is itself a failure, so the rest throw. */
@@ -76,7 +78,7 @@ function fakeRouteRepository(): RouteStorageRepository {
         ];
       },
       async getProofProjection(id: string) {
-        return id === PROOF_ID ? { id, finalStatus: 'pending' } : null;
+        return id === PROOF_ID ? { id, finalStatus: 'pending', transactionHashes: storedProofHashes } : null;
       },
     } as unknown as RouteStorageRepository,
     { get: (target, key) => (key in target ? (target as never)[key] : unexpected) },
@@ -113,6 +115,7 @@ beforeEach(() => {
   });
   blueprintStatus = 'approved';
   storedCallsHash = HASH;
+  storedProofHashes = [];
   submissionRecoveryRuntime.flags = () => ({ ...FLAGS });
   submissionRecoveryRuntime.repository = () => repository;
   submissionRecoveryRuntime.routeRepository = fakeRouteRepository;
@@ -191,6 +194,28 @@ describe('creating an attempt re-verifies everything', () => {
     const third = await create();
     assert.equal(third.status, 200);
     assert.notEqual(third.body.attempt.id, first.body.attempt.id);
+  });
+
+  // 2026-11-12, W2: an AAPLc sale in two steps reverted at the swap. A second press 18 s later sent the
+  // same swap, which landed four minutes later, while the blueprint's proof, already final, said it failed.
+  test('calls whose proof already holds a transaction are never handed to a wallet again', async () => {
+    storedProofHashes = [`0x${'12'.repeat(32)}`];
+    const refused = await create();
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, 'route_already_sent');
+    assert.match(refused.body.detail, /already went to Base from your wallet once/);
+    assert.match(refused.body.detail, /Compare again for a fresh quote/);
+    assert.equal((await repository.listRecoverable(USER.id, WALLET)).length, 0);
+    // Dismissing nothing frees nothing: the calls stay spent.
+    storedProofHashes = [`0x${'12'.repeat(32)}`, `0x${'34'.repeat(32)}`];
+    assert.equal((await create()).status, 409);
+  });
+
+  test('a proof with no transaction yet still takes an attempt', async () => {
+    storedProofHashes = [];
+    const response = await create();
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.attempt.proofId, PROOF_ID);
   });
 
   test('a request that raced another gets the other one back from storage, and is refused all the same', async () => {
