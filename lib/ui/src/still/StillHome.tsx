@@ -406,7 +406,8 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
         <a href={model.signInHref} className="still-btn">Sign in</a>
         {model.createWallet ? (
           <button type="button" className="still-btn sec" disabled={model.createWallet.opening} onClick={model.createWallet.onCreate}>
-            {model.createWallet.opening ? 'Opening Base Account…' : 'Create a wallet'}
+            {/* Half of a phone's width: "Opening Base Account…" broke onto two lines in the button. */}
+            {model.createWallet.opening ? 'Opening…' : 'Create a wallet'}
           </button>
         ) : null}
       </div>

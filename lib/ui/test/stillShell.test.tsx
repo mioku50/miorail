@@ -293,7 +293,7 @@ describe('Home', () => {
     assert.doesNotMatch(idle, /\$\d/);
     assert.equal(pressed, 0, 'drawing the page presses nothing');
     const opening = renderToStaticMarkup(<StillHomeSignedOut model={{ ...model, createWallet: { opening: true, error: null, onCreate: () => {} } }} />);
-    assert.match(opening, /<button type="button" class="still-btn sec" disabled="">Opening Base Account…<\/button>/);
+    assert.match(opening, /<button type="button" class="still-btn sec" disabled="">Opening…<\/button>/);
     const failed = renderToStaticMarkup(<StillHomeSignedOut model={{ ...model, createWallet: { opening: false, error: 'Base Account did not open. Try again, or sign in with the wallet you have.', onCreate: () => {} } }} />);
     assert.match(failed, /<p class="still-section still-warn" role="alert">Base Account did not open\./);
     assert.doesNotMatch(failed, /No wallet yet/);
