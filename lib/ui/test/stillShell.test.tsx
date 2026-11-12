@@ -278,6 +278,25 @@ describe('Home', () => {
     assert.match(html, /Spend without selling\./);
     assert.match(html, /Not offered to US persons/);
     assert.doesNotMatch(html, /\$\d/);
+    // No way to create a wallet was given (Base App, Farcaster, a wallet connected): none is drawn.
+    assert.doesNotMatch(html, /Create a wallet|No wallet yet/);
+  });
+
+  // 2026-11-12: a visitor with no wallet had only "Sign in", which led to a list of wallets they did not have.
+  it('signed out with Base Account at hand, "Create a wallet" sits beside "Sign in" and says what it makes', () => {
+    let pressed = 0;
+    const model = { sky: skyStateV1({ now: WEDNESDAY }), result: null, checking: false, message: null, onCheck: () => {}, signInHref: '/signin?next=%2F' };
+    const idle = renderToStaticMarkup(<StillHomeSignedOut model={{ ...model, createWallet: { opening: false, error: null, onCreate: () => { pressed += 1; } } }} />);
+    const buttons = idle.slice(idle.indexOf('class="still-btns"'));
+    assert.match(buttons, /^class="still-btns"><a href="\/signin\?next=%2F" class="still-btn">Sign in<\/a><button type="button" class="still-btn sec">Create a wallet<\/button><\/div>/);
+    assert.match(idle, /No wallet yet\? Create a Base Account with a passkey: nothing to install, and Still offers to pay its network fee on stock trades and loans\./);
+    assert.doesNotMatch(idle, /\$\d/);
+    assert.equal(pressed, 0, 'drawing the page presses nothing');
+    const opening = renderToStaticMarkup(<StillHomeSignedOut model={{ ...model, createWallet: { opening: true, error: null, onCreate: () => {} } }} />);
+    assert.match(opening, /<button type="button" class="still-btn sec" disabled="">Opening Base Account…<\/button>/);
+    const failed = renderToStaticMarkup(<StillHomeSignedOut model={{ ...model, createWallet: { opening: false, error: 'Base Account did not open. Try again, or sign in with the wallet you have.', onCreate: () => {} } }} />);
+    assert.match(failed, /<p class="still-section still-warn" role="alert">Base Account did not open\./);
+    assert.doesNotMatch(failed, /No wallet yet/);
   });
 });
 

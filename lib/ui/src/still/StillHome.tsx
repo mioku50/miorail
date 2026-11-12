@@ -321,6 +321,19 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
   );
 }
 
+/**
+ * "Create a wallet" beside "Sign in", for a visitor with no wallet (2026-11-12).
+ * The app opens Base Account's own window, where a passkey makes the wallet;
+ * nothing is signed until the sign-in that follows, as with any wallet.
+ */
+export interface StillCreateWalletV1 {
+  /** The window was asked for and has not answered yet. */
+  opening: boolean;
+  /** Why it did not open, in words; null when it did, or when the person closed it. */
+  error: string | null;
+  onCreate: () => void;
+}
+
 export interface StillCheckModelV1 {
   sky: SkyStateV1;
   /** The last checked wallet's Home, or null. */
@@ -330,6 +343,8 @@ export interface StillCheckModelV1 {
   message: string | null;
   onCheck: (subject: string) => void;
   signInHref: string;
+  /** Absent where no wallet can be created here: inside Base App or Farcaster, or with a wallet connected. */
+  createWallet?: StillCreateWalletV1 | null;
 }
 
 export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
@@ -389,7 +404,17 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       ) : null}
       <div className="still-btns">
         <a href={model.signInHref} className="still-btn">Sign in</a>
+        {model.createWallet ? (
+          <button type="button" className="still-btn sec" disabled={model.createWallet.opening} onClick={model.createWallet.onCreate}>
+            {model.createWallet.opening ? 'Opening Base Account…' : 'Create a wallet'}
+          </button>
+        ) : null}
       </div>
+      {model.createWallet ? (
+        model.createWallet.error
+          ? <p className="still-section still-warn" role="alert">{model.createWallet.error}</p>
+          : <p className="still-section still-note">No wallet yet? Create a Base Account with a passkey: nothing to install, and Still offers to pay its network fee on stock trades and loans.</p>
+      ) : null}
       <p className="still-section still-note">
         Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
         Not offered to US persons.

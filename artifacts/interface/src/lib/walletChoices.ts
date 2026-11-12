@@ -73,6 +73,25 @@ export function openInBaseAppHrefV1(pageUrl: string): string {
   return `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(pageUrl)}`;
 }
 
+/** The Base Account connector, where main.tsx built one: never inside Base App or Farcaster. */
+export function baseAccountConnectorV1<T extends WalletConnectorViewV1>(connectors: readonly T[]): T | null {
+  return connectors.find((connector) => connector.type === 'baseAccount' || connector.id === 'baseAccount') ?? null;
+}
+
+/**
+ * The connector a "Create a wallet" press opens, or null where the button has
+ * nothing to do (2026-11-12).
+ *
+ * It is Base Account: its window creates a wallet with a passkey, or opens the
+ * one a person already has. There is none to open inside Base App or Farcaster,
+ * where main.tsx builds no Base Account and the host's own wallet is the page's.
+ * A wallet already connected here is one the person has: they sign in with it.
+ */
+export function createWalletConnectorIdV1(input: { connectors: readonly WalletConnectorViewV1[]; connected: boolean }): string | null {
+  if (input.connected) return null;
+  return baseAccountConnectorV1(input.connectors)?.id ?? null;
+}
+
 /** A phone or tablet, where wallets are apps rather than extensions. */
 export function isMobileBrowserV1(input: { userAgent: string; maxTouchPoints?: number }): boolean {
   if (/Android|iPhone|iPad|iPod|Mobile/i.test(input.userAgent)) return true;
@@ -133,8 +152,10 @@ export function walletChoicesV1(input: {
     };
   }
 
-  // 2. Base Account: a passkey, nothing to install, works in any browser.
-  const baseAccount = input.connectors.find((connector) => connector.type === 'baseAccount' || connector.id === 'baseAccount');
+  // 2. Base Account: a passkey, nothing to install, works in any browser. Its
+  // window makes a new wallet as readily as it opens one, so this row is also
+  // where a person with no wallet at all begins.
+  const baseAccount = baseAccountConnectorV1(input.connectors);
   if (baseAccount) {
     choices.push({
       kind: 'connector',
@@ -142,7 +163,7 @@ export function walletChoicesV1(input: {
       connectorId: baseAccount.id,
       name: 'Base Account',
       icon: baseAccount.icon?.trim() ? baseAccount.icon : null,
-      detail: 'A passkey wallet — nothing to install. Miorail offers to pay its network fee on stock trades.',
+      detail: 'Create one with a passkey, or use yours: nothing to install. Miorail offers to pay its network fee on stock trades and Still loans.',
     });
   }
 

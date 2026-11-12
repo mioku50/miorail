@@ -21,6 +21,7 @@ import {
 import { useAuthGate } from '../../app/AuthProvider';
 import { AppLoading } from '../../app/AppLoading';
 import { RequireSession } from '../../app/RequireSession';
+import { useCreateWalletV1 } from './useCreateWallet';
 import { useStillSky, useStillWallet } from './useStillSky';
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,8 @@ export function StillWalletPage() {
   // be decoded twice into a different subject.
   const subject = legacyWalletSubjectV1(window.location.pathname);
   const check = useStillCheck(subject);
+  // A new wallet opens the reader's own Home too.
+  const createWallet = useCreateWalletV1('/');
   const answer = check.data ?? null;
   const result = useMemo(
     () => (answer?.outcome === 'report' ? { view: homeViewV1({ report: answer.report, sky }), report: answer.report } : null),
@@ -122,6 +125,7 @@ export function StillWalletPage() {
           },
           // Signing in opens the reader's own Home, not the public subject.
           signInHref: '/signin?next=%2F',
+          createWallet,
         }}
       />
     </StillFrame>
@@ -131,6 +135,7 @@ export function StillWalletPage() {
 function StillHomePage() {
   const sky = useStillSky();
   const signInHref = useSignInHref();
+  const createWallet = useCreateWalletV1('/');
   const still = useMyStill();
   const telegram = useTelegramAlertsV1({ enabled: still.signedIn });
   const [subject, setSubject] = useState<string | null>(null);
@@ -167,6 +172,7 @@ function StillHomePage() {
               else setSubject(normalized);
             },
             signInHref,
+            createWallet,
           }}
         />
       )}

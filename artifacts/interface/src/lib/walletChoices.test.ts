@@ -3,6 +3,8 @@ import test from 'node:test';
 import { detectBaseAppEarly } from './detectBaseAppEarly';
 import {
   METAMASK_OPEN_HREF_V1,
+  baseAccountConnectorV1,
+  createWalletConnectorIdV1,
   isMobileBrowserV1,
   metaMaskPairHrefV1,
   metaMaskPairSchemeV1,
@@ -41,6 +43,25 @@ test('a desktop browser with two extensions offers both by name, then Base Accou
   const metamask = result.choices[0]!;
   assert.equal(metamask.kind === 'connector' && metamask.icon, 'data:image/svg+xml,<svg/>');
   assert.match(result.choices[2]!.detail, /nothing to install/);
+  // The row is also where a person with no wallet begins, and the fee offer
+  // has covered Still's loans since 2026-11-09, not stock trades alone.
+  assert.match(result.choices[2]!.detail, /^Create one with a passkey, or use yours/);
+  assert.match(result.choices[2]!.detail, /stock trades and Still loans\.$/);
+});
+
+// The gas credits programme asks for Base Account as the way to make a wallet
+// (2026-11-12): "Create a wallet" on Home opens exactly the connector the
+// picker's Base Account row does, and only where that row exists.
+test('"Create a wallet" opens Base Account, and only where Base Account is built and nothing is connected yet', () => {
+  assert.equal(createWalletConnectorIdV1({ connectors: [GENERIC, BASE_ACCOUNT, METAMASK], connected: false }), 'baseAccount');
+  assert.equal(createWalletConnectorIdV1({ connectors: [GENERIC, METAMASK, { id: 'org.base.account', name: 'Base Account', type: 'baseAccount' }], connected: false }), 'org.base.account');
+  // A connected wallet is one the person already has: they sign in with it.
+  assert.equal(createWalletConnectorIdV1({ connectors: [GENERIC, BASE_ACCOUNT], connected: true }), null);
+  // Inside Base App and Farcaster main.tsx builds the injected connector alone.
+  assert.equal(createWalletConnectorIdV1({ connectors: [GENERIC, COINBASE], connected: false }), null);
+  assert.equal(createWalletConnectorIdV1({ connectors: [], connected: false }), null);
+  assert.equal(baseAccountConnectorV1([METAMASK, BASE_ACCOUNT]), BASE_ACCOUNT);
+  assert.equal(baseAccountConnectorV1([METAMASK, COINBASE]), null);
 });
 
 test('a host that injects without announcing is offered once, as a browser wallet', () => {
