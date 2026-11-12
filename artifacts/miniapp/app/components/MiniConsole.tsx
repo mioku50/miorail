@@ -196,6 +196,7 @@ import {
   builderCodeToDataSuffix,
   isWalletRejectionError,
   requireLiveWalletAccountV1,
+  submissionReconcilableV1,
   transactionHashesFromReceipts,
   useFoundWalletClaim,
   useSpendPermissionGrant,
@@ -673,7 +674,8 @@ export function MiniConsole() {
     proofId: submission?.proofId ?? null,
     routeRunId: prepared?.routeRunId ?? null,
     walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
-    enabled: Boolean(submission && submission.proofId && RECONCILABLE.includes(submission.status)),
+    // A swap sent in steps is read by its hashes once its last step is out, without waiting for the wallet's node.
+    enabled: Boolean(submission && submission.proofId && submissionReconcilableV1(submission, RECONCILABLE)),
     attemptKey: submission?.batchId ?? null,
   });
 

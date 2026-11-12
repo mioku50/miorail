@@ -34,6 +34,17 @@ export {
   sponsoredGasPlanV1,
 } from './src/sponsoredGas';
 export type { SponsoredGasOfferV1, SponsoredGasStateV1 } from './src/sponsoredGas';
+// 2026-11-12: a swap sent in steps is read from Base by its hashes, without waiting for the wallet's node.
+export { submissionReconcilableV1 } from './src/proofReconciliation';
+// 2026-11-12: each call's gas, measured, for a wallet that takes a limit per call (Base Account).
+export {
+  GAS_LIMIT_CALL_EXTRA_V1,
+  GAS_LIMIT_MARGIN_PERCENT_V1,
+  gasLimitOverrideSupportV1,
+  gasLimitedCallsV1,
+  publicGasMeterV1,
+  sendCallsKeepingCallCapabilitiesV1,
+} from './src/gasLimitOverride';
 export {
   WALLET_CANNOT_BATCH_V1,
   WALLET_CONNECTION_NOT_READY_V1,

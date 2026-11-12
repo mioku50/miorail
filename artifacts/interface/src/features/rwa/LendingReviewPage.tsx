@@ -6,8 +6,8 @@ import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useSponsoredGasStatus, useStillEligibilityV1, useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1, stillEligibilityViewV1 } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, requireLiveWalletAccountV1, sendCallsCapabilitiesV1,
-  sponsoredGasPlanV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, gasLimitedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, publicGasMeterV1,
+  requireLiveWalletAccountV1, sendCallsCapabilitiesV1, sendCallsKeepingCallCapabilitiesV1, sponsoredGasPlanV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
 const LENDING_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1({
@@ -44,6 +44,7 @@ export function LendingReviewPage() {
   // (2026-11-08). After the wallet failed with the sponsor, the next press goes without one.
   const sponsoredGas = useSponsoredGasStatus({ enabled: session.signedIn });
   const [sponsorDeclined, setSponsorDeclined] = useState(false);
+  const [gasLimitsDeclined, setGasLimitsDeclined] = useState(false);
   // A new loan's review waits for this sign-in's confirmation that it is not a US person, given in the
   // line at the top of the page; once it lands, the refused review is read again, once (2026-11-10).
   const eligibility = useStillEligibilityV1(session.signedIn ? session.wallet : null, { enabled: session.signedIn });
@@ -66,17 +67,25 @@ export function LendingReviewPage() {
       // as "no capabilities", and the batch went without the Builder Code): it is asked again (audit WAL-5).
       const walletCapabilities = restored ? (await batches.readNow()).capabilities : batches.capabilities;
       const gas = sponsoredGasPlanV1({ offer: sponsorship ?? null, capabilities: walletCapabilities, declinedBefore: sponsorDeclined });
+      // Each call's gas, measured, for a wallet that takes it: Base Account gives a batch none to spare (2026-11-12).
+      const sized = await gasLimitedCallsV1({ from: owner, ...publicGasMeterV1(config),
+        // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
+        calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
+          suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: walletCapabilities, sponsored: gas.state === 'sponsored' }),
+        // After a send that carried them failed, the wallet's own estimate again.
+        capabilities: gasLimitsDeclined ? undefined : walletCapabilities });
+      const requestCapabilities = sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability });
       try {
-        const result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
-          // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
-          calls: attributedCallsV1({ calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
-            suffix: LENDING_BUILDER_SUFFIX_V1, capabilities: walletCapabilities, sponsored: gas.state === 'sponsored' }),
-          capabilities: sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability }),
-        });
+        const result = sized.limits
+          // viem drops a call's own capabilities, so calls carrying their gas go as the same request, sent directly.
+          ? await sendCallsKeepingCallCapabilitiesV1(config, { account: owner, chainId: 8453, forceAtomic: true, calls: sized.calls, capabilities: requestCapabilities })
+          : await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true, calls: sized.calls, capabilities: requestCapabilities });
         return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
       } catch (error) {
         // Whatever else failed, the next press must not depend on the sponsor; the person's own No is not the sponsor's.
         if (gas.capability && !isWalletRejectionError(error)) setSponsorDeclined(true);
+        // Nor on the measured gas.
+        if (sized.limits && !isWalletRejectionError(error)) setGasLimitsDeclined(true);
         throw error;
       }
     },

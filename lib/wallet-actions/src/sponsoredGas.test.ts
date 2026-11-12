@@ -109,7 +109,9 @@ test('both loan pages hand Still’s offer to the wallet and drop it after a fai
     const source = readFileSync(path.join(root, page), 'utf8');
     assert.match(source, /sendCalls: async \(\{ calls, sponsorship \}\) =>/, page);
     assert.match(source, /sponsoredGasPlanV1\(\{ offer: sponsorship \?\? null, capabilities: [^,]+, declinedBefore: sponsorDeclined \}\)/, page);
-    assert.match(source, /capabilities: sendCallsCapabilitiesV1\(\{ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas\.capability \}\)/, page);
+    // One request object, sent by either way to the wallet (the direct one carries measured gas, 2026-11-12).
+    assert.match(source, /const requestCapabilities = sendCallsCapabilitiesV1\(\{ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas\.capability \}\);/, page);
+    assert.equal((source.match(/capabilities: requestCapabilities \}\)/g) ?? []).length, 2, page);
     assert.match(source, /if \(gas\.capability && !isWalletRejectionError\(error\)\) setSponsorDeclined\(true\);/, page);
   }
 });

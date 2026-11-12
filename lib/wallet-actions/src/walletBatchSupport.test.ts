@@ -225,7 +225,9 @@ test('nothing is asked again after a longer wait than the bound, a failure while
 
 test('the swap and loan pages ask a wallet once more through the same helper', () => {
   const root = path.resolve(here, '../../..');
-  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'), /result = await sendRetryingWalletNetworkV1\(\(\) => sendCalls\.mutateAsync\(\{/);
+  // Both ways to the wallet go inside it: calls carrying their measured gas by the direct request (2026-11-12), the rest by wagmi.
+  assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'),
+    /result = await sendRetryingWalletNetworkV1\(\(\) => sized\.limits[\s\S]{0,400}?\? sendCallsKeepingCallCapabilitiesV1\(config, \{[\s\S]{0,400}?: sendCalls\.mutateAsync\(\{/);
   assert.match(readFileSync(path.join(root, 'lib/ui/src/console/useLendingReviewConsole.ts'), 'utf8'),
     /const batchId = await sendRetryingWalletNetworkV1\(\(\) => input\.sendCalls\(\{ calls, sponsorship \}\), \{/);
 });

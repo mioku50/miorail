@@ -18,7 +18,7 @@ import {
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
 import { DeepVerification, ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState, type DeepVerificationResultV1 } from "@mioagent/ui";
-import { BlueprintSubmitButton, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
+import { BlueprintSubmitButton, builderCodeForSurfaceV1, submissionReconcilableV1, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 import { EarnComparePanel } from "./EarnComparePanel";
@@ -213,7 +213,8 @@ export function RoutePlanHome() {
     routeRunId: prepare.data?.outcome === "prepared" ? prepare.data.routeRunId : null,
     walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
     enabled: Boolean(
-      submission && submission.proofId && RECONCILABLE_SUBMISSION_STATUSES.includes(submission.status),
+      // A swap sent in steps is read by its hashes once its last step is out, without waiting for the wallet's node.
+      submission && submission.proofId && submissionReconcilableV1(submission, RECONCILABLE_SUBMISSION_STATUSES),
     ),
     attemptKey: submission?.batchId ?? null,
   });

@@ -126,7 +126,7 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
-import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, submissionReconcilableV1, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { useConsoleNav } from './useConsoleNav';
 import { downloadRouteProofV1, routeProofExportV1 } from '../proof/exportProof';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
@@ -512,7 +512,8 @@ export function RouteIntelligenceConsole() {
     proofId: submission?.proofId ?? null,
     routeRunId: prepared?.routeRunId ?? null,
     walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
-    enabled: Boolean(submission && submission.proofId && RECONCILABLE_SUBMISSION_STATUSES.includes(submission.status)),
+    // A swap sent in steps is read by its hashes once its last step is out, without waiting for the wallet's node.
+    enabled: Boolean(submission && submission.proofId && submissionReconcilableV1(submission, RECONCILABLE_SUBMISSION_STATUSES)),
     attemptKey: submission?.batchId ?? null,
   });
 

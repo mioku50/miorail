@@ -127,7 +127,9 @@ test('the swap, both loan pages and the Spend payment send their calls through t
     .filter((file) => /sendCalls\.mutateAsync\(|method: 'wallet_sendCalls'/.test(readFileSync(file, 'utf8')));
   assert.ok(senders.length >= 9, `found ${senders.length} senders`);
   // Found's claim is the one sender with no Builder Code at all: it collects a gift, and is not counted as Still's activity.
-  for (const file of senders.filter((file) => !file.endsWith('useFoundWalletClaim.ts'))) {
+  // gasLimitOverride.ts is the request the others hand calls to once they carry their measured gas (2026-11-12): it
+  // sends what it is given, and every caller gives it calls it attributed first (gasLimitOverride.test.ts).
+  for (const file of senders.filter((file) => !file.endsWith('useFoundWalletClaim.ts') && !file.endsWith('gasLimitOverride.ts'))) {
     assert.match(readFileSync(file, 'utf8'), /attributedCallsV1\(\{ calls/, path.relative(root, file));
   }
   // Both loan pages send a sponsored batch as approved; Spend has no sponsor.

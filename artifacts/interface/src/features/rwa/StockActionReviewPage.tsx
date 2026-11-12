@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import {
@@ -22,7 +22,8 @@ import {
   useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
+import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, gasLimitedCallsV1, isWalletRejectionError, publicGasMeterV1, requireLiveWalletAccountV1,
+  sendCallsKeepingCallCapabilitiesV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 /**
@@ -87,6 +88,9 @@ export function StockActionReviewPage() {
   // -------------------------------------------------------------------------
   const sendCalls = useSendCalls();
   const config = useConfig();
+  // Set once a send that carried measured gas failed for a reason but the person's own No: the next
+  // press goes with the wallet's own estimate.
+  const gasLimitsDeclined = useRef(false);
   const recordSubmission = useRecordBlueprintSubmission();
   const batches = useWalletBatchSupportV1();
   const reviewConsole = useStockActionReviewConsoleV1({
@@ -98,20 +102,34 @@ export function StockActionReviewPage() {
       if (!address) throw new Error('Your wallet is not connected');
       const { restored } = await requireLiveWalletAccountV1(config, address);
       const capabilities = restored ? (await batches.readNow()).capabilities : batches.capabilities;
-      const result = await sendCalls.mutateAsync({
-        account: address,
+      // Each call's gas, measured, for a wallet that takes it: Base Account gives a batch none to spare
+      // (2026-11-12). Only a batch the wallet must keep whole; calls it may split are left to it.
+      const sized = await gasLimitedCallsV1({ from: address, ...publicGasMeterV1(config),
         // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data, as a swap
         // and a loan do (audit WAL-5: this path sent only the capability, which MetaMask ignores).
-        calls: attributedCallsV1({ calls: calls as { data?: string }[], suffix: STOCK_ACTION_BUILDER_SUFFIX_V1, capabilities }) as never,
-        chainId: 8453,
-        forceAtomic: atomicRequired,
-        // Optional, so a wallet that does not understand the capability still
-        // sends the batch rather than refusing it.
-        capabilities: STOCK_ACTION_BUILDER_SUFFIX_V1
-          ? { dataSuffix: { value: STOCK_ACTION_BUILDER_SUFFIX_V1, optional: true } }
-          : undefined,
-      });
-      return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+        calls: attributedCallsV1({ calls: calls as { to: string; data?: string }[], suffix: STOCK_ACTION_BUILDER_SUFFIX_V1, capabilities }),
+        capabilities: atomicRequired && !gasLimitsDeclined.current ? capabilities : undefined });
+      // Optional, so a wallet that does not understand the capability still
+      // sends the batch rather than refusing it.
+      const requestCapabilities = STOCK_ACTION_BUILDER_SUFFIX_V1
+        ? { dataSuffix: { value: STOCK_ACTION_BUILDER_SUFFIX_V1, optional: true } }
+        : undefined;
+      try {
+        const result = sized.limits
+          // viem drops a call's own capabilities, so calls carrying their gas go as the same request, sent directly.
+          ? await sendCallsKeepingCallCapabilitiesV1(config, { account: address, chainId: 8453, forceAtomic: atomicRequired, calls: sized.calls, capabilities: requestCapabilities })
+          : await sendCalls.mutateAsync({
+            account: address,
+            calls: sized.calls as never,
+            chainId: 8453,
+            forceAtomic: atomicRequired,
+            capabilities: requestCapabilities,
+          });
+        return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+      } catch (error) {
+        if (sized.limits && !isWalletRejectionError(error)) gasLimitsDeclined.current = true;
+        throw error;
+      }
     },
     // The one submission-record route this codebase has — the same one the
     // swap and NFT families write through. A stock action's Blueprint IS a swap

@@ -289,7 +289,11 @@ describe('nothing is signed on a guess', () => {
     // The panel still tells the truth about simulation — it just stops voting.
     assert.equal(view.available, false);
     assert.equal(view.passed, false);
-    assert.equal(view.headline, 'Simulation not available');
+    // And the truth is that none ran: no provider was asked, so none failed to answer (2026-11-12).
+    assert.equal(view.headline, 'Not simulated');
+    assert.equal(view.subLabel, 'not run');
+    assert.doesNotMatch(view.detail, /answered|provider/i);
+    assert.match(view.detail, /did not simulate this route/);
   });
 
   test('only a passed simulation unlocks the signing CTA', () => {

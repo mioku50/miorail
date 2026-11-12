@@ -25,6 +25,8 @@ test('sendCalls is invoked in exactly one place, guarded by a single-flight ref'
   const source = mod.useSubmitApprovedBlueprint.toString();
   const sendCallsInvocations = source.match(/sendCalls\.mutateAsync\(/g) ?? [];
   assert.equal(sendCallsInvocations.length, 1, 'the wallet batch must be sent from exactly one call site');
+  // Calls that carry their measured gas go by the one direct request, under the same guard.
+  assert.equal((source.match(/sendCallsKeepingCallCapabilitiesV1\(/g) ?? []).length, 1);
   assert.ok(/inFlightRef/.test(source), 'a single-flight ref must guard against double submits');
   assert.ok(/if\s*\(\s*inFlightRef\.current\s*\)\s*return/.test(source), 'a repeat call while in flight must be a no-op');
 });
@@ -42,9 +44,12 @@ test('dataSuffix is attached only as an optional capability derived from the bui
   // A capability object is sent only when there is something to put in it: the
   // suffix, or a fee sponsor the approval offered (growth plan step 2).
   assert.ok(
-    /capabilities:\s*suffix\s*\|\|\s*gas\.capability\s*\?/.test(source),
+    /requestCapabilities\s*=\s*suffix\s*\|\|\s*gas\.capability\s*\?/.test(source),
     'no capability may be attached without a suffix or a sponsor offer',
   );
+  // Both ways to the wallet send that same object: the wagmi mutation, and the direct request for
+  // calls that carry their measured gas (2026-11-12).
+  assert.equal((source.match(/capabilities:\s*requestCapabilities/g) ?? []).length, 2);
 });
 
 test('preflight fails closed on a from-address mismatch without opening the wallet', () => {

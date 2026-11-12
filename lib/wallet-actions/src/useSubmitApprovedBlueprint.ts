@@ -35,6 +35,7 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
+import { gasLimitedCallsV1, publicGasMeterV1, sendCallsKeepingCallCapabilitiesV1 } from './gasLimitOverride';
 import { sendRetryingWalletNetworkV1, useWalletBatchSupportV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1, walletNetworkFailureSentenceV1, walletNotAskedSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import { requireLiveWalletAccountV1 } from './liveWalletConnection';
 import {
@@ -353,6 +354,10 @@ export function useSubmitApprovedBlueprint({
   // person refusing: the next attempt goes without it, so a paymaster that
   // will not pay can never be the reason a trade cannot be made.
   const sponsorDeclinedRef = useRef(false);
+  // The same for the gas limits measured for each call: a send that carried
+  // them and failed for any reason but the person's own No goes, next time,
+  // with the wallet's own estimate, as every batch did before 2026-11-12.
+  const gasLimitsDeclinedRef = useRef(false);
   const attemptRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const finalizedRef = useRef(false);
@@ -805,10 +810,6 @@ export function useSubmitApprovedBlueprint({
       }
       approvedRef.current = payload;
 
-      const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
-      if ((await openAttempt(payload, storage)) === 'stopped') return;
-      const attempt = attemptRef.current;
-
       const suffix = builderCodeToDataSuffix(builderCode);
       // Growth plan step 2: the fee, paid by Miorail when the approval offered
       // it — swap approvals of a reviewed stock only; earn and NFT approvals
@@ -823,37 +824,67 @@ export function useSubmitApprovedBlueprint({
         declinedBefore: sponsorDeclinedRef.current,
         chainId: base.id,
       });
+      // Each call's gas, measured while the attempt below is opened, for a
+      // wallet that takes it: Base Account gives a batch no gas to spare, and a
+      // swap whose pools moved before its block ran out (2026-11-12).
+      const sizing = gasLimitedCallsV1({
+        from: payload.from,
+        // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
+        calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }),
+        // After a send that carried them failed, the wallet's own estimate again.
+        capabilities: gasLimitsDeclinedRef.current ? undefined : capabilities,
+        chainId: base.id,
+        ...publicGasMeterV1(config, base.id),
+      });
+
+      const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
+      if ((await openAttempt(payload, storage)) === 'stopped') return;
+      const attempt = attemptRef.current;
+
+      const sized = await sizing;
       setSponsoredGas(gas.state);
       setStatus('submitting');
+      // `optional: true` so a wallet without dataSuffix support still sends
+      // the batch. The user asked for the transaction, not for attribution.
+      // The same for the fee sponsor: optional, and only when offered.
+      const requestCapabilities =
+        suffix || gas.capability
+          ? {
+              ...(suffix ? { dataSuffix: { value: suffix, optional: true } } : {}),
+              ...(gas.capability ?? {}),
+            }
+          : undefined;
       let result: { id: string };
       try {
         // A wallet whose own connection to Base failed before it sent anything is
         // asked once more, after the wait it named (MetaMask, 2026-11-08).
-        result = await sendRetryingWalletNetworkV1(() => sendCalls.mutateAsync({
+        result = await sendRetryingWalletNetworkV1(() => sized.limits
+          // viem drops a call's own capabilities, so calls carrying their gas
+          // go as the same request, sent directly.
+          ? sendCallsKeepingCallCapabilitiesV1(config, {
+              account: payload.from,
+              chainId: base.id,
+              calls: sized.calls,
+              capabilities: requestCapabilities,
+              forceAtomic: true,
+            })
+          : sendCalls.mutateAsync({
           // The account the server approved these calls for, named on every try: a connection that
           // no longer holds it is refused before the wallet is asked (audit WAL-1).
           account: payload.from,
-          // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data.
-          calls: attributedCallsV1({ calls: payload.calls.map(normalizeCall), suffix, capabilities, chainId: base.id, sponsored: gas.state === 'sponsored' }) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
+          calls: sized.calls as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
           // EIP-5792 `atomicRequired`, which wagmi spells `forceAtomic`. NOT a
           // capability: `atomic` is what wallet_getCapabilities REPORTS, and
           // sending it back as a request capability would be a field the wallet
           // has no contract to honour.
           forceAtomic: true,
-          // `optional: true` so a wallet without dataSuffix support still sends
-          // the batch. The user asked for the transaction, not for attribution.
-          // The same for the fee sponsor: optional, and only when offered.
-          capabilities:
-            suffix || gas.capability
-              ? {
-                  ...(suffix ? { dataSuffix: { value: suffix, optional: true } } : {}),
-                  ...(gas.capability ?? {}),
-                }
-              : undefined,
+          capabilities: requestCapabilities,
         }));
       } catch (cause) {
-        if (isWalletRejectionError(cause)) {
+        const rejected = isWalletRejectionError(cause);
+        if (sized.limits && !rejected) gasLimitsDeclinedRef.current = true;
+        if (rejected) {
           setStatus('cancelled');
           setError('Cancelled in wallet');
           // Refused in the wallet means no batch exists. There is nothing to

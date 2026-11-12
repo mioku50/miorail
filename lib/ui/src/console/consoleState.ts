@@ -108,6 +108,9 @@ export const CONSOLE_COPY_V1 = {
   notScored: 'not scored · no source',
   dashedAxis: 'dashed axis = no source',
   simulationUnavailable: 'Simulation is not available yet, so nothing is signed from a guess.',
+  // A route the server prepared with no simulation behind it was never simulated: nobody was asked.
+  simulationNotRun:
+    'Miorail did not simulate this route. Its calls were checked by their structure, and your wallet shows its own estimate of the result before you confirm.',
 } as const;
 
 /** Turns a raw backend/adapter reason into a sentence that keeps the honest
@@ -555,6 +558,20 @@ export function deriveSimulationViewV1(
         : serverAllowsSigning && simulation.outcome === 'simulation_provider_unavailable'
           ? null
           : copy.detail,
+    };
+  }
+  if (!simulation && serverAllowsSigning) {
+    // The Safety Kernel prepared the route and no simulation came with it, so none ran: at standard
+    // checks a provider-built swap is not simulated. "No simulation provider answered" stood here
+    // over every such swap, a failure nobody had (2026-11-12, a sale whose wallet ran out of gas).
+    return {
+      available: false,
+      passed: false,
+      headline: 'Not simulated',
+      detail: CONSOLE_COPY_V1.simulationNotRun,
+      subLabel: 'not run',
+      canSign: true,
+      disabledReason: null,
     };
   }
   if (!simulation || simulation.status === 'unavailable') {
