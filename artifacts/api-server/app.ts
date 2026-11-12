@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { rateLimit } from './middleware/rate-limit';
+import { boundedBody } from './middleware/bodyBounds';
 import { sessionStoreV1 } from './lib/postgresSessionStore.js';
 import {
   MCP_OAUTH_SCOPES_V1,
@@ -67,6 +68,9 @@ app.use(
 // Body parser. No client of ours compresses a request body, so none is ever
 // decompressed: an encoded body is refused before any decoder exists.
 app.use(express.json({ inflate: false }));
+// No route reads a body with thousands of members, and a schema asked about one keeps an issue for
+// each: refused here, before any schema (audit SUP-4).
+app.use(boundedBody());
 
 // Session middleware
 app.use(
