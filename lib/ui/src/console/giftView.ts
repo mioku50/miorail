@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
 import type { VerificationHonestyViewV1, VerifiedFactV1 } from './verificationHonesty';
 import { composerLinksV1 } from './composerLinks';
 
@@ -591,6 +592,44 @@ export function giftDefaultModeV1(holding: GiftHoldingV1 | null): 'send' | 'buy'
 // questions open, so it gets its own list, stated as flatly.
 // ---------------------------------------------------------------------------
 
+/**
+ * What a send from holdings moves: a reviewed stock, or, since 2026-11-12, USDC or gold (operator:
+ * «надо бы ему агенту разрешить также подготовку отправки usdc и … золота»). Read from the token's
+ * address, the same two contracts the server allows.
+ */
+export type GiftSendTokenKindV1 = 'stock' | 'usdc' | 'gold';
+
+export function giftSendTokenKindV1(address: string | null | undefined): GiftSendTokenKindV1 {
+  const token = (address ?? '').toLowerCase();
+  if (token === ADDRESSES.usdc.toLowerCase()) return 'usdc';
+  if (token === ADDRESSES.paxg.toLowerCase()) return 'gold';
+  return 'stock';
+}
+
+/** Where the review's Back goes: a stock's send began on its page; a coin's began elsewhere. */
+export function giftSendBackLabelV1(address: string | null | undefined): string {
+  return giftSendTokenKindV1(address) === 'stock' ? 'Back to the stock' : 'Back';
+}
+
+/** Only a stock's gift is a public card: "gave … USDC stock" would be no card at all. */
+export function giftShareableV1(address: string | null | undefined): boolean {
+  return giftSendTokenKindV1(address) === 'stock';
+}
+
+const GIFT_SEND_NOT_VERIFIED_COIN_V1: Readonly<Record<'usdc' | 'gold', readonly string[]>> = {
+  usdc: [
+    'Who holds the keys to the recipient’s address. Miorail checked its shape and, for a Basename, that it still resolves there — not that the person you mean controls it.',
+    'Whether Circle, which issues USDC, will freeze the recipient’s address later. The simulation ran this transfer under USDC’s rules as they are now.',
+    'Whether it can be undone. It cannot: once the receipt shows the transfer, the USDC is theirs.',
+  ],
+  gold: [
+    'Who holds the keys to the recipient’s address. Miorail checked its shape and, for a Basename, that it still resolves there — not that the person you mean controls it.',
+    'What the gold will be worth when it arrives, or later. The dollar figure was a quote, not a price anyone promised.',
+    'Whether Paxos, which issues PAXG, will freeze the recipient’s address later. The simulation ran this transfer under PAXG’s rules as they are now.',
+    'Whether it can be undone. It cannot: once the receipt shows the transfer, the PAXG is theirs.',
+  ],
+};
+
 export const GIFT_SEND_NOT_VERIFIED_V1: readonly string[] = [
   'Who holds the keys to the recipient’s address. Miorail checked its shape and, for a Basename, that it still resolves there — not that the person you mean controls it.',
   'Whether the recipient can sell the stock later. Its issuer’s transfer rules applied to this transfer in the simulation; what they allow afterwards was not read.',
@@ -613,11 +652,18 @@ export function giftSendHonestyViewV1(input: {
       : { label, detail: check?.detail ?? `${check?.description ?? label} — not confirmed`, tone: 'warn' };
   };
   const address = input.token.address?.toLowerCase() ?? '';
+  const kind = giftSendTokenKindV1(address);
+  const what =
+    kind === 'usdc'
+      ? 'Circle’s USDC, the canonical one on Base'
+      : kind === 'gold'
+        ? 'Paxos’s PAXG, gold, the token Still reads'
+        : 'a Coinbase-issued stock in Miorail’s reviewed corpus';
   const verified: VerifiedFactV1[] = [
     fact(
       'You give',
       'send_reviewed_stock',
-      `${address} — a Coinbase-issued stock in Miorail’s reviewed corpus; the contract answers "${input.token.symbol}" and ${input.token.decimals} decimals.`,
+      `${address} — ${what}; the contract answers "${input.token.symbol}" and ${input.token.decimals} decimals.`,
     ),
     {
       label: 'They receive',
@@ -630,7 +676,9 @@ export function giftSendHonestyViewV1(input: {
     fact('Balance', 'send_balance', 'Your wallet held at least this amount when it was read, and it is read again when you approve.'),
     {
       label: 'Token security',
-      detail: 'Not asked: nothing is bought, so no token-risk provider was queried. The stock is one Miorail has already reviewed.',
+      detail: `Not asked: nothing is bought, so no token-risk provider was queried. ${
+        kind === 'stock' ? 'The stock is one Miorail has already reviewed.' : `${input.token.symbol} is checked by its contract’s address, not by its name.`
+      }`,
       tone: 'none',
     },
   ];
@@ -646,7 +694,7 @@ export function giftSendHonestyViewV1(input: {
   }
   return {
     verified,
-    notVerified: [...GIFT_SEND_NOT_VERIFIED_V1],
+    notVerified: [...(kind === 'stock' ? GIFT_SEND_NOT_VERIFIED_V1 : GIFT_SEND_NOT_VERIFIED_COIN_V1[kind])],
     note: 'Each line above is something that was read. Everything below it is something nobody looked at.',
   };
 }

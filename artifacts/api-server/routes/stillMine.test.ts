@@ -6,7 +6,7 @@ import { InMemoryRateLimiter } from '@mioagent/utils';
 import { computeMirror, type MirrorInput, type MirrorOutcome, type MirrorReadingV1, type MirrorService } from '@mioagent/still-engine';
 import type { LlmProvider, LlmRequest } from '@mioagent/llm';
 
-import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
+import { EXAMPLE, SATURDAY, calendar, snapshot, universe, type Holdings } from '../../../lib/still-engine/test/fixtures.js';
 import type { BaseNameResolutionV1 } from '../lib/baseNameResolver.js';
 import { stillAgentLlmRuntimeV1 } from '../lib/stillAgentServer.js';
 import { createMemoryStillReadingStoreV1, stillReadingsRuntimeV1 } from '../lib/stillReadings.js';
@@ -358,7 +358,7 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     ['переведи все NVDA на me.base.eth', /^me\.base\.eth — это ваш же кошелёк/],
     ['переведи все NVDA на nobody.base.eth', /^nobody\.base\.eth не указывает ни на какой адрес в Base/],
     ['transfer all my NVDA to bob.eth', /^I read \.base\.eth names and 0x addresses, and cannot check bob\.eth/],
-    [`скинь биткоин на ${FRIEND}`, /^Перевод я готовлю только для акций Coinbase/],
+    [`скинь биткоин на ${FRIEND}`, /^Перевод я готовлю для акций Coinbase \(.+\), USDC и золота \(PAXG\).+cbBTC отправьте кнопкой Send в своём кошельке\.$/],
     ['отправь другу NVDA', /^Кому перевести\? Напишите в вопросе адрес 0x… или имя \.base\.eth/],
     ['отправь $5 NVDA на friend.base.eth', /^Назовите количество в NVDAc или «все»/],
     // Re-audit R6, 2026-11-04: this prepared a send to the address it was told not to use.
@@ -408,6 +408,82 @@ test('a stock that is all pledged is said to be, with the way to take it back fi
   debt = '0';
   const free = (await ask(server, 'send all my NVDA to friend.base.eth')).body.answer;
   assert.match(free.text, /Nothing is owed, so you can take them back without USDC: Repay → “Take back NVDAc”\./);
+});
+
+test('USDC and gold go to the same send review: USDC read on its own, gold from the report, gold on Morpho said so', async () => {
+  // 2026-11-12, the operator: «давай отправим <name>.base.eth все мои usdc» was answered with the list of
+  // stocks, and «надо бы ему агенту разрешить также подготовку отправки usdc и eth и золота».
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a transfer is not re-worded by a model');
+  const FRIEND = `0x${'2'.repeat(40)}` as const;
+  stillMineRuntimeV1.resolveName = async (name): Promise<BaseNameResolutionV1> =>
+    name === 'friend.base.eth' ? { outcome: 'resolved', name, address: FRIEND } : { outcome: 'unresolved', name, errorCode: 'base_name_unresolved' };
+  const readUsdc = stillMineRuntimeV1.readUsdc;
+  let usdc: { raw: string; decimals: number; block: string } | null = { raw: '9985685', decimals: 6, block: '53000400' };
+  stillMineRuntimeV1.readUsdc = async () => usdc;
+  let gold: Holdings = { ...EXAMPLE, wallet: { ...EXAMPLE.wallet, PAXG: 2_500_000_000_000_000n } };
+  const withGold = (address: string): MirrorReadingV1 => {
+    const input = { ...inputFor(address), snapshot: snapshot(gold) };
+    return { outcome: 'report', report: computeMirror(input), input, cached: false };
+  };
+  try {
+    const { server } = app(WALLET, async () => assert.fail('not checked'), async (address) => withGold(address));
+
+    // All of the wallet's USDC, read on its own at its own block: the canonical contract, 6 places.
+    const all = (await ask(server, 'давай отправим friend.base.eth все мои usdc')).body.answer;
+    assert.deepEqual(all.sendAction, {
+      tokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      amountAtomic: '9985685',
+      symbol: 'USDC',
+      decimals: 6,
+      recipient: FRIEND,
+      recipientName: 'friend.base.eth',
+    });
+    assert.match(all.text, /^Подготовил перевод: 9\.985685 USDC \(всё, что в кошельке\) на friend\.base\.eth/);
+    assert.ok(all.steps.some((step: string) => step === 'Сумма: 9.985685 USDC из кошелька, блок Base 53,000,400'));
+    assert.ok(all.steps.some((step: string) => /любую отправку из кошелька\. Она бывает от \$0\.05 до \$100\.00 и до 5 в день$/.test(step)));
+    // Dollars are USDC's own unit.
+    const five = (await ask(server, `send $5 USDC to ${FRIEND}`)).body.answer;
+    assert.equal(five.sendAction.amountAtomic, '5000000');
+    // More than it holds is said, and nothing handed over.
+    const more = (await ask(server, `send 20 USDC to ${FRIEND}`)).body.answer;
+    assert.match(more.text, /^The wallet holds 9\.985685 USDC \(Base block 53,000,400\), less than 20\./);
+    assert.equal(more.sendAction ?? null, null);
+
+    // Gold, from the report: the PAXG contract and its 18 places.
+    const half = (await ask(server, 'send half my gold to friend.base.eth')).body.answer;
+    assert.deepEqual(half.sendAction, {
+      tokenAddress: '0xe904aea5e1b110c9174728fa2effc8aed19e98ef',
+      amountAtomic: '1250000000000000',
+      symbol: 'PAXG',
+      decimals: 18,
+      recipient: FRIEND,
+      recipientName: 'friend.base.eth',
+    });
+    assert.ok(half.steps.some((step: string) => /^The review screen is titled Gift, Miorail’s name for any send from the wallet\. It is worth \$0\.05 to \$100\.00 at the sell price, up to 5 a day$/.test(step)));
+
+    // Gold that is all pledged lies on Morpho, and Repay takes it back there.
+    gold = { ...EXAMPLE, morpho: { PAXG: { collateral: 2_500_000_000_000_000n, borrowShares: 0n } } };
+    store = createMemoryStillReadingStoreV1();
+    const pledged = (await ask(server, 'send all my gold to friend.base.eth')).body.answer;
+    assert.match(pledged.text, /^Your 0\.0025 PAXG are pledged as collateral on Morpho, and the wallet holds none/);
+    assert.equal(pledged.actionLink.href, '/repay?asset=PAXG');
+    assert.equal(pledged.sendAction ?? null, null);
+
+    // ETH is not prepared yet: said, with the wallet's own Send.
+    const eth = (await ask(server, `send 0.001 ETH to ${FRIEND}`)).body.answer;
+    assert.match(eth.text, /^I prepare transfers of Coinbase stocks \(.+\), USDC and gold \(PAXG\).+Send ETH with your own wallet’s Send button\.$/);
+    assert.equal(eth.sendAction ?? null, null);
+
+    // A USDC read that did not answer is ours, never an empty wallet.
+    usdc = null;
+    const unread = (await ask(server, `send all my USDC to ${FRIEND}`)).body.answer;
+    assert.match(unread.text, /^Your USDC balance could not be read just now: that is our failure/);
+    assert.equal(unread.sendAction ?? null, null);
+  } finally {
+    stillMineRuntimeV1.readUsdc = readUsdc;
+  }
 });
 
 test('a question the planner cannot place is said so, and nothing claims to have been computed', async () => {

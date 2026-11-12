@@ -80,9 +80,11 @@ import {
   giftBannerV1,
   giftFromHistoryStateV1,
   giftProofLineV1,
+  giftSendBackLabelV1,
   giftSendHonestyViewV1,
   giftSendNoticeV1,
   giftShareForProofV1,
+  giftShareableV1,
   giftUrlV1,
   reviewBalanceViewV1,
   reviewCallRowsV1,
@@ -729,7 +731,7 @@ export function RouteIntelligenceConsole() {
    * it BEFORE the click and disable the control that cannot work.
    */
   const reviewBlockedReason = giftMissing
-    ? 'This gift has no recipient on this page. Start it again from the stock’s page.'
+    ? 'This gift has no recipient on this page. Start it again where it began: the stock’s page or the Agent.'
     : !connected
       ? CONSOLE_COPY_V1.walletDisconnected
       : result?.outcome !== 'evaluated' || !projection
@@ -1531,7 +1533,7 @@ export function RouteIntelligenceConsole() {
           // refusal, so the recoverable refusal offers the thing that fixes it.
           onCompareAgain={() => (giftSend ? prepareGiftSend(true) : compare({ fresh: true }))}
           comparePending={giftSend ? prepare.isPending : comparePending}
-          {...(giftSend ? { compareAgainLabel: 'Prepare it again', backLabel: 'Back to the stock' } : {})}
+          {...(giftSend ? { compareAgainLabel: 'Prepare it again', backLabel: giftSendBackLabelV1(giftSend.tokenAddress) } : {})}
           calls={
             prepared
               ? reviewCallRowsV1({
@@ -1771,8 +1773,9 @@ export function RouteIntelligenceConsole() {
                 ...giftLine,
                 // Only a delivered gift is announced, and only where public
                 // proofs are switched on — a link that 404s is no gift.
+                // Only a stock's gift becomes a public card; a send of USDC or gold is a proof, not a card (2026-11-12).
                 share:
-                  giftLine.delivered && flags?.publicProofV1
+                  giftLine.delivered && flags?.publicProofV1 && giftShareableV1(proof.expectedOutput.asset.address)
                     ? {
                         url: giftLink,
                         pending: giftShare.isPending,

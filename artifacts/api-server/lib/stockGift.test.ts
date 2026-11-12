@@ -7,8 +7,10 @@ import type { BaseNameResolutionV1 } from './baseNameResolver.js';
 import {
   CANONICAL_BASE_USDC_V1,
   STOCK_GIFT_DAILY_LIMIT_V1,
+  SENDABLE_TOKENS_SENTENCE_V1,
   checkStockGiftSendV1,
   checkStockGiftV1,
+  isSendableTokenV1,
   resolveGiftRecipientV1,
 } from './stockGift.js';
 
@@ -243,6 +245,57 @@ describe('a gift from what the wallet holds', () => {
     assert.equal(renamed.ok || renamed.code, 'gift_name_changed');
     const zero = await send({ amountAtomic: '0' });
     assert.equal(zero.ok || zero.code, 'gift_amount_invalid');
+  });
+
+  // 2026-11-12, the operator: «надо бы ему агенту разрешить также подготовку отправки usdc и … золота».
+  test('USDC and gold are sent under the same rules: USDC at par with no quote, gold at what a router pays', async () => {
+    const PAXG = '0xe904aea5e1b110c9174728fa2effc8aed19e98ef';
+    let quoted = 0;
+    const usdcHolding = { ok: true as const, decimals: 6, symbol: 'USDC', balanceAtomic: '9985685', blockNumber: '56500000' };
+    const usdc = await send({
+      tokenAddress: CANONICAL_BASE_USDC_V1,
+      amountAtomic: '9985685',
+      isGiftableStock: async () => false,
+      readHolding: async () => usdcHolding,
+      valueInUsdc: async () => { quoted += 1; return worth('1'); },
+    });
+    assert.equal(usdc.ok, true);
+    if (!usdc.ok) return;
+    assert.equal(usdc.token.address, CANONICAL_BASE_USDC_V1);
+    assert.equal(usdc.valuation.usdcAtomic, '9985685');
+    assert.equal(usdc.valuation.provider, 'USDC at $1');
+    assert.equal(quoted, 0, 'USDC is its own dollar figure: no router is asked');
+    // Its range is its amount.
+    const large = await send({ tokenAddress: CANONICAL_BASE_USDC_V1, amountAtomic: '100000001', isGiftableStock: async () => false,
+      readHolding: async () => ({ ...usdcHolding, balanceAtomic: '200000000' }) });
+    assert.equal(large.ok || large.code, 'gift_value_out_of_range');
+    if (!large.ok) assert.equal(large.message, 'A send from your wallet is from $0.05 to $100; 100.000001 USDC is $100.00.');
+    const short = await send({ tokenAddress: CANONICAL_BASE_USDC_V1, amountAtomic: '9985686', isGiftableStock: async () => false, readHolding: async () => usdcHolding });
+    assert.equal(short.ok || short.code, 'gift_balance_short');
+    if (!short.ok) assert.match(short.message, /less than the 9\.985686 USDC to send\. Send less\.$/);
+
+    const gold = await send({
+      tokenAddress: PAXG,
+      amountAtomic: '1250000000000000',
+      isGiftableStock: async () => false,
+      readHolding: async () => ({ ok: true as const, decimals: 18, symbol: 'PAXG', balanceAtomic: '2500000000000000', blockNumber: '56500000' }),
+      valueInUsdc: async () => { quoted += 1; return worth('5100000'); },
+    });
+    assert.equal(gold.ok, true);
+    assert.equal(quoted, 1, 'gold is priced at what a router would pay for it');
+
+    // Any other token is refused with what may be sent.
+    const other = await send({ tokenAddress: '0x1111111111111111111111111111111111111111', isGiftableStock: async () => false });
+    assert.equal(other.ok || other.code, 'gift_not_a_reviewed_stock');
+    if (!other.ok) assert.equal(other.message, SENDABLE_TOKENS_SENTENCE_V1);
+    assert.equal(await isSendableTokenV1(CANONICAL_BASE_USDC_V1.toUpperCase().replace('0X', '0x'), async () => false), true);
+    assert.equal(await isSendableTokenV1(PAXG, async () => false), true);
+    assert.equal(await isSendableTokenV1(NVDA, async (token) => token === NVDA), true);
+    assert.equal(await isSendableTokenV1('0x1111111111111111111111111111111111111111', async () => false), false);
+    // USDC is never a recipient, its own send included.
+    const toUsdc = await send({ tokenAddress: CANONICAL_BASE_USDC_V1, amountAtomic: '100000', isGiftableStock: async () => false,
+      readHolding: async () => usdcHolding, gift: { recipient: CANONICAL_BASE_USDC_V1, recipientName: null } });
+    assert.equal(toUsdc.ok || toUsdc.code, 'gift_recipient_invalid');
   });
 
   test('no balance or price is read for a gift the cheaper rules already refuse', async () => {

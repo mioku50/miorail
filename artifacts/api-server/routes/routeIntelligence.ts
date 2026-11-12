@@ -80,7 +80,7 @@ import { readChainConditionsV1 } from '../lib/chainConditions.js';
 import { readFeeCalibrationV1 } from '../lib/feeCalibration.js';
 import { readMarketSnapshotV1 } from '../lib/marketSnapshot.js';
 import { BASE_PUBLIC_RPC_URL_V1 } from '../lib/baseRpcSwapSimulation.js';
-import { checkStockGiftSendV1, checkStockGiftV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
+import { checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
@@ -1411,7 +1411,8 @@ export const swapBlueprintRouteRuntime = {
             const holding = await readStockHoldingV1(tokenAddress, walletAddress);
             return holding.ok ? holding.balanceAtomic : null;
           },
-          reviewedStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+          // A send from holdings may move a reviewed stock, USDC or PAXG (2026-11-12), read again at approve.
+          reviewedStock: (tokenAddress: string) => isSendableTokenV1(tokenAddress, swapPrepareRouteRuntime.gift.isGiftableStock),
         },
       },
       input,

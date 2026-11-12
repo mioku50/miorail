@@ -261,7 +261,8 @@ export interface GiftSendKernelInputV1 {
   walletAddress: string;
   /** The recipient the person declared, as the server resolved it. */
   recipient: string;
-  /** A Coinbase-issued B20 in the reviewed corpus: read by the caller. */
+  /** A token a send may move, read by the caller: a Coinbase-issued B20 in the reviewed corpus, or,
+   * since 2026-11-12, Circle's USDC or Paxos's PAXG on Base. */
   reviewedStock: boolean;
   /** The wallet's balance of the token, read now. Null: the read failed. */
   balanceAtomic: string | null;
@@ -318,7 +319,7 @@ export function runGiftSendKernelV1(input: GiftSendKernelInputV1): SafetyKernelR
 
   check(
     'send_reviewed_stock',
-    'The token is a Coinbase-issued stock Miorail has reviewed',
+    'The token is one Miorail sends: a Coinbase-issued stock it has reviewed, USDC or PAXG',
     Boolean(
       input.reviewedStock &&
         token &&
@@ -328,7 +329,7 @@ export function runGiftSendKernelV1(input: GiftSendKernelInputV1): SafetyKernelR
         call.asset?.assetId === intent.fromAsset?.assetId &&
         intent.amount.asset.assetId === intent.fromAsset?.assetId,
     ),
-    'Only a Coinbase-issued tokenized stock Miorail has reviewed can be given here',
+    'Miorail sends a Coinbase-issued stock it has reviewed, USDC or PAXG (gold) from a wallet, and nothing else',
   );
 
   const reserved = new Set(

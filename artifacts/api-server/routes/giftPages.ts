@@ -3,6 +3,7 @@ import { client } from '@mioagent/db';
 import { formatAtomicV1, giftOfPublicBundleV1, type PublicGiftV1 } from '@mioagent/proof-verifier';
 import { createDatabaseUnderlyingAssetRepository } from '@mioagent/route-storage';
 import { companyDisplayNameV1 } from '@mioagent/rwa-market-reality';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { logger } from '@mioagent/utils';
 
 import { reverseBaseNameV1 } from '../lib/baseNameResolver.js';
@@ -107,6 +108,9 @@ export async function readGiftSummaryV1(publicId: string): Promise<GiftSummaryV1
   return { gift, names: { giver, recipient }, stock };
 }
 
+/** The coins a send from holdings may move besides a stock: Circle's USDC and Paxos's PAXG on Base. */
+const GIFT_COIN_ADDRESSES_V1: ReadonlySet<string> = new Set([ADDRESSES.usdc.toLowerCase(), ADDRESSES.paxg.toLowerCase()]);
+
 function shortAddressV1(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
@@ -118,14 +122,24 @@ export function giftPageMetaV1(input: { origin: string; summary: GiftSummaryV1 }
   const giver = names.giver ?? shortAddressV1(gift.giver);
   const recipient = names.recipient ?? shortAddressV1(gift.recipient);
   const amount = `${formatAtomicV1(gift.amountAtomic, gift.token.decimals)} ${gift.token.symbol}`;
-  const company = stock?.companyName ?? stock?.ticker ?? gift.token.symbol;
+  // USDC and gold (sendable since 2026-11-12) are named by their amount, never as "USDC stock": the app
+  // offers no card for them, and a link made some other way still says what it is. A stock whose label
+  // could not be read is still a stock, named by its symbol.
+  const coin = GIFT_COIN_ADDRESSES_V1.has((gift.token.address ?? '').toLowerCase());
+  const company = coin ? null : (stock?.companyName ?? stock?.ticker ?? gift.token.symbol);
   // "gave" only over a completed proof: the reconciler completes a gift only
   // when the receipt shows the transfer, so anything else was not given.
-  const title = gift.delivered
-    ? `${giver} gave ${recipient} ${company} stock · Miorail`
-    : `A gift of ${company} stock that did not arrive · Miorail`;
+  const title = company
+    ? gift.delivered
+      ? `${giver} gave ${recipient} ${company} stock · Miorail`
+      : `A gift of ${company} stock that did not arrive · Miorail`
+    : gift.delivered
+      ? `${giver} sent ${recipient} ${amount} · Miorail`
+      : `A send of ${amount} that did not arrive · Miorail`;
   const description = gift.delivered
-    ? `${amount}: tokenized ${company} stock, delivered on Base in one transaction. The record checks itself in your browser.`
+    ? company
+      ? `${amount}: tokenized ${company} stock, delivered on Base in one transaction. The record checks itself in your browser.`
+      : `${amount}, delivered on Base in one transaction. The record checks itself in your browser.`
     : `A gift of ${amount} from ${giver} to ${recipient} did not complete on Base, so nothing was delivered. The record says what happened.`;
   return {
     title,

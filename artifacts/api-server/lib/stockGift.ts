@@ -1,4 +1,5 @@
 import type { AssetRefV1, RouteIntentV1 } from '@mioagent/route-domain';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
 import type { BaseNameResolutionV1 } from './baseNameResolver.js';
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,31 @@ async function checkGiftRecipientAndDayV1(input: {
 /** $0.05 in USDC atomic units: the smallest gift from holdings. */
 export const STOCK_GIFT_SEND_MIN_USDC_ATOMIC_V1 = 50_000n;
 
+/**
+ * What a send from holdings moves besides a reviewed stock: USDC and gold, the two coins Still itself
+ * reads and pays out (operator, 2026-11-12: «надо бы ему агенту разрешить также подготовку отправки
+ * usdc и … золота»). Each by its one contract on Base, Circle's canonical USDC and Paxos's PAXG, and
+ * under the same rules as a stock: the same recipient checks, the same $0.05 to $100, the same five
+ * a day, the same one transfer simulated before it is offered.
+ */
+export const SENDABLE_COINS_V1: ReadonlyMap<string, { symbol: 'USDC' | 'PAXG'; name: string }> = new Map([
+  [CANONICAL_BASE_USDC_V1, { symbol: 'USDC', name: 'USD Coin' }],
+  [ADDRESSES.paxg.toLowerCase(), { symbol: 'PAXG', name: 'Gold (PAXG)' }],
+]);
+
+/** The coin a send moves, or null when the token is not one of them. */
+export function sendableCoinV1(tokenAddress: string): { symbol: 'USDC' | 'PAXG'; name: string } | null {
+  return SENDABLE_COINS_V1.get(tokenAddress.trim().toLowerCase()) ?? null;
+}
+
+/** Whether a send from holdings may move this token: a reviewed stock, USDC or PAXG. */
+export async function isSendableTokenV1(tokenAddress: string, isGiftableStock: (tokenAddress: string) => Promise<boolean>): Promise<boolean> {
+  return sendableCoinV1(tokenAddress) !== null || (await isGiftableStock(tokenAddress));
+}
+
+/** What a refused token is told: what a send from holdings may move. */
+export const SENDABLE_TOKENS_SENTENCE_V1 = 'Miorail sends a Coinbase stock it has reviewed, USDC or PAXG (gold) from a wallet, and nothing else.';
+
 /** One wallet's holding of one token, read at one block. */
 export type StockHoldingReadV1 =
   | { ok: true; decimals: number; symbol: string; balanceAtomic: string; blockNumber: string }
@@ -218,14 +244,12 @@ export async function checkStockGiftSendV1(input: {
 }): Promise<StockGiftSendCheckV1> {
   const refuse = (code: StockGiftSendRefusalCodeV1, message: string): StockGiftSendCheckV1 => ({ ok: false, code, message });
   const token = input.tokenAddress.trim().toLowerCase();
+  const coin = ADDRESS_V1.test(token) ? sendableCoinV1(token) : null;
   if (!/^[1-9][0-9]{0,77}$/.test(input.amountAtomic)) {
-    return refuse('gift_amount_invalid', 'Enter how much of the stock to give.');
+    return refuse('gift_amount_invalid', coin ? `Enter how much ${coin.symbol} to send.` : 'Enter how much of the stock to give.');
   }
-  if (!ADDRESS_V1.test(token) || !(await input.isGiftableStock(token))) {
-    return refuse(
-      'gift_not_a_reviewed_stock',
-      'Only a Coinbase-issued tokenized stock Miorail has reviewed can be given here.',
-    );
+  if (!ADDRESS_V1.test(token) || !(coin || (await input.isGiftableStock(token)))) {
+    return refuse('gift_not_a_reviewed_stock', SENDABLE_TOKENS_SENTENCE_V1);
   }
   const who = await checkGiftRecipientAndDayV1({
     token,
@@ -233,7 +257,9 @@ export async function checkStockGiftSendV1(input: {
     gift: input.gift,
     resolveName: input.resolveName,
     giftsApprovedToday: input.giftsApprovedToday,
-    selfMessage: 'A gift goes to someone else; this stock is already in your wallet.',
+    selfMessage: coin
+      ? `A send goes to someone else; this ${coin.symbol} is already in your wallet.`
+      : 'A gift goes to someone else; this stock is already in your wallet.',
   });
   if (!who.ok) return who;
 
@@ -249,22 +275,31 @@ export async function checkStockGiftSendV1(input: {
   if (BigInt(holding.balanceAtomic) < BigInt(input.amountAtomic)) {
     return refuse(
       'gift_balance_short',
-      `This wallet holds ${unitsV1(holding.balanceAtomic, holding.decimals)} ${holding.symbol}, less than the ${amount} to give. Give less, or buy it with USDC instead.`,
+      coin
+        ? `This wallet holds ${unitsV1(holding.balanceAtomic, holding.decimals)} ${holding.symbol}, less than the ${amount} to send. Send less.`
+        : `This wallet holds ${unitsV1(holding.balanceAtomic, holding.decimals)} ${holding.symbol}, less than the ${amount} to give. Give less, or buy it with USDC instead.`,
     );
   }
 
-  const valuation = await input.valueInUsdc({ token: asset, amountAtomic: input.amountAtomic }).catch((): StockValuationV1 => null);
+  // USDC is counted at par, as Still counts it everywhere: the amount is its value. Anything else is
+  // what a router would pay for it in USDC now.
+  const valuation =
+    coin?.symbol === 'USDC'
+      ? { usdcAtomic: input.amountAtomic, provider: 'USDC at $1', observedAt: new Date().toISOString() }
+      : await input.valueInUsdc({ token: asset, amountAtomic: input.amountAtomic }).catch((): StockValuationV1 => null);
   if (!valuation || !/^[0-9]+$/.test(valuation.usdcAtomic)) {
     return refuse(
       'gift_value_unavailable',
-      `Miorail could not price ${amount} just now, and the gift range is in dollars, so nothing was prepared. This says nothing about the stock; try again in a moment.`,
+      `Miorail could not price ${amount} just now, and the range is in dollars, so nothing was prepared. This says nothing about the ${coin ? 'token' : 'stock'}; try again in a moment.`,
     );
   }
   const value = BigInt(valuation.usdcAtomic);
   if (value < STOCK_GIFT_SEND_MIN_USDC_ATOMIC_V1 || value > STOCK_GIFT_MAX_USDC_ATOMIC_V1) {
     return refuse(
       'gift_value_out_of_range',
-      `A gift from what you hold is worth from $0.05 to $100. ${amount} fetches about ${usdcDollarsV1(valuation.usdcAtomic)} in USDC right now.`,
+      coin?.symbol === 'USDC'
+        ? `A send from your wallet is from $0.05 to $100; ${amount} is ${usdcDollarsV1(valuation.usdcAtomic)}.`
+        : `A ${coin ? 'send' : 'gift'} from what you hold is worth from $0.05 to $100. ${amount} fetches about ${usdcDollarsV1(valuation.usdcAtomic)} in USDC right now.`,
     );
   }
   return {

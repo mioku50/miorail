@@ -223,7 +223,7 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   }
   // A transfer is read by the rules alone: its recipient is the question's own words.
   if (route === 'send') {
-    return stillAgentSendAnswerV1({ question, wallet, report, resolveName: input.resolveName ?? resolveBaseNameV1, stage });
+    return stillAgentSendAnswerV1({ question, wallet, report, resolveName: input.resolveName ?? resolveBaseNameV1, ...(input.readUsdc ? { readUsdc: input.readUsdc } : {}), stage });
   }
   // A direct read and a request to act are the page's own answers: no model.
   if (route === 'fast' || route === 'action_prep') return agentAnswerV1({ question, report, sky, signedIn: true });

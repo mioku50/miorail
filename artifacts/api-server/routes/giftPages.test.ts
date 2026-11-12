@@ -137,6 +137,19 @@ test('a gift that did not complete is never described as given', async (t) => {
   assert.match(html, /so nothing was delivered/);
 });
 
+test('a send of USDC is named by its amount, never as a stock', async (t) => {
+  // USDC and gold are sendable from holdings since 2026-11-12; the app offers no card for them.
+  const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const asset = { kind: 'erc20', address: USDC, symbol: 'USDC', decimals: 6 };
+  const sent = bundle({
+    calls: [{ callType: 'transfer', to: USDC, valueWei: '0', data: `0xa9059cbb${word(FRIEND)}${word(5_000_000n)}`, asset, amountAtomic: '5000000', recipient: FRIEND }],
+  });
+  stubV1(t, { loadBundle: async () => sent, stock: async () => null });
+  const html = (await request(appV1()).get(`/gift/${ID}`).expect(200)).text;
+  assert.doesNotMatch(html, /USDC stock|tokenized/);
+  assert.match(html, /<title>[^<]* sent [^<]* 5 USDC · Miorail<\/title>/);
+});
+
 test('a name that cannot be read is an address, and a stock that cannot be named is its symbol', async (t) => {
   stubV1(t, {
     reverseName: async () => {

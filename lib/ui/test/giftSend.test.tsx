@@ -17,6 +17,9 @@ import {
   usdcCentsLabelV1,
   type GiftHoldingV1,
   type PublicGiftLikeV1,
+  giftSendBackLabelV1,
+  giftSendTokenKindV1,
+  giftShareableV1,
 } from '../src/console/giftView';
 import { ReviewScreen } from '../src/console/ConsoleScreens';
 import { GiftForm, TradeAmountForm } from '../src/console/MarketRealityScreen';
@@ -179,6 +182,32 @@ describe('the review of one transfer', () => {
     assert.match(view.verified[4]!.detail, /nothing is bought, so no token-risk provider was queried/);
     assert.deepEqual(view.notVerified, [...GIFT_SEND_NOT_VERIFIED_V1]);
     assert.ok(view.notVerified.every((line) => !/pool|liquidity/i.test(line)), 'a purchase’s unknowns are not a transfer’s');
+  });
+
+  // 2026-11-12: USDC and gold are sent from holdings too, and are not called stocks anywhere on the review.
+  test('a send of USDC or gold says what it moves, and is offered no public card', () => {
+    const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+    const PAXG = '0xe904aea5e1b110c9174728fa2effc8aed19e98ef';
+    assert.equal(giftSendTokenKindV1(USDC), 'usdc');
+    assert.equal(giftSendTokenKindV1(PAXG.toUpperCase().replace('0X', '0x')), 'gold');
+    assert.equal(giftSendTokenKindV1(NVDA), 'stock');
+    assert.equal(giftSendBackLabelV1(NVDA), 'Back to the stock');
+    assert.equal(giftSendBackLabelV1(USDC), 'Back');
+    assert.equal(giftShareableV1(NVDA), true);
+    assert.equal(giftShareableV1(USDC), false);
+    assert.equal(giftShareableV1(PAXG), false);
+    const checks = [
+      { id: 'send_reviewed_stock', description: 'reviewed', status: 'passed' as const, detail: null },
+      { id: 'send_calldata_exact', description: 'calldata', status: 'passed' as const, detail: null },
+      { id: 'send_balance', description: 'balance', status: 'passed' as const, detail: null },
+    ];
+    for (const [address, symbol, decimals, says] of [[USDC, 'USDC', 6, /Circle’s USDC, the canonical one on Base/], [PAXG, 'PAXG', 18, /Paxos’s PAXG, gold/]] as const) {
+      const view = giftSendHonestyViewV1({ token: { address, symbol, decimals }, recipient: FRIEND, recipientName: null, safetyChecks: checks, simulation: { state: 'passed' } });
+      assert.match(view.verified[0]!.detail, says);
+      const all = [...view.verified.map((fact) => fact.detail), ...view.notVerified].join(' ');
+      assert.doesNotMatch(all, /stock/i, symbol);
+      assert.ok(view.notVerified.some((line) => /cannot/.test(line)), 'it cannot be undone, said for every token');
+    }
   });
 
   test('an expired or refused send is worded as a transfer, and the buttons say what they do', () => {
