@@ -247,6 +247,16 @@ const AMOUNT_THOUSANDS_V2 = /(?:^|[^\d.,])\d{1,3}(?:,\d{3})+(?![\d,.]|\p{L})/u;
  * ("send 5.") is not part of the number.
  */
 const AMOUNT_TOKENS_V2 = /(?:(?<![\p{L}\d])([-−–]))?((?:\d|[.,](?=\d))[\d.,]*\d|\d)/gu;
+/**
+ * A word right after the number that makes it not the amount (audit MCP-1, 2026-11-14): a scale ("5k",
+ * "2 тысячи", "1 million") or a smaller unit ("50 cents", "50 центов"). "50 cents USDC" prepared 50 USDC,
+ * a hundred times what was written; "5k" and "2 тысячи" prepared 5 and 2. A token's name ("5 USDC",
+ * "0.5 NVDAc") and a dollar after it are not here.
+ */
+const AMOUNT_SCALE_AFTER_V2 = /^\s*(?:k|к|kk|mm|m|mln|bn|thousands?|millions?|billions?|cents?|¢|тыс\p{L}*|млн|млрд|миллион\p{L}*|миллиард\p{L}*|цент\p{L}*|коп\p{L}*)(?![\p{L}\d])/iu;
+/** "1.000", "12,500" or "250.000": three digits after one separator is how much of Europe writes a
+ * thousand, so it is not read as one, twelve and a half or two hundred and fifty (audit MCP-1). */
+const AMOUNT_GROUPED_V2 = /^[1-9]\d{0,2}[.,]\d{3}$/u;
 
 /**
  * The one amount the text holds, read whole (audit N13-5, 2026-11-13). The check and the reading
@@ -271,6 +281,7 @@ export function agentAmountTokenV2(text: string): AgentAmountTokenV2 {
   if (sign) return { kind: 'unclear' };
   if ((body.match(/[.,]/g) ?? []).length > 1) return { kind: 'unclear' };
   if (/^[.,]/.test(body) && index > 0 && /[\p{L}\d]/u.test(text[index - 1]!)) return { kind: 'unclear' };
+  if (AMOUNT_GROUPED_V2.test(body) || AMOUNT_SCALE_AFTER_V2.test(text.slice(index + body.length))) return { kind: 'unclear' };
   const value = (/^[.,]/.test(body) ? `0${body}` : body).replace(',', '.');
   return { kind: 'one', value, index, end: index + body.length };
 }
@@ -281,11 +292,21 @@ export function agentPlainAmountV2(text: string): string | null {
   return token.kind === 'one' && Number(token.value) > 0 ? token.value : null;
 }
 
+/** "Half a share", «пол-акции»: half of ONE token, not half of what the wallet holds (audit SS-2). */
+const AMOUNT_HALF_UNIT_V2 = /half\s+(?:a|an|one)(?![\p{L}])|пол\s*-?\s*акци|полакци|половин\p{L}*\s+(?:одной\s+)?акции(?![\p{L}])/iu;
+/** The same transfer more than once: "twice", «дважды». One is prepared, so none is (audit SS-2). */
+const AMOUNT_REPEAT_V2 = /twice|thrice|(?:two|three|four|five)\s+times|дважды|трижды|(?:два|три|четыре|пять)\s+раза/iu;
+
 /** Whether `text` holds an amount these rules would have to guess at. For a transfer, pass the
- * question without its recipient: an address is digits too. */
+ * question without its recipient: an address is digits too. A share word beside a number is one of them
+ * (audit SS-2, 2026-11-14): "max 5" is "at most 5", "all 50" names 50, and "half of 10" is 5, while
+ * each was read as all, or half, of what the wallet holds. */
 export function agentAmountUnclearV2(text: string): boolean {
+  const token = agentAmountTokenV2(text);
   return AMOUNT_PERCENT_V2.test(text) || AMOUNT_EXCEPT_V2.test(text) || AMOUNT_THOUSANDS_V2.test(text)
-    || agentAmountTokenV2(text).kind === 'unclear';
+    || AMOUNT_HALF_UNIT_V2.test(text) || AMOUNT_REPEAT_V2.test(text)
+    || ((ALL_WORDS_V2.test(text) || HALF_WORDS_V2.test(text)) && token.kind !== 'none')
+    || token.kind === 'unclear';
 }
 
 /** The tokens a swap can name: USDC and the assets Still reads. */

@@ -43,8 +43,7 @@ import {
   roomLabelXV1,
   StillAssistants,
   ThinkingOrbs,
-  type MobileHoldingV1,
-} from '../src/still';
+  type MobileHoldingV1, agentPlainAmountV2 } from '../src/still';
 
 void React;
 
@@ -687,6 +686,40 @@ describe('the Agent', () => {
     }
     for (const unclear of ['-5', '1.2.3', 'abc.5']) assert.equal(agentAmountUnclearV2(unclear), true, unclear);
     for (const plain of ['.5', '0,5', '5.']) assert.equal(agentAmountUnclearV2(plain), false, plain);
+  });
+
+  // Audits MCP-1 and SS-2, 2026-11-14, on the real parser: "50 cents USDC" prepared 50 USDC, "5k" and
+  // "2 тысячи" prepared 5 and 2, "1.000" prepared 1, "max 5" and "all 50" prepared everything in the
+  // wallet, "half of 10" half of it, and "half a share" half of every share. Each is asked back now.
+  it('a scale, a smaller unit, a share word beside a number, or a European thousand is asked back, never worked out', () => {
+    const sends = ['send 50 cents of USDC to bob.base.eth', 'переведи 50 центов USDC на friend.base.eth', 'send 5k USDC to bob.base.eth',
+      'send 5 k USDC to bob.base.eth', 'отправь 2 тысячи USDC на bob.base.eth', 'отправь 5 тыс USDC на bob.base.eth', 'send 2 thousand USDC to bob.base.eth',
+      'send 1 million USDC to bob.base.eth', 'send 3 млн USDC на bob.base.eth', 'send 1.000 USDC to bob.base.eth', 'send 12,500 USDC to bob.base.eth',
+      'send max 5 USDC to bob.base.eth', 'send all 50 USDC to bob.base.eth', 'переведи все 50 USDC на bob.base.eth', 'send half of 10 USDC to bob.base.eth',
+      'send half a share of NVDAc to bob.base.eth', 'переведи пол-акции NVDAc на bob.base.eth', 'переведи половину акции NVDAc на bob.base.eth',
+      'send 5 USDC to bob.base.eth twice', 'переведи 5 USDC на bob.base.eth дважды'];
+    for (const q of sends) {
+      const request = agentSendRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear], [null, true], q);
+    }
+    for (const q of ['swap max 5 USDC to ETH', 'обменяй все 50 USDC на ETH', 'buy gold for max 5 USDC', 'swap 5k USDC to PAXG', 'swap half of 10 USDC to ETH',
+      'swap 1.000 USDC to ETH']) {
+      const request = agentSwapRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear], [null, true], q);
+    }
+    // What was right stays right: a token's name, a dollar sign, a plain decimal, and a share with no number.
+    for (const [q, amount] of [['send 5 USDC to bob.base.eth', { kind: 'exact', value: '5' }], ['send 0.125 ETH to bob.base.eth', { kind: 'exact', value: '0.125' }],
+      ['send 1.5 NVDAc to bob.base.eth', { kind: 'exact', value: '1.5' }], ['send 12.25 USDC to bob.base.eth', { kind: 'exact', value: '12.25' }],
+      ['send all my USDC to bob.base.eth', { kind: 'share', share: 'all' }], ['переведи все NVDAc на bob.base.eth', { kind: 'share', share: 'all' }],
+      ['send half my NVDAc to bob.base.eth', { kind: 'share', share: 'half' }], ['переведи половину моих акций NVDAc на bob.base.eth', { kind: 'share', share: 'half' }],
+      ['send max USDC to bob.base.eth', { kind: 'share', share: 'all' }]] as const) {
+      const request = agentSendRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear], [amount, false], q);
+    }
+    assert.deepEqual(agentSwapRequestV2('swap all my USDC to ETH')?.amount, { kind: 'share', share: 'all' });
+    assert.deepEqual(agentSwapRequestV2('buy ETH for $10')?.amount, { kind: 'exact', value: '10' });
+    assert.deepEqual(agentSwapRequestV2('swap 0.5 ETH to USDC')?.amount, { kind: 'exact', value: '0.5' });
+    for (const unclear of ['5k', '50 cents', '1.000', '250.000', '2 тысячи']) assert.equal(agentPlainAmountV2(unclear), null, unclear);
   });
 
   it('reads a transfer by its rules: the stock, how much, and the recipient the question wrote', () => {
