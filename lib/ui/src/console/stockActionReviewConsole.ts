@@ -1,6 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import {
+  useBindSubmissionBatch,
+  useCreateSubmissionAttempt,
+  useRecordBlueprintSubmission,
   useStockActionConfirm,
   useStockActionRelease,
   useStockActionReview,
@@ -8,7 +11,7 @@ import {
 } from '@mioagent/api-client-react';
 
 import type { StockActionReviewModelV1 } from './StockActionReviewScreen';
-import { walletCannotSendSentenceV1 } from './walletBatchSupport';
+import { walletCannotSendSentenceV1, walletDidNotSendV1, walletSubmissionFailureMessageV1, walletUserRejectedV1 } from './walletBatchSupport';
 import {
   stockSellAmountV1,
   stockSellConfirmAllowedV1,
@@ -159,6 +162,8 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
   if (message.includes('stock_action_refresh_required')) {
     return 'The market moved after you confirmed, so Miorail will not offer the request it planned a moment ago. Nothing was submitted — review the current terms again.';
   }
+  if (message.includes('stock_action_handoff_open')) return STOCK_HANDOFF_OPEN_V1;
+  if (message.includes('stock_action_already_sent')) return STOCK_ALREADY_SENT_V1;
   if (message.includes('stock_action_insufficient_funds')) {
     return 'The wallet does not have enough funds to cover this trade and any fees it must pay. Your wallet was not asked to sign and nothing was submitted.';
   }
@@ -183,22 +188,41 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
   return 'The batch could not be prepared on this server. Nothing was submitted, and this is not a statement about the security.';
 }
 
+/** Said when the wallet answered with neither a batch id nor a refusal it names: a closed connection or a
+ * timeout may come after it sent the purchase (audit N13-2, 2026-11-13). */
+export const STOCK_SEND_UNREAD_V1 =
+  'Your wallet did not say whether it sent this: its answer never came back. Check your wallet’s activity before anything else, because it may already be on Base. If nothing went out, dismiss the unfinished request on this page and confirm again.';
+/** An earlier press already handed this purchase to a wallet, and what became of it is not known yet. */
+export const STOCK_HANDOFF_OPEN_V1 =
+  'Your wallet already had this purchase once, and Base has not shown what became of it, so your wallet was not asked again. Check your wallet’s activity; if nothing went out, dismiss the unfinished request on this page and confirm again.';
+/** The purchase reached Base once: another needs another review. */
+export const STOCK_ALREADY_SENT_V1 =
+  'This purchase already went to Base from your wallet once, so it is not sent again, and nothing was sent now. Its result is in your wallet’s activity; another purchase needs a new review.';
+export const STOCK_HANDOFF_UNRECORDED_V1 =
+  'This purchase could not be recorded before your wallet was asked, so your wallet was not asked and nothing was sent. Press again in a moment.';
+
+const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
+
+/** Why the wallet did not send, when its answer proves it did not. */
+function stockWalletRefusalCopyV1(error: unknown): string {
+  return walletUserRejectedV1(error)
+    ? 'You declined the batch in your wallet. Nothing was submitted, and nothing changed.'
+    : walletSubmissionFailureMessageV1(error);
+}
+
 export function useStockActionReviewConsoleV1(input: {
   draft: string | null;
-  /** The host's wallet. Returns the batch id, or null when the wallet accepted
-   * and named nothing. Throwing is how a decline arrives. */
-  sendCalls: (batch: { calls: unknown[]; atomicRequired: boolean }) => Promise<string | null>;
   /**
-   * Record what the wallet did, through the ONE submission route this codebase
-   * has. Optional so a host that cannot record still opens a wallet — refusing
-   * to transact over a bookkeeping failure would be the worse trade.
+   * The host's wallet. Returns the batch id, or null when the wallet accepted
+   * and named nothing. Throwing is how a decline arrives.
+   *
+   * `from` and `chainId` are the server's: the account this purchase was
+   * reviewed and released for. The host sends as exactly that account and
+   * refuses, before the wallet is asked, a connection that holds another
+   * (audit N13-3, 2026-11-13: the miniapp sent as whichever account its
+   * wallet had selected, and a review made for one was asked of another).
    */
-  recordSubmission?: (input: {
-    routeRunId: string;
-    blueprintId: string;
-    approvedCallsHash: string;
-    batchId: string;
-  }) => Promise<unknown>;
+  sendCalls: (batch: { calls: unknown[]; atomicRequired: boolean; from: `0x${string}`; chainId: 8453 }) => Promise<string | null>;
   /** Why the connected wallet cannot send one batch, read by the host from
    * the wallet. The wallet is then not offered the calls. */
   walletBlocker?: string | null;
@@ -207,8 +231,13 @@ export function useStockActionReviewConsoleV1(input: {
   const confirm = useStockActionConfirm();
   const sellTerms = useStockActionSellTerms();
   const release = useStockActionRelease();
+  const createAttempt = useCreateSubmissionAttempt();
+  const bindBatch = useBindSubmissionBatch();
+  const recordSubmission = useRecordBlueprintSubmission();
   const [walletError, setWalletError] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
+  // Set once this purchase may have reached a wallet with no answer heard: nothing on this page offers it again.
+  const [handedOver, setHandedOver] = useState(false);
   const [sellInput, setSellInput] = useState({ draft: input.draft, value: '' });
   const openingWallet = useRef(false);
   const [walletBusy, setWalletBusy] = useState(false);
@@ -247,36 +276,104 @@ export function useStockActionReviewConsoleV1(input: {
 
   const onOpen = useCallback(async () => {
     const clearance = confirmed?.clearance;
-    if (!clearance || openingWallet.current) return;
+    if (!clearance || openingWallet.current || handedOver) return;
     openingWallet.current = true;
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const released = (await release.mutateAsync({
-        clearance,
-        // One handle for the whole attempt, so a retry re-plans the same intent
-        // rather than becoming a second purchase.
-        requestId: `stock-action:${(input.draft ?? 'draft').slice(-24)}`,
-      })) as {
-        action?: { calls?: unknown[]; atomicRequired?: boolean };
+      let released: {
+        action?: { calls?: unknown[]; atomicRequired?: boolean; from?: unknown; chainId?: unknown };
         routeRunId?: string;
         blueprintId?: string;
         approvedCallsHash?: string;
       };
+      try {
+        released = (await release.mutateAsync({
+          clearance,
+          // One handle for the whole attempt, so a retry re-plans the same intent
+          // rather than becoming a second purchase.
+          requestId: `stock-action:${(input.draft ?? 'draft').slice(-24)}`,
+        })) as typeof released;
+      } catch (error) {
+        // The server's refusals: nothing reached a wallet. Its "already handed over" is said as such.
+        const message = error instanceof Error ? error.message : String(error ?? '');
+        if (message.includes('stock_action_handoff_open') || message.includes('stock_action_already_sent')) setHandedOver(true);
+        setWalletError(stockReleaseFailureCopyV1(error));
+        return;
+      }
       const calls = released.action?.calls;
       if (!Array.isArray(calls) || calls.length === 0) {
         setWalletError('The server returned no calls for this clearance, so nothing was offered to your wallet.');
         return;
       }
-      const id = await input.sendCalls({
-        calls,
-        atomicRequired: released.action?.atomicRequired !== false,
-      });
-      setBatchId(id);
-      if (!id) {
-        setWalletError('Your wallet accepted the batch without returning an id, so its outcome cannot be followed up here.');
+      const from = released.action?.from;
+      const routeRunId = String(released.routeRunId ?? '');
+      const blueprintId = String(released.blueprintId ?? '');
+      const approvedCallsHash = String(released.approvedCallsHash ?? '');
+      if (typeof from !== 'string' || !ADDRESS_V1.test(from) || released.action?.chainId !== 8453 || !routeRunId || !blueprintId || !/^0x[0-9a-f]{64}$/i.test(approvedCallsHash)) {
+        setWalletError('The server’s answer did not name the account and network these calls are for, so nothing was offered to your wallet.');
         return;
       }
+      const account = from.toLowerCase() as `0x${string}`;
+
+      // -------------------------------------------------------------------
+      // Audit N13-2, 2026-11-13: a durable handoff BEFORE the wallet.
+      //
+      // The review recorded nothing until the wallet answered. A wallet that
+      // sent the purchase and lost its answer on the way back read as
+      // "Nothing was submitted", the button came back, and a reload forgot
+      // the press. The attempt opened here is the server's: while it is
+      // open, these calls are not handed to a wallet again, from this page,
+      // another tab or a reload, and the server releases nothing more for
+      // this stock action. The person checks the wallet and dismisses it.
+      // -------------------------------------------------------------------
+      let attemptId: string | null = null;
+      try {
+        attemptId = (await createAttempt.mutateAsync({ walletAddress: account, goal: 'swap', routeRunId, blueprintId, approvedCallsHash })).attempt.id;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        // A server without recovery has no attempt to open, as for a swap: the page's own lock is what holds it.
+        if (!message.startsWith('submission_recovery_disabled')) {
+          if (message.startsWith('submission_attempt_open')) {
+            setHandedOver(true);
+            setWalletError(STOCK_HANDOFF_OPEN_V1);
+          } else if (/^(?:route_already_sent|proof_already_final)\b/.test(message)) {
+            setHandedOver(true);
+            setWalletError(STOCK_ALREADY_SENT_V1);
+          } else {
+            setWalletError(STOCK_HANDOFF_UNRECORDED_V1);
+          }
+          return;
+        }
+      }
+      const record = (status: 'submitted' | 'cancelled' | 'failed', extra: { batchId?: string; error?: string } = {}) =>
+        recordSubmission.mutateAsync({ blueprintId, routeRunId, walletAddress: account, approvedCallsHash, status,
+          ...(attemptId ? { submissionAttemptId: attemptId } : {}), ...extra });
+
+      let id: string | null;
+      try {
+        id = await input.sendCalls({ calls, atomicRequired: released.action?.atomicRequired !== false, from: account, chainId: 8453 });
+      } catch (error) {
+        if (!walletDidNotSendV1(error)) {
+          // The wallet may have sent it: the attempt stays open, and nothing here offers it again.
+          setHandedOver(true);
+          setWalletError(STOCK_SEND_UNREAD_V1);
+          return;
+        }
+        // The wallet's answer proves nothing went out: the record closes the attempt, and a press may ask again.
+        const said = stockWalletRefusalCopyV1(error);
+        await record(walletUserRejectedV1(error) ? 'cancelled' : 'failed', { error: said.slice(0, 500) }).catch(() => undefined);
+        setWalletError(said);
+        return;
+      }
+      setBatchId(id);
+      if (!id) {
+        setHandedOver(true);
+        setWalletError('Your wallet accepted the batch without returning an id, so its outcome cannot be followed up here. Check your wallet’s activity before anything else.');
+        return;
+      }
+      // Best-effort: the record below carries the same handle.
+      if (attemptId) await bindBatch.mutateAsync({ attemptId, batchId: id }).catch(() => undefined);
       // -------------------------------------------------------------------
       // Tell the server what the wallet did.
       //
@@ -292,24 +389,17 @@ export function useStockActionReviewConsoleV1(input: {
       // is surfaced as its own sentence and never as a wallet error.
       // -------------------------------------------------------------------
       try {
-        await input.recordSubmission?.({
-          routeRunId: String(released.routeRunId ?? ''),
-          blueprintId: String(released.blueprintId ?? ''),
-          approvedCallsHash: String(released.approvedCallsHash ?? ''),
-          batchId: id,
-        });
+        await record('submitted', { batchId: id });
       } catch {
         setWalletError(
           'Your wallet submitted the batch, and this server could not write down that it did. The batch is real — check your wallet activity. Do not send it again.',
         );
       }
-    } catch (error) {
-      setWalletError(stockReleaseFailureCopyV1(error));
     } finally {
       openingWallet.current = false;
       setWalletBusy(false);
     }
-  }, [confirmed?.clearance, input, release]);
+  }, [confirmed?.clearance, input, release, createAttempt, bindBatch, recordSubmission, handedOver]);
 
   const model = useMemo<StockActionReviewModelV1>(
     () => ({
@@ -375,12 +465,13 @@ export function useStockActionReviewConsoleV1(input: {
       wallet: {
         pending: release.isPending || walletBusy,
         error: walletError ?? (batchId ? null : input.walletBlocker ?? null),
-        blocked: Boolean(input.walletBlocker) && !batchId,
+        // A purchase that may already be in the wallet's hands is not offered again from here.
+        blocked: (Boolean(input.walletBlocker) && !batchId) || handedOver,
         batchId,
         onOpen: () => void onOpen(),
       },
     }),
-    [review.isLoading, review.error, body, confirm, confirmed, release.isPending, walletBusy, walletError, batchId, onOpen, input, isSell, sellValue, sell.atomic, sell.balance, sell.error, sellTerms.isPending, sellTerms.error, termsWire, termsState, termsEstablished, onEstablishTerms],
+    [review.isLoading, review.error, body, confirm, confirmed, release.isPending, walletBusy, walletError, batchId, handedOver, onOpen, input, isSell, sellValue, sell.atomic, sell.balance, sell.error, sellTerms.isPending, sellTerms.error, termsWire, termsState, termsEstablished, onEstablishTerms],
   );
 
   return { model, body };

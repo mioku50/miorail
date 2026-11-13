@@ -18,6 +18,7 @@ import {
 } from '../../lib/stocksBenchCorpus.js';
 import {
   miorailGetStockBaseMcpActionV1,
+  stockActionHandoffV1,
   miorailGetExecutionStatusV1,
   miorailPrepareStockActionV1,
   stockActionRuntime,
@@ -595,6 +596,8 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     stockActionRuntime.now = () => NOW;
     stockActionRuntime.secret = () => CLEARANCE_SECRET;
     stockActionRuntime.readToken = async () => ({ ok: true, decimals: 18, symbol: 'NVDAc' });
+    // Nothing of this draft is held at a wallet unless a test says so (audit N13-2).
+    stockActionRuntime.handoffHeld = async () => null;
     // The audit row is mandatory: no row, no bytes. Files in this package share
     // a process, so the repository has to be supplied here rather than
     // inherited from whichever neighbour ran last.
@@ -808,6 +811,47 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     const result = await miorailGetExecutionStatusV1(IDENTITY, { actionDraftId: 'draft-1' });
     assert.equal(result.state, 'submitted_unknown');
     assert.equal(result.batchId, 'batch-2');
+  });
+
+  // Audit N13-2, 2026-11-13: a release recorded where it came from, and nothing more. A purchase whose wallet
+  // answer was lost could be released again, re-planned into a new blueprint the attempt guard did not cover.
+  test('a stock action held at a wallet, or already sent, is not released again, before anything is planned', async () => {
+    for (const [held, code] of [['open', 'stock_action_handoff_open'], ['sent', 'stock_action_already_sent']] as const) {
+      let planned = 0;
+      executionStub();
+      const plan = stockActionRuntime.planAndPrepare;
+      stockActionRuntime.planAndPrepare = async (input) => { planned += 1; return plan(input); };
+      const asked: unknown[] = [];
+      stockActionRuntime.handoffHeld = async (owner) => { asked.push(owner); return held; };
+      await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'again' }), (error: unknown) => {
+        assert.equal((error as { code?: string }).code, code);
+        assert.match((error as Error).message, held === 'open' ? /not handed out again: a second request could be a second purchase/ : /already reached Base from the user’s wallet once/);
+        return true;
+      });
+      assert.equal(planned, 0, `${held}: nothing is planned`);
+      assert.deepEqual(asked, [{ tenantId: IDENTITY.tenantId, walletAddress: IDENTITY.walletAddress, actionDraftId: 'draft-1' }]);
+    }
+    executionStub();
+    stockActionRuntime.handoffHeld = async () => { throw new Error('postgres down'); };
+    await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'again' }), refusedWith('stock_action_tracking_unavailable'));
+  });
+
+  test('what is held is read from the latest release: what reached Base first, then an open attempt', async () => {
+    const records = new InMemoryStockActionExecutionRepositoryV1();
+    const owner = { tenantId: IDENTITY.tenantId, walletAddress: WALLET, actionDraftId: 'draft-1' };
+    const sent = new Set<string>(), open = new Set<string>();
+    const deps = { records, proofTransactions: async (id: string) => (sent.has(id) ? 1 : 0), openAttempt: async (id: string) => open.has(id) };
+    assert.equal(await stockActionHandoffV1(deps, owner), null, 'never released');
+    await records.recordDraft({ ...owner, at: NOW });
+    assert.equal(await stockActionHandoffV1(deps, owner), null, 'a draft with no release');
+    await records.recordRelease({ ...owner, clearanceId: 'c-1', blueprintId: 'bp-1', routeRunId: 'run-1', at: NOW });
+    assert.equal(await stockActionHandoffV1(deps, owner), null, 'released, and never handed to a wallet');
+    open.add('bp-1');
+    assert.equal(await stockActionHandoffV1(deps, owner), 'open');
+    sent.add('bp-1');
+    assert.equal(await stockActionHandoffV1(deps, owner), 'sent', 'a confirmed attempt is still listed as open; what reached Base is said');
+    // Another wallet's draft of the same id is not this one.
+    assert.equal(await stockActionHandoffV1(deps, { ...owner, tenantId: `eip155:8453:${OTHER_WALLET}`, walletAddress: OTHER_WALLET }), null);
   });
 
   test('a tracking failure releases no calls and an unread status cannot become not_released', async () => {

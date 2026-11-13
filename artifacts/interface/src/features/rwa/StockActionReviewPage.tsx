@@ -19,10 +19,9 @@ import {
 } from '@mioagent/ui';
 import {
   useOfficialAssetDossier,
-  useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, gasLimitedCallsV1, isWalletRejectionError, publicGasMeterV1, requireLiveWalletAccountV1,
+import { SubmissionRecoveryRail, attributedCallsV1, builderCodeForSurfaceV1, builderCodeToDataSuffix, gasLimitedCallsV1, isWalletRejectionError, publicGasMeterV1, requireLiveWalletAccountV1,
   sendCallsKeepingCallCapabilitiesV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
@@ -72,7 +71,7 @@ function shortAddressV1(address: string | undefined): string | null {
 export function StockActionReviewPage() {
   const [, navigate] = useLocation();
   const [, params] = useRoute('/action/:draft');
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
   const status = useStatus();
   const nav = useConsoleNav('market');
@@ -91,20 +90,19 @@ export function StockActionReviewPage() {
   // Set once a send that carried measured gas failed for a reason but the person's own No: the next
   // press goes with the wallet's own estimate.
   const gasLimitsDeclined = useRef(false);
-  const recordSubmission = useRecordBlueprintSubmission();
   const batches = useWalletBatchSupportV1();
   const reviewConsole = useStockActionReviewConsoleV1({
     draft: params?.draft ?? null,
     walletBlocker: batches.blocker,
-    sendCalls: async ({ calls, atomicRequired }) => {
+    sendCalls: async ({ calls, atomicRequired, from }) => {
       // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
-      // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
-      if (!address) throw new Error('Your wallet is not connected');
-      const { restored } = await requireLiveWalletAccountV1(config, address);
+      // the account the server released these calls for: a wallet that answers as another is not asked
+      // (audit WAL-1; the server's account since N13-3, not the one the wallet has selected).
+      const { restored } = await requireLiveWalletAccountV1(config, from);
       const capabilities = restored ? (await batches.readNow()).capabilities : batches.capabilities;
       // Each call's gas, measured, for a wallet that takes it: Base Account gives a batch none to spare
       // (2026-11-12). Only a batch the wallet must keep whole; calls it may split are left to it.
-      const sized = await gasLimitedCallsV1({ from: address, ...publicGasMeterV1(config),
+      const sized = await gasLimitedCallsV1({ from, ...publicGasMeterV1(config),
         // A wallet that drops `dataSuffix` (MetaMask) gets the code in each call's own data, as a swap
         // and a loan do (audit WAL-5: this path sent only the capability, which MetaMask ignores).
         calls: attributedCallsV1({ calls: calls as { to: string; data?: string }[], suffix: STOCK_ACTION_BUILDER_SUFFIX_V1, capabilities }),
@@ -117,9 +115,9 @@ export function StockActionReviewPage() {
       try {
         const result = sized.limits
           // viem drops a call's own capabilities, so calls carrying their gas go as the same request, sent directly.
-          ? await sendCallsKeepingCallCapabilitiesV1(config, { account: address, chainId: 8453, forceAtomic: atomicRequired, calls: sized.calls, capabilities: requestCapabilities })
+          ? await sendCallsKeepingCallCapabilitiesV1(config, { account: from, chainId: 8453, forceAtomic: atomicRequired, calls: sized.calls, capabilities: requestCapabilities })
           : await sendCalls.mutateAsync({
-            account: address,
+            account: from,
             calls: sized.calls as never,
             chainId: 8453,
             forceAtomic: atomicRequired,
@@ -130,23 +128,6 @@ export function StockActionReviewPage() {
         if (sized.limits && !isWalletRejectionError(error)) gasLimitsDeclined.current = true;
         throw error;
       }
-    },
-    // The one submission-record route this codebase has — the same one the
-    // swap and NFT families write through. A stock action's Blueprint IS a swap
-    // Blueprint, so this needs no family of its own; it needed the release to
-    // approve first, which is what makes a record possible at all.
-    recordSubmission: async ({ routeRunId, blueprintId, approvedCallsHash, batchId }) => {
-      if (!address) return;
-      return recordSubmission.mutateAsync({
-        blueprintId,
-        routeRunId,
-        walletAddress: address,
-        approvedCallsHash: approvedCallsHash as `0x${string}`,
-        // What the WALLET did. Not a claim that the entry happened — that is
-        // reconciliation's answer, from the chain.
-        status: 'submitted',
-        batchId,
-      });
     },
   });
   const body = reviewConsole.body;
@@ -268,6 +249,14 @@ export function StockActionReviewPage() {
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
       onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
+      {/* A purchase whose wallet answer was never heard is held here until the person has checked the
+          wallet: the same rail as Swap AI's, so dismissing it is one answer everywhere (audit N13-2). */}
+      <SubmissionRecoveryRail
+        compact
+        walletAddress={address ?? null}
+        chainId={chainId ?? null}
+        enabled={Boolean(status.data?.productMigration?.submissionRecoveryV1)}
+      />
       <StockActionReviewScreen
         model={reviewConsole.model}
         board={model ? <MarketRealityScreen model={model} /> : null}

@@ -341,8 +341,18 @@ describe('what the wallet did is written down', () => {
     // The three handles the record needs, all of them from the server's own
     // release response — the client computes none of them.
     for (const field of ['routeRunId', 'blueprintId', 'approvedCallsHash']) {
-      assert.match(code, new RegExp(`${field}: String\\(released\\.${field}`));
+      assert.match(code, new RegExp(`const ${field} = String\\(released\\.${field}`));
     }
+  });
+
+  // Audit N13-2, 2026-11-13: nothing was written down before the wallet was asked.
+  test('the handoff is written down before the wallet is asked, and the account is the server’s', () => {
+    const attemptAt = code.indexOf('createAttempt.mutateAsync(');
+    const walletAt = code.indexOf('input.sendCalls(');
+    assert.ok(attemptAt > 0 && walletAt > attemptAt, 'the attempt is opened before the wallet');
+    assert.match(code, /input\.sendCalls\(\{ calls, atomicRequired: released\.action\?\.atomicRequired !== false, from: account, chainId: 8453 \}\)/);
+    // Only a refusal the wallet names frees the purchase for another press.
+    assert.match(code, /if \(!walletDidNotSendV1\(error\)\) \{\s*setHandedOver\(true\);\s*setWalletError\(STOCK_SEND_UNREAD_V1\);/);
   });
 
   test('it reports what the wallet did, never that the entry happened', () => {
@@ -501,6 +511,16 @@ describe('Phase 17.7 — the review screen is shared, and only the wallet differ
   const webPage = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
   const baseApp = read('artifacts/miniapp/app/action/[draft]/page.tsx');
   const miniConsole = read('artifacts/miniapp/app/components/MiniConsole.tsx');
+
+  // Audit N13-3, 2026-11-13: the miniapp sent as the account its wallet had selected.
+  test('both surfaces send as the account the server released the calls for, and hold an unanswered one', () => {
+    for (const [name, file] of [['web', webPage], ['Base App', baseApp]] as const) {
+      assert.match(file, /sendCalls: async \(\{ calls, atomicRequired, from \}\) => \{/, name);
+      assert.match(file, /await requireLiveWalletAccountV1\(config, from\);/, name);
+      assert.doesNotMatch(file, /account: address/, `${name} never sends as the connected address`);
+      assert.match(file, /<SubmissionRecoveryRail/, `${name} shows the unfinished wallet request it holds`);
+    }
+  });
 
   test('both surfaces mount the same screen', () => {
     for (const [name, file] of [['web', webPage], ['Base App', baseApp]] as const) {

@@ -3,7 +3,7 @@ import {
   profileIdentityV1,
 } from '@mioagent/opportunity-rail';
 import { createDatabaseRouteStorageRepository, createDatabaseStockActionExecutionRepositoryV1, entryPlanCallsHashV1,
-  type McpAuditOutcomeV1, type StockActionExecutionRepositoryV1 } from '@mioagent/route-storage';
+  type McpAuditOutcomeV1, type StockActionDraftOwnerV1, type StockActionExecutionRepositoryV1 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import {
   beginEntrySubmissionV1,
@@ -989,6 +989,22 @@ export const stockActionRuntime = {
       return latest ? { ...latest, proof: { ...latest.proof, routeRunId, batchId: refreshed.batchId } } : null;
     });
   },
+  /**
+   * What became of this stock action's latest release at a wallet (audit N13-2, 2026-11-13): 'sent' once
+   * its proof holds a transaction, 'open' while the submission attempt opened before the wallet is
+   * unfinished, null when nothing of it reached a wallet that is known of.
+   */
+  handoffHeld: async (owner: StockActionDraftOwnerV1): Promise<'open' | 'sent' | null> => {
+    const { routeProofIdV1 } = await import('@mioagent/transaction-composer');
+    const { submissionRecoveryRuntime } = await import('../submissionRecovery.js');
+    return stockActionHandoffV1({
+      records: stockActionRuntime.records(),
+      proofTransactions: async (blueprintId) =>
+        (await createDatabaseRouteStorageRepository(client).getProofProjection(routeProofIdV1(blueprintId), owner.tenantId))?.transactionHashes.length ?? 0,
+      openAttempt: async (blueprintId) => (await submissionRecoveryRuntime.migrationAvailable())
+        && (await submissionRecoveryRuntime.repository().findOpenAttemptByBlueprint(owner.tenantId, blueprintId)) !== null,
+    }, owner);
+  },
   recordStockSubmission: async (input: {
     tenantId: string;
     walletAddress: `0x${string}`;
@@ -1226,11 +1242,31 @@ export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
     'The market moved after this was confirmed. Miorail will not offer the old request — review the current terms again.',
   stock_action_blocked:
     'Miorail’s Safety Kernel refused this plan. Nothing executable was produced.',
+  stock_action_handoff_open:
+    'This stock action was already handed to the user’s wallet once, and Base has not shown what became of it, so it is not handed out again: a second request could be a second purchase. The user checks their wallet’s activity; if nothing went out, they dismiss the unfinished wallet request on the review page, then confirm again. Nothing was prepared now.',
+  stock_action_already_sent:
+    'This stock action already reached Base from the user’s wallet once, so it is not handed out again. Its result is read with miorail_get_execution_status; another purchase needs a new review. Nothing was prepared now.',
   stock_action_insufficient_funds:
     'The wallet does not have enough funds to cover this trade and any fees it must pay. Nothing executable was produced and nothing was submitted.',
   stock_action_executor_not_authorized:
     'The issuer’s policy registry refuses the exact contract this batch would authorize to move the token. The approval would have been granted — `approve()` is not policy gated — and the transfer would then have reverted, after the wallet had signed twice and paid for both. Nothing executable was produced. This is the issuer’s rule for that contract, read on chain; Miorail does not set it and cannot lift it.',
 };
+
+/**
+ * Whether this stock action's latest release is still held at a wallet (audit N13-2, 2026-11-13): 'sent'
+ * once its proof holds a transaction, 'open' while the attempt opened before the wallet is unfinished.
+ * What reached Base is said first: a confirmed attempt is still listed as recoverable.
+ */
+export async function stockActionHandoffV1(deps: {
+  records: StockActionExecutionRepositoryV1;
+  proofTransactions: (blueprintId: string) => Promise<number>;
+  openAttempt: (blueprintId: string) => Promise<boolean>;
+}, owner: StockActionDraftOwnerV1): Promise<'open' | 'sent' | null> {
+  const latest = await deps.records.latest(owner);
+  if (!latest?.release) return null;
+  if ((await deps.proofTransactions(latest.release.blueprintId)) > 0) return 'sent';
+  return (await deps.openAttempt(latest.release.blueprintId)) ? 'open' : null;
+}
 
 export interface StockActionExecutionArgsV1 {
   clearance: string;
@@ -1272,6 +1308,18 @@ export async function miorailGetStockBaseMcpActionV1(
     );
   }
   const clearance = verified.claims;
+
+  // One stock action reaches a wallet once at a time (audit N13-2, 2026-11-13). A release whose wallet
+  // answer was never heard, or whose calls reached Base, is not followed by another: a re-plan is a new
+  // blueprint, and the submission attempt opened before a wallet guards only its own.
+  let handoff: 'open' | 'sent' | null;
+  try {
+    handoff = await runtime.handoffHeld({ tenantId: identity.tenantId, walletAddress: identity.walletAddress, actionDraftId: clearance.actionDraftId });
+  } catch {
+    throw stockActionRefusalV1('stock_action_tracking_unavailable');
+  }
+  if (handoff === 'sent') throw stockActionExecutionRefusalV1('stock_action_already_sent');
+  if (handoff === 'open') throw stockActionExecutionRefusalV1('stock_action_handoff_open');
 
   const token = await runtime.readToken(clearance.tokenAddress);
   if (!token.ok) throw stockActionExecutionRefusalV1('stock_action_token_unreadable');

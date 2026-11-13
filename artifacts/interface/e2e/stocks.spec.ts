@@ -202,15 +202,31 @@ test('one wallet attempt stays pending until the wallet resolves', async ({ page
       window.walletAttempts = 0;
       export function StockActionReviewPage() {
         const {model} = useStockActionReviewConsoleV1({draft:'test-sell',
-          sendCalls: async () => { window.walletAttempts++; await new Promise(resolve => { window.finishWallet = resolve; }); return 'test-batch'; },
-          recordSubmission: async () => {}});
+          sendCalls: async (batch) => { window.walletAttempts++; window.walletAskedAs = [batch.from, batch.chainId]; window.handoffs.push('wallet');
+            await new Promise(resolve => { window.finishWallet = resolve; }); return 'test-batch'; }});
         return React.createElement(StockActionReviewScreen, {model});
       }`,
   }));
+  // The server's release names the account it was reviewed for (audit N13-3), and the handoff is written
+  // down as an attempt before the wallet is asked (audit N13-2). All of it is a stand-in here.
+  const OWNER = `0x${'a'.repeat(40)}`, HASH = `0x${'1'.repeat(64)}`;
+  await page.addInitScript(() => { (window as unknown as { handoffs: string[] }).handoffs = []; });
   let releases = 0;
   await page.route('**/api/route-intelligence/rwa/stock-action/release', route => {
     releases++;
-    return route.fulfill({ json: { action: { calls: [{ to: TOKEN, value: '0x0', data: '0x' }], atomicRequired: true } } });
+    return route.fulfill({ json: { action: { chainId: 8453, from: OWNER, calls: [{ to: TOKEN, value: '0x0', data: '0x' }], atomicRequired: true },
+      routeRunId: 'run-1', blueprintId: 'bp-1', approvedCallsHash: HASH } });
+  });
+  const attempt = { id: 'attempt-1', walletAddress: OWNER, chainId: 8453, goal: 'swap', routeRunId: 'run-1', blueprintId: 'bp-1', proofId: null, approvedCallsHash: HASH,
+    batchId: null, status: 'wallet_pending', errorCode: null, createdAt: '2026-09-06T18:00:00.000Z', updatedAt: '2026-09-06T18:00:00.000Z', completedAt: null };
+  const written: string[] = [];
+  const mark = (what: string) => { written.push(what); return page.evaluate((entry) => (window as unknown as { handoffs: string[] }).handoffs.push(entry), what); };
+  await page.route('**/api/route-intelligence/submission-attempts', async route => { await mark('attempt'); return route.fulfill({ json: { attempt } }); });
+  await page.route('**/api/route-intelligence/submission-attempts/*/batch', async route => { await mark('batch');
+    return route.fulfill({ json: { attempt: { ...attempt, batchId: 'test-batch', status: 'batch_observed' } } }); });
+  await page.route('**/api/route-intelligence/swap/blueprints/*/submission', async route => {
+    await mark(`record:${(route.request().postDataJSON() as { status: string; submissionAttemptId?: string }).status}:${(route.request().postDataJSON() as { submissionAttemptId?: string }).submissionAttemptId}`);
+    return route.fulfill({ json: { outcome: 'recorded', lifecycle: 'submitted', proofId: 'proof-1', finalStatus: 'pending' } });
   });
   await page.goto('/action/test-sell');
   await page.getByRole('button', { name: 'Use available balance' }).click();
@@ -220,8 +236,11 @@ test('one wallet attempt stays pending until the wallet resolves', async ({ page
   await expect.poll(() => page.evaluate(() => (window as unknown as { walletAttempts: number }).walletAttempts)).toBe(1);
   await expect(page.getByRole('button', { name: 'Waiting for your wallet…', exact: true })).toBeDisabled();
   expect(releases).toBe(1);
+  expect(await page.evaluate(() => (window as unknown as { walletAskedAs: unknown }).walletAskedAs)).toEqual([OWNER, 8453]);
+  expect(await page.evaluate(() => (window as unknown as { handoffs: string[] }).handoffs)).toEqual(['attempt', 'wallet']);
   await page.evaluate(() => (window as unknown as { finishWallet: () => void }).finishWallet());
   await expect(page.getByText('Submitted from your Base Account.', { exact: true })).toBeVisible();
+  await expect.poll(() => written).toEqual(['attempt', 'batch', 'record:submitted:attempt-1']);
 });
 
 test('a buy refused for insufficient funds explains why and never opens the wallet', async ({ page }) => {

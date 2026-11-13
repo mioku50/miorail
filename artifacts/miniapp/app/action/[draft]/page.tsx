@@ -1,13 +1,13 @@
 "use client";
 import { useParams } from "next/navigation";
 import { useAccount, useConfig, useSendCalls } from "wagmi";
-import { useRecordBlueprintSubmission } from "@mioagent/api-client-react";
+import { useStatus } from "@mioagent/api-client-react";
 import {
   StockActionReviewScreen,
   useStockActionReviewConsoleV1,
 } from "@mioagent/ui";
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
-import { attributedCallsV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from "@mioagent/wallet-actions";
+import { SubmissionRecoveryRail, attributedCallsV1, builderCodeToDataSuffix, requireLiveWalletAccountV1, useWalletBatchSupportV1 } from "@mioagent/wallet-actions";
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review, in Base App.
@@ -34,23 +34,23 @@ const BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(
 export default function BaseAppStockActionReviewPage() {
   const params = useParams<{ draft?: string }>();
   const draft = typeof params?.draft === "string" ? decodeURIComponent(params.draft) : null;
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const sendCalls = useSendCalls();
   const config = useConfig();
   const walletBatches = useWalletBatchSupportV1();
-  const recordSubmission = useRecordBlueprintSubmission();
+  const status = useStatus();
 
   const reviewConsole = useStockActionReviewConsoleV1({
     draft,
-    sendCalls: async ({ calls, atomicRequired }) => {
+    sendCalls: async ({ calls, atomicRequired, from }) => {
       // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
-      // the account this review was read for: a wallet that answers as another is not asked (audit WAL-1).
-      if (!address) throw new Error("Your wallet is not connected");
-      await requireLiveWalletAccountV1(config, address);
+      // the account the server released these calls for, from the session that reviewed them. It was the
+      // account the wallet had selected: a review made for one was asked of another (audit N13-3).
+      await requireLiveWalletAccountV1(config, from);
       // A wallet that drops `dataSuffix` gets the code in each call's own data, as on the web (audit WAL-5).
       const { capabilities } = await walletBatches.readNow();
       const result = await sendCalls.mutateAsync({
-        account: address,
+        account: from,
         calls: attributedCallsV1({ calls: calls as { data?: string }[], suffix: BUILDER_SUFFIX_V1, capabilities }) as never,
         chainId: 8453,
         forceAtomic: atomicRequired,
@@ -60,24 +60,17 @@ export default function BaseAppStockActionReviewPage() {
       });
       return typeof result === "string" ? result : ((result as { id?: string })?.id ?? null);
     },
-    // The same submission-record route the web uses. Without it a batch signed
-    // in Base App left no record anywhere in the app — the surface nearest the
-    // wallet was the one that forgot fastest.
-    recordSubmission: async ({ routeRunId, blueprintId, approvedCallsHash, batchId }) => {
-      if (!address) return;
-      return recordSubmission.mutateAsync({
-        blueprintId,
-        routeRunId,
-        walletAddress: address,
-        approvedCallsHash: approvedCallsHash as `0x${string}`,
-        status: "submitted",
-        batchId,
-      });
-    },
   });
 
   return (
     <main className="mio-console">
+      {/* A purchase whose wallet answer was never heard is held until the person has checked the wallet (audit N13-2). */}
+      <SubmissionRecoveryRail
+        compact
+        walletAddress={address ?? null}
+        chainId={chainId ?? null}
+        enabled={Boolean(status.data?.productMigration?.submissionRecoveryV1)}
+      />
       <StockActionReviewScreen model={reviewConsole.model} />
     </main>
   );

@@ -332,14 +332,19 @@ export function walletNotAskedSentenceV1(cause: unknown): string | null {
  * never asked. A timeout or a dropped connection proves nothing and is not here.
  */
 export function walletDidNotSendV1(cause: unknown): boolean {
+  return walletUserRejectedV1(cause) || walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true
+    || walletConnectionNotReadyV1(cause) || walletNotAskedSentenceV1(cause) !== null;
+}
+
+/** The person's own No in the wallet, by its code (EIP-1193 4001, viem's UserRejectedRequestError): never by words. */
+export function walletUserRejectedV1(cause: unknown): boolean {
   let current: unknown = cause;
   for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth += 1) {
     const record = current as { code?: unknown; name?: unknown; cause?: unknown };
     if (record.code === 4001 || record.name === 'UserRejectedRequestError') return true;
     current = record.cause;
   }
-  return walletCannotSendSentenceV1(cause) !== null || walletNetworkFailureV1(cause)?.beforeSending === true
-    || walletConnectionNotReadyV1(cause) || walletNotAskedSentenceV1(cause) !== null;
+  return false;
 }
 
 /**
