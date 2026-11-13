@@ -4,7 +4,7 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 import { aaveReadFixture, AAVE_TEST_WALLET, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1 } from './aaveV4BorrowPlan.js';
-import { STILL_AAVE_MAX_RESERVES_V1, stockShareTermsV1, headAtLeastV1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
+import { AAVE_DEPLOYMENT_CHANGED_WORDS_V1, STILL_AAVE_MAX_RESERVES_V1, stockShareTermsV1, headAtLeastV1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
 
 const input = (r = aaveReadFixture()) => ({ walletAddress: AAVE_TEST_WALLET, operation: 'borrow' as const, stockId: 'NVDAc' as const, collateralSupplyAssets: BigInt(0),
   deps: { now: () => new Date('2026-10-21T15:00:00Z'), snapshot: async () => r, calendar: async () => calendar() } });
@@ -100,6 +100,29 @@ describe('after a step of a loan in steps, the account is read at a block that h
     const behind = await readStillAaveStandingV1({ ...base, atLeastBlock: at + BigInt(1) });
     assert.deepEqual(behind.state === 'refused' ? [behind.refusal, behind.detail] : null,
       ['aave_unread', 'Still could not read this Aave account at a block that holds the step that just landed.']);
+  });
+});
+
+// Audit LA-3 (2026-11-14): after an upgrade of the Spoke's implementation every review, repayments too, said
+// Still could not read the account, though the read worked and only the pin did not match.
+describe('an Aave Spoke Still has not reviewed', () => {
+  it('is said as what it is, with the way out on Aave itself, for a repayment too', async () => {
+    for (const operation of ['borrow', 'repay'] as const) {
+      const base = input(aaveReadFixture());
+      const changed = await readStillAaveStandingV1({ ...base, operation, ...(operation === 'repay' ? { collateralSupplyAssets: BigInt(0) } : {}),
+        deps: { ...base.deps, snapshot: async () => { throw new Error('aave_deployment_changed'); } } });
+      assert.deepEqual(changed.state === 'refused' ? [changed.refusal, changed.detail] : null, ['aave_deployment_changed', AAVE_DEPLOYMENT_CHANGED_WORDS_V1], operation);
+    }
+    assert.match(AAVE_DEPLOYMENT_CHANGED_WORDS_V1, /repay or take your stock back directly in Aave’s own app/);
+    // A read that the pin does not match says the same.
+    const r = aaveReadFixture();
+    const moved = { ...r, deployment: { ...r.deployment, implementationAddress: `0x${'9'.repeat(40)}` as `0x${string}` } };
+    const base = input(r);
+    const answer = await readStillAaveStandingV1({ ...base, deps: { ...base.deps, snapshot: async () => moved } });
+    assert.deepEqual(answer.state === 'refused' ? [answer.refusal, answer.detail] : null, ['aave_deployment_changed', AAVE_DEPLOYMENT_CHANGED_WORDS_V1]);
+    // A read that failed is still a failed read.
+    const unread = await readStillAaveStandingV1({ ...base, deps: { ...base.deps, snapshot: async () => { throw new Error('aave_deployment_unread'); } } });
+    assert.deepEqual(unread.state === 'refused' ? unread.refusal : null, 'aave_unread');
   });
 });
 

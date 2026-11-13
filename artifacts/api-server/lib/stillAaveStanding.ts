@@ -5,6 +5,7 @@ import { ADDRESSES, STOCKS, type StockId } from '@mioagent/still-engine/registry
 import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/abi';
 import { Batch } from '@mioagent/still-engine/rpc';
 import { TERMS, stockPriceStale } from '@mioagent/still-engine/policy';
+import { logger } from '@mioagent/utils';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import type { StillShareLoweredV1 } from './stillLimitComparison.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4DeploymentStatusV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
@@ -102,8 +103,19 @@ export async function headAtLeastV1(read: () => Promise<bigint>, atLeast: bigint
   return head;
 }
 
+/**
+ * Said when Aave's Spoke answers with an implementation Still has not reviewed (audit LA-3, 2026-11-14). The
+ * read worked and only the pin did not match, yet every review, repayments and take-backs too, said Still could
+ * not read the account: the person tried again here while the stock fell, instead of repaying on Aave itself.
+ */
+export const AAVE_DEPLOYMENT_CHANGED_WORDS_V1 = 'Aave has changed the contract Still lends through (its Spoke), and Still prepares nothing on a version it has not reviewed. '
+  + 'Your loan and your deposit are as they were on Aave, and you can repay or take your stock back directly in Aave’s own app meanwhile.';
+let deploymentChangeSaid = false;
+
 async function freshSnapshot(wallet: Address, atLeastBlock?: bigint): Promise<StillAaveSnapshotV1> {
   providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-aave/1');
+  // A provider that read a deployment other than the pinned one is a fact, not a failed read.
+  let changed = false;
   for (const provider of providers) {
     try {
       const at = await headAtLeastV1(() => provider.client.getBlockNumber(), atLeastBlock);
@@ -151,9 +163,12 @@ async function freshSnapshot(wallet: Address, atLeastBlock?: bigint): Promise<St
       });
       const positions = slots.map(({ reserveId, position }) => ({ reserveId, ...need(position.outcome) }));
       return { universe, snapshot, deployment, reserves, positions };
-    } catch { /* Fall back only at a new explicitly pinned block. */ }
+    } catch (error) {
+      /* Fall back only at a new explicitly pinned block. */
+      if (error instanceof Error && error.message === 'aave_deployment_changed') changed = true;
+    }
   }
-  throw new Error('aave_deployment_unread');
+  throw new Error(changed ? 'aave_deployment_changed' : 'aave_deployment_unread');
 }
 
 /** Whole reviewed Spoke only; another reserve/loan cannot be quietly omitted. */
@@ -430,11 +445,19 @@ export async function readStillAaveStandingV1(input: {
   const now = input.deps?.now?.() ?? new Date();
   let read: StillAaveSnapshotV1;
   try { read = await (input.deps?.snapshot ?? freshSnapshot)(wallet as Address, input.atLeastBlock); }
-  catch { return refuse('aave_unread', 'Still could not establish this Aave account at one Base block.'); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'aave_deployment_changed') {
+      // Once in the log per process, for the operator: nothing else compares the Spoke with its pin.
+      if (!deploymentChangeSaid) { deploymentChangeSaid = true; logger.error('Aave V4 Spoke implementation differs from the reviewed pin: every Aave review refuses until it is reviewed'); }
+      return refuse('aave_deployment_changed', AAVE_DEPLOYMENT_CHANGED_WORDS_V1);
+    }
+    return refuse('aave_unread', 'Still could not establish this Aave account at one Base block.');
+  }
   if (input.atLeastBlock !== undefined && BigInt(read.snapshot.block.number) < input.atLeastBlock) {
     return refuse('aave_unread', 'Still could not read this Aave account at a block that holds the step that just landed.');
   }
-  if (!matchesAaveV4DeploymentV1(read.deployment) || read.deployment.blockNumber !== Number(read.snapshot.block.number)) return refuse('aave_deployment_changed', 'The Aave deployment could not be bound to this read block.');
+  if (!matchesAaveV4DeploymentV1(read.deployment)) return refuse('aave_deployment_changed', AAVE_DEPLOYMENT_CHANGED_WORDS_V1);
+  if (read.deployment.blockNumber !== Number(read.snapshot.block.number)) return refuse('aave_deployment_changed', 'The Aave deployment could not be bound to this read block.');
   if (!validAaveReserveBindingsV1(read)) return refuse('aave_reserve_mismatch', 'Every reserve on the reviewed Spoke must match its registered stock or USDC identity.');
   const aave = read.snapshot.aave!;
   const loanReserve = read.reserves.find(r => same(r.underlying, ADDRESSES.usdc))!;
