@@ -7,7 +7,7 @@ import {
 } from './lendingReviewView';
 import { StillIconV1 } from '../still/icons';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
-import { spendConfirmByNoteV1 } from '../still/spendView';
+import { STILL_SPEND_COMMISSION_NOTE_V1, spendConfirmByNoteV1 } from '../still/spendView';
 
 void React;
 export { formatLendingHealthRatioV1 };
@@ -140,6 +140,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
                 ? <>, and tops up <strong className="mono">{body.deliverTo.phone}</strong></> : null}. Check that {body.deliverTo.phone ? 'they are' : 'it is'} yours:
                 the invoice was opened with {body.deliverTo.phone ? 'them' : 'it'}, and Still cannot change {body.deliverTo.phone ? 'them' : 'it'}.{' '}</> : null}
               Bitrefill holds this price until {new Date(facts.payment.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}. The loan stays yours to repay.
+              {body.commission ? <>{' '}{STILL_SPEND_COMMISSION_NOTE_V1}</> : null}
             </span></div> : null}
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>
             {shareRoundingExtra ? <p className="still-note">Your wallet receives {usdc(facts.requestedAssets!)} ({facts.requestedAssets} atomic USDC). Onchain debt-share rounding records {usdc(debtIncrease.toString())} ({debtIncrease.toString()} atomic USDC) of new debt.</p> : null}

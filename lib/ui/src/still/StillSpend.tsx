@@ -9,6 +9,7 @@ import { StillIconV1 } from './icons';
 import {
   SHARE_CARD_PRIVACY_NOTE_V1,
   SPEND_TYPES_V1,
+  STILL_SPEND_COMMISSION_NOTE_V1,
   shareAmountWordsV1,
   spendConfirmByNoteV1,
   spendLatePaymentNoteV1,
@@ -397,6 +398,7 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
           </dl>
           {paying.deliverTo ? <p className="still-note">Check that {paying.deliverTo.phone ? 'the email and the number are' : 'the email is'} yours: the invoice was opened
             with {paying.deliverTo.phone ? 'them' : 'it'}, and Still cannot change {paying.deliverTo.phone ? 'them' : 'it'}.</p> : null}
+          {order?.commission ? <p className="still-note">{STILL_SPEND_COMMISSION_NOTE_V1}</p> : null}
           {paying.block !== null ? (
             <p className="still-note still-borrow-block">Read at Base block <span className="mono">{paying.block.toLocaleString('en-US')}</span>; the transfer was run on that same state, and only the invoice’s price left the wallet.</p>
           ) : null}

@@ -119,6 +119,8 @@ export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
   measured: { provider: string; blockNumber: number; loanDeltaAssets: string };
   /** Still Spend: where Bitrefill sends what the loan pays for, as the open invoice holds it. */
   deliverTo?: SpendDeliveryWireV1;
+  /** Still Spend: the invoice was opened with Still's affiliate code, so Bitrefill may pay Still a commission. */
+  commission?: true;
 }
 /** The email Bitrefill sends a purchase to, and the number a top-up goes to. Fixed when the invoice was opened. */
 export interface SpendDeliveryWireV1 { email: string; phone: string | null }
@@ -226,12 +228,14 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
   }
   // Shown only as the server gave it, and only beside a payment.
   const deliverTo = value.facts.payment ? spendDeliveryWireV1(value.deliverTo) : null;
-  const { deliverTo: _given, ...rest } = value as Record<string, unknown>;
-  void _given;
+  const commission = Boolean(value.facts.payment) && (value as { commission?: unknown }).commission === true;
+  const { deliverTo: _given, commission: _said, ...rest } = value as Record<string, unknown>;
+  void _given; void _said;
   // The stress of a new loan, only in the shape the server writes it; any other is left out, not the review.
   const { stress: given, ...facts } = value.facts;
   const stress = value.facts.operation === 'borrow' && given !== undefined ? lendingStressWireV1(given) : null;
-  return { ...(rest as unknown as LendingReadyWireV1), facts: { ...facts, ...(stress ? { stress } : {}) }, ...(deliverTo ? { deliverTo } : {}) };
+  return { ...(rest as unknown as LendingReadyWireV1), facts: { ...facts, ...(stress ? { stress } : {}) }, ...(deliverTo ? { deliverTo } : {}),
+    ...(commission ? { commission: true as const } : {}) };
 }
 export function parseLendingExecutionWireV1(value: unknown, executionId: string): LendingExecutionWireV1 | null {
   if (!object(value) || value.executionId !== executionId || !id(value.executionId) ||

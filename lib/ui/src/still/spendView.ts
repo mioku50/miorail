@@ -197,7 +197,14 @@ export interface SpendOrderViewV1 {
   esimInstallLink: string | null;
   /** The number a top-up goes to, "+919876543210"; null for anything else. */
   refillTo: string | null;
+  /** The server opened it with Still's affiliate code at Bitrefill; its review says so (STILL_SPEND_COMMISSION_NOTE_V1). */
+  commission: boolean;
 }
+
+/** One line on a purchase's review, shown only for an invoice the server opened with Still's affiliate code.
+ * Bitrefill's partner guide: an affiliate code changes who receives a commission, a coupon changes the
+ * price; a commission counts only for a delivered order, and some products earn none. */
+export const STILL_SPEND_COMMISSION_NOTE_V1 = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase. It does not change your price.';
 
 const STATUS_WORDS_V1: Record<string, string> = {
   unpaid: 'Waiting for payment', payment_detected: 'Payment seen, waiting for confirmation', payment_confirmed: 'Payment confirmed',
@@ -228,6 +235,7 @@ export function spendOrderViewV1(payload: unknown): SpendOrderViewV1 | null {
     orderLink: link(status?.accessLink) ?? link(order.paymentLink),
     status: state ? STATUS_WORDS_V1[state]! : null, delivered: state === 'complete', esimInstallLink: link(status?.esimInstallLink),
     refillTo: typeof order.refillTo === 'string' && /^\+\d{7,15}$/.test(order.refillTo) ? order.refillTo : null,
+    commission: order.commission === true,
   };
 }
 

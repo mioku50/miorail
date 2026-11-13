@@ -1,4 +1,4 @@
-import { createBitrefillGuestCheckoutV1, spendCallingCodeV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
+import { BITREFILL_AFFILIATE_CODE_V1, createBitrefillGuestCheckoutV1, spendCallingCodeV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
 import { logger } from '@mioagent/utils';
 
 import type { LendingPaymentV1 } from './lendingDraft.js';
@@ -76,6 +76,9 @@ export interface SpendOrderV1 {
   expiresAt: string;
   accessToken: string;
   paymentLink: string | null;
+  /** Opened through a checkout that carries Still's affiliate code: Bitrefill may pay Still a commission
+   * on it. Its review says so; the price is Bitrefill's either way. */
+  commission?: boolean;
 }
 
 export interface SpendOrderOwnerV1 { tenantId: string; walletAddress: string }
@@ -200,13 +203,29 @@ export function spendDraftPaymentV1(order: SpendOrderV1, now: Date): LendingPaym
     packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
 }
 
+/** Still's affiliate code at Bitrefill (the operator's partner account, 2026-11-13), from the environment only:
+ * the public code base names none, so a copy of it run by somebody else credits nobody. `malformed` is a value
+ * that breaks Bitrefill's own rule, which Bitrefill would drop in silence; Still then sends none and says so. */
+export function stillBitrefillAffiliateV1(env: NodeJS.ProcessEnv = process.env): { state: 'attached'; code: string } | { state: 'unset' | 'malformed' } {
+  const code = env.STILL_BITREFILL_AFFILIATE_CODE?.trim() ?? '';
+  if (!code) return { state: 'unset' };
+  return BITREFILL_AFFILIATE_CODE_V1.test(code) ? { state: 'attached', code } : { state: 'malformed' };
+}
+
+/** Whether Bitrefill may pay Still a commission on what is bought here: its affiliate code goes with every
+ * invoice this process opens. A review says so in one line (STILL_SPEND_COMMISSION_NOTE_V1). */
+export const stillSpendCommissionV1 = (env: NodeJS.ProcessEnv = process.env): boolean => stillBitrefillAffiliateV1(env).state === 'attached';
+
 /** Still's client registered at Bitrefill (2026-11-02), from the environment;
- * without one the guest client is the metadata document. Never logged. */
-export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { clientId?: string; clientSecret?: string } {
+ * without one the guest client is the metadata document. Never logged. The affiliate code
+ * travels with whichever client it is. */
+export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { clientId?: string; clientSecret?: string; affiliateCode?: string } {
   const clientId = env.STILL_BITREFILL_CLIENT_ID?.trim() ?? '';
   const clientSecret = env.STILL_BITREFILL_CLIENT_SECRET?.trim() ?? '';
-  if (!/^[A-Za-z0-9._:/-]{8,200}$/.test(clientId)) return {};
-  return { clientId, ...(clientSecret ? { clientSecret } : {}) };
+  const affiliate = stillBitrefillAffiliateV1(env);
+  const code = affiliate.state === 'attached' ? { affiliateCode: affiliate.code } : {};
+  if (!/^[A-Za-z0-9._:/-]{8,200}$/.test(clientId)) return code;
+  return { clientId, ...(clientSecret ? { clientSecret } : {}), ...code };
 }
 
 /** Which client Still presents to Bitrefill: its registered one, or the published document it falls back to,
@@ -222,9 +241,11 @@ let checkoutV1: BitrefillGuestCheckoutV1 | null = null;
 export const stillSpendCheckoutV1 = (): BitrefillGuestCheckoutV1 => {
   if (!checkoutV1) {
     const kind = stillBitrefillClientKindV1();
-    const said = { client: kind, pay: stillSpendPayEnabledV1() ? 'on' : 'off', secretExpiryKnown: Number.isFinite(Date.parse((process.env.STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT ?? '').trim())) };
+    const affiliate = stillBitrefillAffiliateV1().state;
+    const said = { client: kind, pay: stillSpendPayEnabledV1() ? 'on' : 'off', secretExpiryKnown: Number.isFinite(Date.parse((process.env.STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT ?? '').trim())), affiliate };
     if (kind === 'registered') logger.info('Still Spend presents its registered client to Bitrefill', said);
     else logger.warn('Still Spend has no registered client with a secret: Bitrefill may refuse its catalogue and invoices', said);
+    if (affiliate === 'malformed') logger.warn('STILL_BITREFILL_AFFILIATE_CODE is not 6 to 16 letters and digits: Still sends no affiliate code, and no purchase is attributed', { affiliate });
     checkoutV1 = createBitrefillGuestCheckoutV1(stillBitrefillClientV1());
   }
   return checkoutV1;

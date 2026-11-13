@@ -27,6 +27,21 @@ import { ToonParseError, decodeToonV1 } from './toon.js';
 
 export const BITREFILL_MCP_URL_V1 = `${BITREFILL_ORIGIN_V1}/mcp`;
 export const BITREFILL_MCP_TOKEN_URL_V1 = `${BITREFILL_ORIGIN_V1}/oauth/mcp/token`;
+
+/** Bitrefill's own rule for an affiliate code: 6 to 16 letters and digits. Bitrefill drops anything else
+ * in silence and the purchase goes through unattributed, so a code that breaks the rule is refused here. */
+export const BITREFILL_AFFILIATE_CODE_V1 = /^[A-Za-z0-9]{6,16}$/;
+
+/** Where the MCP requests go: the server itself, with Still's affiliate code as `?ref=` when it has one.
+ * Bitrefill reads the code from the URL of every request, a guest's included: "part of the URL your
+ * client stores, not something you send once" (its partner integration guide, 2026-09-10). The code
+ * changes whom Bitrefill pays a commission, never the buyer's price. The token request's resource stays
+ * the server itself, as the guide's own token request names it. */
+export function bitrefillMcpEndpointV1(affiliateCode?: string): string {
+  if (affiliateCode === undefined) return BITREFILL_MCP_URL_V1;
+  if (!BITREFILL_AFFILIATE_CODE_V1.test(affiliateCode)) throw new TypeError('bitrefill_affiliate_code_invalid');
+  return `${BITREFILL_MCP_URL_V1}?ref=${affiliateCode}`;
+}
 export const STILL_BITREFILL_CLIENT_ID_V1 = 'https://stills.lat/clients/bitrefill-mcp.json';
 /** The only tools this client may call. */
 export const BITREFILL_GUEST_READ_TOOLS_V1 = ['search-products', 'get-product-details'] as const;
@@ -155,6 +170,9 @@ export interface BitrefillGuestOptionsV1 {
    * client is Still's metadata document, which Bitrefill stopped trusting on
    * 2026-11-02; Still registered by Bitrefill's own registration endpoint. */
   clientSecret?: string;
+  /** Still's affiliate code at Bitrefill, sent as `?ref=` on every MCP request (bitrefillMcpEndpointV1).
+   * One that breaks Bitrefill's rule throws here rather than going out to be dropped. */
+  affiliateCode?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: () => number;
@@ -178,6 +196,7 @@ export interface BitrefillGuestTransportV1 {
 
 export function createBitrefillGuestTransportV1(tools: readonly string[], options: BitrefillGuestOptionsV1 = {}): BitrefillGuestTransportV1 {
   const clientId = options.clientId ?? STILL_BITREFILL_CLIENT_ID_V1;
+  const endpoint = bitrefillMcpEndpointV1(options.affiliateCode);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const now = options.now ?? (() => Date.now());
   const perMinute = options.perMinute ?? 20;
@@ -245,7 +264,7 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     if (!spend(priority)) return { ok: false, reason: 'bitrefill_rate_limited' };
     let response: Response;
     try {
-      response = await partnerFetch(BITREFILL_MCP_URL_V1, {
+      response = await partnerFetch(endpoint, {
         method: 'POST',
         headers: { authorization: `Bearer ${bearer.value}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } }),

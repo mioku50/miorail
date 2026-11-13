@@ -85,6 +85,8 @@ function orderWireV1(order: SpendOrderV1) {
     orderId: order.orderId, productId: order.productId, productName: order.productName, packageValue: order.packageValue,
     faceCurrency: order.faceCurrency, priceAtomic: order.priceAtomic, payTo: order.payTo, refillTo: order.refillTo === null ? null : `+${order.refillTo}`, createdAt: order.createdAt,
     expiresAt: order.expiresAt, paymentLink: order.paymentLink, deliverTo: spendDeliveryV1(order),
+    // Bitrefill may pay Still a commission on it: its review says so in one line.
+    commission: order.commission === true,
   };
 }
 
@@ -152,7 +154,8 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   if (quoted > STILL_SPEND_CAP_ATOMIC_V1) return refuse(409, 'spend_over_cap');
   if (options.payableAtomic !== undefined && quoted > options.payableAtomic) return { ...refuse(409, 'spend_wallet_usdc_short'), priceAtomic: quoted.toString() };
   const now = stillSpendRuntimeV1.now();
-  const invoice = await stillSpendRuntimeV1.checkout().createInvoice({
+  const checkout = stillSpendRuntimeV1.checkout();
+  const invoice = await checkout.createInvoice({
     productId: product.value.id, packageValue: offered.value, email: request.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,
   });
   if (!invoice.ok) {
@@ -164,6 +167,8 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
     orderId: invoice.value.invoiceId, ...owner, productId: product.value.id, productName: product.value.name,
     packageValue: offered.value, faceCurrency: offered.faceCurrency, priceAtomic: quoted.toString(), payTo: invoice.value.payTo, email: request.email, refillTo,
     createdAt: now.toISOString(), expiresAt: invoice.value.expiresAt, accessToken: invoice.value.accessToken, paymentLink: invoice.value.paymentLink,
+    // The checkout that opened it says whether its request carried Still's affiliate code.
+    commission: checkout.affiliated === true,
   };
   stillSpendRuntimeV1.orders.put(order);
   return { ok: true, order };

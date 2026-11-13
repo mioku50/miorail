@@ -65,6 +65,8 @@ export interface SpendInvoiceStatusV1 {
 export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string; detail?: string };
 
 export interface BitrefillGuestCheckoutV1 {
+  /** Its requests carry Still's affiliate code (`?ref=`), so an invoice it opens may earn Still a commission. */
+  readonly affiliated?: boolean;
   /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */
   createInvoice(input: { productId: string; packageValue: string; email: string; refillInput?: string; quotedAtomic: bigint; now: Date }): Promise<SpendCheckoutResultV1<SpendInvoiceV1>>;
   /** Display polling uses ordinary slots. An omitted purpose is a fresh payment safety check. */
@@ -221,6 +223,8 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
   // kept for opening invoices and checking them immediately before payment.
   const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, ...options });
   return {
+    // The transport has refused a code that breaks Bitrefill's rule by now, so a code here is one it sends.
+    affiliated: options.affiliateCode !== undefined,
     async createInvoice(input) {
       if (!SPEND_EMAIL_V1.test(input.email) || input.email.length > 254 || input.quotedAtomic <= 0n) return { ok: false, reason: 'bitrefill_refused' };
       if (input.refillInput !== undefined && !/^\d{7,15}$/.test(input.refillInput)) return { ok: false, reason: 'bitrefill_refused' };

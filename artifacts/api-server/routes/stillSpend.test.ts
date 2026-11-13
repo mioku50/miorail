@@ -14,7 +14,7 @@ import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
-import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillClientKindV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillAffiliateV1, stillBitrefillClientKindV1, stillBitrefillClientV1, stillSpendCommissionV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
@@ -668,6 +668,50 @@ describe('where the purchase goes, shown before it is paid', () => {
   });
 });
 
+// Bitrefill's partner guide: the affiliate code changes whom Bitrefill pays a commission, never the price.
+// A purchase opened with Still's code says so on its review, and one opened without it says nothing.
+describe('a commission from Bitrefill, said where it is true', () => {
+  it('an invoice opened through a checkout that carries Still’s code says so on its own read and on the loan’s review', async () => {
+    Object.assign(stillSpendRuntimeV1, { checkout: () => ({ ...checkout(), affiliated: true }) });
+    const opened = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(opened.body.order.commission, true);
+    assert.equal((await request(app()).get(`/api/still/spend/orders/${INVOICE}`)).body.order.commission, true);
+    const intent = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '13250000', collateralSupplyAtomic: '0', spendOrderId: INVOICE });
+    const review = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(intent.body.reviewUrl).slice('/lending/'.length)}`);
+    assert.deepEqual([review.body.state, review.body.commission], ['ready', true]);
+    // Not a fact the review is bound by: the hashed calls and terms are what they are without it.
+    assert.equal('commission' in review.body.facts, false);
+  });
+
+  it('one opened without a code, and a loan with no purchase, say nothing of a commission', async () => {
+    const opened = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(opened.body.order.commission, false);
+    const intent = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '13250000', collateralSupplyAtomic: '0', spendOrderId: INVOICE });
+    const review = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(intent.body.reviewUrl).slice('/lending/'.length)}`);
+    assert.deepEqual([review.body.state, review.body.commission], ['ready', undefined]);
+    const plain = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '1000000', collateralSupplyAtomic: '0' });
+    const loan = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(plain.body.reviewUrl).slice('/lending/'.length)}`);
+    assert.deepEqual([loan.body.state, loan.body.commission], ['ready', undefined]);
+  });
+
+  it('the code comes from the environment only, as Bitrefill’s rule allows it, and travels with either client', () => {
+    assert.deepEqual(stillBitrefillAffiliateV1({}), { state: 'unset' });
+    assert.deepEqual(stillBitrefillAffiliateV1({ STILL_BITREFILL_AFFILIATE_CODE: '  ' }), { state: 'unset' });
+    assert.deepEqual(stillBitrefillAffiliateV1({ STILL_BITREFILL_AFFILIATE_CODE: ' Fixture7Code ' }), { state: 'attached', code: 'Fixture7Code' });
+    for (const bad of ['short', 'has space1', 'https://www.bitrefill.com/?ref=Fixture7Code', 'Fixture7Code&x=1', 'A'.repeat(17)]) {
+      assert.deepEqual(stillBitrefillAffiliateV1({ STILL_BITREFILL_AFFILIATE_CODE: bad }), { state: 'malformed' }, bad);
+      assert.equal(stillSpendCommissionV1({ STILL_BITREFILL_AFFILIATE_CODE: bad }), false, bad);
+      assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_AFFILIATE_CODE: bad }), {}, bad);
+    }
+    assert.equal(stillSpendCommissionV1({ STILL_BITREFILL_AFFILIATE_CODE: 'Fixture7Code' }), true);
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_AFFILIATE_CODE: 'Fixture7Code' }), { affiliateCode: 'Fixture7Code' });
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_ID: '00000000-0000-4000-8000-000000000001', STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret', STILL_BITREFILL_AFFILIATE_CODE: 'Fixture7Code' }),
+      { clientId: '00000000-0000-4000-8000-000000000001', clientSecret: 'fixture-secret', affiliateCode: 'Fixture7Code' });
+  });
+});
+
 describe('a loan in steps that stopped before it paid', () => {
   const row = (over: Record<string, unknown>) => ({ state: 'failed', errorCode: 'loan_steps_stopped', verification: { stoppedAt: 3 },
     run: { delivery: 'sequential', calls: [0, 1, 2, 3] }, ...over }) as never;
@@ -714,7 +758,7 @@ describe('Still’s registered Bitrefill client', () => {
     for (const env of [{}, { STILL_BITREFILL_CLIENT_ID: 'not an id', STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }]) assert.equal(stillBitrefillClientKindV1(env), 'published_document');
     const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
     const example = readFileSync(repo('.env.example'), 'utf8');
-    for (const name of ['STILL_SPEND_PAY_V1', 'STILL_BITREFILL_CLIENT_ID', 'STILL_BITREFILL_CLIENT_SECRET', 'STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT']) {
+    for (const name of ['STILL_SPEND_PAY_V1', 'STILL_BITREFILL_CLIENT_ID', 'STILL_BITREFILL_CLIENT_SECRET', 'STILL_BITREFILL_CLIENT_SECRET_EXPIRES_AT', 'STILL_BITREFILL_AFFILIATE_CODE']) {
       assert.match(example, new RegExp(`^${name}=$`, 'm'), `${name} is described, with no value`);
     }
   });

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  BITREFILL_AFFILIATE_CODE_V1,
+  BITREFILL_MCP_TOKEN_URL_V1,
   BITREFILL_MCP_URL_V1,
+  bitrefillMcpEndpointV1,
   createBitrefillGuestCatalogV1,
   createBitrefillGuestCheckoutV1,
   createBitrefillGuestTransportV1,
@@ -212,5 +215,47 @@ describe('Still’s guest checkout talks to Bitrefill only as it says', () => {
     assert.equal(calls.length, 0);
     // The catalogue's own factory exposes no way to buy.
     assert.deepEqual(Object.keys(createBitrefillGuestCatalogV1({ fetchImpl })).sort(), ['product', 'search']);
+  });
+});
+
+// Bitrefill's partner integration guide (2026-09-10): an affiliate code travels as `?ref=` on the MCP
+// server's URL and is read "on every request, with every authentication mode", a guest's included.
+// "An unknown or malformed code never fails the purchase. It is dropped silently."
+describe('Still’s affiliate code reaches Bitrefill on every MCP request, and nowhere else', () => {
+  const CODE = 'Fixture7Code';
+
+  it('opens and reads an invoice at the server’s URL with ?ref=, while the token is asked for the server itself', async () => {
+    const { fetchImpl, calls } = bitrefill([token, () => rpc(JSON.stringify(answer({ amount: '13.25' }))), () => rpc('invoice_status: unpaid')]);
+    const checkout = createBitrefillGuestCheckoutV1({ fetchImpl, affiliateCode: CODE });
+    assert.equal((await checkout.createInvoice({ productId: 'bitrefill-esim-germany', packageValue: '10GB, 30 Days', email: 'buyer@example.com', quotedAtomic: QUOTED, now: NOW })).ok, true);
+    assert.equal((await checkout.readInvoice({ invoiceId: INVOICE_ID, accessToken: 'access-token-0123456789' })).ok, true);
+    assert.deepEqual(calls.map((call) => call.url), [BITREFILL_MCP_TOKEN_URL_V1, `${BITREFILL_MCP_URL_V1}?ref=${CODE}`, `${BITREFILL_MCP_URL_V1}?ref=${CODE}`]);
+    // The OAuth resource is the server, as the guide's own token request names it: a ref there is not Bitrefill's way.
+    assert.equal(new URLSearchParams(calls[0]!.body).get('resource'), BITREFILL_MCP_URL_V1);
+    assert.ok(calls.every((call) => !call.body.includes(CODE)), 'the code is in the URL only: no tool argument, no token request');
+    // The tool's arguments are what they were without a code.
+    assert.deepEqual(JSON.parse(calls[1]!.body).params.arguments, {
+      cart_items: [{ product_id: 'bitrefill-esim-germany', package_value: '10GB, 30 Days' }], payment_method: 'usdc_base', return_payment_link: false, email: 'buyer@example.com' });
+  });
+
+  it('the catalogue’s reads carry it too, and without a code nothing changes', async () => {
+    const detail = 'id: x-germany\nname: X\npackages[1]{package_value,package_currency,payment_price,payment_currency}:\n  "1",USD,"1.00",USDC';
+    const coded = bitrefill([token, () => rpc(detail)]);
+    assert.equal((await createBitrefillGuestCatalogV1({ fetchImpl: coded.fetchImpl, affiliateCode: CODE }).product('x-germany')).ok, true);
+    assert.equal(coded.calls[1]!.url, `${BITREFILL_MCP_URL_V1}?ref=${CODE}`);
+    const plain = bitrefill([token, () => rpc(detail)]);
+    assert.equal((await createBitrefillGuestCatalogV1({ fetchImpl: plain.fetchImpl }).product('x-germany')).ok, true);
+    assert.equal(plain.calls[1]!.url, BITREFILL_MCP_URL_V1);
+  });
+
+  it('a code that breaks Bitrefill’s rule is refused before anything is sent, instead of being dropped by Bitrefill unseen', () => {
+    for (const code of ['', 'short', 'seventeen-chars17', 'has space1', 'ünïcode12', 'a&b=c1234', `${'A'.repeat(17)}`]) {
+      assert.throws(() => createBitrefillGuestCheckoutV1({ affiliateCode: code }), /bitrefill_affiliate_code_invalid/, code);
+      assert.throws(() => bitrefillMcpEndpointV1(code), /bitrefill_affiliate_code_invalid/, code);
+    }
+    assert.equal(bitrefillMcpEndpointV1('ABCdef'), `${BITREFILL_MCP_URL_V1}?ref=ABCdef`);
+    assert.equal(bitrefillMcpEndpointV1(`${'9'.repeat(16)}`), `${BITREFILL_MCP_URL_V1}?ref=${'9'.repeat(16)}`);
+    assert.equal(bitrefillMcpEndpointV1(), BITREFILL_MCP_URL_V1);
+    assert.equal(BITREFILL_AFFILIATE_CODE_V1.test('Fixture7Code'), true);
   });
 });

@@ -144,7 +144,7 @@ describe('paying from Still, as the page says it', () => {
         expiresAt: '2026-11-01T12:15:00.000Z', paymentLink: 'https://www.bitrefill.com/invoice/x?token=t' }, status });
     assert.deepEqual(order('13250000'), { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days',
       packageLabel: '10GB, 30 Days', priceUsdc: '13.25', priceAtomic: '13250000', expiresAt: '2026-11-01T12:15:00.000Z', orderLink: 'https://www.bitrefill.com/order/1',
-      status: 'Payment confirmed', delivered: false, esimInstallLink: null, refillTo: null });
+      status: 'Payment confirmed', delivered: false, esimInstallLink: null, refillTo: null, commission: false });
     assert.equal(order('13000000')!.priceUsdc, '13.00');
     assert.equal(order('13250001')!.priceUsdc, '13.250001');
     // No status read: the invoice page stands in, and no state is claimed.
@@ -454,6 +454,19 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.match(html, /<button type="button" class="still-btn">Pay 2\.00 USDC<\/button>/);
     assert.match(html, /A payment sent cannot be taken back by Still/);
     assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ onPay: null })} order={null} orderReading={false} />), /<button type="button" class="still-btn">Pay/);
+    assert.doesNotMatch(html, /commission/);
+  });
+
+  it('the payment page says Bitrefill may pay Still a commission only for an invoice the server opened with Still’s code', () => {
+    const wire = (commission: unknown) => spendOrderViewV1({ order: { orderId: ORDER, productName: 'PUBG Mobile', packageValue: '60 UC', faceCurrency: null, priceAtomic: '2000000',
+      expiresAt: '2026-11-03T18:15:00Z', paymentLink: null, refillTo: null, ...(commission === undefined ? {} : { commission }) } })!;
+    assert.equal(wire(true).commission, true);
+    for (const said of [undefined, false, 'true', 1]) assert.equal(wire(said).commission, false, JSON.stringify(said));
+    const html = renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={wire(true)} orderReading={false} />);
+    assert.match(html, /<p class="still-note">Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase\. It does not change your price\.<\/p>/);
+    // Before the button that pays.
+    assert.ok(html.indexOf('Bitrefill affiliate') < html.indexOf('>Pay 2.00 USDC<'));
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={wire(false)} orderReading={false} />), /commission/);
   });
 
   it('the payment page says a refusal in the server’s words, and how a sent payment stands', () => {

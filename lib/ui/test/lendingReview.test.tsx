@@ -405,6 +405,19 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     }
     const plain = parseLendingReviewWireV1({ ...ready(), deliverTo: { email: 'buyer@example.com', phone: null } })!;
     assert.equal(plain.state === 'ready' ? plain.deliverTo : 'x', undefined);
+    // An invoice opened with Still's affiliate code at Bitrefill: the review says so, once, and only beside a payment.
+    const NOTE = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase. It does not change your price.';
+    assert.doesNotMatch(html, /commission/);
+    const coded = parseLendingReviewWireV1({ ...body, commission: true })!;
+    assert.equal(coded.state === 'ready' ? coded.commission : null, true);
+    assert.equal(render({ body: coded }).split(NOTE).length - 1, 1);
+    for (const said of ['true', 1, {}, null, false]) {
+      const read = parseLendingReviewWireV1({ ...body, commission: said })!;
+      assert.equal(read.state === 'ready' ? read.commission : 'x', undefined, JSON.stringify(said));
+      assert.doesNotMatch(render({ body: read }), /commission/, JSON.stringify(said));
+    }
+    const unpaid = parseLendingReviewWireV1({ ...ready(), commission: true })!;
+    assert.equal(unpaid.state === 'ready' ? unpaid.commission : 'x', undefined, 'a loan with no purchase says no commission');
     // A payment of another amount than the loan, or on a repayment, is not a review.
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, payment: { ...payment, assets: '13250001' } } }), null);
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, operation: 'repay', payment } }), null);

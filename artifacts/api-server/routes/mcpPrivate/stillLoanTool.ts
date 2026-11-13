@@ -158,6 +158,8 @@ export const StillPreparePurchaseOutputV1Schema = z.object({
  * number, so the person checks them where the assistant cannot change them, on the review itself. The
  * answer never repeats either back. */
 const DELIVERY_NEXT_V1 = 'The page this link opens shows the user where Bitrefill will send the purchase: tell them to check there, before they sign, that the email (and for a top-up the number) is their own, because the invoice is already open with it and Still cannot change it. ';
+/** Said when the invoice was opened with Still's affiliate code at Bitrefill, as its review says too. */
+const COMMISSION_NEXT_V1 = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase, which does not change its price, and the review says so. ';
 
 /** What each refusal means to the person, in the Spend page's terms. */
 const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
@@ -230,7 +232,7 @@ export async function stillPreparePurchaseV1(
       productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
-    next: DELIVERY_NEXT_V1 + 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
+    next: DELIVERY_NEXT_V1 + (order.commission ? COMMISSION_NEXT_V1 : '') + 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
   };
 }
 
@@ -300,7 +302,7 @@ export async function stillPrepareWalletPurchaseV1(
       productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
-    next: `${DELIVERY_NEXT_V1}Give the user this link. It opens Spend’s payment page for this wallet only, signed in with it: the page reads Bitrefill’s invoice and the wallet’s USDC again, simulates the one transfer of exactly ${price} USDC to the invoice address, and the user’s own wallet signs it. No loan is taken. The page can prepare the payment until expiresAt; Bitrefill holds the price until purchase.invoiceExpiresAt. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been paid. After the user pays, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.`,
+    next: `${DELIVERY_NEXT_V1}${order.commission ? COMMISSION_NEXT_V1 : ''}Give the user this link. It opens Spend’s payment page for this wallet only, signed in with it: the page reads Bitrefill’s invoice and the wallet’s USDC again, simulates the one transfer of exactly ${price} USDC to the invoice address, and the user’s own wallet signs it. No loan is taken. The page can prepare the payment until expiresAt; Bitrefill holds the price until purchase.invoiceExpiresAt. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been paid. After the user pays, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.`,
   };
 }
 
