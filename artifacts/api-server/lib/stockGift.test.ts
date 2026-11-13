@@ -10,6 +10,7 @@ import {
   SENDABLE_TOKENS_SENTENCE_V1,
   checkStockGiftSendV1,
   checkStockGiftV1,
+  withSendApprovalLockV1,
   isSendableTokenV1,
   resolveGiftRecipientV1,
 } from './stockGift.js';
@@ -313,4 +314,23 @@ describe('a gift from what the wallet holds', () => {
     });
     assert.equal(reads, 0);
   });
+});
+
+// Audit SS-1 (2026-11-14): two tabs approving at once each counted four and both went to five.
+test('one tenant’s approvals take turns, so a count and the approval it allows are one step', async () => {
+  let approvedToday = 4;
+  const approvals: string[] = [];
+  const approve = (tab: string) => withSendApprovalLockV1('tenant-a', async () => {
+    const seen = approvedToday;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (seen >= STOCK_GIFT_DAILY_LIMIT_V1) { approvals.push(`${tab}:refused`); return; }
+    approvedToday = seen + 1;
+    approvals.push(`${tab}:approved`);
+  });
+  await Promise.all([approve('one'), approve('two'), withSendApprovalLockV1('tenant-b', async () => { approvals.push('other:approved'); })]);
+  assert.deepEqual(approvals.sort(), ['one:approved', 'other:approved', 'two:refused']);
+  assert.equal(approvedToday, 5);
+  // A refusal inside does not keep the lock.
+  await assert.rejects(withSendApprovalLockV1('tenant-a', async () => { throw new Error('boom'); }), /boom/);
+  assert.equal(await withSendApprovalLockV1('tenant-a', async () => 'next'), 'next');
 });

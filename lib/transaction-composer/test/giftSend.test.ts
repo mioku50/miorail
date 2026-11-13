@@ -325,7 +325,7 @@ describe('approve', () => {
         reads.push(`${read.tokenAddress}:${read.walletAddress}`);
         return '50000';
       },
-      reviewedStock: async () => true,
+      reviewedStock: async () => true, dailyLimit: async () => null,
     };
     const approved = await approveGiftSendBlueprintV1(deps, approveInput(result));
     assert.equal(approved.outcome, 'approved');
@@ -351,12 +351,12 @@ describe('approve', () => {
   test('a balance that moved below the amount since prepare is refused', async () => {
     const { repo, result } = await prepared();
     const verdict = await approveGiftSendBlueprintV1(
-      { repository: repo, readBalance: async () => '1', reviewedStock: async () => true },
+      { repository: repo, readBalance: async () => '1', reviewedStock: async () => true, dailyLimit: async () => null },
       approveInput(result),
     );
     assert.equal(verdict.outcome, 'blocked');
     const unread = await approveGiftSendBlueprintV1(
-      { repository: repo, readBalance: async () => { throw new Error('rpc down'); }, reviewedStock: async () => true },
+      { repository: repo, readBalance: async () => { throw new Error('rpc down'); }, reviewedStock: async () => true, dailyLimit: async () => null },
       approveInput(result),
     );
     assert.equal(unread.outcome, 'blocked');
@@ -365,11 +365,34 @@ describe('approve', () => {
     assert.match(unread.reason, /says nothing about the wallet/);
   });
 
+  // Audit SS-1 (2026-11-14): "up to five a day" was counted only at prepare, so six to ten reviews made
+  // before the first approve were all approved and signed.
+  test('a send over the day’s limit is refused at approve, and one already approved keeps its place', async () => {
+    const { repo, result } = await prepared();
+    const full = 'This wallet has sent 5 gifts today, the daily limit. It resets at 00:00 UTC.';
+    let reads = 0;
+    const refused = await approveGiftSendBlueprintV1(
+      { repository: repo, readBalance: async () => { reads += 1; return AMOUNT; }, reviewedStock: async () => true, dailyLimit: async () => full },
+      approveInput(result),
+    );
+    assert.equal(refused.outcome, 'blocked');
+    if (refused.outcome !== 'blocked') return;
+    assert.equal(refused.reason, full);
+    assert.equal(refused.safety?.checks[0]?.id, 'gift_daily_limit');
+    assert.equal(reads, 0, 'refused before the balance is read');
+    assert.equal(await repo.getProofProjection(routeProofIdV1(result.blueprint.id), TENANT), null, 'nothing approved, no proof opened');
+    // Within the limit it is approved; pressed again after the wallet's No, it keeps the place it took.
+    assert.equal((await approveGiftSendBlueprintV1(
+      { repository: repo, readBalance: async () => AMOUNT, reviewedStock: async () => true, dailyLimit: async () => null }, approveInput(result))).outcome, 'approved');
+    assert.equal((await approveGiftSendBlueprintV1(
+      { repository: repo, readBalance: async () => AMOUNT, reviewedStock: async () => true, dailyLimit: async () => full }, approveInput(result))).outcome, 'approved');
+  });
+
   test('an expired review cannot be approved', async () => {
     const { repo, result } = await prepared();
     const later = new Date(NOW.getTime() + 5 * 60_000 + 1);
     const verdict = await approveGiftSendBlueprintV1(
-      { repository: repo, readBalance: async () => AMOUNT, reviewedStock: async () => true },
+      { repository: repo, readBalance: async () => AMOUNT, reviewedStock: async () => true, dailyLimit: async () => null },
       approveInput(result, later),
     );
     assert.equal(verdict.outcome, 'expired');
@@ -389,7 +412,7 @@ describe('one approve route, two kernels', () => {
             return [];
           },
         },
-        send: { readBalance: async () => AMOUNT, reviewedStock: async () => true },
+        send: { readBalance: async () => AMOUNT, reviewedStock: async () => true, dailyLimit: async () => null },
       },
       {
         tenantId: TENANT,
@@ -417,7 +440,7 @@ describe('one approve route, two kernels', () => {
               sendAsked += 1;
               return AMOUNT;
             },
-            reviewedStock: async () => true,
+            reviewedStock: async () => true, dailyLimit: async () => null,
           },
         },
         {

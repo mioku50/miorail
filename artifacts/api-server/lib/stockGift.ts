@@ -25,6 +25,28 @@ export const STOCK_GIFT_MIN_USDC_ATOMIC_V1 = 100_000n;
 export const STOCK_GIFT_MAX_USDC_ATOMIC_V1 = 100_000_000n;
 /** Approved gifts per wallet per UTC day. */
 export const STOCK_GIFT_DAILY_LIMIT_V1 = 5;
+export const STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 = `This wallet has sent ${STOCK_GIFT_DAILY_LIMIT_V1} gifts today, the daily limit. It resets at 00:00 UTC.`;
+
+const sendApprovals = new Map<string, Promise<void>>();
+/**
+ * One approve at a time for one tenant, so the daily count and the approval it allows are one step
+ * (audit SS-1): two tabs approving together each saw four and both went to five. The API is one
+ * process, as Spend's own invoice lock relies on.
+ */
+export async function withSendApprovalLockV1<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+  const before = sendApprovals.get(tenantId) ?? Promise.resolve();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const mine = before.then(() => held);
+  sendApprovals.set(tenantId, mine);
+  await before;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (sendApprovals.get(tenantId) === mine) sendApprovals.delete(tenantId);
+  }
+}
 
 const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
 const ZERO_ADDRESS_V1 = '0x0000000000000000000000000000000000000000';
@@ -121,11 +143,7 @@ async function checkGiftRecipientAndDayV1(input: {
     }
   }
   if ((await input.giftsApprovedToday()) >= STOCK_GIFT_DAILY_LIMIT_V1) {
-    return {
-      ok: false,
-      code: 'gift_daily_limit_reached',
-      message: `This wallet has sent ${STOCK_GIFT_DAILY_LIMIT_V1} gifts today, the daily limit. It resets at 00:00 UTC.`,
-    };
+    return { ok: false, code: 'gift_daily_limit_reached', message: STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 };
   }
   return { ok: true, recipient: recipient as `0x${string}` };
 }

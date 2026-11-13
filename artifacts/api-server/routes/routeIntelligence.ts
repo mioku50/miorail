@@ -80,7 +80,7 @@ import { readChainConditionsV1 } from '../lib/chainConditions.js';
 import { readFeeCalibrationV1 } from '../lib/feeCalibration.js';
 import { readMarketSnapshotV1 } from '../lib/marketSnapshot.js';
 import { BASE_PUBLIC_RPC_URL_V1 } from '../lib/baseRpcSwapSimulation.js';
-import { checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
+import { STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1, STOCK_GIFT_DAILY_LIMIT_V1, checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1, withSendApprovalLockV1 } from '../lib/stockGift.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
@@ -1397,7 +1397,7 @@ export const swapBlueprintRouteRuntime = {
       .find((entry) => entry.blueprint.id === input.blueprintId)?.blueprint.expectedAssetChanges ?? null,
   // A gift from holdings is approved by its own kernel, with the wallet's
   // balance read again now; every other run here is a swap.
-  approve: async (input: ApproveExecutionBlueprintInput) =>
+  approve: async (input: ApproveExecutionBlueprintInput) => withSendApprovalLockV1(input.tenantId, () =>
     approveRouteBlueprintV1(
       {
         repository: createDatabaseRouteStorageRepository(client),
@@ -1413,10 +1413,13 @@ export const swapBlueprintRouteRuntime = {
           },
           // A send from holdings may move a reviewed stock, USDC or PAXG (2026-11-12), read again at approve.
           reviewedStock: (tokenAddress: string) => isSendableTokenV1(tokenAddress, swapPrepareRouteRuntime.gift.isGiftableStock),
+          // Up to five a day, counted again here, under the lock above (audit SS-1).
+          dailyLimit: async () => (await swapPrepareRouteRuntime.gift.giftsApprovedToday(input.tenantId, input.now)) >= STOCK_GIFT_DAILY_LIMIT_V1
+            ? STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 : null,
         },
       },
       input,
-    ),
+    )),
   recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
     recordBlueprintSubmissionV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
   attemptRepository: () => createDatabaseSubmissionAttemptRepository(client),

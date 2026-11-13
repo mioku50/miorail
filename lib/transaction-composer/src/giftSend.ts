@@ -566,6 +566,10 @@ export interface GiftSendApprovalDependenciesV1 {
   /** The wallet's balance of the token now; null when it cannot be read. */
   readBalance: (input: { tokenAddress: `0x${string}`; walletAddress: `0x${string}` }) => Promise<string | null>;
   reviewedStock: (tokenAddress: string) => Promise<boolean>;
+  /** The wallet's daily room for sends, asked again at approve: null within it, else the sentence that
+   * refuses (audit SS-1, 2026-11-14: counted only at prepare, six to ten reviews made before the first
+   * approve were all approved and signed under "up to five a day"). */
+  dailyLimit: () => Promise<string | null>;
 }
 
 function pendingSendProofV1(blueprint: ExecutionBlueprintV1, now: Date): RouteProofV1 {
@@ -671,6 +675,21 @@ export async function approveGiftSendBlueprintV1(
           verdict: 'blocked',
           checks: [{ id: 'blueprint_status', description: 'Blueprint must be ready_for_review or already approved to be approvable', status: 'failed', detail }],
           blockedReason: detail,
+        }),
+      };
+    }
+    // A send that is approved takes a place in the day, so the day is counted here as well as at prepare.
+    // One already approved (a press again after the wallet's No) keeps the place it took.
+    const overLimit = await deps.dailyLimit();
+    if (overLimit !== null) {
+      return {
+        outcome: 'blocked',
+        reason: overLimit,
+        safety: SafetyKernelResultV1Schema.parse({
+          schemaVersion: 'safety-kernel-result/v1',
+          verdict: 'blocked',
+          checks: [{ id: 'gift_daily_limit', description: 'A send is approved only within the wallet’s daily limit', status: 'failed', detail: overLimit }],
+          blockedReason: overLimit,
         }),
       };
     }
