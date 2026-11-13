@@ -67,6 +67,9 @@ function loweredSentenceV1(lowered: unknown, asset: StillBorrowAssetV1, share: s
   if (lowered.reason === 'earnings_unlisted') {
     return `${stock.id} counts at ${share}, not ${full}: Aave’s earnings calendar lists no report date for ${stock.name} yet, so Still counts it as if a report were near.`;
   }
+  if (lowered.reason === 'price_stale' && instant(lowered.updatedAt)) {
+    return `${stock.id} counts at ${share}, not ${full}: the price Aave reads for it was last refreshed ${newYorkMomentV1(lowered.updatedAt)} New York time, over a day of open market ago, so Still counts it as while Wall Street is closed until the price is refreshed.`;
+  }
   if (lowered.reason === 'earnings_unread') {
     return `${stock.id} counts at ${share}, not ${full}: Still could not read the earnings calendar just now, so it counts the stock as if a report were near. Read the limit again later.`;
   }

@@ -9,7 +9,9 @@ import { aavePoststateFixture, aaveReadFixture, aaveRepaidReadFixture, aaveStand
 import { lendingSigningTermsFactsV1 } from './lendingReview.js';
 import { runAaveLendingV1 } from './aaveLendingRunner.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
-import type { StillAaveStandingV1 } from './stillAaveStanding.js';
+import { readStillAaveStandingV1, type StillAaveStandingV1 } from './stillAaveStanding.js';
+import { computeMirror } from '@mioagent/still-engine';
+import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 
 const ZERO = BigInt(0), NOW = new Date('2026-10-21T15:00:00Z');
 async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body: SimulationProviderResponseV1) => void, patch?: Parameters<typeof aavePoststateFixture>[3]) {
@@ -442,5 +444,76 @@ describe('Aave runner: what a fall at once and a paused stock would do to a new 
     const r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, h.deps);
     assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
     if (r.state === 'ready') assert.equal(r.facts.stress, undefined);
+  });
+});
+
+// Audit N13-4, 2026-11-13. A stock whose reference price was not refreshed for over a day of open market
+// counts as while Wall Street is closed. The Mirror said so, and the page showed the lower limit; the loan
+// itself was drawn and checked at the full share, so a loan past the shown limit was ready to sign.
+describe('a stock price not refreshed for over a day of open market lowers the loan’s own limit', () => {
+  // A Wednesday: the two days before it are open market, with no closed window between.
+  const AT = new Date('2026-10-21T15:00:00Z');
+  const ask = BigInt(60_000_000);
+  async function staleRead(ageSeconds: bigint) {
+    const raw = aaveReadFixture();
+    raw.snapshot.block.timestamp = BigInt(AT.getTime() / 1000);
+    const stock = raw.snapshot.aave!.reserves.find(r => r.info.role.kind === 'stock' && r.info.role.asset.id === 'NVDAc')!;
+    raw.snapshot.balances.set(stock.info.underlying.toLowerCase(), { ok: true, value: ZERO });
+    stock.priceUpdatedAt = { ok: true, value: raw.snapshot.block.timestamp - ageSeconds };
+    const reading = await readStillAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, operation: 'borrow', stockId: 'NVDAc', collateralSupplyAssets: ZERO,
+      deps: { now: () => AT, snapshot: async () => raw, calendar: async () => calendar() } });
+    if (reading.state !== 'read') throw new Error(`the fixture was not read: ${reading.refusal}`);
+    return { raw, reading, s: reading.standing, token: stock.info.underlying.toLowerCase() };
+  }
+  /** A simulation whose block is `laterSeconds` after the read. */
+  function provider(s: StillAaveStandingV1, laterSeconds = ZERO): SimulationProvider {
+    const at = { ...s, snapshot: { ...s.snapshot, block: { ...s.snapshot.block, timestamp: s.snapshot.block.timestamp + laterSeconds } } };
+    return { providerId: 'aave-fixture', async simulate(request) {
+      const f = aavePoststateFixture(at, 'borrow', ask);
+      const observations = { ...f.response.observations, requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: request.walletAddress.toLowerCase(),
+        callsHash: request.callsHash, before: request.observations!.before, after: request.observations!.after }) };
+      return { ok: true, body: { status: 'success', blockNumber: s.blockNumber, gasUsed: '200000', stateChanges: [], revertReason: null, observations,
+        assetChanges: { status: 'available', unavailableReason: null, changes: [{ kind: 'erc20_transfer', token: ADDRESSES.usdc, direction: 'in', amountAtomic: ask.toString(), counterparty: ADDRESSES.aaveHub, callIndex: 0 }] } } };
+    } };
+  }
+  const run = (s: StillAaveStandingV1, token: string, reading: Awaited<ReturnType<typeof staleRead>>['reading'], laterSeconds = ZERO) =>
+    runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { operation: 'borrow', collateralTokenAddress: token, borrowAssets: ask.toString(), collateralSupplyAssets: '0' } },
+      { read: async () => reading, deploymentAt: async () => s.deployment, chain: { providers: [provider(s, laterSeconds)], batchCapableIds: new Set(['aave-fixture']) }, now: () => AT });
+
+  it('counts the stock at the closed-market share, the limit the Mirror shows, and refuses a loan past it', async () => {
+    const { raw, s, token, reading } = await staleRead(BigInt(48 * 3600));
+    assert.equal(s.capacity!.shareBpsByStock.NVDAc, 4000);
+    assert.deepEqual(s.capacity!.loweredByStock.NVDAc, { reason: 'price_stale', updatedAt: new Date(AT.getTime() - 48 * 3_600_000).toISOString() });
+    const mirror = computeMirror({ universe: raw.universe, snapshot: raw.snapshot, calendar: calendar(), subject: { address: AAVE_TEST_WALLET, name: null, input: 'fixture' }, assembledAt: AT });
+    const venue = mirror.venues.find(row => row.venue === 'aave-v4')!;
+    assert.equal(mirror.assets.find(row => row.asset === 'NVDAc')!.stillFactorBps, 2800);
+    assert.equal((s.capacity!.limitAssets / BigInt(10_000)).toString(), venue.capacityCents, 'one limit, on the page and on the loan');
+    // 60 USDC more on 10 owed would be 70 against a limit of $59.33: it was ready to sign.
+    const r = await run(s, token, reading);
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') assert.equal(r.refusal, 'aave_over_still_limit');
+  });
+  it('a price that turns stale between the read and the simulation is checked again at the simulated block', async () => {
+    // 24 h 50 min old when read: the full share. An hour later, at the simulated block, it is past 25 h.
+    const { s, token, reading } = await staleRead(BigInt(24 * 3600 + 50 * 60));
+    assert.equal(s.capacity!.shareBpsByStock.NVDAc, 5000);
+    assert.ok(ask <= s.capacity!.availableAssets, 'the first check lets it through');
+    const r = await run(s, token, reading, BigInt(3600));
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') {
+      // The poststate proof checks the debt against the limit at the simulated block, before anything is reviewed.
+      assert.equal(r.refusal, 'aave_poststate_policy_refused');
+      assert.match(r.detail, /measured total debt exceeds Still’s current whole-account allowance/);
+    }
+    // The same simulation in the same hour as the read is ready: it was the age that refused it.
+    const same = await run(s, token, reading);
+    assert.equal(same.state, 'ready', same.state === 'refused' ? same.detail : '');
+  });
+  it('a fresh price, or one whose age could not be read, keeps the full share and the loan', async () => {
+    const { s, token, reading } = await staleRead(BigInt(3600));
+    assert.equal(s.capacity!.shareBpsByStock.NVDAc, 5000);
+    assert.equal(s.capacity!.loweredByStock.NVDAc, undefined);
+    const r = await run(s, token, reading);
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
   });
 });

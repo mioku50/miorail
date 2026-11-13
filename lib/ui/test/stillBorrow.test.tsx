@@ -215,6 +215,10 @@ describe('what Still’s limit is worth, in numbers', () => {
     assert.match(lowered({ reason: 'earnings_unread' })!, /^NVDAc counts at 40%, not 50%: Still could not read the earnings calendar just now/);
     const spacex = stillBorrowComparisonViewV1({ ...aave, shareBps: 4_000, marginAtStillLimitBps: 6_000, lowered: { reason: 'earnings_unlisted' } }, 'SPCXc')!.lowered;
     assert.equal(spacex, 'SPCXc counts at 40%, not 50%: Aave’s earnings calendar lists no report date for SpaceX yet, so Still counts it as if a report were near.');
+    // A price not refreshed for over a day of open market lowers the loan's own limit now, not only the page's (audit N13-4).
+    assert.equal(lowered({ reason: 'price_stale', updatedAt: '2026-11-11T20:00:00.000Z' }),
+      'NVDAc counts at 40%, not 50%: the price Aave reads for it was last refreshed Wed 3 PM New York time, over a day of open market ago, so Still counts it as while Wall Street is closed until the price is refreshed.');
+    assert.equal(stillBorrowComparisonViewV1({ ...aave, lowered: { reason: 'price_stale', updatedAt: 'yesterday' } }, 'NVDAc'), null, 'a time that cannot be read leaves the comparison out');
   });
 
   it('prints both limits and both margins where the amount is chosen', () => {

@@ -4,7 +4,7 @@ import { readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-
 import { ADDRESSES, STOCKS, type StockId } from '@mioagent/still-engine/registry';
 import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/abi';
 import { Batch } from '@mioagent/still-engine/rpc';
-import { TERMS } from '@mioagent/still-engine/policy';
+import { TERMS, stockPriceStale } from '@mioagent/still-engine/policy';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import type { StillShareLoweredV1 } from './stillLimitComparison.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4DeploymentStatusV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
@@ -334,20 +334,32 @@ function need<T>(value: { ok: true; value: T } | { ok: false } | undefined): T {
   if (!value?.ok) throw new Error('aave_required_read_missing');
   return value.value;
 }
-/** The lower of the shares at the read block and now, and what lowered it. */
-export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockAt: Date, now: Date): { share: bigint; lowered: StillShareLoweredV1 | null } {
+/**
+ * The lower of the shares at the read block and now, and what lowered it.
+ *
+ * `priceUpdatedAt`: when the stock's reference price was last refreshed. A price not refreshed for over
+ * a day of open market counts as while the market is closed, as the Mirror reports it (audit BASE-7).
+ * This is what the loan is drawn and checked by, so the Mirror's lower limit was only what the page said
+ * until audit N13-4 (2026-11-13): a loan the page showed as past the limit was still ready to sign. An age
+ * that could not be read changes nothing, as in the Mirror.
+ */
+export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockAt: Date, now: Date,
+  priceUpdatedAt: Date | null = null): { share: bigint; lowered: StillShareLoweredV1 | null } {
   const dates = calendar.ok ? calendar.calendar.dates.get(stock) : undefined;
   let share: bigint = TERMS.shareOfProtocolBps;
   let lowered: StillShareLoweredV1 | null = null;
   for (const when of [now, blockAt]) {
     const closed = weekendWindow(when);
     const earnings = dates === undefined ? null : earningsWindow(when, dates);
-    const at = stillShareBps('stock', closed.active, dates === undefined || earnings?.active === true);
+    // Inside a closed-market window the feed is quiet by design, and the window's own share applies.
+    const stale = !closed.active && priceUpdatedAt !== null && stockPriceStale(priceUpdatedAt, when);
+    const at = stillShareBps('stock', closed.active || stale, dates === undefined || earnings?.active === true);
     if (at >= share) continue;
     share = at;
     lowered = closed.active ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
       : earnings?.active ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
-        : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };
+        : stale ? { reason: 'price_stale', updatedAt: priceUpdatedAt!.toISOString() }
+          : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };
   }
   return { share, lowered };
 }
@@ -389,7 +401,8 @@ export function stillAaveCapacityV1(input: {
     // of the recorded and newest factor also covers the refresh conservatively.
     const factor = latestFactor < userFactor ? latestFactor : userFactor;
     if (price <= ZERO || factor < ZERO || factor > BPS || registry.multiplier <= ZERO || registry.paused || flags.paused || flags.frozen || !caps.active || caps.halted) throw new Error('aave_collateral_unavailable');
-    const { share, lowered } = stockShareTermsV1(stock.id, calendar, blockAt, now);
+    const updatedAt = reserve.priceUpdatedAt.ok ? new Date(Number(reserve.priceUpdatedAt.value) * 1000) : null;
+    const { share, lowered } = stockShareTermsV1(stock.id, calendar, blockAt, now, updatedAt);
     shareBpsByStock[stock.id] = Number(share);
     if (lowered) loweredByStock[stock.id] = lowered;
     const denominator = (BigInt(10) ** BigInt(stock.decimals)) * BPS * usdcPrice;

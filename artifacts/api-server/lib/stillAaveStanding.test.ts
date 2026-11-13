@@ -4,7 +4,7 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 import { aaveReadFixture, AAVE_TEST_WALLET, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1 } from './aaveV4BorrowPlan.js';
-import { STILL_AAVE_MAX_RESERVES_V1, headAtLeastV1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
+import { STILL_AAVE_MAX_RESERVES_V1, stockShareTermsV1, headAtLeastV1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
 
 const input = (r = aaveReadFixture()) => ({ walletAddress: AAVE_TEST_WALLET, operation: 'borrow' as const, stockId: 'NVDAc' as const, collateralSupplyAssets: BigInt(0),
   deps: { now: () => new Date('2026-10-21T15:00:00Z'), snapshot: async () => r, calendar: async () => calendar() } });
@@ -37,6 +37,23 @@ describe('Still Aave bounded same-block standing', () => {
     const report = stillAaveCapacityV1({ ...common, calendar: calendar({ NVDAc: ['2026-10-22'] }), now: new Date('2026-10-21T15:00:00Z') });
     assert.equal(report.shareBpsByStock.NVDAc, 4000);
     assert.deepEqual(report.loweredByStock.NVDAc, { reason: 'earnings', reportDate: '2026-10-22', until: '2026-10-24T00:00:00.000Z' });
+  });
+  it('counts a stock whose price was not refreshed for over a day of open market as while the market is closed (audit N13-4)', () => {
+    const wednesday = new Date('2026-10-21T15:00:00Z'), hour = 3_600_000;
+    const at = (hours: number) => new Date(wednesday.getTime() - hours * hour);
+    // 24 h 50 min at the read block and 25 h 10 min now: the lower of the two applies.
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, new Date(wednesday.getTime() + 20 * 60_000), at(24 + 50 / 60)),
+      { share: BigInt(4000), lowered: { reason: 'price_stale', updatedAt: at(24 + 50 / 60).toISOString() } });
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, wednesday, at(24)), { share: BigInt(5000), lowered: null });
+    // An age that could not be read changes nothing, as in the Mirror.
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, wednesday, null), { share: BigInt(5000), lowered: null });
+    // Inside a closed-market window the feed is quiet by design: the window is what is said.
+    const saturday = new Date('2026-10-24T15:00:00Z');
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), saturday, saturday, new Date('2026-10-22T15:00:00Z')).lowered,
+      { reason: 'market_closed', until: '2026-10-26T00:00:00.000Z' });
+    // A Friday evening price on Monday morning, before the open: the weekend's hours are not counted.
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), new Date('2026-10-26T13:00:00Z'), new Date('2026-10-26T13:00:00Z'), new Date('2026-10-23T19:55:00Z')),
+      { share: BigInt(5000), lowered: null });
   });
   it('does not require a health factor, oracle or borrow allowance for repayment', async () => {
     const r = aaveReadFixture(); if (!r.snapshot.aave) throw Error('fixture');
