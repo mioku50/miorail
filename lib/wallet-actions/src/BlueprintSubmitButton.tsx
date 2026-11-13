@@ -127,10 +127,13 @@ export function BlueprintSubmitButton({
       builderCode,
       goal,
       quoteExpiry,
-      // A swap whose wallet answer was lost must not go out twice after a
-      // reload or in another tab (re-audit R1, 2026-11-04). Earn and NFT,
-      // which go only as one batch, are left as they were.
-      recovery: goal === 'swap',
+      // A submission whose wallet answer was lost must not go out twice after a
+      // reload, in another tab or after "Review again": a swap since re-audit R1
+      // (2026-11-04), an Earn deposit and an NFT purchase since audit WAL-1
+      // (2026-11-14), where the same deposit went to the wallet a second time.
+      // The server keeps one open attempt per blueprint for all three, and their
+      // records close it as a swap's does.
+      recovery: true,
     });
 
   const lastReported = useRef<string>('');

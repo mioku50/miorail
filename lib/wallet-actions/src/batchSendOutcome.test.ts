@@ -32,7 +32,7 @@ interface Harness {
   records: string[];
 }
 
-function harness(walletAnswers: Array<() => unknown>): Harness {
+function harness(walletAnswers: Array<() => unknown>, goal: 'swap' | 'earn' | 'nft' = 'swap'): Harness {
   const state = { walletAsked: 0, attemptsOpened: 0, attemptOpen: false, markersCleared: 0, records: [] as string[] };
   const cells: unknown[] = [];
   let cursor = 0;
@@ -128,7 +128,7 @@ function harness(walletAnswers: Array<() => unknown>): Harness {
   };
   const render = () => {
     cursor = 0;
-    return hook({ routeRunId: 'run-1', blueprintId: 'blueprint-1', blueprintHash: `0x${'2'.repeat(64)}`, recovery: true });
+    return hook({ routeRunId: 'run-1', blueprintId: 'blueprint-1', blueprintHash: `0x${'2'.repeat(64)}`, recovery: true, goal });
   };
   return Object.assign(state, {
     async press() {
@@ -197,4 +197,26 @@ test('a wallet that says it cannot send a batch is still a plain failure, free t
   assert.equal(first.status, 'failed');
   assert.equal(run.attemptOpen, false);
   assert.deepEqual(run.records, ['failed']);
+});
+
+// Audit WAL-1 (2026-11-14): an Earn deposit and an NFT purchase opened no recovery attempt, so a lost answer
+// left nothing on record and the same deposit went to the wallet again. The button now asks for one for every
+// goal, and the hook holds them exactly as it holds a swap.
+test('an Earn deposit and an NFT purchase whose answer never came back are held as a swap is (audit WAL-1)', async () => {
+  for (const goal of ['earn', 'nft'] as const) {
+    const run = harness([() => { throw new Error('connection closed'); }], goal);
+    const first = await run.press();
+    assert.equal(first.status, 'submitted_unknown', goal);
+    assert.equal(run.attemptOpen, true, goal);
+    assert.deepEqual(run.records, [], goal);
+    await run.press();
+    assert.equal(run.walletAsked, 1, `${goal}: the wallet is not asked for the same calls again`);
+    assert.equal(run.attemptsOpened, 1, goal);
+  }
+});
+
+test('the submit button opens a recovery attempt for every goal', () => {
+  const button = readFileSync(path.join(here, 'BlueprintSubmitButton.tsx'), 'utf8');
+  assert.match(button, /\n\s+recovery: true,\n/);
+  assert.doesNotMatch(button, /recovery: goal/);
 });
