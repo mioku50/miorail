@@ -27,6 +27,7 @@ const DB_TEST_FILES = new Set([
   'lib/db/src/db.test.ts',
   'lib/db/migration0064.constraints.test.ts',
   'lib/db/lending0091.postgres.test.ts',
+  'lib/db/mcpOAuth0064.postgres.test.ts',
   'lib/db/spend0095.postgres.test.ts',
   'lib/observability/src/index.test.ts',
   'lib/route-storage/test/database.test.ts',

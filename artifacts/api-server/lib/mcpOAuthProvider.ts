@@ -24,6 +24,8 @@ type SqlV1 = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Re
 // is no Postgres. Every query in this file still goes through the one client;
 // this is the single point at which a test may substitute it.
 export const mcpOAuthRuntimeV1: { sql: SqlV1 } = { sql: databaseClientV1 as unknown as SqlV1 };
+/** A used refresh token presented again this soon after its exchange is the same client's retry, not a copy. */
+export const REFRESH_REUSE_GRACE_SECONDS_V1 = 30;
 const sql: SqlV1 = (strings, ...values) => mcpOAuthRuntimeV1.sql(strings, ...values);
 
 const ACCESS_TTL_MS_V1 = 15 * 60 * 1000;
@@ -392,7 +394,35 @@ export const mcpOAuthProviderV1: OAuthServerProvider = {
         AND g.revoked_at IS NULL AND g.expires_at > now()
       LIMIT 1`;
     const current = rows[0];
-    if (!current) throw new InvalidGrantError('Refresh token is invalid, expired or revoked.');
+    if (!current) {
+      // ---------------------------------------------------------------------
+      // A refresh token this client already exchanged, presented again (audit
+      // N13-7, 2026-11-13; RFC 9700 §4.14.2). Two parties hold a copy of it,
+      // and which one is the person cannot be told: the grant it belongs to
+      // ends, with every token of it, so a stolen copy stops working too, and
+      // the person connects the assistant again. It was refused alone, and
+      // the successor kept refreshing for the rest of the grant's 30 days.
+      //
+      // Only a token ended by its own exchange is a copy: a rotation stamps
+      // revoked_at and last_used_at together, and an owner's revocation never
+      // stamps last_used_at. An unknown token ends nothing. Within a few
+      // seconds of the exchange it is the client's own retry or race, whose
+      // answer was lost, and that ends nothing either.
+      // ---------------------------------------------------------------------
+      await sql`
+        WITH reused AS (
+          SELECT grant_id FROM mcp_oauth_tokens
+          WHERE token_hash = ${hash} AND client_id = ${clientInfo.client_id} AND kind = 'refresh'
+            AND revoked_at IS NOT NULL AND last_used_at IS NOT NULL AND revoked_at = last_used_at
+            AND last_used_at < now() - make_interval(secs => ${REFRESH_REUSE_GRACE_SECONDS_V1})
+        ), ended AS (
+          UPDATE mcp_oauth_grants SET revoked_at = now()
+          WHERE id IN (SELECT grant_id FROM reused) AND revoked_at IS NULL
+          RETURNING id
+        ) UPDATE mcp_oauth_tokens SET revoked_at = COALESCE(revoked_at, now())
+          WHERE grant_id IN (SELECT id FROM ended)`;
+      throw new InvalidGrantError('Refresh token is invalid, expired or revoked.');
+    }
     const granted = stringArrayV1(current.scopes);
     const scopes = requestedScopes && requestedScopes.length > 0 ? [...new Set(requestedScopes)] : granted;
     if (scopes.some((scope) => !granted.includes(scope))) throw new InvalidScopeError('Requested scope exceeds the durable grant.');
