@@ -113,7 +113,9 @@ test('both loan pages hand Still’s offer to the wallet and drop it after a fai
   const root = path.resolve(here, '../../..');
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx']) {
     const source = readFileSync(path.join(root, page), 'utf8');
-    assert.match(source, /sendCalls: async \(\{ calls, sponsorship \}\) =>/, page);
+    assert.match(source, /sendCalls: async \(\{ calls, sponsorship, beforeWallet \}\) =>/, page);
+    // The hook's last check stands right before the wallet opens, after the host's own waits (audit WAL-3).
+    assert.match(source, /await beforeWallet\(\);\n\s+try \{\n\s+const result = sized\.limits/, page);
     assert.match(source, /sponsoredGasPlanV1\(\{ offer: sponsorship \?\? null, capabilities: [^,]+, declinedBefore: sponsorDeclined \}\)/, page);
     // One request object, sent by either way to the wallet (the direct one carries measured gas, 2026-11-12).
     assert.match(source, /const requestCapabilities = sendCallsCapabilitiesV1\(\{ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas\.capability \}\);/, page);

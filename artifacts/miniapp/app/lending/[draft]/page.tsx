@@ -36,7 +36,7 @@ export default function BaseAppLendingReviewPage() {
   });
   const review = useLendingReviewConsoleV1({ draft, walletAddress: address ?? null,
     sessionWalletAddress: session.data?.user?.address ?? null, feeNote,
-    sendCalls: async ({ calls, sponsorship }) => {
+    sendCalls: async ({ calls, sponsorship, beforeWallet }) => {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09). The send names the
       // signed-in wallet, so a wallet that answers as another account is not asked (audit WAL-1).
@@ -54,6 +54,8 @@ export default function BaseAppLendingReviewPage() {
         // After a send that carried them failed, the wallet's own estimate again.
         capabilities: gasLimitsDeclined ? undefined : walletCapabilities });
       const requestCapabilities = sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability });
+      // The last step before the wallet opens, after every wait above: a person who left in them is not asked (audit WAL-3).
+      await beforeWallet();
       try {
         const result = sized.limits
           // viem drops a call's own capabilities, so calls carrying their gas go as the same request, sent directly.

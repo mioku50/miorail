@@ -16,7 +16,9 @@ type CallsV1 = LendingReadyWireV1['calls'];
 export interface LendingStepProgressV1 { index: number; total: number; phase: 'wallet' | 'confirming' | 'checking' }
 /** A wallet that cannot send a batch: one call as one transaction, and how it ended once mined. */
 export interface LendingStepsWalletV1 {
-  send: (call: CallsV1[number]) => Promise<string>;
+  /** `beforeWallet` is the host's last step before the wallet opens, after its own waits (a restored
+   * connection, a gas measure): it throws when the person has left, and then the wallet is not asked. */
+  send: (call: CallsV1[number], beforeWallet?: () => Promise<void>) => Promise<string>;
   receipt: (hash: string) => Promise<'success' | 'reverted' | null>;
 }
 /** The steps stopped after some landed: what landed is recorded, and the person is told what it means. */
@@ -125,7 +127,9 @@ export function useLendingReviewConsoleV1(input: {
   walletAddress: string | null;
   /** One batch to the wallet. `sponsorship` is Still's offer to pay its network fee, when the arm made
    * one: the host hands it to a wallet that takes a fee sponsor, and may ignore it. */
-  sendCalls: (batch: { calls: CallsV1; sponsorship?: LendingFeeSponsorV1 | null }) => Promise<string | null>;
+  /** `beforeWallet`: the host calls it as its last step before the wallet opens, after its own waits; it
+   * throws when the person has left or another wallet signed in, and then the wallet is not asked. */
+  sendCalls: (batch: { calls: CallsV1; sponsorship?: LendingFeeSponsorV1 | null; beforeWallet: () => Promise<void> }) => Promise<string | null>;
   /** What the host may say about the fee before the press (`lendingFeeNoteV1`); shown for a batch only. */
   feeNote?: string | null;
   /** Why the connected wallet cannot send one batch, read from the wallet by
@@ -312,8 +316,10 @@ export function useLendingReviewConsoleV1(input: {
               if (typeof arm.attemptId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(arm.attemptId)) throw new Error('lending_arm_unreadable');
               // Still's offer to pay this batch's network fee, bound by the server to these calls; anything else is none.
               const sponsorship = parseLendingFeeSponsorV1(arm.sponsorship);
+              // Addressed to this arm's own attempt, so it is sent after the page was left too: the wallet's answer is
+              // the record, and without it the review would hold the market until its owner released it (audit WAL-3).
               const report = async (outcome: 'submitted' | 'unknown' | 'rejected' | 'stopped', batchId?: string) => {
-                if (current.current !== identity || !alive.current) throw new Error('lending_identity_changed');
+                if (current.current !== identity) throw new Error('lending_identity_changed');
                 await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome, ...(batchId ? { batchId } : {}) }) });
               };
@@ -326,6 +332,16 @@ export function useLendingReviewConsoleV1(input: {
               // Left while the arm was answered (another wallet, or the page closed): the wallet is not asked, so no
               // prompt opens after the person has gone, with nobody left to record what it sent (final audit FA2).
               if (current.current !== identity || !alive.current) { await release(); throw new Error('lending_identity_changed'); }
+              // The same question again at the host's last step before the wallet opens: its own waits come after
+              // this point (a restored connection up to 93 s, a gas measure up to 2.5 s), and a person who left in
+              // them had a wallet prompt open after them all the same (audit WAL-3, 2026-11-14).
+              let left = false;
+              const beforeWallet = async () => {
+                if (current.current === identity && alive.current) return;
+                left = true;
+                await release();
+                throw new Error('lending_identity_changed');
+              };
               if (approved.delivery === 'sequential') {
                 if (!input.steps) { await report('rejected').catch(() => undefined); throw new Error('lending_steps_unavailable'); }
                 // One transaction per call. After each lands, Still reads it from the
@@ -337,6 +353,12 @@ export function useLendingReviewConsoleV1(input: {
                 // landed is its result. Addressed to its own attempt, so no other review is touched.
                 const leave = (batchId: string) => request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome: 'stopped', batchId }) });
+                // After the first step the arm is spent: leaving between steps stops them, it releases nothing.
+                const stillHere = async () => {
+                  if (current.current === identity && alive.current) return;
+                  left = true;
+                  throw new Error('lending_identity_changed');
+                };
                 for (let index = 0; index < calls.length; index++) {
                   if (current.current !== identity || !alive.current) {
                     if (landed) await leave(landed).catch(() => undefined);
@@ -345,8 +367,14 @@ export function useLendingReviewConsoleV1(input: {
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });
                   let hash: string;
-                  try { handedToWallet = true; hash = await wallet.send(calls[index]!); }
+                  try { handedToWallet = true; hash = await wallet.send(calls[index]!, index === 0 ? beforeWallet : stillHere); }
                   catch (error) {
+                    if (left) {
+                      // Left in the host's own wait: this step was never asked of the wallet.
+                      if (index === 0) handedToWallet = false;
+                      else if (landed) await leave(landed).catch(() => undefined);
+                      throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying, returning), landed);
+                    }
                     if (index === 0) { await report(walletDidNotSendV1(error) ? 'rejected' : 'unknown').catch(() => undefined); throw error; }
                     // What landed stays recorded. A refusal the wallet names sent nothing more, so the rest is
                     // stopped for good; any other error may have sent this step, and the chain says which.
@@ -381,7 +409,7 @@ export function useLendingReviewConsoleV1(input: {
                 // A wallet whose own connection to Base failed before it sent anything is asked once more, after
                 // the wait it named (MetaMask, 2026-11-08); the person is told why the press is waiting.
                 let waited = false;
-                const batchId = await sendRetryingWalletNetworkV1(() => input.sendCalls({ calls, sponsorship }), {
+                const batchId = await sendRetryingWalletNetworkV1(() => input.sendCalls({ calls, sponsorship, beforeWallet }), {
                   onWait: ms => { waited = true; update({ walletError: `Your wallet could not reach Base, so nothing was sent. Still asks it again in ${Math.ceil(ms / 1000)} seconds…` }); },
                 });
                 if (waited) update({ walletError: null });
@@ -390,6 +418,8 @@ export function useLendingReviewConsoleV1(input: {
                 });
                 return batchId;
               } catch (error) {
+                // Left before the wallet was asked: released already, and nothing was sent.
+                if (left) { handedToWallet = false; throw error; }
                 // A refusal, or a wallet that cannot send a batch at all, sent
                 // nothing; anything else may have been sent.
                 await report(walletDidNotSendV1(error) ? 'rejected' : 'unknown').catch(() => undefined);

@@ -229,5 +229,5 @@ test('the swap and loan pages ask a wallet once more through the same helper', (
   assert.match(readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8'),
     /result = await sendRetryingWalletNetworkV1\(\(\) => sized\.limits[\s\S]{0,400}?\? sendCallsKeepingCallCapabilitiesV1\(config, \{[\s\S]{0,400}?: sendCalls\.mutateAsync\(\{/);
   assert.match(readFileSync(path.join(root, 'lib/ui/src/console/useLendingReviewConsole.ts'), 'utf8'),
-    /const batchId = await sendRetryingWalletNetworkV1\(\(\) => input\.sendCalls\(\{ calls, sponsorship \}\), \{/);
+    /const batchId = await sendRetryingWalletNetworkV1\(\(\) => input\.sendCalls\(\{ calls, sponsorship, beforeWallet \}\), \{/);
 });

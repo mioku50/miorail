@@ -243,6 +243,30 @@ test('a review left while its arm is answered never asks the wallet, and the arm
   expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
 });
 
+// Audit WAL-3 (2026-11-14): the FA2 check stood before the hosts' own waits (a restored connection up to 93 s,
+// a gas measure up to 2.5 s), so a person who left in them still had a wallet prompt open; and a wallet that
+// answered after the page was left was never recorded, so the review held the market.
+test('a review left during the host’s own wait never asks the wallet, and the arm goes back as not sent (audit WAL-3)', async ({ page }) => {
+  const state = await install(page, 'host-waits'); await page.goto('/lending/fixture-lending');
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => typeof (window as FixtureWindow).finishHostWait)).toBe('function');
+  await page.evaluate(() => (window as FixtureWindow).closeLendingReview()); await expect(page.locator('body')).toContainText('Left the review');
+  await page.evaluate(() => (window as FixtureWindow).finishHostWait());
+  await expect.poll(() => state.order.at(-1)).toBe('submission:rejected');
+  expect(await attempts(page)).toBe(0); expect(state.executionState).toBe('ready');
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
+});
+
+test('a wallet that answers after the review was left is still recorded, and the market is not held (audit WAL-3)', async ({ page }) => {
+  const state = await install(page, 'pending'); await page.goto('/lending/fixture-lending');
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect.poll(() => attempts(page)).toBe(1);
+  await page.evaluate(() => (window as FixtureWindow).closeLendingReview()); await expect(page.locator('body')).toContainText('Left the review');
+  await page.evaluate(() => (window as FixtureWindow).finishLendingWallet('fixture-batch'));
+  await expect.poll(() => state.order.at(-1)).toBe('submission:submitted');
+  expect(state.executionState).toBe('submitted');
+});
+
 test('an expired preparation retains only status access to an existing wallet attempt', async ({ page }) => {
   const state = await install(page); state.response = { state: 'refused', refusal: 'lending_preparation_expired',
     detail: 'The preparation expired. Your existing submission can still be checked; nothing can be sent from this link.',

@@ -32,9 +32,11 @@ export function LendingReviewPage() {
   // account is refused before it is asked (audit WAL-1, 2026-11-10).
   const owner = session.signedIn ? session.wallet as Hex : null;
   const steps = useMemo<LendingStepsWalletV1 | null>(() => batches.blocker && address && owner ? {
-    send: async call => {
+    send: async (call, beforeWallet) => {
       // A restored connection is brought back before the wallet is asked (2026-11-09).
       await requireLiveWalletAccountV1(config, owner);
+      // The person may have left during that wait: then the wallet is not asked (audit WAL-3).
+      await beforeWallet?.();
       return sendTransaction(config, { account: owner, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
         data: LENDING_BUILDER_SUFFIX_V1 ? concat([call.data as Hex, LENDING_BUILDER_SUFFIX_V1 as Hex]) : call.data as Hex });
     },
@@ -58,7 +60,7 @@ export function LendingReviewPage() {
   const review = useLendingReviewConsoleV1({ draft: params?.draft ?? legacyParams?.draft ?? null,
     sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null,
     walletBlocker: steps ? null : batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember, steps, feeNote, rereadKey: reread,
-    sendCalls: async ({ calls, sponsorship }) => {
+    sendCalls: async ({ calls, sponsorship, beforeWallet }) => {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09).
       if (!owner) throw new Error('lending_identity_changed');
@@ -75,6 +77,8 @@ export function LendingReviewPage() {
         // After a send that carried them failed, the wallet's own estimate again.
         capabilities: gasLimitsDeclined ? undefined : walletCapabilities });
       const requestCapabilities = sendCallsCapabilitiesV1({ suffix: LENDING_BUILDER_SUFFIX_V1, sponsor: gas.capability });
+      // The last step before the wallet opens, after every wait above: a person who left in them is not asked (audit WAL-3).
+      await beforeWallet();
       try {
         const result = sized.limits
           // viem drops a call's own capabilities, so calls carrying their gas go as the same request, sent directly.

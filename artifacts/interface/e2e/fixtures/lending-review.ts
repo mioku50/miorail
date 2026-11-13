@@ -36,12 +36,14 @@ export type FixtureWindow = Window & {
   /** What each batch handed the wallet as Still's offer to pay its fee. */
   lendingSponsorships: unknown[];
   lendingWalletAttempts: number;
+  /** Lets the host's own wait before the wallet end ('host-waits'). */
+  finishHostWait: () => void;
   setLendingFixtureIdentity: (next: { session: string; connected: string }) => void;
   finishLendingWallet: (batch: string) => void;
   /** Takes the review off the page, as leaving it does. */
   closeLendingReview: () => void;
 };
-export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'rpc-failing' | 'rpc-failing-once' | 'steps' | 'steps-declined' = 'submitted') {
+export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'rpc-failing' | 'rpc-failing-once' | 'steps' | 'steps-declined' | 'host-waits' = 'submitted') {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
@@ -148,12 +150,14 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       const {model}=useLendingReviewConsoleV1({draft:decodeURIComponent(location.pathname.split('/').pop()),sessionWalletAddress:identity.session,walletAddress:identity.connected,
         // The page reads the result by itself; here eight reads in 4.8 s, so a test sees them end.
         followMs:[300,300,300,300,600,600,1200,1200],
-        sendCalls:async(batch)=>{ window.lendingWalletAttempts++; window.lendingSponsorships=[...(window.lendingSponsorships??[]),batch.sponsorship??null];
+        // As the real hosts do: their own waits first (a restored connection, a gas measure), then the hook's
+        // last check, then the wallet (audit WAL-3). 'host-waits' holds the host's wait until the test lets it go.
+        sendCalls:async(batch)=>{ ${outcome === 'host-waits' ? 'await new Promise(resolve=>{window.finishHostWait=resolve;});' : ''} await batch.beforeWallet?.(); window.lendingWalletAttempts++; window.lendingSponsorships=[...(window.lendingSponsorships??[]),batch.sponsorship??null];
           ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'rpc-failing' ? "throw Object.assign(new Error('Requested resource not available.'),{code:-32002,shortMessage:'Requested resource not available.',details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,12 minutes. Consider using a different RPC endpoint.'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : outcome === 'rpc-failing-once' ? "if(window.lendingWalletAttempts===1) throw Object.assign(new Error('Requested resource not available.'),{code:-32002,details:'RPC 0x2105 Custom eth_getCode: RPC endpoint returned too many errors, retrying in 0,01 minutes. Consider using a different RPC endpoint.'}); return 'fixture-batch';" : "return 'fixture-batch';"}
         },
         onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; },
         ${outcome.startsWith('steps') ? `steps:{
-          send:async call=>{ window.lendingStepSends=[...(window.lendingStepSends??[]),call.to];
+          send:async (call,beforeWallet)=>{ await beforeWallet?.(); window.lendingStepSends=[...(window.lendingStepSends??[]),call.to];
             ${outcome === 'steps-declined' ? "if(window.lendingStepSends.length===2) throw Object.assign(new Error('declined'),{code:4001});" : ''}
             return '0x'+String(window.lendingStepSends.length).padStart(64,'0'); },
           receipt:async()=>'success' },` : ''}});
