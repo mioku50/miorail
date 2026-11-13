@@ -45,9 +45,11 @@ test(
     await writeFile(
       hook,
       `import {readFileSync} from 'node:fs';
+    // The list's first page, at Coinbase's largest page size (audit BASE-3).
+    const listing = 'https://api.coinbase.com/v1/tokenized-stocks?page_size=500';
     globalThis.fetch = async (url) => new Response(
-      String(url) === 'https://api.coinbase.com/v1/tokenized-stocks' ? readFileSync(process.env.STOCKS_API_FIXTURE, 'utf8') : '{}',
-      {status: String(url) === 'https://api.coinbase.com/v1/tokenized-stocks' ? 200 : 503});`,
+      String(url) === listing ? readFileSync(process.env.STOCKS_API_FIXTURE, 'utf8') : '{}',
+      {status: String(url) === listing ? 200 : 503});`,
     );
     const worker = async () => {
       // Other sources are deliberately unavailable. Their failures must not stop
