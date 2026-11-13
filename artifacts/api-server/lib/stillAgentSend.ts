@@ -1,6 +1,7 @@
 import { STOCKS, type MirrorReport } from '@mioagent/still-engine';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import {
+  agentPlainAmountV2,
   agentSendRequestV2,
   atomicToDecimalV2,
   isRussianV1,
@@ -46,11 +47,10 @@ const COIN_SENDS_V1: Readonly<Record<string, { token: string; symbol: string }>>
   PAXG: { token: ADDRESSES.paxg.toLowerCase(), symbol: 'PAXG' },
 };
 
-/** One plain number written in the question, the recipient left out: "$5" for a send of USDC. */
+/** One plain number written in the question, the recipient left out: "$5" for a send of USDC. Read by
+ * the same rule that checked it, so "$.5" is half a dollar and never five (audit N13-5). */
 function plainNumberV1(question: string, recipient: string | null): string | null {
-  const rest = recipient ? question.replace(recipient, ' ') : question;
-  const raw = /(\d+(?:[.,]\d+)?)/u.exec(rest)?.[1] ?? null;
-  return raw && Number(raw.replace(',', '.')) > 0 ? raw.replace(',', '.') : null;
+  return agentPlainAmountV2(recipient ? question.replace(recipient, ' ') : question);
 }
 
 /** "0.5" in base units, exactly; null when it has more places than the token. */

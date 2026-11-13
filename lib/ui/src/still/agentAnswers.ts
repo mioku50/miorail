@@ -241,13 +241,51 @@ const AMOUNT_EXCEPT_V2 = new RegExp(`${EDGE}(?:but|except|excluding|other\\s+tha
   + `|кроме|без|оставь|оставив|оставить|оставляя|оставим|за\\s+исключением|минус|за\\s+вычетом)(?:$|[^\\p{L}])`, 'iu');
 /** "1,000" or "12,500,000": digits grouped by commas in threes. "0,5" is a decimal and is not one. */
 const AMOUNT_THOUSANDS_V2 = /(?:^|[^\d.,])\d{1,3}(?:,\d{3})+(?![\d,.]|\p{L})/u;
-const AMOUNT_NUMBERS_V2 = /\d+(?:[.,]\d+)*/gu;
+/**
+ * Every number as it was written: its digits and separators together, a leading separator (".5")
+ * and a sign attached to it (a minus not inside a word) kept on it. A separator that ends a sentence
+ * ("send 5.") is not part of the number.
+ */
+const AMOUNT_TOKENS_V2 = /(?:(?<![\p{L}\d])([-−–]))?((?:\d|[.,](?=\d))[\d.,]*\d|\d)/gu;
+
+/**
+ * The one amount the text holds, read whole (audit N13-5, 2026-11-13). The check and the reading
+ * were two regexes: the check counted ".5" as one number, the reading began at its first digit and
+ * prepared 5 USDC for ".5", ten times what was written; "-5" became 5 and "1.2.3" became 1.2. Now
+ * the token that is checked is the token that is read. ".5" is 0.5. A sign, two separators in one
+ * number, a separator right after a letter, or more than one number: no amount is read.
+ */
+export type AgentAmountTokenV2 =
+  | { kind: 'none' }
+  | { kind: 'unclear' }
+  | { kind: 'one'; value: string; index: number; end: number };
+
+export function agentAmountTokenV2(text: string): AgentAmountTokenV2 {
+  const tokens = Array.from(text.matchAll(AMOUNT_TOKENS_V2));
+  if (tokens.length === 0) return { kind: 'none' };
+  if (tokens.length > 1) return { kind: 'unclear' };
+  const [match] = tokens;
+  const sign = match![1];
+  const body = match![2]!;
+  const index = match!.index! + (sign ? sign.length : 0);
+  if (sign) return { kind: 'unclear' };
+  if ((body.match(/[.,]/g) ?? []).length > 1) return { kind: 'unclear' };
+  if (/^[.,]/.test(body) && index > 0 && /[\p{L}\d]/u.test(text[index - 1]!)) return { kind: 'unclear' };
+  const value = (/^[.,]/.test(body) ? `0${body}` : body).replace(',', '.');
+  return { kind: 'one', value, index, end: index + body.length };
+}
+
+/** The one plain number in `text`, as a decimal with a point, when it is above zero; null otherwise. */
+export function agentPlainAmountV2(text: string): string | null {
+  const token = agentAmountTokenV2(text);
+  return token.kind === 'one' && Number(token.value) > 0 ? token.value : null;
+}
 
 /** Whether `text` holds an amount these rules would have to guess at. For a transfer, pass the
  * question without its recipient: an address is digits too. */
 export function agentAmountUnclearV2(text: string): boolean {
   return AMOUNT_PERCENT_V2.test(text) || AMOUNT_EXCEPT_V2.test(text) || AMOUNT_THOUSANDS_V2.test(text)
-    || (text.match(AMOUNT_NUMBERS_V2) ?? []).length > 1;
+    || agentAmountTokenV2(text).kind === 'unclear';
 }
 
 /** The tokens a swap can name: USDC and the assets Still reads. */
@@ -311,13 +349,13 @@ export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null 
   else if (ALL_WORDS_V2.test(question)) amount = { kind: 'share', share: 'all' };
   else if (HALF_WORDS_V2.test(question)) amount = { kind: 'share', share: 'half' };
   else {
-    // To buy, the amount is what is spent: "for 10 USDC", "$10". A number of
-    // the token bought is an output, which Swap AI does not take.
-    const spent = buy && !sell
-      ? /(?:\$\s*(\d+(?:[.,]\d+)?))|(?:(\d+(?:[.,]\d+)?)\s*(?:usdc|\$|доллар|usd))/iu.exec(question)
-      : /(\d+(?:[.,]\d+)?)/.exec(question);
-    const raw = spent?.[1] ?? spent?.[2] ?? null;
-    if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
+    // The one number checked above, read whole (audit N13-5). To buy, the amount
+    // is what is spent: "for 10 USDC", "$10". A number of the token bought is an
+    // output, which Swap AI does not take.
+    const token = agentAmountTokenV2(question);
+    const spent = token.kind === 'one' && (!(buy && !sell)
+      || /\$\s*$/u.test(question.slice(0, token.index)) || /^\s*(?:usdc|\$|доллар|usd)/iu.test(question.slice(token.end)));
+    if (spent && Number(token.value) > 0) amount = { kind: 'exact', value: token.value };
   }
   return { from, to, amount, amountUnclear };
 }
@@ -514,8 +552,9 @@ export function agentSendRequestV2(question: string): AgentSendRequestV2 | null 
   else if (HALF_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'half' };
   else if (SEND_DOLLARS_V2.test(rest)) amount = { kind: 'dollars' };
   else {
-    const raw = /(\d+(?:[.,]\d+)?)/u.exec(rest)?.[1] ?? null;
-    if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
+    // The one number checked above, read whole (audit N13-5).
+    const value = agentPlainAmountV2(rest);
+    if (value !== null) amount = { kind: 'exact', value };
   }
   const written = new Set([...Array.from(question.matchAll(SEND_ADDRESSES_V2), (match) => match[0].toLowerCase()),
     ...Array.from(question.matchAll(SEND_NAMES_V2), (match) => match[1]!.toLowerCase())]);

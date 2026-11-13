@@ -660,6 +660,35 @@ describe('the Agent', () => {
     assert.doesNotMatch(`${swap.text} ${ru.text}`, /Prepared|Подготовил/);
   });
 
+  // Audit N13-5, 2026-11-13: the check and the reading were two regexes. ".5 USDC" passed the check as one
+  // number, and the reading began at its first digit, so 5 USDC was prepared: ten times what was written.
+  // "-5" became 5, "1.2.3" became 1.2 and "1.000.000" became 1.
+  it('reads the very number it checked: ".5" is 0.5, and a sign or a broken number is asked back', () => {
+    assert.deepEqual(agentSendRequestV2('send .5 USDC to friend.base.eth')?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSendRequestV2('переведи ,5 NVDAc на friend.base.eth')?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSwapRequestV2('swap .5 USDC to ETH')?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSwapRequestV2('buy ETH for $.5')?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSwapRequestV2('buy ETH with .5 USDC')?.amount, { kind: 'exact', value: '0.5' });
+    assert.deepEqual(agentSwapRequestV2('Buy gold (PAXG) for $10')?.amount, { kind: 'exact', value: '10' });
+    // A number of the token bought is still an output, not what is spent.
+    assert.equal(agentSwapRequestV2('buy 5 ETH')?.amount, null);
+    // A full stop after a number, or a dash between words, belongs to the sentence.
+    assert.deepEqual(agentSendRequestV2('Send 5 USDC to friend.base.eth.')?.amount, { kind: 'exact', value: '5' });
+    assert.deepEqual(agentSendRequestV2('send 5. USDC to bob.base.eth')?.amount, { kind: 'exact', value: '5' });
+    assert.deepEqual(agentSendRequestV2('send 5 USDC to bob.base.eth - thanks')?.amount, { kind: 'exact', value: '5' });
+    for (const q of ['send -5 USDC to friend.base.eth', 'send −0.5 USDC to friend.base.eth', 'send 1.2.3 USDC to friend.base.eth',
+      'send 1.000.000 USDC to friend.base.eth', 'send 1..5 USDC to friend.base.eth', 'send 5,5,5 USDC to friend.base.eth']) {
+      const request = agentSendRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear], [null, true], q);
+    }
+    for (const q of ['swap -5 USDC to ETH', 'swap 1.2.3 USDC to ETH', 'обменяй 1.000.000 USDC на ETH']) {
+      const request = agentSwapRequestV2(q);
+      assert.deepEqual([request?.amount, request?.amountUnclear], [null, true], q);
+    }
+    for (const unclear of ['-5', '1.2.3', 'abc.5']) assert.equal(agentAmountUnclearV2(unclear), true, unclear);
+    for (const plain of ['.5', '0,5', '5.']) assert.equal(agentAmountUnclearV2(plain), false, plain);
+  });
+
   it('reads a transfer by its rules: the stock, how much, and the recipient the question wrote', () => {
     // 2026-11-03: the operator asked for "перевод всех Nvdac на <name>.base.eth"
     // and read the list of what the Agent answers.

@@ -446,6 +446,15 @@ test('USDC and gold go to the same send review: USDC read on its own, gold from 
     // Dollars are USDC's own unit.
     const five = (await ask(server, `send $5 USDC to ${FRIEND}`)).body.answer;
     assert.equal(five.sendAction.amountAtomic, '5000000');
+    // ".5" is half of one, read by the same rule that checked it: it prepared 5 USDC (audit N13-5, 2026-11-13).
+    const point5 = (await ask(server, 'send .5 USDC to friend.base.eth')).body.answer;
+    assert.equal(point5.sendAction.amountAtomic, '500000');
+    assert.match(point5.text, /^Prepared a transfer: 0\.5 USDC to friend\.base\.eth/);
+    assert.equal((await ask(server, `send $.5 USDC to ${FRIEND}`)).body.answer.sendAction.amountAtomic, '500000');
+    // A sign is not an amount: it is asked back, and nothing is handed over.
+    const negative = (await ask(server, 'send -5 USDC to friend.base.eth')).body.answer;
+    assert.match(negative.text, /^I take an amount only as one plain number, so I did not guess\./);
+    assert.equal(negative.sendAction ?? null, null);
     // More than it holds is said, and nothing handed over.
     const more = (await ask(server, `send 20 USDC to ${FRIEND}`)).body.answer;
     assert.match(more.text, /^The wallet holds 9\.985685 USDC \(Base block 53,000,400\), less than 20\./);
