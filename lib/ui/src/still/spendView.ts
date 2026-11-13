@@ -245,6 +245,7 @@ export function spendOrderErrorV1(message: string): string {
     case 'bitrefill_invoice_price_changed': return 'Bitrefill’s invoice asked a different price than it quoted a moment before. Nothing was opened to pay; read the product again.';
     case 'bitrefill_guest_refused': return 'Bitrefill is not letting Still in right now, so Spend cannot open an invoice for any product. Nothing was paid.';
     case 'spend_rate_limited': return 'Still opens at most six invoices an hour for one wallet, and you have opened six. Try again later; nothing was opened.';
+    case 'spend_attempts_limited': return 'Still asks Bitrefill for at most three invoices a minute and twelve an hour for one wallet, counting the ones that could not be opened, and this wallet has asked for that many. Try again in a few minutes; nothing was opened.';
     case 'spend_request_invalid': return 'Check the email address: Bitrefill sends the receipt there.';
     case 'region_restricted':
     case 'region_unchecked': {

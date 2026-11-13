@@ -39,6 +39,9 @@ let orders: SpendOrderStoreV1, loans: MemoryLoanExecutionStoreV1, wallets: Memor
 let invoiceStatus: SpendInvoiceStatusNameV1, opened: unknown[], attached: number, loanRuns: number;
 /** Every read of an invoice the stand-in for Bitrefill was asked for, by what it was for; and every quote, by how it was asked. */
 let statusReads: string[], quotes: unknown[];
+/** The order store's own clock, moved on by `later`: three fresh quotes a minute for one wallet (audit N13-6). */
+let shift = 0;
+const later = (ms = 61_000) => { shift += ms; };
 
 function checkout(): BitrefillGuestCheckoutV1 {
   return {
@@ -86,7 +89,8 @@ function app(owner: string | null = WALLET) {
 }
 
 beforeEach(() => {
-  orders = createSpendOrderStoreV1({ now: () => NOW });
+  shift = 0;
+  orders = createSpendOrderStoreV1({ now: () => new Date(NOW.getTime() + shift) });
   loans = new MemoryLoanExecutionStoreV1();
   wallets = new MemorySpendWalletStoreV1();
   enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0; walletRuns = 0; statusReads = []; quotes = [];
@@ -185,13 +189,16 @@ describe('a phone top-up', () => {
   it('opens nothing without a number, with a local one, or with one of another country', async () => {
     sell(AIRTEL);
     for (const [phone, error] of [[undefined, 'spend_phone_needed'], ['98765 43210', 'spend_phone_invalid'], ['+7 777 123 4567', 'spend_phone_invalid'], ['', 'spend_request_invalid']] as const) {
+      later(); // Each in a minute of its own: this is about what is refused, not how often.
       const r = await request(app()).post('/api/still/spend/orders').send({ ...TOP_UP, ...(phone === undefined ? {} : { phone }) });
       assert.deepEqual([r.status, r.body.error], [400, error], String(phone));
     }
     // Kazakhstan shares +7 with Russia: a Russian number is not a Kazakh top-up.
     sell({ ...AIRTEL, id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', country: 'KZ', packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }] });
     const kz = { productId: 'beeline-kazakhstan', packageValue: '100', email: 'buyer@example.com' };
+    later();
     assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...kz, phone: '+7 912 345 6789' })).body.error, 'spend_phone_invalid');
+    later();
     assert.equal(opened.length, 0);
     assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...kz, phone: '+7 777 123 4567' })).status, 200);
     assert.equal((opened[0] as { refillInput?: string }).refillInput, '77771234567');
@@ -447,17 +454,70 @@ describe('six invoices an hour for one wallet', () => {
     assert.deepEqual(quotes, [{ freshForCheckout: true }]);
   });
 
-  it('counts requests sent together together: eight at once open six', async () => {
+  it('counts requests sent together together: eight at once ask Bitrefill three times, and open three', async () => {
     const answers = await Promise.all(Array.from({ length: 8 }, () => request(app()).post('/api/still/spend/orders').send(ORDER)));
-    assert.deepEqual(answers.map((answer) => answer.status).sort(), [200, 200, 200, 200, 200, 200, 429, 429]);
-    assert.equal(opened.length, 6);
-    assert.equal(orders.openedLastHour({ tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }), 6);
+    assert.deepEqual(answers.map((answer) => answer.status).sort(), [200, 200, 200, 429, 429, 429, 429, 429]);
+    assert.deepEqual([...new Set(answers.filter((answer) => answer.status === 429).map((answer) => answer.body.error))], ['spend_attempts_limited']);
+    assert.equal(quotes.length, 3);
+    assert.equal(opened.length, 3);
   });
 
-  it('does not count an invoice that did not open', async () => {
-    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason: 'bitrefill_unreachable' }) }) });
-    for (let index = 0; index < 8; index++) assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 503);
+  it('opens six an hour, the ones being opened counted with the ones that opened', async () => {
+    const owner = { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET };
+    for (const wave of [3, 3]) {
+      const answers = await Promise.all(Array.from({ length: wave }, () => request(app()).post('/api/still/spend/orders').send(ORDER)));
+      assert.deepEqual(answers.map((answer) => answer.status), Array(wave).fill(200));
+      later();
+    }
+    assert.equal(orders.openedLastHour(owner), 6);
+    const seventh = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.deepEqual([seventh.status, seventh.body.error], [429, 'spend_rate_limited']);
+    assert.equal(quotes.length, 6, 'the seventh asked Bitrefill nothing');
+    assert.equal(opened.length, 6);
+  });
+
+  it('does not count an invoice that did not open as one of the six, and asks Bitrefill no more than three times a minute', async () => {
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async (_id: string, options?: unknown) => { quotes.push(options); return { ok: false, reason: 'bitrefill_unreachable' }; } }) });
+    const statuses: number[] = [];
+    for (let index = 0; index < 8; index++) statuses.push((await request(app()).post('/api/still/spend/orders').send(ORDER)).status);
+    assert.deepEqual(statuses, [503, 503, 503, 429, 429, 429, 429, 429]);
+    assert.equal(quotes.length, 3);
     assert.equal(orders.openedLastHour({ tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }), 0);
+  });
+
+  // Audit N13-6, 2026-11-13: an invoice refused after its fresh quote was none of the six an hour, so one
+  // wallet asking for a top-up with no number took the whole part of Bitrefill's window kept for buying, and
+  // the next person's purchase was refused by Bitrefill's limit.
+  it('one wallet’s refused invoices leave the window to the next person, and come back by the minute and the hour', async () => {
+    const TOP_UP_PRODUCT: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
+      packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }),
+      product: async (id: string, options?: unknown) => { quotes.push(options); return { ok: true, value: id === TOP_UP_PRODUCT.id ? TOP_UP_PRODUCT : ESIM }; } }) });
+    const noNumber = () => request(app()).post('/api/still/spend/orders').send({ productId: 'airtel-india', packageValue: '10', email: 'buyer@example.com' });
+    for (let n = 0; n < 3; n++) assert.equal((await noNumber()).body.error, 'spend_phone_needed');
+    const fourth = await noNumber();
+    assert.deepEqual([fourth.status, fourth.body.error], [429, 'spend_attempts_limited']);
+    assert.equal(quotes.length, 3, 'the fourth asked Bitrefill nothing');
+    // Another wallet's purchase is its own.
+    assert.equal((await request(app(OTHER)).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    assert.equal(opened.length, 1);
+    // A minute later three more, up to twelve in the hour; then nothing until the hour has passed.
+    for (let minute = 0; minute < 3; minute++) {
+      later();
+      for (let n = 0; n < 3; n++) assert.equal((await noNumber()).body.error, 'spend_phone_needed');
+    }
+    later();
+    assert.equal((await noNumber()).body.error, 'spend_attempts_limited');
+    later(60 * 60_000);
+    assert.equal((await noNumber()).body.error, 'spend_phone_needed');
+  });
+
+  it('gives a quote back when Bitrefill’s own window here refused it before anything was asked', async () => {
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason: 'bitrefill_rate_limited' }) }) });
+    for (let index = 0; index < 5; index++) {
+      const answer = await request(app()).post('/api/still/spend/orders').send(ORDER);
+      assert.deepEqual([answer.status, answer.body.error], [503, 'bitrefill_rate_limited']);
+    }
   });
 });
 

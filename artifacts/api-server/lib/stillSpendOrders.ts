@@ -102,21 +102,40 @@ export interface SpendOrderStoreV1 {
   openedLastHour(owner: SpendOrderOwnerV1): number;
   /** One invoice is being opened for this owner: it counts until `done`, whether or not it opens. */
   opening(owner: SpendOrderOwnerV1): { done(): void };
+  /**
+   * One fresh quote asked of Bitrefill for this owner, counted before it is asked whatever it answers;
+   * null when this owner has asked for as many as the limits allow. `unspent` gives it back when nothing
+   * was asked after all (Bitrefill's own window was already full here).
+   */
+  quote(owner: SpendOrderOwnerV1): { unspent(): void } | null;
 }
+
+/**
+ * Fresh quotes asked of Bitrefill for one wallet (audit N13-6, 2026-11-13). Each comes from the part of
+ * Bitrefill's window kept for buying, and an invoice that was refused after it was none of the six an
+ * hour: one wallet asking for a top-up with no number nineteen times in a minute took the whole window,
+ * and the next person's purchase was refused by Bitrefill's limit. Counted with the refused ones, and
+ * apart from the six invoices an hour, which count only invoices that opened.
+ */
+export const SPEND_QUOTES_PER_MINUTE_V1 = 3;
+export const SPEND_QUOTES_PER_HOUR_V1 = 12;
 
 export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: number } = {}): SpendOrderStoreV1 {
   const now = input.now ?? (() => new Date());
   const ttlMs = input.ttlMs ?? 30 * 60_000;
   const rows = new Map<string, SpendOrderV1>();
   const opened = new Map<string, number[]>();
+  const quotes = new Map<string, number[]>();
   const underway = new Map<string, number>();
   const key = (owner: SpendOrderOwnerV1) => `${owner.tenantId}|${owner.walletAddress}`;
   const prune = () => {
     const at = now().getTime();
     for (const [id, row] of rows) if (at - Date.parse(row.createdAt) > ttlMs) rows.delete(id);
-    for (const [owner, times] of opened) {
-      const kept = times.filter((time) => at - time < 3_600_000);
-      if (kept.length) opened.set(owner, kept); else opened.delete(owner);
+    for (const times of [opened, quotes]) {
+      for (const [owner, list] of times) {
+        const kept = list.filter((time) => at - time < 3_600_000);
+        if (kept.length) times.set(owner, kept); else times.delete(owner);
+      }
     }
   };
   return {
@@ -134,6 +153,26 @@ export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: numbe
     openedLastHour(owner) {
       prune();
       return (opened.get(key(owner))?.length ?? 0) + (underway.get(key(owner)) ?? 0);
+    },
+    quote(owner) {
+      prune();
+      const who = key(owner);
+      const times = quotes.get(who) ?? [];
+      const at = now().getTime();
+      if (times.length >= SPEND_QUOTES_PER_HOUR_V1 || times.filter((time) => at - time < 60_000).length >= SPEND_QUOTES_PER_MINUTE_V1) return null;
+      // Counted at once, before any await: requests sent together are counted together (audit SPEND-3).
+      quotes.set(who, [...times, at]);
+      let counted = true;
+      return {
+        unspent() {
+          if (!counted) return;
+          counted = false;
+          const list = quotes.get(who) ?? [];
+          const index = list.lastIndexOf(at);
+          if (index >= 0) list.splice(index, 1);
+          if (list.length) quotes.set(who, list); else quotes.delete(who);
+        },
+      };
     },
     opening(owner) {
       const who = key(owner);

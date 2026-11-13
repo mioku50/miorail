@@ -116,9 +116,16 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   // together, not each before any of them is on record (audit SPEND-3).
   const orders = stillSpendRuntimeV1.orders;
   if (orders.openedLastHour(owner) >= 6) return refuse(429, 'spend_rate_limited');
+  // The fresh quotes are bounded too, refused invoices included, before Bitrefill is asked (audit N13-6):
+  // each one spends the part of its window kept for buying, the next person's purchase included.
+  const quote = orders.quote(owner);
+  if (!quote) return refuse(429, 'spend_attempts_limited');
   const opening = orders.opening(owner);
   try {
-    return await openCountedSpendOrderV1(owner, request, options, refuse);
+    const opened = await openCountedSpendOrderV1(owner, request, options, refuse);
+    // Refused by Bitrefill's window here, before anything was asked of it: that quote was never spent.
+    if (!opened.ok && opened.error === 'bitrefill_rate_limited') quote.unspent();
+    return opened;
   } finally {
     opening.done();
   }

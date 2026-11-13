@@ -162,6 +162,7 @@ const DELIVERY_NEXT_V1 = 'The page this link opens shows the user where Bitrefil
 /** What each refusal means to the person, in the Spend page's terms. */
 const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
   spend_rate_limited: 'Still opens at most six Bitrefill invoices an hour for one wallet, and this wallet has opened six. This is Still’s own limit, not Bitrefill’s, and an invoice that was refused does not count. Wait before opening another; nothing was opened.',
+  spend_attempts_limited: 'Still asks Bitrefill for at most three invoices a minute and twelve an hour for one wallet, counting the ones that were refused, and this wallet has asked for that many. Each one asks Bitrefill for a fresh quote. This is Still’s own limit, not Bitrefill’s. Correct what an earlier refusal named, then wait a few minutes; nothing was opened.',
   bitrefill_rate_limited: 'Bitrefill asked Still to slow down, so no invoice was opened. Nothing was paid; try again in a minute.',
   bitrefill_unreachable: 'Still could not reach Bitrefill just now, so no invoice was opened. Nothing was paid; try again in a minute.',
   bitrefill_invalid_response: 'Bitrefill answered in a way Still could not read, so Still kept no invoice. Nothing was paid; try again in a minute.',

@@ -101,7 +101,9 @@ const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', count
 
 function spend(t: test.TestContext, input: { enabled?: boolean } = {}) {
   const original = { ...stillSpendRuntimeV1 };
-  const orders: SpendOrderStoreV1 = createSpendOrderStoreV1({ now: () => NOW });
+  // The store's own clock, moved on by `later`: three fresh quotes a minute for one wallet (audit N13-6).
+  let shift = 0;
+  const orders: SpendOrderStoreV1 = createSpendOrderStoreV1({ now: () => new Date(NOW.getTime() + shift) });
   const opened: Array<Parameters<BitrefillGuestCheckoutV1['createInvoice']>[0]> = [];
   Object.assign(stillSpendRuntimeV1, {
     orders, enabled: () => input.enabled ?? true, now: () => NOW,
@@ -116,7 +118,7 @@ function spend(t: test.TestContext, input: { enabled?: boolean } = {}) {
     }),
   });
   t.after(() => Object.assign(stillSpendRuntimeV1, original));
-  return { orders, opened };
+  return { orders, opened, later: (ms = 61_000) => { shift += ms; } };
 }
 
 test('a purchase opens the invoice as Spend does, and the link is the review of the loan that pays exactly its price', async (t) => {
@@ -150,10 +152,13 @@ test('a purchase opens the invoice as Spend does, and the link is the review of 
 });
 
 test('a top-up sends only a number of its own country, and what cannot be bought opens nothing', async (t) => {
-  const { opened } = spend(t);
-  const refused = async (args: Partial<Parameters<typeof stillPreparePurchaseV1>[1]>, code: string, deps = { secret: SECRET, now: NOW }) =>
-    assert.rejects(stillPreparePurchaseV1(IDENTITY, { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0', ...args }, deps),
+  const { opened, later } = spend(t);
+  // Each in a minute of its own: this is about what is refused, not how often.
+  const refused = async (args: Partial<Parameters<typeof stillPreparePurchaseV1>[1]>, code: string, deps = { secret: SECRET, now: NOW }) => {
+    later();
+    await assert.rejects(stillPreparePurchaseV1(IDENTITY, { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0', ...args }, deps),
       (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === code && !error.message.includes(EMAIL));
+  };
   await refused({ packageValue: 'Unlimited, 30 Days' }, 'spend_over_cap');
   await refused({ packageValue: '1GB, 7 Days' }, 'spend_package_not_offered');
   await refused({ phone: '+81 90 1234 5678' }, 'spend_request_invalid');
@@ -180,14 +185,40 @@ test('a purchase Bitrefill refuses says Bitrefill’s own words, and nothing was
 });
 
 test('six opened invoices an hour is Still’s own limit and says so, and refusals before it are not counted', async (t) => {
-  const { opened } = spend(t);
-  const purchase = (packageValue = '5GB, 30 Days') => stillPreparePurchaseV1(IDENTITY,
-    { productId: ESIM.id, packageValue, email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW });
+  const { opened, later } = spend(t);
+  // A minute apart, so the three fresh quotes a minute (audit N13-6) are not what stops them.
+  const purchase = (packageValue = '5GB, 30 Days') => {
+    later();
+    return stillPreparePurchaseV1(IDENTITY, { productId: ESIM.id, packageValue, email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW });
+  };
   await assert.rejects(purchase('Unlimited, 30 Days'), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_over_cap');
   for (let n = 0; n < 6; n += 1) await purchase();
   await assert.rejects(purchase(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_rate_limited'
     && /Still opens at most six Bitrefill invoices an hour for one wallet, and this wallet has opened six\. This is Still’s own limit, not Bitrefill’s/.test(error.message));
   assert.equal(opened.length, 6, 'the seventh never reached Bitrefill');
+});
+
+test('refused invoices are counted before Bitrefill is asked again: three a minute, twelve an hour, said as Still’s own limit (audit N13-6)', async (t) => {
+  const { opened, later } = spend(t);
+  let quotes = 0;
+  const product = stillSpendRuntimeV1.catalog().product;
+  stillSpendRuntimeV1.catalog = () => ({ search: async () => ({ ok: true, value: [] }), product: async (id: string) => { quotes += 1; return product(id); } }) as unknown as ReturnType<typeof stillSpendRuntimeV1.catalog>;
+  const topUp = () => stillPreparePurchaseV1(IDENTITY, { productId: TOP_UP.id, packageValue: '10', email: EMAIL, collateral: 'AAPLc', addCollateral: '0' }, { secret: SECRET, now: NOW });
+  for (let n = 0; n < 3; n += 1) await assert.rejects(topUp(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_phone_needed');
+  await assert.rejects(topUp(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_attempts_limited'
+    && /^Still asks Bitrefill for at most three invoices a minute and twelve an hour for one wallet, counting the ones that were refused/.test(error.message)
+    && /This is Still’s own limit, not Bitrefill’s\./.test(error.message));
+  assert.equal(quotes, 3, 'the fourth asked Bitrefill nothing');
+  // A minute later three more, up to twelve in the hour.
+  for (let minute = 0; minute < 3; minute += 1) {
+    later();
+    for (let n = 0; n < 3; n += 1) await assert.rejects(topUp(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_phone_needed');
+  }
+  later();
+  await assert.rejects(topUp(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_attempts_limited');
+  assert.equal(quotes, 12);
+  assert.equal(opened.length, 0);
+  assert.equal(stillSpendRuntimeV1.orders.openedLastHour(IDENTITY), 0, 'none of them is one of the six an hour');
 });
 
 test('a catalogue Bitrefill could not serve is named as that, not as a refusal', async (t) => {
