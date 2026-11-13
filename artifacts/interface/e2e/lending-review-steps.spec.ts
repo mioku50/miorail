@@ -64,7 +64,9 @@ function payingSteps() {
   return { ...base, calls: [...base.calls, { to: USDC, data: '0xa9059cbb', value: '0' }],
     steps: [...base.steps, { index: 3, to: USDC, reading: 'Pay Bitrefill: send 0.18 USDC to the invoice address 0x3333…3333' }],
     facts: { ...base.facts, payment: { merchant: 'bitrefill', orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333',
-      assets: '180000', productName: 'Bitrefill eSIM Germany', packageValue: '1GB, 7 Days', faceCurrency: 'USD', expiresAt: '2026-10-29T04:00:00.000Z' } } };
+      assets: '180000', productName: 'Bitrefill eSIM Germany', packageValue: '1GB, 7 Days', faceCurrency: 'USD', expiresAt: '2026-10-29T04:00:00.000Z' } },
+    // Where Bitrefill sends it, as the server gives it with every payment (audit SPEND-1).
+    deliverTo: { email: 'buyer@example.com', phone: null } };
 }
 
 test('a Spend purchase goes in steps too, the payment last', async ({ page }) => {

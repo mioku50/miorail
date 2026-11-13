@@ -14,8 +14,9 @@ const payment = { merchant: 'bitrefill', orderId: ORDER_ID, payTo: '0x3333333333
   productName: 'PUBG Mobile', packageValue: '60 UC', faceCurrency: null, expiresAt: '2026-11-03T18:15:00.000Z' };
 const facts = { payment, usdcBeforeAtomic: '2120000', usdcAfterAtomic: '120000', blockNumber: 53_470_000,
   warnings: ['Your wallet sends 2 USDC of its own to Bitrefill’s invoice address 0x3333…3333 for PUBG Mobile · 60 UC. No loan is taken.'] };
+// Where Bitrefill sends the purchase, as the server gives it with every payment it holds (audit SPEND-1).
 const wire = (state: string, patch: Record<string, unknown> = {}) => ({ orderId: ORDER_ID, state, attemptId: state === 'ready' ? null : ATTEMPT, batchId: null,
-  transactionHash: null, errorCode: null, updatedAt: NOW.toISOString(), facts,
+  transactionHash: null, errorCode: null, updatedAt: NOW.toISOString(), facts, deliverTo: { email: 'buyer@example.com', phone: null },
   ...(state === 'ready' ? { calls: [CALL], callsHash: `0x${'1'.repeat(64)}`, signingTermsHash: `0x${'2'.repeat(64)}`, expiresAt: '2026-11-03T18:02:00.000Z', steps: [] } : {}), ...patch });
 
 // paid: the wallet answers with a hash. batch / manual: with a batch id only that wallet knows, which
