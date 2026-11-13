@@ -183,14 +183,35 @@ describe('the two surfaces share one projection', () => {
     }
   });
 
-  test('a wallet rejection is reported as a rejection, never as a result', () => {
-    assert.match(interfacePage, /isWalletRejectionError\(error\) \? 'user_rejected' : 'wallet_failed'/);
+  // Audit WAL-2 / DIFF-1 (2026-11-14): the error was read by its words, so "connection closed" went in as the
+  // person's No, the server freed the plan's one slot, and the same entry could go to the wallet again.
+  const miniConsole = readFileSync(
+    path.join(here, '..', '..', '..', 'artifacts', 'miniapp', 'app', 'components', 'MiniConsole.tsx'),
+    'utf8',
+  );
+
+  test('a wallet error is read as a swap reads it: only the wallet’s own refusal is a rejection', () => {
+    for (const [page, quote] of [[interfacePage, "'"], [miniConsole, '"']] as const) {
+      assert.ok(!page.includes('isWalletRejectionError'), 'words alone never decide that nothing went out');
+      assert.match(page, /const outcome = asked \? walletSendOutcomeV1\(error\) : ['"]failed['"];/);
+      assert.ok(page.includes(`result: outcome === ${quote}cancelled${quote} ? ${quote}user_rejected${quote} : ${quote}wallet_failed${quote},`));
+    }
     // The client may never claim a transaction succeeded.
     assert.ok(!/result: 'entry_succeeded'/.test(interfacePage));
     assert.ok(!/result: 'confirmed'/.test(interfacePage));
   });
 
-  test('a wallet that names no batch is recorded as failed, never as sent', () => {
-    assert.match(interfacePage, /result: 'wallet_failed',\s*batchId: null,/);
+  test('an answer that never came back, or one with no batch to ask about, is recorded as nothing', () => {
+    // Neither sent nor refused: the attempt keeps the plan's one slot, and the page says to check the wallet.
+    assert.equal(interfacePage.split('setWalletError(B20_ENTRY_ANSWER_UNREAD_V1);\n        return;').length - 1, 2);
+    assert.equal(miniConsole.split('setB20WalletError(B20_ENTRY_ANSWER_UNREAD_V1);\n        return;').length - 1, 2);
+    for (const page of [interfacePage, miniConsole]) assert.ok(!/result: ['"]wallet_failed['"],\s*batchId: null,/.test(page), 'no batch id is not a failure');
+  });
+
+  test('an error before the wallet was asked is a request that never left the page', () => {
+    // Set at the last step before the wallet opens, and nowhere else.
+    assert.ok(interfacePage.includes('asked = true;\n      const result = await sendCalls.mutateAsync({'));
+    assert.ok(miniConsole.includes('asked = true;\n      const result = await b20SendCalls.mutateAsync({'));
+    for (const page of [interfacePage, miniConsole]) assert.equal(page.split('asked = true;').length - 1, 1);
   });
 });

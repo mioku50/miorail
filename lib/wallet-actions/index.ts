@@ -69,6 +69,7 @@ export { WalletAccountChangedErrorV1, WalletConnectionNotReadyErrorV1, connected
 export {
   useSubmitApprovedBlueprint,
   isWalletRejectionError,
+  walletSendOutcomeV1,
   blueprintSubmitPreflight,
   transactionHashesFromReceipts,
   normalizeWalletReceipts,

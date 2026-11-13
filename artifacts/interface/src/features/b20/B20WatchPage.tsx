@@ -15,6 +15,7 @@ import {
   type ResultRevealStateV1,
   swapTokenGoalV1,
   swapTokenHrefV1,
+  B20_ENTRY_ANSWER_UNREAD_V1,
   b20ErrorCodeV1,
   b20UnavailableCopyV1,
   percentToBpsV1,
@@ -49,10 +50,10 @@ import {
   attributedCallsV1,
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
-  isWalletRejectionError,
   requireLiveWalletAccountV1,
   transactionHashesFromReceipts,
   useWalletBatchSupportV1,
+  walletSendOutcomeV1,
 } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
@@ -524,6 +525,8 @@ export function B20WatchSection() {
       setWalletError(begun.detail);
       return;
     }
+    // Whether the wallet was asked at all: an error before it is a request that never left this page.
+    let asked = false;
     try {
       // The payload comes from the server and is passed through untouched. No
       // calldata is built, rewritten or reordered in this browser.
@@ -535,6 +538,7 @@ export function B20WatchSection() {
       // code in each call's own data, as a swap and a loan do (audit WAL-5). The calls' own bytes are the
       // server's, untouched; only the code follows them.
       const { capabilities } = await walletBatches.readNow();
+      asked = true;
       const result = await sendCalls.mutateAsync({
         account: address,
         calls: attributedCallsV1({ calls: begun.payload.calls as { data?: string }[], suffix: B20_BUILDER_SUFFIX_V1, capabilities }) as never,
@@ -546,14 +550,10 @@ export function B20WatchSection() {
       });
       const batchId = typeof result === 'string' ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {
-        // The wallet accepted it but named nothing we can ask about later.
-        // Recorded as a failed request, never as a success.
-        await recordSubmission.mutateAsync({
-          planId,
-          attemptId: begun.attemptId,
-          result: 'wallet_failed',
-          batchId: null,
-        });
+        // The wallet accepted it but named nothing we can ask about later: it may well be on its way.
+        // Recorded as nothing, neither a success nor a refusal, so this plan's one slot stays taken
+        // (audit DIFF-1, 2026-11-14: it was a failed request, which let the same entry go out again).
+        setWalletError(B20_ENTRY_ANSWER_UNREAD_V1);
         return;
       }
       await recordSubmission.mutateAsync({
@@ -564,11 +564,19 @@ export function B20WatchSection() {
       });
     } catch (error) {
       // A rejected prompt is not a reverted transaction, and the two never
-      // share a branch.
+      // share a branch. Only the wallet's own refusal, or a request it could not make, says nothing
+      // went out, as a swap reads it (walletSendOutcomeV1). A closed connection or a timeout may come
+      // after the wallet sent the batch: then nothing is recorded as a refusal, the attempt keeps this
+      // plan's one slot, and the same entry is not offered again (audit WAL-2 / DIFF-1, 2026-11-14).
+      const outcome = asked ? walletSendOutcomeV1(error) : 'failed';
+      if (outcome === 'submitted_unknown') {
+        setWalletError(B20_ENTRY_ANSWER_UNREAD_V1);
+        return;
+      }
       await recordSubmission.mutateAsync({
         planId,
         attemptId: begun.attemptId,
-        result: isWalletRejectionError(error) ? 'user_rejected' : 'wallet_failed',
+        result: outcome === 'cancelled' ? 'user_rejected' : 'wallet_failed',
         batchId: null,
       });
     }

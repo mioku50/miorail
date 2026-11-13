@@ -132,6 +132,12 @@ export const ENTRY_STATE_COPY_V1: Record<string, { title: string; detail: string
   },
 };
 
+/** Said when the wallet's answer to an entry never came back, or came back with nothing to ask about
+ * later: it may already have sent the batch. Nothing is recorded as a refusal, so the plan's one slot
+ * stays taken and the same entry is not offered to the wallet again (audit WAL-2 / DIFF-1, 2026-11-14). */
+export const B20_ENTRY_ANSWER_UNREAD_V1 =
+  'Your wallet did not say whether it sent this entry: its answer never came back. Check your wallet’s activity before anything else, because it may already be on Base. This plan is not offered to your wallet again; if nothing went out, run the check again for a new one.';
+
 /** Why reconciliation refused, in words. A code alone tells a user nothing. */
 export const ENTRY_ERROR_COPY_V1: Record<string, string> = {
   wrong_token_received: 'A different token arrived than the one that was cleared.',

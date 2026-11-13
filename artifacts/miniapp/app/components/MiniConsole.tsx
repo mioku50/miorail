@@ -135,6 +135,7 @@ import {
   type LookalikeAliasFilterV1,
   type RoutePlanProjectionV1,
   type RwaDiscoverTabV1,
+  B20_ENTRY_ANSWER_UNREAD_V1,
 } from "@mioagent/ui";
 import {
   useBoundedProofReconciliation,
@@ -194,13 +195,13 @@ import {
   SubmissionRecoveryRail,
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
-  isWalletRejectionError,
   requireLiveWalletAccountV1,
   submissionReconcilableV1,
   transactionHashesFromReceipts,
   useFoundWalletClaim,
   useSpendPermissionGrant,
   type BlueprintSubmitStatus,
+  walletSendOutcomeV1,
 } from "@mioagent/wallet-actions";
 import { SimulateButton, useB20ExitProofPayment, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
@@ -1364,11 +1365,14 @@ export function MiniConsole() {
       setB20WalletError(begun.detail);
       return;
     }
+    // Whether the wallet was asked at all: an error before it is a request that never left this page.
+    let asked = false;
     try {
       // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
       // the account this plan was made for: a wallet that answers as another is not asked (audit WAL-1).
       if (!address) throw new Error("Your wallet is not connected");
       await requireLiveWalletAccountV1(b20WagmiConfig, address);
+      asked = true;
       const result = await b20SendCalls.mutateAsync({
         account: address,
         calls: begun.payload.calls as never,
@@ -1380,12 +1384,9 @@ export function MiniConsole() {
       });
       const batchId = typeof result === "string" ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {
-        await b20RecordSubmission.mutateAsync({
-          planId: b20EntryPlanId,
-          attemptId: begun.attemptId,
-          result: "wallet_failed",
-          batchId: null,
-        });
+        // Accepted with no id to ask about later: it may well be on its way, so nothing is recorded and
+        // this plan's one slot stays taken (audit DIFF-1, 2026-11-14).
+        setB20WalletError(B20_ENTRY_ANSWER_UNREAD_V1);
         return;
       }
       await b20RecordSubmission.mutateAsync({
@@ -1395,10 +1396,17 @@ export function MiniConsole() {
         batchId,
       });
     } catch (error) {
+      // Only the wallet's own refusal, or a request it could not make, says nothing went out, as on the
+      // site (audit WAL-2 / DIFF-1, 2026-11-14): an answer that never came back keeps the plan's slot.
+      const outcome = asked ? walletSendOutcomeV1(error) : "failed";
+      if (outcome === "submitted_unknown") {
+        setB20WalletError(B20_ENTRY_ANSWER_UNREAD_V1);
+        return;
+      }
       await b20RecordSubmission.mutateAsync({
         planId: b20EntryPlanId,
         attemptId: begun.attemptId,
-        result: isWalletRejectionError(error) ? "user_rejected" : "wallet_failed",
+        result: outcome === "cancelled" ? "user_rejected" : "wallet_failed",
         batchId: null,
       });
     }
