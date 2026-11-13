@@ -2,8 +2,10 @@ import React from 'react';
 import { tokenDecimalV1 } from './stockSellAmount';
 import {
   formatLendingHealthRatioV1, labelLendingTargetV1, lendingExecutionCopyV1, lendingHealthHundredthsV1,
-  lendingStressGapTextV1, lendingStressMarginTextV1, lendingStressPauseTextV1, type LendingFactsWireV1, type LendingStressWireV1,
+  lendingStressFigureLabelV1, lendingStressFigureV1, lendingStressGapTextV1, lendingStressPauseTextV1, lendingStressPriceTextV1,
+  type LendingFactsWireV1, type LendingStressWireV1,
 } from './lendingReviewView';
+import { StillIconV1 } from '../still/icons';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
 import { spendConfirmByNoteV1 } from '../still/spendView';
 
@@ -26,20 +28,32 @@ function LendingInvoiceDeadlineV1({ expiresAt, orderId }: { expiresAt: string; o
  * what a pause of its transfers would do, and what repaying does. */
 function LendingStressV1({ facts, stress }: { facts: LendingFactsWireV1; stress: LendingStressWireV1 }) {
   const what = stress.scope === 'collateral' ? facts.collateralSymbol : 'All your collateral here';
+  const price = lendingStressPriceTextV1(facts, stress);
+  // Set apart from the notes around it (2026-11-13, the operator on the first real one: «как то незаметно
+  // сделано я лично не обратил внимание»): a card of its own colour, a title, and the margin as one figure.
   return (
-    <div className="still-card still-lending-stress" role="group" aria-label="If prices fall at once">
-      <p className="still-sub"><strong>If prices fall at once</strong></p>
+    <div className="still-lending-stress" role="group" aria-labelledby="still-lending-stress-title">
+      <div className="still-lending-stress-head">
+        <span className="still-lending-stress-icon"><StillIconV1 name="shield" /></span>
+        <div>
+          <div className="still-eyebrow">Stress test</div>
+          <h2 id="still-lending-stress-title">If prices fall at once</h2>
+        </div>
+      </div>
+      <p className="still-lending-stress-margin">
+        <strong>{lendingStressFigureV1(stress)}</strong>
+        <span>{lendingStressFigureLabelV1(facts, stress)}{price ? ` ${price}` : ''}</span>
+      </p>
       <table className="mr-borrow-table" aria-label="Health ratio after a fall at once">
         <thead><tr><th scope="col">{what}</th><th scope="col">Health ratio</th><th scope="col">Liquidation</th></tr></thead>
         <tbody>
           {stress.scenarios.map(row => <tr key={row.fallBps}>
             <th scope="row">{row.fallBps / 100}% lower</th>
             <td className="mono">{lendingHealthHundredthsV1(row.healthWad)}</td>
-            <td>{row.liquidatable ? 'Can start' : 'Not reached'}</td>
+            <td className={row.liquidatable ? 'is-liquidatable' : undefined}>{row.liquidatable ? 'Can start' : 'Not reached'}</td>
           </tr>)}
         </tbody>
       </table>
-      <p className="still-note">{lendingStressMarginTextV1(facts, stress)}</p>
       <p className="still-note">{lendingStressGapTextV1(facts)}</p>
       <p className="still-note">{lendingStressPauseTextV1(facts, stress)}</p>
       <p className="still-note">Repaying part of the loan raises the health ratio. Repay takes an exact amount or all of it, and can give {facts.collateralSymbol} back after.</p>

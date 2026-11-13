@@ -709,7 +709,10 @@ describe('a new loan says what a fall at once and a paused collateral would do',
     const html = shown(borrow(stress()));
     assert.match(html, /If prices fall at once/);
     for (const [fall, ratio] of [['10', '1.89'], ['20', '1.68'], ['30', '1.47']]) assert.match(html, new RegExp(`${fall}% lower</th><td class="mono">${ratio.replace('.', '\\.')}</td><td>Not reached`));
-    assert.match(html, /Liquidation can start only after AAPLc falls more than 52\.3% at once: below \$118\.15 per AAPLc \(now \$248\.10, on the price Aave reads\)\./);
+    assert.match(html, /<strong>52\.3%<\/strong><span>AAPLc can fall this much at once before liquidation can start\. The line is \$118\.15 per AAPLc; it is \$248\.10 now, on the price Aave reads\.<\/span>/);
+    // Set apart, with a title of its own (2026-11-13: the first one on a real loan went unseen).
+    assert.match(html, /class="still-lending-stress" role="group" aria-labelledby="still-lending-stress-title"/);
+    assert.match(html, /<h2 id="still-lending-stress-title">If prices fall at once<\/h2>/);
     assert.match(html, /after a weekend, a holiday or a night, the first new price can be far from the last one/);
     // Bounded, never excluded.
     assert.doesNotMatch(html, /no liquidation|cannot be liquidated|risk-free|guaranteed/i);
@@ -727,7 +730,7 @@ describe('a new loan says what a fall at once and a paused collateral would do',
   it('with several collateral says only how far all of it can fall together', () => {
     const html = shown(borrow(stress({ scope: 'all_collateral', priceCents: null, liquidationPriceCents: null })));
     assert.match(html, /All your collateral here/);
-    assert.match(html, /Liquidation can start only after all your collateral here falls more than 52\.3% together\./);
+    assert.match(html, /<strong>52\.3%<\/strong><span>All your collateral here can fall this much together before liquidation can start\.<\/span>/);
   });
   it('a stress that is not the server’s shape is left out, and the review stays', () => {
     for (const bad of [{ ...stress(), marginTenths: 1001 }, { ...stress(), scenarios: [] }, { ...stress(), scope: 'all_collateral' }, 'x']) {

@@ -13,6 +13,7 @@ import { telegramAlertsViewV1 } from '../src/console/telegramAlertsView';
 import { copyOnThisPressV1 } from '../src/console/WalletMcpMiorailCard';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
+  AGENT_PROMPTS_V1,
   agentAnswerV1,
   agentRouteV2,
   agentAmountUnclearV2,
@@ -585,6 +586,20 @@ describe('the Agent', () => {
       assert.deepEqual(agentSwapRequestV2(q), { ...expected, amountUnclear: false }, q);
       assert.equal(agentRouteV2(q).route, 'swap', q);
     }
+    // Gold (2026-11-13): the suggested question, and the operator's own words, prepare USDC to PAXG.
+    for (const [q, expected] of [
+      ['Buy gold (PAXG) for $10', { from: 'USDC', to: 'PAXG', amount: { kind: 'exact', value: '10' } }],
+      ['Купи золото (PAXG) на $10', { from: 'USDC', to: 'PAXG', amount: { kind: 'exact', value: '10' } }],
+      ['давай купим на все мои usdc золото PAXG', { from: 'USDC', to: 'PAXG', amount: { kind: 'share', share: 'all' } }],
+    ] as const) {
+      assert.deepEqual(agentSwapRequestV2(q), { ...expected, amountUnclear: false }, q);
+      assert.equal(agentRouteV2(q).route, 'swap', q);
+    }
+    const gold = agentSwapAnswerV2({ question: 'Buy gold (PAXG) for $10', report: null });
+    assert.match(gold.text, /^Prepared: swap 10 USDC to PAXG\./);
+    assert.equal(gold.actionLink?.href, `/routes?goal=${encodeURIComponent('Swap 10 USDC to PAXG')}`);
+    // Every suggested question is one the agent serves: none falls through to "I could not read that".
+    for (const prompt of AGENT_PROMPTS_V1) for (const q of [prompt.en, prompt.ru]) assert.notEqual(agentRouteV2(q).route, 'unknown', q);
     // A loan is not a swap, and a what-if is a calculation.
     assert.equal(agentRouteV2('Займи $500 и отправь другу').route, 'action_prep');
     assert.equal(agentSwapRequestV2('swap my collateral'), null);
@@ -733,7 +748,7 @@ describe('the Agent', () => {
   it('renders the prompts in the reader’s language and orbs that name the stage under way', () => {
     const html = renderToStaticMarkup(<StillAgent model={{ sky: skyStateV1({ now: WEDNESDAY }), report: null, dividends: null, reading: true, signedIn: true, russian: true }} />);
     assert.match(html, /Сколько я могу взять без продажи\?/);
-    assert.match(html, /Что будет при падении NVDA на 30%\?/);
+    assert.match(html, /Купи золото \(PAXG\) на \$10/);
     assert.match(html, /data-phase="evidence"/);
     assert.match(html, /Читаю ваш кошелёк на Base/);
     const computing = renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'computing', summary: 'NVIDIA −30%' }} russian={false} />);

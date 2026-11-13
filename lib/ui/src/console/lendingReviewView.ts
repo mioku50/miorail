@@ -72,14 +72,22 @@ function stressDollarsV1(cents: string): string {
   return `$${(value / hundred).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${(value % hundred).toString().padStart(2, '0')}`;
 }
 
-/** How far the collateral can fall at once before liquidation can start, and at what price. */
-export function lendingStressMarginTextV1(facts: Pick<LendingFactsWireV1, 'collateralSymbol' | 'venue'>, stress: LendingStressWireV1): string {
-  const margin = `${Math.floor(stress.marginTenths / 10)}.${stress.marginTenths % 10}%`;
-  if (stress.scope === 'all_collateral') return `Liquidation can start only after all your collateral here falls more than ${margin} together.`;
-  const price = stress.liquidationPriceCents !== null && stress.priceCents !== null
-    ? `: below ${stressDollarsV1(stress.liquidationPriceCents)} per ${facts.collateralSymbol} (now ${stressDollarsV1(stress.priceCents)}, on the price ${facts.venue === 'aave-v4' ? 'Aave' : 'Morpho'} reads)`
-    : '';
-  return `Liquidation can start only after ${facts.collateralSymbol} falls more than ${margin} at once${price}.`;
+/** How far the collateral can fall at once before liquidation can start: the block's one large figure. */
+export function lendingStressFigureV1(stress: LendingStressWireV1): string {
+  return `${Math.floor(stress.marginTenths / 10)}.${stress.marginTenths % 10}%`;
+}
+
+/** What that figure is, said beside it. */
+export function lendingStressFigureLabelV1(facts: Pick<LendingFactsWireV1, 'collateralSymbol'>, stress: LendingStressWireV1): string {
+  return stress.scope === 'all_collateral'
+    ? 'All your collateral here can fall this much together before liquidation can start.'
+    : `${facts.collateralSymbol} can fall this much at once before liquidation can start.`;
+}
+
+/** One collateral: the price below which liquidation can start, beside the price the venue reads now. */
+export function lendingStressPriceTextV1(facts: Pick<LendingFactsWireV1, 'collateralSymbol' | 'venue'>, stress: LendingStressWireV1): string | null {
+  if (stress.scope !== 'collateral' || stress.liquidationPriceCents === null || stress.priceCents === null) return null;
+  return `The line is ${stressDollarsV1(stress.liquidationPriceCents)} per ${facts.collateralSymbol}; it is ${stressDollarsV1(stress.priceCents)} now, on the price ${facts.venue === 'aave-v4' ? 'Aave' : 'Morpho'} reads.`;
 }
 
 /** Why a fall can come at once, and what Still does about it. */

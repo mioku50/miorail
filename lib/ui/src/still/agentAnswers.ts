@@ -163,7 +163,8 @@ export function agentRouteV2(question: string): { route: AgentRouteV2; topic: Ag
 export const AGENT_PROMPTS_V1: ReadonlyArray<{ en: string; ru: string }> = [
   { en: 'How much can I spend without selling?', ru: 'Сколько я могу взять без продажи?' },
   { en: 'How safe is my loan?', ru: 'Насколько безопасен мой займ?' },
-  { en: 'What happens if NVDA drops 30%?', ru: 'Что будет при падении NVDA на 30%?' },
+  // Gold in Swap AI (2026-11-12); the operator asked for it here, in place of NVDA −30% (2026-11-13).
+  { en: 'Buy gold (PAXG) for $10', ru: 'Купи золото (PAXG) на $10' },
   { en: 'Why did my borrowing limit decrease?', ru: 'Почему моя сумма займа уменьшилась?' },
   { en: 'What if I repay $100 of my loan?', ru: 'Что будет, если погасить $100 долга?' },
   { en: 'When do weekend limits start?', ru: 'Когда начинаются выходные лимиты?' },
@@ -173,8 +174,8 @@ export const AGENT_PROMPTS_V1: ReadonlyArray<{ en: string; ru: string }> = [
 /** What the agent answers, said when a question is not one of them. */
 export function agentCapabilitiesV2(ru: boolean): string {
   return ru
-    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды. И готовлю перевод акции из кошелька на адрес 0x… или имя .base.eth: подписываете его вы.'
-    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends. I also prepare a transfer of a stock from your wallet to a 0x address or a .base.eth name, which you sign.';
+    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды. И готовлю обмен для Swap AI, например покупку золота (PAXG) за USDC, и перевод акции из кошелька на адрес 0x… или имя .base.eth: подписываете их вы.'
+    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends. I also prepare a swap for Swap AI, such as buying gold (PAXG) with USDC, and a transfer of a stock from your wallet to a 0x address or a .base.eth name, which you sign.';
 }
 
 function parseDollarCentsV2(question: string): bigint | null {

@@ -244,7 +244,9 @@ test('a calculation streams its stages from the server and says what it holds fi
     return route.fulfill({ contentType: 'application/x-ndjson', body: `${lines.map((line) => JSON.stringify(line)).join('\n')}\n` });
   });
   await page.goto('/agent');
-  await page.getByRole('button', { name: 'What happens if NVDA drops 30%?', exact: true }).click();
+  // Typed: the suggestion it was became gold (2026-11-13).
+  await page.getByLabel('A question about your money').fill('What happens if NVDA drops 30%?');
+  await page.getByRole('button', { name: 'Ask', exact: true }).click();
   const answer = page.locator('.still-bubble').last();
   await expect(answer).toContainText('health factor 2.09 → 1.46');
   await expect(answer.locator('.still-agent-mode-badge')).toHaveText('Calculated · Still engine');
