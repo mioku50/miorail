@@ -10,8 +10,9 @@ import { aaveV4PoststateAggregateAbiV1, buildAaveV4PoststateProbesV1 } from './a
 export const AAVE_TEST_WALLET = '0x1111111111111111111111111111111111111111' as Address;
 const RAY = BigInt(10) ** BigInt(27), WAD = BigInt(10) ** BigInt(18), ZERO = BigInt(0);
 const clone = <T>(value: T): T => structuredClone(value);
-export function aaveReadFixture(): StillAaveSnapshotV1 {
-  const u = universe(), s = snapshot({ ...EXAMPLE, wallet: { NVDAc: BigInt(100_000_000) }, pledged: { NVDAc: BigInt(100_000_000) }, aaveDebt: BigInt(10_000_000) });
+/** `alsoPledged`: other stocks this account already counts as collateral beside NVDAc. */
+export function aaveReadFixture(alsoPledged: Record<string, bigint> = {}): StillAaveSnapshotV1 {
+  const u = universe(), s = snapshot({ ...EXAMPLE, wallet: { NVDAc: BigInt(100_000_000) }, pledged: { NVDAc: BigInt(100_000_000), ...alsoPledged }, aaveDebt: BigInt(10_000_000) });
   s.balances.set(ADDRESSES.usdc.toLowerCase(), { ok: true, value: BigInt(1_000_000_000) });
   if (!u.aave.ok || !s.aave) throw Error('fixture');
   s.aave.account = { ok: true, value: { healthFactor: BigInt(5) * WAD, borrowCount: BigInt(1) } };
@@ -74,6 +75,8 @@ export interface AavePhaseFixture {
   priceChange?: boolean;
   /** B20 `isPaused(TRANSFER)` on the pledged stock; false unless set. */
   transfersPaused?: boolean;
+  /** Other stocks' tokens whose transfers answer paused (audit LA-2); `transfersPaused` is the chosen stock's. */
+  pausedTokens?: string[];
   /** The pledged stock does not answer `isPaused`: its optional getter fails. */
   pauseUnread?: boolean;
   /** The selected stock reserve lets a liquidator take shares (`receiveSharesEnabled`); false unless set. */
@@ -165,7 +168,8 @@ export function aavePoststateFixture(standing: StillAaveStandingV1, operation: '
         assetId: info!.hubAssetId, decimals: info!.decimals, collateralRisk: 100, flags: 0, dynamicConfigKey: info!.dynamicConfigKey }; break;
       case 'getReserveConfig': result = { collateralRisk: 100, paused: false, frozen: false, borrowable: source!.info.role.kind === 'usdc',
         receiveSharesEnabled: phase.receiveShares === true && id === standing.collateralReserve?.reserveId }; break;
-      case 'isPaused': result = phase.transfersPaused === true; break;
+      case 'isPaused': result = to.toLowerCase() === standing.selectedStock?.token.toLowerCase()
+        ? phase.transfersPaused === true : (phase.pausedTokens ?? []).some((token) => token.toLowerCase() === to.toLowerCase()); break;
       case 'getSpokeConfig': result = { addCap: Number(standing.universe.aave.ok ? standing.universe.aave.noCap : ZERO), drawCap: Number(standing.universe.aave.ok ? standing.universe.aave.noCap : ZERO), riskPremiumThreshold: 0, active: true, halted: false }; break;
       case 'getDynamicReserveConfig': result = { collateralFactor: Number(source!.factorBps.ok ? source!.factorBps.value : ZERO), maxLiquidationBonus: 10500, liquidationFee: 1000 }; break;
       case 'getReservePrice': result = (source!.price.ok ? source!.price.value : ZERO) + (phase.priceChange ? BigInt(1) : ZERO); break;

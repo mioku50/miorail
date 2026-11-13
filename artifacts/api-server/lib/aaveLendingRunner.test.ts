@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { repayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
+import { repayAllBoundAtomicV1, repayAllMinimumAtomicV1 } from '@mioagent/still-engine/repay';
 import { usdcWordsV1 } from './repayWords.js';
 import { describe, it } from 'node:test';
 import { stableHashV1 } from '@mioagent/route-domain';
@@ -14,8 +14,9 @@ import { computeMirror } from '@mioagent/still-engine';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 
 const ZERO = BigInt(0), NOW = new Date('2026-10-21T15:00:00Z');
-async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body: SimulationProviderResponseV1) => void, patch?: Parameters<typeof aavePoststateFixture>[3]) {
-  const s = await aaveStandingFixture(operation), amount = BigInt(4_000_000);
+async function harness(operation: 'borrow' | 'repay' = 'borrow', change?: (body: SimulationProviderResponseV1) => void, patch?: Parameters<typeof aavePoststateFixture>[3],
+  read?: ReturnType<typeof aaveReadFixture>) {
+  const s = await aaveStandingFixture(operation, read), amount = BigInt(4_000_000);
   const q: LendingQuestionV1 = operation === 'borrow'
     ? { operation, collateralTokenAddress: s.selectedStock!.token.toLowerCase(), borrowAssets: amount.toString(), collateralSupplyAssets: s.collateralSupplyAssets.toString() }
     : { operation, collateralTokenAddress: s.selectedStock!.token.toLowerCase(), amountMode: 'assets', repayAssets: amount.toString(), maximumAssets: amount.toString() };
@@ -297,11 +298,15 @@ describe('Aave runner: repay all, then take the stock back', () => {
     // Audit LEND-2 (2026-11-10): Aave takes the smaller of the debt and the bound when the repayment lands, so
     // a maximum at the debt itself leaves the interest since the read owing. The least bound is named.
     const least = repayAllBoundAtomicV1(h.s.debtAssets);
-    for (const maximum of [h.s.debtAssets, least - 1n]) {
+    // What is refused is a bound the debt has nearly reached (audit LA-1): the debt and room until landing.
+    const minimum = repayAllMinimumAtomicV1(h.s.debtAssets);
+    assert.ok(minimum > h.s.debtAssets && minimum < least);
+    for (const maximum of [h.s.debtAssets, minimum - 1n]) {
       const tight = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: maximum.toString() } }, h.deps);
       assert.equal(tight.state, 'refused');
       if (tight.state === 'refused') {
         assert.equal(tight.refusal, 'repay_maximum_exceeded');
+        // The page's own bound is what the person is told to use.
         assert.ok(tight.detail.includes(`Set the maximum to at least ${usdcWordsV1(least)}; what is not needed stays in your wallet.`), tight.detail);
         assert.doesNotMatch(tight.detail, /at least the debt/);
       }
@@ -310,6 +315,15 @@ describe('Aave runner: repay all, then take the stock back', () => {
     const roomy = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: least.toString() } }, h.deps);
     assert.notEqual(roomy.state === 'refused' ? roomy.refusal : null, 'repay_maximum_exceeded');
     assert.equal(h.simulations(), 1);
+    // Audit LA-1 (2026-11-14): the page's bound, read a moment earlier, after the debt crossed a cent since. It was
+    // refused as below a bound rounded up again at the server's reading; it keeps almost all of its room, and goes.
+    // The page read the debt on a cent; a second later the server reads one base unit more.
+    const pageBound = repayAllBoundAtomicV1(h.s.debtAssets), later = h.s.debtAssets + 1n;
+    assert.ok(pageBound < repayAllBoundAtomicV1(later), 'the debt crossed a cent between the page and the review');
+    const raced = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: pageBound.toString() } },
+      { ...h.deps, read: async () => ({ state: 'read' as const, standing: { ...h.s, debtAssets: later } }) });
+    assert.notEqual(raced.state === 'refused' ? raced.refusal : null, 'repay_maximum_exceeded');
+    assert.equal(h.simulations(), 2, 'it went on to be simulated');
     const short = { ...h.s, walletUsdcAssets: h.s.debtAssets - 3n };
     const funding = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, { ...h.deps, read: async () => ({ state: 'read' as const, standing: short }) });
     assert.equal(funding.state, 'refused');
@@ -317,7 +331,7 @@ describe('Aave runner: repay all, then take the stock back', () => {
       assert.equal(funding.refusal, 'aave_funding_insufficient');
       assert.match(funding.detail, /^This wallet holds [\d.]+ USDC, less than your maximum of 20 USDC\. The debt is [\d.]+ USDC, 0\.000003 USDC more than the wallet holds/);
     }
-    assert.equal(h.simulations(), 1);
+    assert.equal(h.simulations(), 2);
   });
   async function returning(debt = true, change?: (body: SimulationProviderResponseV1) => void, delivery?: 'sequential') {
     const s = await aaveStandingFixture('repay', debt ? aaveReadFixture() : aaveRepaidReadFixture());
@@ -425,6 +439,26 @@ describe('Aave runner: what a fall at once and a paused stock would do to a new 
       assert.match(r.detail, /transfers are paused onchain \(Base block [\d,]+\)\. Still opens no new loan against it/);
       assert.match(r.detail, /Repaying works\.$/);
     }
+  });
+  // Audit LA-2 (2026-11-14): only the chosen stock's pause was read, while Still's limit counts every stock the
+  // account has enabled. A loan chosen against NVDAc stood mostly on AAPLc, paused and liquidable.
+  it('refuses a new loan on an account whose limit also counts a stock whose transfers are paused', async () => {
+    const aapl = STOCKS.find(stock => stock.id === 'AAPLc')!.token;
+    const read = () => aaveReadFixture({ AAPLc: BigInt(100_000_000) });
+    const paused = await harness('borrow', undefined, phase => { phase.pausedTokens = [aapl]; }, read());
+    const r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: paused.q }, paused.deps);
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') {
+      assert.equal(r.refusal, 'collateral_transfers_paused');
+      assert.match(r.detail, /^AAPLc is paused onchain \(Base block [\d,]+\), and this Aave account counts it as collateral beside NVDAc\. Still opens no new loan on it while it is/);
+      assert.match(r.detail, /Repaying works\.$/);
+    }
+    // The same account with nothing paused is reviewed, and a repayment is never stopped by a pause.
+    const open = await harness('borrow', undefined, undefined, read());
+    assert.equal((await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: open.q }, open.deps)).state, 'ready');
+    const repay = await harness('repay', undefined, phase => { phase.pausedTokens = [aapl]; }, read());
+    const repaid = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: repay.q }, repay.deps);
+    assert.equal(repaid.state, 'ready', repaid.state === 'refused' ? repaid.detail : '');
   });
   it('a stock that does not answer leaves the pause unread, and the loan is still reviewed', async () => {
     const { r } = await borrow(phase => { phase.pauseUnread = true; });

@@ -23,3 +23,19 @@ export function repayAllBoundAtomicV1(debtAtomic: bigint | string): bigint {
   const perMille = upToCent((debt + BigInt(999)) / BigInt(1_000));
   return upToCent(debt) + (perMille > CENT ? perMille : CENT);
 }
+
+/**
+ * USDC base units: the least bound the server takes for an Aave Repay all at the debt it reads (audit LA-1,
+ * 2026-11-14). The debt itself and room for the interest until the repayment lands: a hundredth of a percent
+ * of it, or one base unit, which is close to an hour at a hundred percent a year.
+ *
+ * It was the page's own bound again, at the server's later reading, rounded up to the cent: a debt that
+ * crossed a cent between the page and the review was refused with almost all of the page's room still above
+ * it, and in steps after the allowance was already paid for. The page's bound (above) is always this or more:
+ * the person is still told to use it, and the server refuses only a bound the debt has nearly reached.
+ */
+export function repayAllMinimumAtomicV1(debtAtomic: bigint | string): bigint {
+  const debt = BigInt(debtAtomic);
+  const room = (debt + BigInt(9_999)) / BigInt(10_000);
+  return debt + (room > BigInt(0) ? room : BigInt(1));
+}

@@ -153,6 +153,15 @@ export function morphoLendingStressV1(input: {
 }
 
 /** Said when a new loan is refused because its collateral cannot move. */
+/** Another stock the Aave account counts as collateral is paused (audit LA-2): the new loan would stand on it. */
+export function otherCollateralPausedWordsV1(input: { symbols: readonly string[]; chosen: string; blockNumber: number }): string {
+  const named = input.symbols.length === 1 ? input.symbols[0]! : `${input.symbols.slice(0, -1).join(', ')} and ${input.symbols.at(-1)}`;
+  const verb = input.symbols.length === 1 ? 'is' : 'are';
+  return `${named} ${verb} paused onchain (Base block ${input.blockNumber.toLocaleString('en-US')}), and this Aave account counts ${input.symbols.length === 1 ? 'it' : 'them'} ` +
+    `as collateral beside ${input.chosen}. Still opens no new loan on it while ${input.symbols.length === 1 ? 'it is' : 'they are'}: the loan would stand on a stock that could not be ` +
+    `taken back, and Aave could still liquidate it. Repaying works.`;
+}
+
 export function collateralTransfersPausedWordsV1(input: { symbol: string; venue: 'aave-v4' | 'morpho'; blockNumber: number }): string {
   return `${input.symbol} transfers are paused onchain (Base block ${input.blockNumber.toLocaleString('en-US')}). Still opens no new loan against it while they are: ` +
     `${input.symbol} could not be taken back${input.venue === 'aave-v4' ? ', and Aave could still liquidate the loan' : ''}. Repaying works.`;

@@ -61,6 +61,9 @@ export interface AaveV4MeasuredPhaseV1 {
   usdcSpokeOwedAssets: bigint;
   /** A borrow: B20 `isPaused(TRANSFER)` for the stock it pledges. Null when unread, and for a repayment. */
   selectedTransfersPaused: boolean | null;
+  /** The other stocks this account counts as collateral whose transfers answered paused (audit LA-2): the
+   * limit is made of them too. One that did not answer is not in it. */
+  otherPausedCollateral: string[];
   walletStocks: Map<string, bigint>;
   reserves: Map<number, Reserve>;
   drawnIndex: bigint;
@@ -113,6 +116,10 @@ function getters(standing: StillAaveStandingV1, operation: 'borrow' | 'repay'): 
       const stock = STOCKS.find(s => same(s.token, r.underlying));
       if (stock) rows.push({ id: `${prefix}_registry`, to: ADDRESSES.coinbaseStockRegistry,
         data: `0xd4197e82${stock.token.slice(2).toLowerCase().padStart(64, '0')}` });
+      // Every other stock the limit counts can be paused too, and a new loan stands on it as much as on the
+      // one chosen (audit LA-2, 2026-11-14: only the chosen one was read).
+      if (stock && r.reserveId !== standing.collateralReserve!.reserveId) rows.push({ id: `${prefix}_paused`, to: stock.token, abi: b20PauseAbiV1, functionName: 'isPaused',
+        data: encode({ abi: b20PauseAbiV1, functionName: 'isPaused', args: [0] }), optional: true });
     }
   }
   return rows;
@@ -196,6 +203,8 @@ function decodePhase(groups: readonly Getter[][], rows: readonly Hex[], standing
       walletCollateralAssets: standing.selectedStock ? take<bigint>(`wallet_${standing.selectedStock.id}`) : ZERO, healthFactorWad,
       usdcLiquidityAssets: values.has('loan_liquidity') ? take('loan_liquidity') : ZERO, usdcSpokeOwedAssets: values.has('loan_owed') ? take('loan_owed') : ZERO,
       selectedTransfersPaused: typeof values.get('selected_transfers_paused') === 'boolean' ? values.get('selected_transfers_paused') as boolean : null,
+      otherPausedCollateral: standing.reserves.flatMap(r => values.get(`reserve_${r.reserveId}_paused`) === true
+        ? STOCKS.filter(s => same(s.token, r.underlying)).map(s => s.id) : []),
       walletStocks: new Map(STOCKS.map(s => [s.id, take<bigint>(`wallet_${s.id}`)])), reserves,
       drawnIndex: take('drawn_index'), riskPremium: take('risk_premium'), allowance: take('allowance'),
       projectedSupplyShares: values.has('supply_shares') ? take('supply_shares') : null, account };

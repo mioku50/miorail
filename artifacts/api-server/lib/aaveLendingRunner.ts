@@ -7,9 +7,9 @@ import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4B
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
-import { repayAllBoundAtomicV1 } from '@mioagent/still-engine/repay';
+import { repayAllBoundAtomicV1, repayAllMinimumAtomicV1 } from '@mioagent/still-engine/repay';
 import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
-import { aaveLendingStressV1, collateralTransfersPausedWordsV1 } from './lendingStress.js';
+import { aaveLendingStressV1, collateralTransfersPausedWordsV1, otherCollateralPausedWordsV1 } from './lendingStress.js';
 
 export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
@@ -72,15 +72,19 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   if (q.operation === 'borrow' && (!s.capacity || ask > s.capacity.availableAssets)) return fail('aave_over_still_limit', 'The requested loan exceeds the measured Still allowance for this exact collateral choice.');
   // Aave takes the smaller of the debt and the bound when a repayment lands. A bound with no room above the
   // debt read leaves the interest since owing, so Repay all is asked with room (audit LEND-2, 2026-11-10).
-  const repayAllMinimum = q.operation === 'repay' && q.amountMode === 'all' && s.debtAssets > 0n ? repayAllBoundAtomicV1(s.debtAssets) : null;
+  // What is refused is a bound the debt has nearly reached: the debt and the room until landing (audit LA-1,
+  // 2026-11-14). The page's own bound is what the refusal names, as the page does.
+  const repayAll = q.operation === 'repay' && q.amountMode === 'all' && s.debtAssets > 0n;
+  const repayAllMinimum = repayAll ? repayAllMinimumAtomicV1(s.debtAssets) : null;
+  const repayAllAdvised = repayAll ? repayAllBoundAtomicV1(s.debtAssets) : null;
   if (q.operation === 'repay') {
     if (returning && s.existingSuppliedAssets === 0n) return fail('nothing_to_return', `No ${s.selectedStock.id} is deposited in this Aave Spoke at the reading block, so there is nothing to take back.`);
     if (returning && s.snapshot.aave?.reserves.some(r => r.info.role.kind !== 'usdc' && (!r.status.ok || r.status.value.borrowing))) {
       return fail('aave_other_debt_open', 'Another asset is borrowed in this Aave account, so a stock is not taken back here. Only a USDC loan is repaid and closed by Still.');
     }
     if (s.debtAssets === 0n && !returning) return fail('nothing_to_repay', 'No USDC debt was recorded in this Aave Spoke at the reading block.');
-    if (repayAllMinimum !== null && ask < repayAllMinimum) {
-      return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt: s.debtAssets, maximum: ask, wallet: s.walletUsdcAssets, minimum: repayAllMinimum }));
+    if (repayAllMinimum !== null && repayAllAdvised !== null && ask < repayAllMinimum) {
+      return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt: s.debtAssets, maximum: ask, wallet: s.walletUsdcAssets, minimum: repayAllAdvised }));
     }
     if (q.amountMode === 'assets' && ask > s.debtAssets) return fail('repay_exceeds_debt', 'The exact partial repayment exceeds the recorded debt. Choose full repayment with an explicit maximum instead.');
     if (ask > BigInt(q.maximumAssets)) return fail('repay_maximum_exceeded', 'The chosen repayment exceeds the explicit USDC budget.');
@@ -92,7 +96,7 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   // Said here in numbers; the plan below refuses the same thing in a sentence.
   if (q.operation === 'repay' && repayAssets > s.walletUsdcAssets) {
     return fail('aave_funding_insufficient', repayWalletBelowMaximumWordsV1({ debt: s.debtAssets, maximum: repayAssets, wallet: s.walletUsdcAssets,
-      ...(repayAllMinimum === null ? {} : { minimum: repayAllMinimum }) }));
+      ...(repayAllAdvised === null ? {} : { minimum: repayAllAdvised }) }));
   }
   let allowanceAssets = 0n;
   if (sequential && ((q.operation === 'repay' && repayAssets > 0n) || supply > 0n)) {
@@ -162,6 +166,11 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   // take the deposit inside the Spoke (2026-11-13). Repaying and taking back are never stopped here.
   if (q.operation === 'borrow' && measured.after.selectedTransfersPaused === true) {
     return fail('collateral_transfers_paused', collateralTransfersPausedWordsV1({ symbol: s.selectedStock.id, venue: 'aave-v4', blockNumber: answer.response.blockNumber }));
+  }
+  // Nor against an account whose limit counts another stock that cannot move (audit LA-2, 2026-11-14).
+  const otherPaused = [...new Set([...measured.before.otherPausedCollateral, ...measured.after.otherPausedCollateral])];
+  if (q.operation === 'borrow' && otherPaused.length > 0) {
+    return fail('collateral_transfers_paused', otherCollateralPausedWordsV1({ symbols: otherPaused, chosen: s.selectedStock.id, blockNumber: answer.response.blockNumber }));
   }
   const stress = q.operation === 'borrow' ? aaveLendingStressV1({
     healthAfterWad: healthAfterWad === null ? null : BigInt(healthAfterWad),
