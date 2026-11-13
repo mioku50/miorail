@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { promises as fs } from 'node:fs';
-import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
+import { REVIEWED_UNIVERSE_LIMIT_V1, CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { assembleCashExitLadderV1 } from '@mioagent/rwa-cash-exit';
 import { companyDisplayNameV1 } from '@mioagent/rwa-market-reality';
 import { isReopenShareCodeV1 } from '@mioagent/route-storage';
@@ -112,7 +112,7 @@ export const stockPagesRuntime = {
    * no other issuer, so a page head must not name a company they do not list. */
   stocks: async (): Promise<StockPageEntryV1[]> => {
     const index = await publicStocksCachesV1.index.read('coinbase_b20|500', () =>
-      readMarketRealityIndexV1({ limit: 500, scope: 'coinbase_b20' }),
+      readMarketRealityIndexV1({ limit: REVIEWED_UNIVERSE_LIMIT_V1, scope: 'coinbase_b20' }),
     );
     return index.entries
       .filter((entry) => entry.assetClass === 'equity' && entry.displaySymbol)

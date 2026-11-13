@@ -21,9 +21,18 @@ export const COINBASE_TOKENIZED_STOCKS_URL_V1 = 'https://api.coinbase.com/v1/tok
 const ICON_URL_SHAPE_V1 = /^https:\/\/metadata\.coinbase\.com\/equity_icons\/[0-9a-f]{64}\.png$/;
 const ADDRESS_SHAPE_V1 = /^0x[0-9a-f]{40}$/;
 const PNG_SIGNATURE_V1 = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-/** The API answers in pages of 100 since 2026-10-12 (`next_page_token`, sent
- * back as `page_token`); ten pages is twice the 500 rows the parser keeps. */
-const MAX_PAGES_V1 = 10;
+/** The API answers in pages since 2026-10-12 (`next_page_token`, sent back as
+ * `page_token`), up to 500 a page when asked, which the reviewed ingest asks too
+ * (lib/rwa-official/src/coinbaseStocks.ts). 348 tokens came as one page on 2026-11-14. */
+const PAGE_SIZE_V1 = 500;
+/** 5,000 tokens even at the default page of 100: the ingest's own bound (audit BASE-3, 2026-11-14). */
+const MAX_PAGES_V1 = 50;
+function pageUrlV1(pageToken: string | null): string {
+  const url = new URL(COINBASE_TOKENIZED_STOCKS_URL_V1);
+  url.searchParams.set('page_size', String(PAGE_SIZE_V1));
+  if (pageToken !== null) url.searchParams.set('page_token', pageToken);
+  return url.toString();
+}
 /** Coinbase's icons are about 21 KB; a quarter of a megabyte is headroom. */
 export const STOCK_ICON_MAX_BYTES_V1 = 256 * 1024;
 
@@ -40,7 +49,8 @@ export function parseCoinbaseStockMetaV1(body: unknown): Map<string, CoinbaseSto
   const rows = new Map<string, CoinbaseStockMetaV1>();
   const tokens = (body as { tokens?: unknown } | null)?.tokens;
   if (!Array.isArray(tokens)) return rows;
-  for (const raw of tokens.slice(0, 500)) {
+  // Every row: a list longer than one page is the list, not a reason to drop its tail (audit BASE-3).
+  for (const raw of tokens) {
     if (!raw || typeof raw !== 'object') continue;
     const row = raw as Record<string, unknown>;
     const tokenAddress = typeof row.contract_address === 'string' ? row.contract_address.toLowerCase() : '';
@@ -85,9 +95,7 @@ export function createCoinbaseStockMetaCacheV1(options: CoinbaseStockMetaCacheOp
       for (let page = 0; ; page += 1) {
         if (page === MAX_PAGES_V1) throw new Error('coinbase_stocks_too_many_pages');
         const response = await partnerFetch(
-          next === null
-            ? COINBASE_TOKENIZED_STOCKS_URL_V1
-            : `${COINBASE_TOKENIZED_STOCKS_URL_V1}?page_token=${encodeURIComponent(next)}`,
+          pageUrlV1(next),
           { headers: { accept: 'application/json' } },
           { timeoutMs: 8_000, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) },
         );

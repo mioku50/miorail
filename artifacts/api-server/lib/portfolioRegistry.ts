@@ -1,5 +1,5 @@
 import { client } from '@mioagent/db';
-import { createDatabaseOfficialAssetRepository, type OfficialAssetIdentityV1 } from '@mioagent/route-storage';
+import { REVIEWED_UNIVERSE_LIMIT_V1, createDatabaseOfficialAssetRepository, type OfficialAssetIdentityV1 } from '@mioagent/route-storage';
 import { logger } from '@mioagent/utils';
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ export const portfolioRegistryRuntime = {
   officialAssets: (): Promise<OfficialAssetIdentityV1[]> => {
     const now = portfolioRegistryRuntime.now();
     if (!cached || now - cached.at > REGISTRY_TTL_MS_V1) {
-      const assets = createDatabaseOfficialAssetRepository(client).officialAssets({ chainId: 8453, limit: 500 });
+      const assets = createDatabaseOfficialAssetRepository(client).officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
       cached = { at: now, assets };
       assets.catch(() => {
         if (cached?.assets === assets) cached = null;

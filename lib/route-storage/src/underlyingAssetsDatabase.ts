@@ -7,6 +7,7 @@ import {
   type UnderlyingAssetRepositoryV1,
   type UnderlyingAssetV1,
 } from './underlyingAssets.js';
+import { REVIEWED_UNIVERSE_LIMIT_V1 } from './officialAssets.js';
 import type { SqlTemplateExecutor } from './types.js';
 
 function rowToUnderlyingV1(row: Record<string, unknown>): UnderlyingAssetV1 {
@@ -276,7 +277,7 @@ export function createDatabaseUnderlyingAssetRepository(
                   representation_count DESC,
                   u.canonical_name ASC,
                   u.underlying_key ASC
-         LIMIT ${Math.max(1, Math.min(500, input.limit))}
+         LIMIT ${Math.max(1, Math.min(REVIEWED_UNIVERSE_LIMIT_V1, input.limit))}
       `) as Record<string, unknown>[];
       return rows.map((row) => {
         const byIssuer: Record<string, number> = {};

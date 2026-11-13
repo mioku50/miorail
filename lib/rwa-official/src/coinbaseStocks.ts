@@ -6,14 +6,36 @@ import {
   type OfficialSourceAssetV1,
 } from './sources.js';
 
-/** Ten pages of 100 is twice the 500 records the parser accepts. */
-export const COINBASE_STOCKS_MAX_PAGES_V1 = 10;
+/**
+ * The most records the list may hold before it is refused: a bound against a
+ * runaway answer, not the size of the list. The OpenAPI document sets none
+ * ("Values above 500 are capped at 500" is about ONE page); this was 500, the
+ * size of a page, while Coinbase listed 348 on 2026-11-13 and adds about ten
+ * a day, so near the end of November every pass would have refused the whole
+ * list (audit BASE-3, 2026-11-14).
+ */
+export const COINBASE_STOCKS_MAX_RECORDS_V1 = 5_000;
+/** Coinbase's largest page, asked on every page: "Keep other request
+ * parameters unchanged between pages". 348 tokens came as one page on
+ * 2026-11-14; an answer that ignores it pages at 100, its default. */
+export const COINBASE_STOCKS_PAGE_SIZE_V1 = 500;
+/** Pages enough for the most records even at the default size of 100. */
+export const COINBASE_STOCKS_MAX_PAGES_V1 = COINBASE_STOCKS_MAX_RECORDS_V1 / 100;
+
+/** The list's URL for one page: Coinbase's largest page size, and the token of the page before. */
+export function coinbaseStocksPageUrlV1(base: string, pageToken: string | null): string {
+  const url = new URL(base);
+  url.searchParams.set('page_size', String(COINBASE_STOCKS_PAGE_SIZE_V1));
+  if (pageToken !== null) url.searchParams.set('page_token', pageToken);
+  return url.toString();
+}
 
 /**
  * Every page of the issuer's list, handed to the parser as one document.
  *
  * Coinbase began answering in pages of 100 on 2026-10-12: `tokens` plus a
- * `next_page_token`, sent back as `page_token`. A page that cannot be fetched
+ * `next_page_token`, sent back as `page_token`; `page_size` asks for up to
+ * 500 a page. A page that cannot be fetched
  * makes the whole read unreachable. A list that cannot be followed to its end
  * keeps its `next_page_token`, which the parser refuses. Either way the
  * previous complete snapshot stays, and no address is withdrawn because a
@@ -29,9 +51,7 @@ export async function readCoinbaseStocksApiV1(input: {
   const followed = new Set<string>();
   let next: string | null = null;
   for (let page = 1; page <= maxPages; page += 1) {
-    const fetched = await input.fetchPage(
-      next === null ? input.url : `${input.url}?page_token=${encodeURIComponent(next)}`,
-    );
+    const fetched = await input.fetchPage(coinbaseStocksPageUrlV1(input.url, next));
     if (!fetched.ok) {
       return page === 1 ? fetched : { ok: false, detail: `page ${page}: ${fetched.detail}` };
     }
@@ -73,8 +93,8 @@ export function parseCoinbaseStocksApiV1(body: string): OfficialParseResultV1 {
   } catch {
     return refuse('response is not JSON');
   }
-  // The API answers in pages since 2026-10-12, which its OpenAPI document does
-  // not say: `next_page_token` names the next one. A page is not the list.
+  // The API answers in pages since 2026-10-12 (its OpenAPI document has said so
+  // since): `next_page_token` names the next one. A page is not the list.
   // Read as the list, page one withdrew the 35 stocks on page two for a night,
   // so a document that says it continues is refused and nothing moves.
   // `readCoinbaseStocksApiV1` follows the pages and hands over one document.
@@ -93,9 +113,9 @@ export function parseCoinbaseStocksApiV1(body: string): OfficialParseResultV1 {
     !('tokens' in value) ||
     !Array.isArray(value.tokens) ||
     value.tokens.length === 0 ||
-    value.tokens.length > 500
+    value.tokens.length > COINBASE_STOCKS_MAX_RECORDS_V1
   ) {
-    return refuse('expected a nonempty tokens array of at most 500 records');
+    return refuse(`expected a nonempty tokens array of at most ${COINBASE_STOCKS_MAX_RECORDS_V1} records`);
   }
   const assets: OfficialSourceAssetV1[] = [];
   const seen = new Set<string>();

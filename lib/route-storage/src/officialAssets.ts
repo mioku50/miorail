@@ -1,3 +1,14 @@
+/**
+ * The most rows a read of the WHOLE reviewed universe returns: the official
+ * registry (officialAssets) and the list of underlyings (listUnderlyings).
+ * It was 500, the size of one page, and the universe grows toward it: Coinbase
+ * alone listed 348 tokens on 2026-11-13 and adds about ten a day (audit
+ * BASE-3, 2026-11-14), so a read of "all of it" would have dropped the tail of
+ * the alphabet without a word. A pass that fills it still refuses rather than
+ * measure a cut subset (scripts/rwaCashExitCorpus.ts).
+ */
+export const REVIEWED_UNIVERSE_LIMIT_V1 = 5_000;
+
 import { z } from 'zod';
 
 import { RouteStorageIntegrityError } from './types.js';
@@ -464,7 +475,7 @@ export interface OfficialAssetRepositoryV1 {
     tokenAddress: string;
   }): Promise<OfficialAssetIdentityV1 | null>;
 
-  /** The official universe, bounded. Ordered by ticker then address so two
+  /** The official universe, bounded by REVIEWED_UNIVERSE_LIMIT_V1. Ordered by ticker then address so two
    * contracts sharing a ticker stay adjacent instead of interleaved. */
   officialAssets(input: {
     chainId: number;

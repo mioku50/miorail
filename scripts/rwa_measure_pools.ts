@@ -35,6 +35,7 @@ import {
 import { client, closeDb } from '@mioagent/db';
 import { createMarketTailSourceV1 } from '@mioagent/market-tail';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseMarketPoolReadingRepository,
   createDatabaseMarketTailRepository,
   createDatabasePoolYieldReadingRepository,
@@ -108,7 +109,7 @@ async function main(): Promise<void> {
   // The corpus is the REVIEWED representations, never every token that ever
   // appeared in a pool. A pool holding a token nobody reviewed has nothing to
   // be rendered under.
-  const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: 500 });
+  const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
   const reviewed = new Set<string>();
   for (const row of underlyingRows) {
     const bound = await underlyings.representationsOf({

@@ -12,6 +12,7 @@ import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter, readAerodromeClSpotV1 } from '@mioagent/swap-adapters';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
 
   createDatabaseMarketPoolReadingRepository,
   createDatabaseOfficialAssetRepository,
@@ -709,7 +710,7 @@ export async function readMarketRealityIndexV1(input: {
       now: rwaMarketRealityRuntime.now,
       currentOfficialAddresses: async () =>
         new Set(
-          (await rwaMarketRealityRuntime.official().officialAssets({ chainId: 8453, limit: 500 })).map(
+          (await rwaMarketRealityRuntime.official().officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 })).map(
             (identity) => identity.tokenAddress.toLowerCase(),
           ),
         ),

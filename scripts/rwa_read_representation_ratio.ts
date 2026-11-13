@@ -38,6 +38,7 @@ import {
 import { client, closeDb } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseDividendRecordSupplyRepositoryV1,
   createDatabaseIssuerRepresentationRepository,
@@ -129,7 +130,7 @@ async function main(): Promise<void> {
   // token would turn one issuer's convention into another issuer's evidence.
   const coinbaseB20 = (await official.officialAssets({
     chainId: CHAIN_ID_V1,
-    limit: 500,
+    limit: REVIEWED_UNIVERSE_LIMIT_V1,
   })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
   // Every issuer gets its OWN adapter. Reading `multiplier()` off a dShare
   // would be a guess, and a guess of exactly that shape was measured to
@@ -139,7 +140,7 @@ async function main(): Promise<void> {
     issuerId: 'dinari',
     limit: 500,
   });
-  const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: 500 });
+  const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
   const reviewedBindings = (
     await Promise.all(
       underlyingRows.map((row) =>

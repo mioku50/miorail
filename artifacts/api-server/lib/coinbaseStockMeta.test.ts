@@ -35,7 +35,7 @@ test('a failed read keeps the last good answer and waits before asking again', a
   const fetchImpl = (async (url: unknown) => {
     calls += 1;
     if (fail) throw new Error('offline');
-    assert.equal(String(url), 'https://api.coinbase.com/v1/tokenized-stocks');
+    assert.equal(String(url), 'https://api.coinbase.com/v1/tokenized-stocks?page_size=500');
     return new Response(JSON.stringify(body([nvidia])), { status: 200 });
   }) as typeof fetch;
   const cache = createCoinbaseStockMetaCacheV1({ fetchImpl, now: () => clock, ttlMs: 1_000, retryMs: 100 });
@@ -66,7 +66,7 @@ test('an icon is fetched once, only from the URL Coinbase gave, and only if it i
   const cache = createCoinbaseStockMetaCacheV1({ fetchImpl, now: () => 0 });
   assert.deepEqual(await cache.icon(NVDAC), PNG);
   assert.deepEqual(await cache.icon(NVDAC), PNG);
-  assert.deepEqual(asked, ['https://api.coinbase.com/v1/tokenized-stocks', ICON]);
+  assert.deepEqual(asked, ['https://api.coinbase.com/v1/tokenized-stocks?page_size=500', ICON]);
   assert.equal(await cache.icon(`0x${'9'.repeat(40)}`), null, 'an address Coinbase does not list has no icon');
 
   const other = createCoinbaseStockMetaCacheV1({ fetchImpl, now: () => 0 });
@@ -84,10 +84,10 @@ test('every page is read, and a page that fails keeps the last full answer', asy
   let clock = 0;
   const fetchImpl = (async (url: unknown) => {
     asked.push(String(url));
-    if (String(url) === 'https://api.coinbase.com/v1/tokenized-stocks') {
+    if (String(url) === 'https://api.coinbase.com/v1/tokenized-stocks?page_size=500') {
       return new Response(JSON.stringify({ tokens: [nvidia], next_page_token: 'MHhi/=' }));
     }
-    assert.equal(String(url), 'https://api.coinbase.com/v1/tokenized-stocks?page_token=MHhi%2F%3D');
+    assert.equal(String(url), 'https://api.coinbase.com/v1/tokenized-stocks?page_size=500&page_token=MHhi%2F%3D');
     if (pageTwoFails) return new Response('{}', { status: 503 });
     return new Response(JSON.stringify(body([amazon])));
   }) as typeof fetch;
@@ -97,4 +97,14 @@ test('every page is read, and a page that fails keeps the last full answer', asy
   clock = 1_001;
   pageTwoFails = true;
   assert.deepEqual([...(await cache.read()).keys()], [NVDAC, AMZNC], 'page one alone does not replace the list');
+});
+
+// Audit BASE-3 (2026-11-14): rows after the 500th were dropped in silence, while Coinbase listed 348 on
+// 2026-11-13 and adds about ten a day: a list longer than one page is the list.
+test('every row of a long list is kept: the 501st stock has its name and icon too', () => {
+  const rows = parseCoinbaseStockMetaV1(body(Array.from({ length: 620 }, (_, index) => ({
+    ...nvidia, contract_address: `0xb200${index.toString(16).padStart(36, '0')}`, symbol: `T${index}c`,
+  }))));
+  assert.equal(rows.size, 620);
+  assert.equal(rows.get(`0xb200${(600).toString(16).padStart(36, '0')}`)?.symbol, 'T600c');
 });

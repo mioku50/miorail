@@ -1,6 +1,7 @@
 import { B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1, type B20ReaderV1 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
   RETIRED_OFFICIAL_SOURCES_V1,
 } from '@mioagent/route-storage';
@@ -174,7 +175,7 @@ function bestObservationV1(
  * 2026-10-10), so an update about NVDAc fell outside the page and was titled
  * with its address instead of its name.
  */
-export const OFFICIAL_UNIVERSE_LIMIT_V1 = 500;
+export const OFFICIAL_UNIVERSE_LIMIT_V1 = REVIEWED_UNIVERSE_LIMIT_V1;
 
 export function previewLadderFromRunV1(
   run: CashExitMeasurementRunV1 | null,

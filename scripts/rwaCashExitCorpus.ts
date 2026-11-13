@@ -12,6 +12,7 @@ import type {
   RepresentationSupplyRepositoryV1,
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
+import { REVIEWED_UNIVERSE_LIMIT_V1 } from '@mioagent/route-storage';
 
 const CHAIN_ID_V1 = 8453 as const;
 
@@ -19,7 +20,7 @@ const CHAIN_ID_V1 = 8453 as const;
  * The most rows one repository page returns: the official registry and the
  * underlying list both clamp there, so a pass asking for more gets this many.
  */
-export const CORPUS_PAGE_LIMIT_V1 = 500;
+export const CORPUS_PAGE_LIMIT_V1 = REVIEWED_UNIVERSE_LIMIT_V1;
 
 export type OfficialCorpusReaderV1 = Pick<OfficialAssetRepositoryV1, 'officialAssets'>;
 

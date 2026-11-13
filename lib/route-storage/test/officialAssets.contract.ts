@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   isOfficialV1,
   type OfficialAssetInputV1,
   type OfficialAssetRepositoryV1,
@@ -411,6 +412,24 @@ export function officialAssetContractV1(
         all.map((identity) => identity.listings[0].ticker),
         ['AAPLc', 'SNDKc'],
       );
+    });
+
+    // Audit BASE-3 (2026-11-14): every read of "the whole universe" asked for 500 and both repositories
+    // clamped there, while Coinbase alone listed 348 and adds about ten a day. Past 500, the tail of the
+    // alphabet would have read as no longer official, without a word.
+    test('a read of the whole universe is not cut at 500', async () => {
+      const { repository } = await open();
+      const assets = Array.from({ length: 620 }, (_, index) => assetFixtureV1({
+        ...API_ASSET,
+        tokenAddress: `0xb200${index.toString(16).padStart(36, '0')}`,
+        ticker: `T${index.toString().padStart(3, '0')}c`,
+        displayName: `Stock ${index}`,
+      }));
+      await repository.recordSnapshot({ snapshot: snapshotFixtureV1(API_SNAPSHOT), assets });
+      const universe = await repository.officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
+      assert.equal(universe.length, 620);
+      assert.equal(universe.at(-1)!.listings[0]!.ticker, 'T619c');
+      assert.equal((await repository.officialAssets({ chainId: 8453, limit: 600 })).length, 600, 'a smaller page is still a page');
     });
   });
 }

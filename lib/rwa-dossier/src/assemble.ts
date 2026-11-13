@@ -10,6 +10,7 @@ import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { assembleCashExitLadderV1, type CashExitLadderRungV1 } from '@mioagent/rwa-cash-exit';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
   isOfficialV1,
   type MarketTailRepositoryV1,
@@ -507,7 +508,7 @@ export async function assembleOfficialAssetDossierV1(
 
   const [discrepancies, officialUniverse, establishedUnderlying] = await Promise.all([
     deps.official.sourceDiscrepancies({ chainId: 8453 }),
-    deps.official.officialAssets({ chainId: 8453, limit: 500 }),
+    deps.official.officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 }),
     deps.underlying
       ? deps.underlying.underlyingOf({ chainId: 8453, tokenAddress })
       : Promise.resolve(null),

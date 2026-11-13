@@ -10,6 +10,7 @@
  */
 import { client, closeDb } from '@mioagent/db';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseOfficialAssetRepository,
   createDatabaseRwaSignalRepository,
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
   let coinbase: Array<{ tokenAddress: string; underlyingKey: string }> | null = null;
   const tokensOf = async (underlyingKey: string): Promise<string[]> => {
     if (!coinbase) {
-      const assets = (await official.officialAssets({ chainId: 8453, limit: 500 })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
+      const assets = (await official.officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
       coinbase = [];
       for (const asset of assets) {
         const found = await underlyings.underlyingOf({ chainId: 8453, tokenAddress: asset.tokenAddress });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { REVIEWED_UNIVERSE_LIMIT_V1 } from '@mioagent/route-storage';
 import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
@@ -124,7 +125,8 @@ describe('GET the official assets overview', () => {
     assert.deepEqual(seen, [
       { limit: 64, offset: 0 },
       { limit: 64, offset: 64 },
-      { limit: 64, offset: 500 },
+      // The offset is bounded by the whole universe, which is no longer one page of 500 (audit BASE-3).
+      { limit: 64, offset: REVIEWED_UNIVERSE_LIMIT_V1 },
       { limit: 64, offset: 0 },
     ]);
   });

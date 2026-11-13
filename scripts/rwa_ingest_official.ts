@@ -38,6 +38,7 @@ import {
 } from '@mioagent/rwa-official';
 import { BACKED_BTOKENS_SOURCE_URL_V1, fetchBackedBaseTokensV1 } from '@mioagent/rwa-issuer';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseOfficialAssetRepository,
   createDatabaseRwaSignalRepository,
   createDatabaseUnderlyingAssetRepository,
@@ -259,7 +260,7 @@ async function main(): Promise<void> {
     console.log(`  ${feedTable.feeds.length} published; not compared, the issuer API was not read this pass`);
   } else {
     const held = new Map(
-      (await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 })).map((identity) => [
+      (await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 })).map((identity) => [
         identity.tokenAddress,
         heldReferenceFeedV1(identity),
       ]),
@@ -413,7 +414,7 @@ async function main(): Promise<void> {
 
   if (!dry) {
     // A frozen snapshot must not be the only thing keeping an asset official.
-    const official = await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 });
+    const official = await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
     const orphaned = listedOnlyByRetiredSourcesV1(official);
     if (orphaned.length > 0) {
       console.error('\nLISTED ONLY BY A RETIRED SOURCE — no source still read lists these; a person decides');

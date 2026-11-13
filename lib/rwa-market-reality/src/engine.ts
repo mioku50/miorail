@@ -1,4 +1,5 @@
 import { stableHashV1 } from '@mioagent/route-domain';
+import { REVIEWED_UNIVERSE_LIMIT_V1 } from '@mioagent/route-storage';
 import type {
   CashExitMeasurementRunV1,
   CashExitQuoteLegV1,
@@ -685,7 +686,7 @@ export async function assembleMarketRealityIndexV1(
   // catalogue. Pull the bounded full reviewed corpus first so an `unknown` or
   // bond/fund row cannot consume a page slot ahead of a later equity. Asset
   // class comes from reviewed identity evidence; labels never select it.
-  const reviewedRows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: 500 });
+  const reviewedRows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
   const stockRows = reviewedRows.filter((row) => row.underlying.assetClass === 'equity');
   // The default scope, and why it is not a preference.
   //
@@ -748,7 +749,7 @@ export async function assembleMarketRealityIndexV1(
           // Stable: equal live counts keep the repository's order.
           .sort((left, right) => right.liveRepresentationCount - left.liveRepresentationCount)
       : stockRows;
-  const rows = scopedRows.slice(0, Math.max(1, Math.min(500, input.limit)));
+  const rows = scopedRows.slice(0, Math.max(1, Math.min(REVIEWED_UNIVERSE_LIMIT_V1, input.limit)));
   const entries = rows.map((row) => ({
     underlyingKey: row.underlying.underlyingKey,
     canonicalName: row.underlying.canonicalName,

@@ -1,5 +1,6 @@
 import {
   OFFICIAL_SOURCE_KINDS_V1,
+  REVIEWED_UNIVERSE_LIMIT_V1,
   assertOfficialAssetV1,
   assertOfficialSnapshotV1,
   assertSnapshotMayCarryAssetsV1,
@@ -174,7 +175,7 @@ export function createMemoryOfficialAssetRepository(): OfficialAssetRepositoryV1
           const byTicker = left.listings[0].ticker.localeCompare(right.listings[0].ticker);
           return byTicker !== 0 ? byTicker : left.tokenAddress.localeCompare(right.tokenAddress);
         })
-        .slice(0, Math.max(1, Math.min(500, input.limit)));
+        .slice(0, Math.max(1, Math.min(REVIEWED_UNIVERSE_LIMIT_V1, input.limit)));
     },
 
     async sourceDiscrepancies(input) {

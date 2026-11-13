@@ -1,6 +1,7 @@
 import { b20MultiplierStandingV1, decodeB20CorporateActionLogV1, type B20MultiplierEventV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseB20CorporateActionRepository,
   createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseDividendRecordSupplyRepositoryV1,
@@ -263,7 +264,7 @@ export const databaseDividendReadDepsV1: DividendReadDepsV1 = {
   async tokens() {
     const official = createDatabaseOfficialAssetRepository(client);
     const underlyings = createDatabaseUnderlyingAssetRepository(client);
-    const assets = (await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
+    const assets = (await official.officialAssets({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
     const rows = await Promise.all(
       assets.map(async (asset): Promise<DividendTokenIdentityV1 | null> => {
         const found = await underlyings.underlyingOf({ chainId: CHAIN_ID_V1, tokenAddress: asset.tokenAddress });

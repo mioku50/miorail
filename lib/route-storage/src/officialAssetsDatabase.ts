@@ -1,5 +1,6 @@
 import {
   OFFICIAL_SOURCE_KINDS_V1,
+  REVIEWED_UNIVERSE_LIMIT_V1,
   assertOfficialAssetV1,
   assertOfficialSnapshotV1,
   assertSnapshotMayCarryAssetsV1,
@@ -218,7 +219,7 @@ export function createDatabaseOfficialAssetRepository(
 
     async officialAssets(input) {
       const currentOnly = input.currentlyListedOnly !== false;
-      const limit = Math.max(1, Math.min(500, input.limit));
+      const limit = Math.max(1, Math.min(REVIEWED_UNIVERSE_LIMIT_V1, input.limit));
       // Two reads, because the limit counts ASSETS and a single query would
       // cut a token's second source off the end of the page.
       const addressRows = (await sql`
