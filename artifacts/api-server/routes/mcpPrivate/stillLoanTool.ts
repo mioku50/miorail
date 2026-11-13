@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SPEND_EMAIL_V1 } from '@mioagent/commerce-engine';
+import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { issueLendingDraftV1 } from '../../lib/lendingDraft.js';
@@ -124,7 +125,7 @@ export function stillPrepareLoanReviewV1(
 export const StillPreparePurchaseInputV1Schema = z.object({
   productId: z.string().regex(SPEND_ID_V1).describe('The Bitrefill product id, from still_find_spend.'),
   packageValue: z.string().min(1).max(80).describe('One package’s value exactly as still_spend_product lists it, such as "10GB, 30 Days" or "50".'),
-  email: z.string().max(254).regex(SPEND_EMAIL_V1)
+  email: z.string().max(254).regex(SPEND_EMAIL_V1).regex(SPEND_DELIVERY_EMAIL_V1)
     .describe('The email address the USER gave for Bitrefill’s receipt and order. Never guess one. It goes to Bitrefill and is not kept by Still.'),
   phone: z.string().min(1).max(32).optional()
     .describe('A phone top-up only: the number it goes to, as the USER gave it, in international format starting with the calling code still_spend_product lists. A top-up sent to a wrong number cannot be taken back.'),

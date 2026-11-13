@@ -7,7 +7,7 @@ import {
 } from './lendingReviewView';
 import { StillIconV1 } from '../still/icons';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
-import { STILL_SPEND_COMMISSION_NOTE_V1, spendConfirmByNoteV1 } from '../still/spendView';
+import { SPEND_DELIVERY_UNSHOWN_V1, STILL_SPEND_COMMISSION_NOTE_V1, spendConfirmByNoteV1 } from '../still/spendView';
 
 void React;
 export { formatLendingHealthRatioV1 };
@@ -80,7 +80,10 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const shareRoundingExtra = facts && !repay && facts.requestedAssets !== null && debtIncrease > BigInt(facts.requestedAssets);
   const knownState = model.execution?.state ?? (body.state === 'refused' ? body.executionState : null);
   const inSteps = body.state === 'ready' && body.delivery === 'sequential';
-  const blocked = Boolean(model.submissionLock || model.batchId || (knownState && knownState !== 'ready'));
+  // A purchase is signed only with where Bitrefill sends it on the screen: a delivery the page cannot read
+  // shows no sign button at all, rather than a review without it (audit SPEND-1, 2026-11-14).
+  const undelivered = body.state === 'ready' && Boolean(body.facts.payment) && !body.deliverTo;
+  const blocked = Boolean(model.submissionLock || model.batchId || (knownState && knownState !== 'ready')) || undelivered;
   // A loan in steps that went part way: what landed, the step Still has not seen, and the step after a stop.
   const standing = model.execution?.steps ?? null;
   const inPlace = standing ? standing.landed === 1 ? `Step 1 of ${standing.total} is in place on Base` : `Steps 1–${standing.landed} of ${standing.total} are in place on Base` : '';
@@ -196,6 +199,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           new terms, and this says so beside the button that accepts them. */}
       {body.state === 'ready' && model.onOpen && !blocked && model.termsChanged && model.walletError
         ? <p className="still-note" role="status"><strong>Nothing was sent.</strong> {model.walletError}</p> : null}
+      {undelivered ? <p className="still-warn" role="alert">{SPEND_DELIVERY_UNSHOWN_V1}</p> : null}
       {body.state === 'ready' && model.onOpen && !blocked ? <button type="button" className="still-btn" disabled={model.walletBusy} onClick={model.onOpen}>
         {model.walletBusy ? 'Waiting for your wallet…'
           : model.termsChanged ? (inSteps ? `Accept these terms and open step 1 of ${body.steps.length}` : 'Accept these terms and open your wallet')

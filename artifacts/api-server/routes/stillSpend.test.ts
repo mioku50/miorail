@@ -15,6 +15,7 @@ import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } f
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { createSpendOrderStoreV1, spendDeliveryMaskedV1, stillBitrefillAffiliateV1, stillBitrefillClientKindV1, stillBitrefillClientV1, stillSpendCommissionV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { StillPreparePurchaseInputV1Schema } from './mcpPrivate/stillLoanTool.js';
 import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
@@ -513,7 +514,7 @@ describe('six invoices an hour for one wallet', () => {
   });
 
   it('gives a quote back when Bitrefill’s own window here refused it before anything was asked', async () => {
-    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason: 'bitrefill_rate_limited' }) }) });
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason: 'bitrefill_rate_limited', local: true }) }) });
     for (let index = 0; index < 5; index++) {
       const answer = await request(app()).post('/api/still/spend/orders').send(ORDER);
       assert.deepEqual([answer.status, answer.body.error], [503, 'bitrefill_rate_limited']);
@@ -618,6 +619,49 @@ describe('Bitrefill’s two windows, with a part of each kept for buying', () =>
     assert.equal(mock.asked.length - before, 10);
   });
 
+  // Audit SPEND-2 (2026-11-14): reviews that pay (each one Bitrefill's own answer) by a few free wallets took
+  // all ten calls of the minute, and a buyer's invoice and a loan's next step were refused with them.
+  it('wallets reviewing their payments without pause cannot take the calls kept for buying and for a loan’s next step', async () => {
+    const mock = bitrefill();
+    let at = NOW.getTime();
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    const guest = createBitrefillGuestCheckoutV1({ fetchImpl: mock.fetchImpl, now: () => at });
+    // The worst case: no wallet limited by its own budget, so every review asks Bitrefill.
+    const flood = createSpendInvoiceReadsV1({ paymentPerMinute: 1_000 });
+    Object.assign(stillSpendRuntimeV1, { catalog: () => catalog, checkout: () => guest, invoiceReads: flood,
+      walletLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 1_000 }) });
+    Object.assign(rwaLendingRuntimeV1, { spendCheckout: () => guest, spendInvoiceReads: flood });
+    const mine: Record<string, string> = {};
+    for (const owner of [WALLET, OTHER]) mine[owner] = (await request(site(owner)).post('/api/still/spend/orders').send(ORDER)).body.order.orderId;
+    at += 60_001;
+    const before = mock.count('get-invoice-by-id');
+    for (let index = 0; index < 10; index++) for (const owner of [WALLET, OTHER]) await request(site(owner)).post(`/api/still/spend/orders/${mine[owner]}/wallet`);
+    // Eight of the twenty reached Bitrefill: the reviews' share of its ten.
+    assert.equal(mock.count('get-invoice-by-id') - before, 8);
+    // In that same minute a third wallet opens an invoice, and a loan already under way reads its own.
+    const third = await request(site(THIRD)).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(third.status, 200, JSON.stringify(third.body));
+    const order = orders.get({ tenantId: `eip155:8453:${THIRD}`, walletAddress: THIRD }, third.body.order.orderId)!;
+    assert.equal((await flood.step({ order, checkout: guest })).ok, true);
+    assert.deepEqual([mock.count('buy-products'), mock.count('get-invoice-by-id') - before], [3, 9]);
+  });
+
+  it('a quote is given back only when Still’s own share of the window refused it, never after an invoice was asked for', async () => {
+    // Bitrefill answered the quote and then refused the invoice: that quote was spent.
+    Object.assign(stillSpendRuntimeV1, { checkout: () => ({ ...checkout(), createInvoice: async () => ({ ok: false, reason: 'bitrefill_rate_limited' }) }) });
+    const spent = [];
+    for (let index = 0; index < 4; index++) spent.push((await request(app()).post('/api/still/spend/orders').send(ORDER)).body.error);
+    assert.deepEqual(spent, ['bitrefill_rate_limited', 'bitrefill_rate_limited', 'bitrefill_rate_limited', 'spend_attempts_limited']);
+    assert.equal(quotes.length, 3);
+    // A quote refused here, before Bitrefill was asked, is given back.
+    later();
+    Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }),
+      product: async (_id: string, options?: unknown) => { quotes.push(options); return { ok: false, reason: 'bitrefill_rate_limited', local: true }; } }) });
+    const unsent = [];
+    for (let index = 0; index < 4; index++) unsent.push((await request(app(OTHER)).post('/api/still/spend/orders').send(ORDER)).body.error);
+    assert.deepEqual(unsent, ['bitrefill_rate_limited', 'bitrefill_rate_limited', 'bitrefill_rate_limited', 'bitrefill_rate_limited']);
+  });
+
   it('with the page as it is, the same two wallets ask Bitrefill twice', async () => {
     const mock = bitrefill();
     const catalog = createBitrefillGuestCatalogV1({ fetchImpl: mock.fetchImpl });
@@ -665,6 +709,21 @@ describe('where the purchase goes, shown before it is paid', () => {
     assert.deepEqual(spendDeliveryMaskedV1({ email: 'buyer@example.com', phone: '+919876543210' }), { email: 'b…r@example.com', phone: '+…3210' });
     assert.deepEqual(spendDeliveryMaskedV1({ email: 'jo@example.com', phone: null }), { email: 'j…@example.com', phone: null });
     assert.deepEqual(spendDeliveryMaskedV1({ email: 'x@example.com', phone: null }), { email: 'x…@example.com', phone: null });
+  });
+});
+
+// Audit SPEND-1 (2026-11-14): the server took any address Bitrefill's pattern takes, and the review showed only
+// some of them; an invoice is opened only for an address the review can show in full.
+describe('an invoice is opened only for an email its review can show', () => {
+  it('an apostrophe is fine, a part before the @ longer than 64 is refused before Bitrefill is asked', async () => {
+    const shown = await request(app()).post('/api/still/spend/orders').send({ ...ORDER, email: "o'brien@example.com" });
+    assert.equal(shown.status, 200);
+    assert.deepEqual(shown.body.order.deliverTo, { email: "o'brien@example.com", phone: null });
+    const long = await request(app()).post('/api/still/spend/orders').send({ ...ORDER, email: `${'a'.repeat(65)}@example.com` });
+    assert.deepEqual([long.status, long.body.error], [400, 'spend_request_invalid']);
+    assert.equal(opened.length, 1, 'only the shown one reached Bitrefill');
+    assert.equal(StillPreparePurchaseInputV1Schema.shape.email.safeParse(`${'a'.repeat(65)}@example.com`).success, false);
+    assert.equal(StillPreparePurchaseInputV1Schema.shape.email.safeParse("o'brien@example.com").success, true);
   });
 });
 

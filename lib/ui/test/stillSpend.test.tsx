@@ -379,7 +379,7 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     facts: { payment, usdcBeforeAtomic: '2120000', usdcAfterAtomic: '120000', blockNumber: 53_470_000,
       warnings: ['Your wallet sends 2 USDC of its own to Bitrefill’s invoice address 0x3333…3333 for PUBG Mobile · 60 UC. No loan is taken.'] },
     calls: [{ to: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', value: '0', data: '0xa9059cbb' }], callsHash: `0x${'1'.repeat(64)}`, signingTermsHash: `0x${'2'.repeat(64)}`,
-    expiresAt: '2026-11-03T18:02:00.000Z', steps: [] };
+    expiresAt: '2026-11-03T18:02:00.000Z', steps: [], deliverTo: { email: 'buyer@example.com', phone: null } };
 
   it('says USDC exactly, compares the wallet’s USDC with a price to the unit, and sums a debt only when every one was read', () => {
     assert.deepEqual(['2000000', '2120000', '13250000', '1500001', '0'].map(spendUsdcTextV1), ['2.00 USDC', '2.12 USDC', '13.25 USDC', '1.500001 USDC', '0.00 USDC']);
@@ -397,7 +397,10 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
       { state: 'ready', price: '2.00 USDC', payTo: '0x3333…3333', before: '2.12 USDC', after: '0.12 USDC', block: 53_470_000, label: '60 UC' });
     assert.deepEqual(view.ready, { calls: ready.calls, callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
     // Audit MCP-3 (2026-11-10): where Bitrefill sends the purchase, as the open invoice holds it; none once it is forgotten.
-    assert.equal(view.deliverTo, null);
+    assert.deepEqual(view.deliverTo, { email: 'buyer@example.com', phone: null });
+    const { deliverTo: _held, ...forgotten } = ready;
+    void _held;
+    assert.equal(spendWalletViewV1(forgotten)!.deliverTo, null);
     assert.deepEqual(spendWalletViewV1({ ...ready, deliverTo: { email: 'buyer@example.com', phone: '+919876543210' } })!.deliverTo, { email: 'buyer@example.com', phone: '+919876543210' });
     assert.equal(spendWalletViewV1({ ...ready, deliverTo: { email: 'nobody', phone: null } })!.deliverTo, null);
     const sent = spendWalletViewV1({ ...ready, state: 'submitted', calls: undefined, callsHash: undefined, signingTermsHash: undefined, transactionHash: `0x${'ab'.repeat(32)}` })!;
@@ -455,6 +458,15 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.match(html, /A payment sent cannot be taken back by Still/);
     assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ onPay: null })} order={null} orderReading={false} />), /<button type="button" class="still-btn">Pay/);
     assert.doesNotMatch(html, /commission/);
+  });
+
+  // Audit SPEND-1 (2026-11-14): no Pay button for a payment whose delivery the page cannot show.
+  it('the payment page offers no button for a purchase whose delivery it cannot show', () => {
+    const { deliverTo: _shown, ...unshown } = ready;
+    void _shown;
+    const html = renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ view: spendWalletViewV1(unshown) })} order={null} orderReading={false} />);
+    assert.doesNotMatch(html, />Pay 2\.00 USDC</);
+    assert.match(html, /role="alert">Still cannot show where Bitrefill would send this purchase, so it is not offered for signing\./);
   });
 
   it('the payment page says Bitrefill may pay Still a commission only for an invoice the server opened with Still’s code', () => {

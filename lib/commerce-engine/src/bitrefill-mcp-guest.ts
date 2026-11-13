@@ -92,7 +92,8 @@ export type SpendFailureV1 =
   /** The invoice asks a different amount than the price quoted a moment before. */
   | 'bitrefill_invoice_price_changed';
 
-export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; detail?: string };
+/** `local`: refused here, by Still's own share of Bitrefill's window, before anything was asked of Bitrefill. */
+export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; detail?: string; local?: true };
 
 /** Bitrefill's own words for a refusal, safe to log and to show: one line, no
  * email, no link, no long number (a phone, an order or an account). */
@@ -181,12 +182,20 @@ export interface BitrefillGuestOptionsV1 {
   /** The ordinary part of that same window; the remainder is reserved for priority calls.
    * OAuth and every retry count too. This never increases perMinute. */
   normalPerMinute?: number;
+  /** The ordinary and priority parts together; what is left of perMinute only reserved calls may use:
+   * opening an invoice and the read before a loan's next step (audit SPEND-2, 2026-11-14: reviews read
+   * by a few free wallets kept the window full, and a buyer's invoice and a loan's last step were refused).
+   * Unset: priority calls may use the whole window, as reserved ones do. */
+  priorityPerMinute?: number;
 }
 
 /** Chosen by server code, never copied from a browser or an assistant's arguments. */
 export interface BitrefillGuestCallOptionsV1 {
   priority?: boolean;
+  /** Buying, or what a loan already under way needs: the last part of the window is kept for it. */
+  reserved?: boolean;
 }
+type CallTierV1 = 'normal' | 'priority' | 'reserved';
 
 /** A guest's token and its own rate window, for the tools one caller may use.
  * A tool outside that list is refused here, before anything is sent. */
@@ -201,16 +210,20 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
   const now = options.now ?? (() => Date.now());
   const perMinute = options.perMinute ?? 20;
   const normalPerMinute = Math.min(perMinute, options.normalPerMinute ?? perMinute);
+  const priorityPerMinute = Math.max(normalPerMinute, Math.min(perMinute, options.priorityPerMinute ?? perMinute));
   let token: { value: string; expiresAt: number } | null = null;
   let tokenRequest: Promise<SpendResultV1<string>> | null = null;
-  let window: Array<{ at: number; priority: boolean }> = [];
+  let window: Array<{ at: number; tier: CallTierV1 }> = [];
   let id = 0;
+  const refusedHere = (): SpendResultV1<never> => ({ ok: false, reason: 'bitrefill_rate_limited', local: true });
 
-  function spend(priority: boolean): boolean {
+  function spend(tier: CallTierV1): boolean {
     const at = now();
     window = window.filter((entry) => at - entry.at < 60_000);
-    if (window.length >= perMinute || (!priority && window.filter((entry) => !entry.priority).length >= normalPerMinute)) return false;
-    window.push({ at, priority });
+    if (window.length >= perMinute) return false;
+    if (tier === 'normal' && window.filter((entry) => entry.tier === 'normal').length >= normalPerMinute) return false;
+    if (tier === 'priority' && window.filter((entry) => entry.tier !== 'reserved').length >= priorityPerMinute) return false;
+    window.push({ at, tier });
     return true;
   }
 
@@ -243,11 +256,11 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     return { ok: true, value: token.value };
   }
 
-  async function guestToken(priority: boolean): Promise<SpendResultV1<string>> {
+  async function guestToken(tier: CallTierV1): Promise<SpendResultV1<string>> {
     if (token && token.expiresAt > now()) return { ok: true, value: token.value };
     if (tokenRequest) return tokenRequest;
     // A locally refused request is not a token flight: a priority caller may still have a slot.
-    if (!spend(priority)) return { ok: false, reason: 'bitrefill_rate_limited' };
+    if (!spend(tier)) return refusedHere();
     const pending = requestToken();
     tokenRequest = pending;
     try {
@@ -257,11 +270,11 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     }
   }
 
-  async function callTool(name: string, args: Record<string, unknown>, priority: boolean, retried = false): Promise<SpendResultV1<string>> {
+  async function callTool(name: string, args: Record<string, unknown>, tier: CallTierV1, retried = false): Promise<SpendResultV1<string>> {
     if (!tools.includes(name)) return { ok: false, reason: 'bitrefill_refused' };
-    const bearer = await guestToken(priority);
+    const bearer = await guestToken(tier);
     if (!bearer.ok) return bearer;
-    if (!spend(priority)) return { ok: false, reason: 'bitrefill_rate_limited' };
+    if (!spend(tier)) return refusedHere();
     let response: Response;
     try {
       response = await partnerFetch(endpoint, {
@@ -275,7 +288,7 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     if (response.status === 401 && !retried) {
       // A slower 401 for the previous token must not throw a newer token away.
       if (token?.value === bearer.value) token = null;
-      return callTool(name, args, priority, true);
+      return callTool(name, args, tier, true);
     }
     if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
     if (!response.ok) {
@@ -299,7 +312,7 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     return { ok: true, value: text };
   }
 
-  return { callTool: (name, args, callOptions) => callTool(name, args, callOptions?.priority === true) };
+  return { callTool: (name, args, callOptions) => callTool(name, args, callOptions?.reserved === true ? 'reserved' : callOptions?.priority === true ? 'priority' : 'normal') };
 }
 
 export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCatalogV1 {

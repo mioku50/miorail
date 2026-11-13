@@ -1425,3 +1425,13 @@ export const CommerceDeliveryRecordV1Schema = z
     }
   });
 export type CommerceDeliveryRecordV1 = z.infer<typeof CommerceDeliveryRecordV1Schema>;
+
+/**
+ * An email Still's review can show in full: what Bitrefill sends a purchase to (audit SPEND-1, 2026-11-14).
+ * The server took any address Bitrefill's own pattern takes, while the review drew the line only for this
+ * shape: an apostrophe or a part before the @ longer than 64 went to Bitrefill and was never shown, so a
+ * gift card's code could go to an address the person had not seen. The server now opens no invoice for an
+ * address outside it, and the review reads deliveries by it. An apostrophe is allowed (o'brien@…): a page
+ * shows it as text.
+ */
+export const SPEND_DELIVERY_EMAIL_V1 = /^[^\s@<>"]{1,64}@[A-Za-z0-9.-]{1,190}$/;

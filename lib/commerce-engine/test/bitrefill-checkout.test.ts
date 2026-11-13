@@ -194,6 +194,8 @@ describe('Still’s guest checkout talks to Bitrefill only as it says', () => {
     const { fetchImpl, calls } = bitrefill([token, () => rpc('{"error":"INVALID_INPUT"}', true)]);
     const checkout = createBitrefillGuestCheckoutV1({ fetchImpl });
     assert.deepEqual(await checkout.createInvoice({ productId: 'x', packageValue: '1', email: 'not an email', quotedAtomic: QUOTED, now: NOW }), { ok: false, reason: 'bitrefill_refused' });
+    // Nor for one Bitrefill takes and the review could not show in full (audit SPEND-1).
+    assert.deepEqual(await checkout.createInvoice({ productId: 'x', packageValue: '1', email: `${'a'.repeat(65)}@example.com`, quotedAtomic: QUOTED, now: NOW }), { ok: false, reason: 'bitrefill_refused' });
     assert.equal(calls.length, 0);
     const refused = await checkout.createInvoice({ productId: 'bitrefill-esim-germany', packageValue: '1GB', email: 'buyer@example.com', quotedAtomic: QUOTED, now: NOW });
     assert.equal(!refused.ok && refused.reason, 'bitrefill_refused');
@@ -257,5 +259,34 @@ describe('Still’s affiliate code reaches Bitrefill on every MCP request, and n
     assert.equal(bitrefillMcpEndpointV1(`${'9'.repeat(16)}`), `${BITREFILL_MCP_URL_V1}?ref=${'9'.repeat(16)}`);
     assert.equal(bitrefillMcpEndpointV1(), BITREFILL_MCP_URL_V1);
     assert.equal(BITREFILL_AFFILIATE_CODE_V1.test('Fixture7Code'), true);
+  });
+});
+
+// Audit SPEND-2 (2026-11-14): reviews read by a few free wallets kept the checkout's ten calls a minute full,
+// and a buyer's invoice and a loan's last step were refused with it.
+describe('the last part of the checkout window is kept for buying and for a loan’s next step', () => {
+  const unpaid = () => rpc('invoice_status: unpaid');
+  const read = { invoiceId: INVOICE_ID, accessToken: 'access-token-0123456789' };
+
+  it('reviews stop at eight of the ten, and an invoice and a step read still go', async () => {
+    const { fetchImpl, calls } = bitrefill([token, ...Array.from({ length: 12 }, () => unpaid)]);
+    const checkout = createBitrefillGuestCheckoutV1({ fetchImpl, now: () => 1_000 });
+    const reviews: unknown[] = [];
+    for (let index = 0; index < 9; index++) reviews.push(await checkout.readInvoice(read, { purpose: 'payment' }));
+    // The token and seven reviews make eight; the ninth review is refused here, and says so.
+    assert.equal(reviews.filter((answer) => (answer as { ok: boolean }).ok).length, 7);
+    assert.deepEqual(reviews.at(-1), { ok: false, reason: 'bitrefill_rate_limited', local: true });
+    assert.equal(calls.length, 8);
+    assert.equal((await checkout.readInvoice(read, { purpose: 'step' })).ok, true, 'a loan under way reads its invoice');
+    assert.equal(calls.length, 9);
+    // And the tenth is still there for opening one.
+    assert.equal((await checkout.readInvoice(read, { purpose: 'step' })).ok, true);
+    assert.deepEqual(await checkout.readInvoice(read, { purpose: 'step' }), { ok: false, reason: 'bitrefill_rate_limited', local: true });
+  });
+
+  it('a limit Bitrefill itself answers is not said to be Still’s own', async () => {
+    const { fetchImpl } = bitrefill([token, () => new Response('{"error":"rate limited"}', { status: 429 })]);
+    const checkout = createBitrefillGuestCheckoutV1({ fetchImpl, now: () => 1_000 });
+    assert.deepEqual(await checkout.readInvoice(read, { purpose: 'payment' }), { ok: false, reason: 'bitrefill_rate_limited' });
   });
 });

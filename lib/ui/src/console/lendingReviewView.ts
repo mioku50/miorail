@@ -1,3 +1,4 @@
+import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
 import type { FreshBorrowReviewV1 } from './borrowReviewFreshness';
 import { hasBorrowSigningTermsV1 } from './borrowReviewFreshness';
 import { tokenDecimalV1 } from './stockSellAmount';
@@ -126,7 +127,7 @@ export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
 export interface SpendDeliveryWireV1 { email: string; phone: string | null }
 /** Reads a delivery as the server gave it, or null: nothing is shown from a shape that is not one. */
 export function spendDeliveryWireV1(value: unknown): SpendDeliveryWireV1 | null {
-  if (!object(value) || typeof value.email !== 'string' || value.email.length > 254 || !/^[^\s@<>"']{1,64}@[A-Za-z0-9.-]{1,190}$/.test(value.email) ||
+  if (!object(value) || typeof value.email !== 'string' || value.email.length > 254 || !SPEND_DELIVERY_EMAIL_V1.test(value.email) ||
       // In full on the owner's own page; inside an assistant's card the server shows only their ends.
       !(value.phone === null || (typeof value.phone === 'string' && /^\+(?:\d{7,15}|…\d{4})$/.test(value.phone)))) return null;
   return { email: value.email, phone: value.phone };

@@ -424,6 +424,35 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
   });
 });
 
+// Audit SPEND-1 (2026-11-14): an email with an apostrophe, or longer than 64 before the @, went to Bitrefill and
+// the review showed nothing of it, so a gift card's code could go to an address the person never saw.
+describe('a purchase is signed only with where Bitrefill sends it on the screen', () => {
+  const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333', assets: '13250000',
+    productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' };
+  const paying = () => {
+    const body = ready();
+    Object.assign(body.facts, { operation: 'borrow', requestedAssets: '13250000', maximumDebitAssets: '0', payment });
+    return body;
+  };
+
+  it('an apostrophe is shown, and the review offers the wallet', () => {
+    const read = parseLendingReviewWireV1({ ...paying(), deliverTo: { email: "o'brien@example.com", phone: null } })!;
+    const html = render({ body: read });
+    assert.match(html, /Bitrefill sends what you buy to <strong[^>]*>o&#x27;brien@example\.com<\/strong>/);
+    assert.match(html, />Open in your wallet</);
+  });
+
+  it('a delivery the page cannot read offers no wallet at all, and says why', () => {
+    for (const deliverTo of [undefined, { email: `${'a'.repeat(65)}@example.com`, phone: null }, { email: 'not an address', phone: null }]) {
+      const html = render({ body: parseLendingReviewWireV1({ ...paying(), ...(deliverTo ? { deliverTo } : {}) })! });
+      assert.doesNotMatch(html, /Open in your wallet|Accept these terms/, JSON.stringify(deliverTo));
+      assert.match(html, /role="alert">Still cannot show where Bitrefill would send this purchase, so it is not offered for signing\./);
+    }
+    // A loan with no purchase needs none.
+    assert.match(render({ body: parseLendingReviewWireV1(ready())! }), />Open in your wallet</);
+  });
+});
+
 describe('Still offers to pay a batch’s network fee (operator, 2026-11-08)', () => {
   const NOTE = 'Still offers to pay the network fee, for up to 3 loans or repayments a day. Your wallet shows who pays before you confirm.';
   it('takes the arm’s offer only as an https URL on Still’s own sponsorship path, with its token', () => {
@@ -489,7 +518,9 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
     const base = stepsBody();
     const paying: LendingReadyWireV1 = { ...base, calls: [...base.calls, { to: USDC, data: '0xa9059cbb', value: '0' }],
       steps: [...base.steps, { index: 2, to: USDC, reading: 'Pay Bitrefill: send 3.00 USDC to the invoice address 0x3333…3333' }],
-      facts: { ...base.facts, operation: 'borrow', requestedAssets: '3000000', maximumDebitAssets: '0', payment } };
+      facts: { ...base.facts, operation: 'borrow', requestedAssets: '3000000', maximumDebitAssets: '0', payment },
+      // Where Bitrefill sends it, as the server gives it with every payment (audit SPEND-1).
+      deliverTo: { email: 'buyer@example.com', phone: null } };
     assert.equal(parseLendingReviewWireV1(paying)?.state, 'ready');
     const html = render({ body: paying });
     assert.match(html, /Then pay Bitrefill 3 USDC for Bitrefill eSIM Germany · 1GB, 7 Days, as the last step\./);

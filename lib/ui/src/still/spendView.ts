@@ -206,6 +206,9 @@ export interface SpendOrderViewV1 {
  * price; a commission counts only for a delivered order, and some products earn none. */
 export const STILL_SPEND_COMMISSION_NOTE_V1 = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase. It does not change your price.';
 
+/** Said instead of a sign button when the page cannot show where Bitrefill sends a purchase (audit SPEND-1). */
+export const SPEND_DELIVERY_UNSHOWN_V1 = 'Still cannot show where Bitrefill would send this purchase, so it is not offered for signing. Nothing was sent; open a new invoice from Spend.';
+
 const STATUS_WORDS_V1: Record<string, string> = {
   unpaid: 'Waiting for payment', payment_detected: 'Payment seen, waiting for confirmation', payment_confirmed: 'Payment confirmed',
   pending: 'Bitrefill is preparing it', complete: 'Delivered', blocked: 'Blocked by Bitrefill', denied: 'Payment denied by Bitrefill',

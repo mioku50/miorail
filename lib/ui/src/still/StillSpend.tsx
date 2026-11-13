@@ -8,6 +8,7 @@ import { StillHeader, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import {
   SHARE_CARD_PRIVACY_NOTE_V1,
+  SPEND_DELIVERY_UNSHOWN_V1,
   SPEND_TYPES_V1,
   STILL_SPEND_COMMISSION_NOTE_V1,
   shareAmountWordsV1,
@@ -405,7 +406,8 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
           {paying.warnings.map((line) => <p key={line} className="still-note">{line}</p>)}
           {model.walletError ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
           {model.lock ? <p className="still-note" role="status">{model.lock}</p> : null}
-          {paying.state === 'ready' ? (
+          {paying.state === 'ready' && !paying.deliverTo ? <p className="still-warn" role="alert">{SPEND_DELIVERY_UNSHOWN_V1}</p> : null}
+          {paying.state === 'ready' && paying.deliverTo ? (
             <div className="still-spend-checkout-actions">
               <button type="button" className="still-btn" disabled={!model.onPay || model.busy} onClick={() => model.onPay?.()}>
                 {model.busy ? 'Waiting for your wallet…' : `Pay ${paying.price}`}

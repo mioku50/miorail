@@ -17,7 +17,9 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 //    the part of the window kept for buying: three a minute for one wallet.
 //  - step: before the next step of a loan already under way. Never limited by
 //    wallet, because a refusal here ends a loan that has already moved money;
-//    one failed read is tried once more.
+//    one failed read is tried once more. It and opening an invoice have the
+//    last two of the ten to themselves: no review or page can take them
+//    (audit SPEND-2, 2026-11-14).
 //
 // The caller has already found the order as its owner's: nothing here is
 // reachable by an order id alone.
@@ -75,7 +77,7 @@ export function createSpendInvoiceReadsV1(options: {
     entry.at = now();
   }
 
-  const ask = (checkout: CheckoutV1, order: InvoiceRefV1, purpose: 'display' | 'payment'): Promise<InvoiceReadV1> =>
+  const ask = (checkout: CheckoutV1, order: InvoiceRefV1, purpose: 'display' | 'payment' | 'step'): Promise<InvoiceReadV1> =>
     checkout.readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken }, { purpose })
       .catch((): InvoiceReadV1 => ({ ok: false, reason: 'bitrefill_unreachable' }));
 
@@ -114,10 +116,11 @@ export function createSpendInvoiceReadsV1(options: {
     },
 
     async step(input: { order: InvoiceRefV1; checkout: CheckoutV1 }): Promise<InvoiceReadV1> {
-      let read = await ask(input.checkout, input.order, 'payment');
+      // From the part of the window no review or page can take (audit SPEND-2, 2026-11-14).
+      let read = await ask(input.checkout, input.order, 'step');
       if (!read.ok && passingV1(read.reason)) {
         await wait(1_000);
-        read = await ask(input.checkout, input.order, 'payment');
+        read = await ask(input.checkout, input.order, 'step');
       }
       if (read.ok) remember(input.order.orderId, read.value);
       return read;

@@ -222,6 +222,6 @@ describe('Still reads Bitrefill’s catalogue as a guest', () => {
     const catalog = createBitrefillGuestCatalogV1({ fetchImpl, perMinute: 3, now: () => 1_000 });
     assert.equal((await catalog.search({ type: 'esim', country: 'DE' })).ok, true);
     assert.equal((await catalog.search({ type: 'esim', country: 'DE' })).ok, true);
-    assert.deepEqual(await catalog.search({ type: 'esim', country: 'DE' }), { ok: false, reason: 'bitrefill_rate_limited' });
+    assert.deepEqual(await catalog.search({ type: 'esim', country: 'DE' }), { ok: false, reason: 'bitrefill_rate_limited', local: true });
   });
 });

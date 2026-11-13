@@ -12,7 +12,8 @@ const NOW = new Date('2026-11-11T12:00:00Z');
 const INVOICE = '11111111-2222-4333-8444-555555555555';
 const OTHER_INVOICE = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const ACCESS = 'synthetic-invoice-access-0123456789';
-const REFUSED = { ok: false, reason: 'bitrefill_rate_limited' } as const;
+// Refused here, by Still's own share of the window: nothing reached Bitrefill (audit SPEND-2).
+const REFUSED = { ok: false, reason: 'bitrefill_rate_limited', local: true } as const;
 const PAYMENT = { invoiceId: INVOICE, accessToken: ACCESS };
 const CREATE = { productId: 'synthetic-esim', packageValue: '1 GB', email: 'buyer@example.com', quotedAtomic: 180_000n, now: NOW };
 

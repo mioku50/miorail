@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { SPEND_EMAIL_V1, spendInvoiceSettledV1, spendPhoneV1, type BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
+import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
@@ -72,7 +73,8 @@ stillSpendRouter.use((_req, res, next) => {
 export const SpendOrderRequestV1Schema = z.object({
   productId: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}$/),
   packageValue: z.string().min(1).max(80),
-  email: z.string().max(254).regex(SPEND_EMAIL_V1),
+  // Bitrefill's own pattern, and one the review can show in full (audit SPEND-1).
+  email: z.string().max(254).regex(SPEND_EMAIL_V1).regex(SPEND_DELIVERY_EMAIL_V1),
   /** The number a phone top-up goes to, as the person wrote it. */
   phone: z.string().min(1).max(32).optional(),
 }).strict();
@@ -97,7 +99,9 @@ export function orderStatusWireV1(read: SpendInvoiceDisplayV1) {
   return { status: read.status, statusError: read.error, statusReadAt: read.readAt, settled: read.status !== null && spendInvoiceSettledV1(read.status.status) };
 }
 
-export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string; priceAtomic?: string };
+export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string; priceAtomic?: string;
+  /** The fresh quote was refused by Still's own share of Bitrefill's window: nothing was asked of Bitrefill. */
+  quoteUnsent?: true };
 
 /** One invoice for this owner, as the page and the connected MCP open it:
  * the hourly limit, a fresh quote, the product's own rules, the cap, then
@@ -125,8 +129,10 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   const opening = orders.opening(owner);
   try {
     const opened = await openCountedSpendOrderV1(owner, request, options, refuse);
-    // Refused by Bitrefill's window here, before anything was asked of it: that quote was never spent.
-    if (!opened.ok && opened.error === 'bitrefill_rate_limited') quote.unspent();
+    // Refused by Still's share of Bitrefill's window before the quote was asked: that quote was never spent.
+    // Only that: a quote Bitrefill answered, or an invoice refused after it, was spent (audit SPEND-2:
+    // any rate limit gave it back, an invoice's included, and one wallet's quotes went past three a minute).
+    if (!opened.ok && opened.quoteUnsent) quote.unspent();
     return opened;
   } finally {
     opening.done();
@@ -140,7 +146,10 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   // A fresh quote, not the page's cached one: the invoice is checked against it. It is asked from the
   // part of the catalogue's window kept for buying, which no public read can spend (audit SPEND-1).
   const product = await stillSpendRuntimeV1.catalog().product(request.productId, { freshForCheckout: true });
-  if (!product.ok) return refuse(product.reason === 'bitrefill_product_not_found' ? 404 : 503, product.reason, product.detail ? { detail: product.detail } : {});
+  if (!product.ok) {
+    const refused = refuse(product.reason === 'bitrefill_product_not_found' ? 404 : 503, product.reason, product.detail ? { detail: product.detail } : {});
+    return product.local ? { ...refused, quoteUnsent: true } : refused;
+  }
   if (product.value.prepayment) return refuse(409, 'spend_product_prepayment');
   if (!product.value.inStock || !spendBuyableV1(product.value)) return refuse(409, 'spend_product_not_buyable');
   // A number goes to Bitrefill only for a top-up, and only as a number of the operator's own country.

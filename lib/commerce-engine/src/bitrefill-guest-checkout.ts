@@ -1,3 +1,4 @@
+import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
 import { ToonParseError, decodeToonV1 } from './toon.js';
 import {
   createBitrefillGuestTransportV1,
@@ -62,15 +63,16 @@ export interface SpendInvoiceStatusV1 {
 }
 
 /** A refusal names the answer's keys (`shape`) and the one it could not read (`field`), never a value. */
-export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string; detail?: string };
+export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string; detail?: string; local?: true };
 
 export interface BitrefillGuestCheckoutV1 {
   /** Its requests carry Still's affiliate code (`?ref=`), so an invoice it opens may earn Still a commission. */
   readonly affiliated?: boolean;
   /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */
   createInvoice(input: { productId: string; packageValue: string; email: string; refillInput?: string; quotedAtomic: bigint; now: Date }): Promise<SpendCheckoutResultV1<SpendInvoiceV1>>;
-  /** Display polling uses ordinary slots. An omitted purpose is a fresh payment safety check. */
-  readInvoice(input: { invoiceId: string; accessToken: string }, options?: { purpose?: 'display' | 'payment' }): Promise<SpendCheckoutResultV1<SpendInvoiceStatusV1>>;
+  /** Display polling uses ordinary slots. An omitted purpose is a fresh payment safety check, from the
+   * priority part; `step`, the read before a loan's next step, from the part kept for it and for buying. */
+  readInvoice(input: { invoiceId: string; accessToken: string }, options?: { purpose?: 'display' | 'payment' | 'step' }): Promise<SpendCheckoutResultV1<SpendInvoiceStatusV1>>;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -221,19 +223,22 @@ export function spendInvoiceStatusFromAnswerV1(text: string): SpendCheckoutResul
 export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCheckoutV1 {
   // The same ten slots, including OAuth: display polling cannot spend the four
   // kept for opening invoices and checking them immediately before payment.
-  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, ...options });
+  // Of the ten, reviews and display reads never take the last two: those are kept for opening an invoice
+  // and for the read before a loan's next step (audit SPEND-2, 2026-11-14).
+  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, priorityPerMinute: 8, ...options });
   return {
     // The transport has refused a code that breaks Bitrefill's rule by now, so a code here is one it sends.
     affiliated: options.affiliateCode !== undefined,
     async createInvoice(input) {
-      if (!SPEND_EMAIL_V1.test(input.email) || input.email.length > 254 || input.quotedAtomic <= 0n) return { ok: false, reason: 'bitrefill_refused' };
+      // An address the review could not show is never sent (audit SPEND-1).
+      if (!SPEND_EMAIL_V1.test(input.email) || !SPEND_DELIVERY_EMAIL_V1.test(input.email) || input.email.length > 254 || input.quotedAtomic <= 0n) return { ok: false, reason: 'bitrefill_refused' };
       if (input.refillInput !== undefined && !/^\d{7,15}$/.test(input.refillInput)) return { ok: false, reason: 'bitrefill_refused' };
       const answer = await transport.callTool('buy-products', {
         cart_items: [{ product_id: input.productId, package_value: input.packageValue, ...(input.refillInput !== undefined ? { refill_input: input.refillInput } : {}) }],
         payment_method: 'usdc_base',
         return_payment_link: false,
         email: input.email,
-      }, { priority: true });
+      }, { reserved: true });
       if (!answer.ok) return answer;
       let json: unknown;
       // buy-products "returns plain JSON so payment details can be parsed exactly".
@@ -243,7 +248,7 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
     async readInvoice(input, readOptions) {
       if (!UUID_V1.test(input.invoiceId) || !TOKEN_V1.test(input.accessToken)) return { ok: false, reason: 'bitrefill_refused' };
       const answer = await transport.callTool('get-invoice-by-id', { invoice_id: input.invoiceId, invoice_access_token: input.accessToken },
-        { priority: readOptions?.purpose !== 'display' });
+        readOptions?.purpose === 'step' ? { reserved: true } : { priority: readOptions?.purpose !== 'display' });
       if (!answer.ok) return answer;
       return spendInvoiceStatusFromAnswerV1(answer.value);
     },
