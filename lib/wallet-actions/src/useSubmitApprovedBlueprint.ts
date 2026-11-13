@@ -69,6 +69,10 @@ import {
  * wallet, and what the wallet did with them was never heard. */
 export const SUBMISSION_IN_DOUBT_V1 =
   'Your wallet already had this once, and what it did with it is not known yet, so it was not asked again. Check your wallet’s activity; if nothing went out, dismiss the unfinished submission and press again.';
+/** A batch whose wallet answered with neither an id nor a refusal it names: a closed connection or a
+ * timeout may come after the batch went out (audit N13-1, 2026-11-13). */
+export const BATCH_SEND_UNREAD_V1 =
+  'Your wallet did not say whether it sent this: its answer never came back. Check your wallet’s activity before anything else, because it may already be on Base. If nothing went out, dismiss the unfinished request and press again.';
 export const SUBMISSION_UNRECORDED_V1 =
   'This swap could not be recorded before your wallet was asked, so your wallet was not asked and nothing was sent. Press again in a moment.';
 /** The server's refusal of calls that already reached Base once (`route_already_sent`, or an NFT
@@ -115,14 +119,17 @@ export function isWalletRejectionError(error: unknown): boolean {
 }
 
 /**
- * What a step's send error says happened. Only a refusal the wallet names, the
- * person's own (4001) or a request it cannot do, means nothing went out. Any
- * other error may arrive after the wallet already sent the transaction, its
- * answer lost on the way back (a relay timeout is the usual one): the outcome
- * is unknown, and the same approval is not offered again. The looser
- * isWalletRejectionError only picks the words once nothing was sent.
+ * What a send error says happened, for one batch and for a step alike. Only a
+ * refusal the wallet names, the person's own (4001) or a request it cannot do,
+ * means nothing went out. Any other error may arrive after the wallet already
+ * sent the transaction, its answer lost on the way back (a relay timeout or a
+ * closed connection is the usual one): the outcome is unknown, and the same
+ * approval is not offered again. The looser isWalletRejectionError only picks
+ * the words once nothing was sent: a batch read by its words alone took
+ * "connection closed" for the person's No, closed the attempt and let the same
+ * calls be pressed out a second time (audit N13-1, 2026-11-13).
  */
-export function sequentialSendOutcomeV1(cause: unknown): 'cancelled' | 'failed' | 'submitted_unknown' {
+export function walletSendOutcomeV1(cause: unknown): 'cancelled' | 'failed' | 'submitted_unknown' {
   if (!walletDidNotSendV1(cause)) return 'submitted_unknown';
   return isWalletRejectionError(cause) ? 'cancelled' : 'failed';
 }
@@ -593,7 +600,7 @@ export function useSubmitApprovedBlueprint({
           data: suffix ? concat([call.data, suffix as Hex]) : call.data,
         });
       } catch (cause) {
-        const outcome = sequentialSendOutcomeV1(cause);
+        const outcome = walletSendOutcomeV1(cause);
         if (outcome === 'submitted_unknown') {
           await stop('submitted_unknown', SEQUENTIAL_SEND_UNREAD_V1);
         } else if (sent.length === 0) {
@@ -892,9 +899,21 @@ export function useSubmitApprovedBlueprint({
           capabilities: requestCapabilities,
         }));
       } catch (cause) {
-        const rejected = isWalletRejectionError(cause);
+        // Read as a step's error is (audit N13-1): only a refusal the wallet names proves no batch exists.
+        const outcome = walletSendOutcomeV1(cause);
+        const rejected = outcome === 'cancelled';
         if (sized.limits && !rejected) gasLimitsDeclinedRef.current = true;
-        if (rejected) {
+        if (outcome === 'submitted_unknown') {
+          // The wallet may have sent the batch and its answer been lost on the way back. The attempt
+          // stays open and the marker stays, so neither this page nor a reload hands the same calls to
+          // a wallet again until the person has checked the wallet's activity and dismissed it.
+          // Whatever it was, a press after that check must not depend on the sponsor. Its "press again"
+          // line is not shown: the page says to check the wallet first.
+          if (gas.capability) sponsorDeclinedRef.current = true;
+          setSponsoredGas(null);
+          setStatus('submitted_unknown');
+          setError(BATCH_SEND_UNREAD_V1);
+        } else if (rejected) {
           setStatus('cancelled');
           setError('Cancelled in wallet');
           // Refused in the wallet means no batch exists. There is nothing to

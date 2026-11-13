@@ -198,7 +198,7 @@ test('every batch to Base Account is measured, and calls carrying gas go only by
   assert.ok(hook.indexOf('const sized = await sizing;', openAt) > openAt);
   assert.match(hook, /capabilities: gasLimitsDeclinedRef\.current \? undefined : capabilities,/);
   // Dropped after a send that carried them failed, never after the person's own No.
-  assert.match(hook, /const rejected = isWalletRejectionError\(cause\);\s*if \(sized\.limits && !rejected\) gasLimitsDeclinedRef\.current = true;/);
+  assert.match(hook, /const outcome = walletSendOutcomeV1\(cause\);\s*const rejected = outcome === 'cancelled';\s*if \(sized\.limits && !rejected\) gasLimitsDeclinedRef\.current = true;/);
   for (const file of [
     'lib/wallet-actions/src/useSubmitApprovedBlueprint.ts',
     'artifacts/interface/src/features/rwa/LendingReviewPage.tsx',

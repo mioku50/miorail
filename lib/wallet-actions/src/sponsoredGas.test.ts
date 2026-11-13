@@ -87,8 +87,14 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
     failure.slice(0, 1_000),
     /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null \|\| walletNetworkFailureSentenceV1\(cause\) !== null\s*\|\| walletConnectionNotReadyV1\(cause\) \|\| walletNotAskedSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
   );
-  const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf(marker));
+  const rejectionAt = source.indexOf('} else if (rejected) {');
+  assert.ok(rejectionAt > 0 && rejectionAt < source.indexOf(marker));
+  const rejection = source.slice(rejectionAt, source.indexOf(marker));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');
+  // An answer that never came back (audit N13-1) frees nothing, and says nothing about pressing again.
+  const unknown = source.slice(source.lastIndexOf("if (outcome === 'submitted_unknown') {", rejectionAt), rejectionAt);
+  assert.match(unknown, /if \(gas\.capability\) sponsorDeclinedRef\.current = true;\s*setSponsoredGas\(null\);\s*setStatus\('submitted_unknown'\);\s*setError\(BATCH_SEND_UNREAD_V1\);/);
+  assert.doesNotMatch(unknown, /recordSafely|clearRecoveryMarkerV1/, 'the attempt and its marker stay');
 });
 
 test('a Still loan asks for the Builder Code and, when offered, the sponsor; both optional, and nothing when neither (2026-11-08)', () => {

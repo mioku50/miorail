@@ -238,18 +238,19 @@ test('T62.1: the wallet submission is goal-aware but keeps ONE wallet implementa
 
 test('T62.1: wallet rejection is a single shared code path for both goals', () => {
   const source = mod.useSubmitApprovedBlueprint.toString();
-  // The catch around sendCalls handles rejection once (isWalletRejectionError),
-  // not per-goal — the earn path reuses the exact same cancelled-record logic.
-  assert.ok(/isWalletRejectionError\(cause\)/.test(source), 'a single rejection detector guards the one sendCalls call');
+  // The catch around sendCalls reads the error once (walletSendOutcomeV1), not
+  // per goal — the earn path reuses the exact same cancelled-record logic.
+  assert.ok(/walletSendOutcomeV1\(cause\)/.test(source), 'a single classifier reads the one sendCalls call');
   // Once per delivery, never per goal: the one batch here, and the swap sent in
-  // steps (2026-10-31) through sequentialSendOutcomeV1, which also tells a send
-  // that may have gone out from a refusal (2026-11-02).
-  const rejectionBranches = source.match(/isWalletRejectionError\(/g) ?? [];
-  assert.equal(rejectionBranches.length, 1, 'rejection handling must not be duplicated per goal');
+  // steps (2026-10-31), each through walletSendOutcomeV1, which tells a send
+  // that may have gone out from a refusal (2026-11-02; the batch since audit
+  // N13-1, 2026-11-13). No send error is read by its words alone.
+  assert.equal((source.match(/walletSendOutcomeV1\(/g) ?? []).length, 2, 'one read per delivery, never per goal');
+  assert.equal((source.match(/isWalletRejectionError\(/g) ?? []).length, 0, 'a message’s words are not evidence that nothing was sent');
   // The function text is the transpiled one: \`const sendOneAtATime=__name(async payload=>…\`.
   const steps = source.slice(source.search(/sendOneAtATime\s*=/), source.search(/const submit\s*=/));
   assert.ok(steps.length > 0);
-  assert.equal((steps.match(/sequentialSendOutcomeV1\(cause\)/g) ?? []).length, 1, 'the steps classify a send error once');
+  assert.equal((steps.match(/walletSendOutcomeV1\(cause\)/g) ?? []).length, 1, 'the steps classify a send error once');
   assert.ok(/status:\s*['"]cancelled['"]/.test(source), 'a rejected batch records a cancelled submission');
 });
 
