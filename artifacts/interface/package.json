@@ -52,7 +52,7 @@
     "oxlint": "^1.69.0",
     "playwright": "^1.61.1",
     "typescript": "~6.0.2",
-    "vite": "^8.1.0",
+    "vite": "^8.1.6",
     "vite-plugin-singlefile": "^2.3.4"
   }
 }
