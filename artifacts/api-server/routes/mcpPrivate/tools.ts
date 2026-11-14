@@ -28,6 +28,7 @@ import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfi
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
 import { issueBorrowDraftV1 } from '../../lib/borrowDraft.js';
+import { lendingMarketV1 } from '../../lib/lendingDraft.js';
 import { runMorphoBorrowV1 } from '../../lib/morphoBorrowRunner.js';
 import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../../lib/stillBorrowStanding.js';
 import {
@@ -1769,6 +1770,9 @@ export const BORROW_REFUSAL_COPY_V1: Record<string, string> = {
   nothing_to_borrow: 'There is nothing to borrow in this market right now.',
   over_capacity: 'More was asked for than can actually be drawn here.',
   would_not_be_healthy: 'That amount would leave the position under the liquidation threshold, so it would revert.',
+  market_outside_still: 'Still reviews a loan only in its own markets: cbBTC, WETH and PAXG on Morpho, each in one registered market, and its eight stocks on Aave V4. '
+    + 'This collateral or market is outside them, so nothing was read and no review was prepared.',
+  still_stock_loan_elsewhere: 'A Still loan against a stock is on Aave V4 and is prepared with miorail_prepare_still_loan. miorail_review_borrow reviews only cbBTC, WETH and PAXG on Morpho.',
 };
 
 function borrowRefusalV1(code: string): McpPrivateError {
@@ -1891,6 +1895,13 @@ export async function miorailReviewBorrowV1(
   const marketId = args.marketId === undefined || args.marketId === null
     ? null
     : String(args.marketId).trim().toLowerCase();
+  // Only Still's own markets (audit LM-5, 2026-11-14). For any other collateral the generic reader, Morpho's
+  // Actions API and a simulation ran, and the answer was ready_for_your_approval with figures up to the
+  // protocol's own limit and a link that the review page then refused as a market outside Still. Refused
+  // here before anything is read; a stock's loan is on Aave V4, through its own tool.
+  const still = lendingMarketV1(token);
+  if (still?.venue === 'aave-v4') throw borrowRefusalV1('still_stock_loan_elsewhere');
+  if (!still || (marketId !== null && marketId !== still.marketId.toLowerCase())) throw borrowRefusalV1('market_outside_still');
 
   const run = await borrowRuntimeV1.run({
     collateralTokenAddress: token,

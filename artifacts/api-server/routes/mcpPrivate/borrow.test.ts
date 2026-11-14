@@ -12,7 +12,7 @@ import {
   MiorailReviewBorrowOutputV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
-import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
 import { readBorrowStandingV1 } from '../../lib/stillBorrowStanding.js';
 
@@ -28,6 +28,8 @@ const WALLET = '0xfb132f4c6d9dcf4f80483ea7d96c5a5dccfcfe83';
 const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
 const MARKET = '0xb4b42dd66cef25614b94510a910d54b2c148e7621d22b4271566724beda63d13';
 const OTHER_MARKET = `0xa${MARKET.slice(3)}`;
+// The review tool reviews only Still's own Morpho markets (audit LM-5): cbBTC in its registered market.
+const CBBTC = CRYPTO[0]!.token.toLowerCase(), CBBTC_MARKET = CRYPTO[0]!.morphoMarket.toLowerCase();
 
 const identity: McpPrivateIdentityV1 = {
   tenantId: `eip155:8453:${WALLET}`,
@@ -167,7 +169,7 @@ describe('the review tool returns a review and never a call', () => {
     borrowRuntimeV1.run = async () =>
       ({
         state: 'ready',
-        marketId: MARKET,
+        marketId: CBBTC_MARKET,
         review: REVIEW_V1,
         calls: [{ index: 0, callType: 'other', to: `0x${'b'.repeat(40)}`, valueWei: '0', data: '0xeecea000', asset: null, amountAtomic: null, recipient: null, spender: null }],
         callsHash: `0x${'1'.repeat(64)}`,
@@ -185,9 +187,9 @@ describe('the review tool returns a review and never a call', () => {
       }) as never;
 
     const result = await miorailReviewBorrowV1(identity, {
-      collateralTokenAddress: NVDAC,
+      collateralTokenAddress: CBBTC,
       borrowAmountAtomic: '10000000',
-      marketId: MARKET,
+      marketId: CBBTC_MARKET,
     });
     MiorailReviewBorrowOutputV1Schema.parse(result);
     assert.equal(result.verdict, 'ready_for_your_approval');
@@ -202,18 +204,18 @@ describe('the review tool returns a review and never a call', () => {
     assert.doesNotMatch(everything, /"data"\s*:/);
   });
 
-  test('the authorisation that outlives the borrow travels as a step, named', async () => {
+  test('the steps travel as the wallet’s own calls, each as Miorail read it', async () => {
     borrowRuntimeV1.run = async () =>
       ({
         state: 'ready',
-        marketId: MARKET,
+        marketId: CBBTC_MARKET,
         review: REVIEW_V1,
         calls: [],
         callsHash: `0x${'1'.repeat(64)}`,
         plan: {
           calls: [],
           steps: [
-            { index: 0, to: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', selector: '0xeecea000', venueDescription: 'Authorize Morpho GeneralAdapter1', decodedByMiorail: true, reading: 'Gives 0xb98c948cfa24072e58935bc004a8a7b376ae746a the right to act for this wallet inside Morpho, until it is revoked.' },
+            { index: 0, to: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', selector: '0x50d8cd4b', venueDescription: 'Borrow 10 USDC', decodedByMiorail: true, reading: 'Borrows exactly 10000000 atomic USDC from the registered Morpho market, paid straight to this wallet. The wallet calls Morpho Blue itself, so no authorization is granted.' },
           ],
           authorizations: [],
           targets: [],
@@ -222,13 +224,35 @@ describe('the review tool returns a review and never a call', () => {
         measured: { blockNumber: 51_521_606, arrivedAssets: '10000000', providerId: 'p' },
       }) as never;
     const result = await miorailReviewBorrowV1(identity, {
-      collateralTokenAddress: NVDAC,
+      collateralTokenAddress: CBBTC,
       borrowAmountAtomic: '10000000',
     });
     const steps = result.steps as any[];
     assert.equal(steps[0].readByMiorail, true);
-    assert.match(steps[0].reading, /until it is revoked/);
+    assert.match(steps[0].reading, /no authorization is granted/);
     assert.match(String(result.nextStep), /measured at one block/);
+  });
+
+  test('a collateral or market outside Still is refused before anything is read, and a stock is sent to its own tool (audit LM-5)', async () => {
+    let called = 0;
+    borrowRuntimeV1.run = async () => { called++; return { state: 'refused', stage: 'venue', refusal: 'x', detail: null, marketId: null, review: null } as never; };
+    const outside = `0x${'7'.repeat(40)}`;
+    for (const [args, code] of [
+      [{ collateralTokenAddress: outside, borrowAmountAtomic: '10000000' }, 'market_outside_still'],
+      [{ collateralTokenAddress: CBBTC, borrowAmountAtomic: '10000000', marketId: MARKET }, 'market_outside_still'],
+      [{ collateralTokenAddress: NVDAC, borrowAmountAtomic: '10000000' }, 'still_stock_loan_elsewhere'],
+    ] as const) {
+      await assert.rejects(() => miorailReviewBorrowV1(identity, args), (error: unknown) => error instanceof McpPrivateError && error.code === code, code);
+    }
+    await assert.rejects(() => miorailReviewBorrowV1(identity, { collateralTokenAddress: NVDAC, borrowAmountAtomic: '1' }),
+      (error: unknown) => error instanceof McpPrivateError && /miorail_prepare_still_loan/.test(error.message));
+    assert.equal(called, 0);
+    // Still's own market, named or not, is read.
+    for (const args of [{ collateralTokenAddress: CBBTC, borrowAmountAtomic: '10000000' }, { collateralTokenAddress: CBBTC, borrowAmountAtomic: '10000000', marketId: CBBTC_MARKET.toUpperCase().replace('0X', '0x') }]) {
+      const result = await miorailReviewBorrowV1(identity, args);
+      assert.equal(result.verdict, 'refused');
+    }
+    assert.equal(called, 2);
   });
 
   test('each refusal keeps its precise code AND the sentence a person reads', async () => {
@@ -244,11 +268,11 @@ describe('the review tool returns a review and never a call', () => {
           stage: 'simulation',
           refusal,
           detail: null,
-          marketId: MARKET,
+          marketId: CBBTC_MARKET,
           review: { ...REVIEW_V1, after: null, verdict: 'refused', refusal: matcher.source.replace(/\\/g, '') },
         }) as never;
       const result = await miorailReviewBorrowV1(identity, {
-        collateralTokenAddress: NVDAC,
+        collateralTokenAddress: CBBTC,
         borrowAmountAtomic: '10000000',
       });
       MiorailReviewBorrowOutputV1Schema.parse(result);
@@ -270,7 +294,7 @@ describe('the review tool returns a review and never a call', () => {
     };
     for (const amount of ['0', '-1', '1.5', '', 'max', '1e6']) {
       await assert.rejects(
-        () => miorailReviewBorrowV1(identity, { collateralTokenAddress: NVDAC, borrowAmountAtomic: amount }),
+        () => miorailReviewBorrowV1(identity, { collateralTokenAddress: CBBTC, borrowAmountAtomic: amount }),
         (error: unknown) => error instanceof McpPrivateError,
       );
     }
@@ -282,7 +306,7 @@ describe('the review tool returns a review and never a call', () => {
     borrowRuntimeV1.run = async () =>
       ({
         state: 'ready',
-        marketId: MARKET,
+        marketId: CBBTC_MARKET,
         review: REVIEW_V1,
         calls: [],
         callsHash: `0x${'1'.repeat(64)}`,
@@ -290,7 +314,7 @@ describe('the review tool returns a review and never a call', () => {
         measured: { blockNumber: 1, arrivedAssets: '10000000', providerId: 'p' },
       }) as never;
     await assert.rejects(
-      () => miorailReviewBorrowV1(identity, { collateralTokenAddress: NVDAC, borrowAmountAtomic: '10000000' }),
+      () => miorailReviewBorrowV1(identity, { collateralTokenAddress: CBBTC, borrowAmountAtomic: '10000000' }),
       (error: unknown) => error instanceof McpPrivateError && error.code === 'borrow_secret_unavailable',
     );
   });

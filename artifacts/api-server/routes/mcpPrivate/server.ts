@@ -126,7 +126,7 @@ ${MIORAIL_PRIVATE_CAVEATS_V1.entryOnly}
 BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is the only place in Miorail that answers "could YOU borrow here":
 
 a. miorail_read_borrow_capacity — keep every returned market in its own row. For cbBTC, WETH and PAXG, marketScope still_registered_market means the one code-owned Still market, not every Morpho market. availableToBorrowAtomic is the protocol maximum; still.availableAtomic is Still's stricter allowance against collateral already deposited. Null is unread, not zero. Never silently add wallet-held tokens or native ETH as collateral.
-b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
+b. miorail_review_borrow — only for cbBTC, WETH or PAXG in Still's own Morpho market: reads, writes the wallet's own calls to Morpho Blue, executes them once against real state, and checks the loan asset actually arrives here in the reviewed amount. Any other collateral or market is refused before anything is read. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
 c. A Still loan against a stock goes through miorail_prepare_still_loan: the stock loans are on Aave V4, which miorail_review_borrow does not read.
 
 The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. After the user signs on the Miorail review page, read miorail_get_execution_status with that actionDraftId. Do not ask them to paste a clearance or prepare a second trade to find the first trade's outcome. These paths do not accept an arbitrary router or calldata of your own.`;
@@ -787,13 +787,13 @@ This reads. It prepares nothing, simulates nothing and creates nothing executabl
     'miorail_review_borrow',
     {
       title: 'Measure one exact borrow and produce a review for the user',
-      description: `Runs the whole gate for ONE borrow: reads the market and this wallet's position in it, has the VENUE write the calldata, executes that calldata once against real Base state, and checks that the loan asset actually reaches this wallet in the reviewed amount.
+      description: `Runs the whole gate for ONE borrow in one of Still's own Morpho markets (cbBTC, WETH or PAXG, each in one registered market): reads the market and this wallet's position in it, writes the wallet's own calls to Morpho Blue, executes them once against real Base state, and checks that the loan asset actually reaches this wallet in the reviewed amount. Any other collateral or market is refused before anything is read; a loan against one of Still's stocks is on Aave V4 and goes through miorail_prepare_still_loan.
 
 RETURNS A REVIEW, NEVER A CALL. There is no field here that calldata could be read out of. What a successful run produces is a short-lived link the user opens and decides on.
 
 READ THE WARNINGS VERBATIM. They are computed — how far the collateral price may fall before liquidation, what a liquidation costs on top of the debt, whether this takes most of what the market has left. Do not paraphrase them into reassurance, and do not add a recommendation: Miorail has no opinion on whether anyone should borrow.
 
-CARRY THE STEPS. One of the prepared calls authorises an adapter to act for this wallet inside the lending protocol until it is revoked. That outlives the borrow, and a user who approves "a borrow" without being told about it has approved something wider than they were told. Miorail marks which calls it read itself and which it did not.
+CARRY THE STEPS. The prepared calls are the wallet's own: wrapping ETH when the pledge is native ETH, an exact approval of the collateral being pledged and its clearing afterwards, the pledge to Morpho Blue, and the borrow, which Morpho Blue pays straight to this wallet. None of them authorises anyone to act for the wallet afterwards. Each step says what it does as Miorail read it; pass them on as written.
 
 REFUSALS ARE NOT DEGREES OF ONE ANOTHER. "No provider executed this" is a gap in Miorail's own reading and is never a pass. "It reverts" is a measured fact. "Its effects could not be read" is a third thing. "It delivered something else" is a fourth. Report the one you were given, in its own words.
 
