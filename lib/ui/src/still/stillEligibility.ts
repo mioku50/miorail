@@ -8,8 +8,9 @@ import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBILITY_VERSION_V1, STILL_REG
 // ---------------------------------------------------------------------------
 
 export type StillEligibilityViewV1 =
-  /** The connection comes from a place Still is not offered in: the United States or one of its territories, or a sanctioned country. */
-  | { kind: 'restricted'; country: string; place: string; detail: string }
+  /** The connection comes from a place Still is not offered in: the United States or one of its territories, or a sanctioned
+   * country. `detail` is the server's whole sentence; the line says `open` first, then `reason` (audit UI-11). */
+  | { kind: 'restricted'; country: string; place: string; detail: string; reason: string; open: string }
   /** Still could not place the connection, so it prepares nothing new for now. */
   | { kind: 'unchecked'; detail: string }
   /** Signed in, from elsewhere, and not yet confirmed: the sentence to confirm. */
@@ -25,17 +26,24 @@ export function stillCountryNameV1(code: string): string {
   try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code; } catch { return code; }
 }
 
+/** The place as a sentence names it: "placed in the United States", not "placed in United States" (audit UI-11). */
+export function stillPlaceInSentenceV1(name: string): string {
+  return /^(?:United |U\.S\. |Netherlands$|Philippines$|Bahamas$|Gambia$|Maldives$|Comoros$)|(?:Islands|Republic|Emirates|Kingdom)$/.test(name) ? `the ${name}` : name;
+}
+
 export function stillEligibilityViewV1(payload: unknown): StillEligibilityViewV1 | null {
   if (!object(payload) || payload.schemaVersion !== 'still-eligibility/v1' || !object(payload.region)) return null;
   if (payload.gate !== 'on') return { kind: 'clear' };
   const region = payload.region, open = text(payload.open) ? payload.open : STILL_REGION_OPEN_V1;
   if (region.state === 'restricted' && typeof region.country === 'string' && /^[A-Z]{2}$/.test(region.country)) {
     const place = stillCountryNameV1(region.country);
-    return { kind: 'restricted', country: region.country, place,
-      detail: text(payload.restrictedDetail) ? payload.restrictedDetail : `Still prepares no new loan, purchase or stock buy for a connection from ${place}. ${open}` };
+    const reason = text(payload.restrictedReason) ? payload.restrictedReason : `Still prepares no new loan, purchase or stock buy for a connection from ${stillPlaceInSentenceV1(place)}.`;
+    return { kind: 'restricted', country: region.country, place, reason, open,
+      detail: text(payload.restrictedDetail) ? payload.restrictedDetail : `${reason} ${open}` };
   }
   if (region.state === 'unchecked') {
-    return { kind: 'unchecked', detail: `Still could not tell where you are connecting from, so it prepares no new loan, purchase or stock buy right now. ${open}` };
+    // As the server says it: a check that could not be made now may be made later.
+    return { kind: 'unchecked', detail: `Still could not tell where you are connecting from, so it prepares no new loan, purchase or stock buy right now. ${open} Try again later.` };
   }
   if (region.state !== 'allowed') return null;
   if (payload.signedIn === true && payload.confirmed !== true) {

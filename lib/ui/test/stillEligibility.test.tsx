@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBILITY_VERSION_V1 } from '@mioagent/still-engine/eligibility';
 import { StillEligibilityBarV1, StillEligibilityContext, StillFrame, skyStateV1, spendOrderErrorV1, stillEligibilityViewV1, stillRegionRefusalDetailV1 } from '../src/still';
+import { stillPlaceInSentenceV1 } from '../src/still/stillEligibility';
 import { swapPrepareNoticeV1 } from '../src/console/consoleFlow';
 import { stockConfirmFailureCopyV1 } from '../src/console/stockActionReviewConsole';
 
@@ -27,7 +28,15 @@ describe('where Still is offered, as a page says it', () => {
     assert.deepEqual(stillEligibilityViewV1(read({ signedIn: false })), { kind: 'clear' });
     assert.deepEqual(stillEligibilityViewV1(read({ gate: 'off', region: { state: 'restricted', country: 'US', reason: null } })), { kind: 'clear' });
     const us = stillEligibilityViewV1(read({ region: { state: 'restricted', country: 'US', reason: null } }));
-    assert.deepEqual(us, { kind: 'restricted', country: 'US', place: 'United States', detail: US });
+    assert.deepEqual(us, { kind: 'restricted', country: 'US', place: 'United States', detail: US,
+      reason: 'Still prepares no new loan, purchase or stock buy for a connection from the United States.', open: 'You can still repay a loan, take your collateral back and sell.' });
+    // The server's own reason, of the place the connection is in, when it gives one.
+    const iran = stillEligibilityViewV1(read({ region: { state: 'restricted', country: 'IR', reason: null }, restrictedReason: 'Still prepares nothing new from Iran.' }));
+    assert.equal(iran?.kind === 'restricted' && iran.reason, 'Still prepares nothing new from Iran.');
+    // An unchecked place says to try again later, as the server does.
+    assert.match((stillEligibilityViewV1(read({ region: { state: 'unchecked', country: null, reason: 'no_table' } })) as { detail: string }).detail, /sell\. Try again later\.$/);
+    assert.deepEqual(['United States', 'U.S. Virgin Islands', 'United Kingdom', 'Iran', 'Puerto Rico', 'Northern Mariana Islands'].map(stillPlaceInSentenceV1),
+      ['the United States', 'the U.S. Virgin Islands', 'the United Kingdom', 'Iran', 'Puerto Rico', 'the Northern Mariana Islands']);
     assert.equal(stillEligibilityViewV1(read({ region: { state: 'unchecked', country: null, reason: 'no_table' } }))?.kind, 'unchecked');
     // The sentence confirmed is the server's own, under its own name.
     assert.deepEqual(stillEligibilityViewV1(read({ statement: 'A newer sentence.', version: 'not-us-person-2027-01-01' })), { kind: 'confirm', statement: 'A newer sentence.', version: 'not-us-person-2027-01-01' });
@@ -39,8 +48,10 @@ describe('where Still is offered, as a page says it', () => {
   it('draws the refusal with the place and the source, the confirmation as one box, and nothing when clear', () => {
     const restricted = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read({ region: { state: 'restricted', country: 'US', reason: null } }))} onConfirm={() => {}} />);
     assert.match(restricted, /class="still-eligibility is-restricted" role="status"/);
-    assert.match(restricted, /Still is not available where you are connecting from/);
-    assert.match(restricted, /placed in United States by its IP address/);
+    // What stays open first, the reason once, and why a person elsewhere may be placed there (audit UI-11).
+    assert.match(restricted, /<strong>New loans, purchases and stock buys are not offered from here<\/strong><p>You can still repay a loan, take your collateral back and sell\.<\/p><p>Still prepares no new loan, purchase or stock buy for a connection from the United States\.<\/p>/);
+    assert.doesNotMatch(restricted, /not available where you are connecting from/);
+    assert.match(restricted, /placed in the United States by its IP address\. If you are not there,\s+the address may belong to a VPN, a proxy or a network that routes through it\./);
     assert.match(restricted, /<a href="https:\/\/db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP<\/a>/);
     assert.doesNotMatch(restricted, /type="checkbox"/);
     const confirm = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read())} onConfirm={() => {}} />);

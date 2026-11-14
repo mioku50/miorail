@@ -1,7 +1,7 @@
 import React, { createContext, useState, type ReactNode } from 'react';
 import { STILL_REGION_ATTRIBUTION_V1, STILL_US_PERSON_DEFINITION_V1 } from '@mioagent/still-engine/eligibility';
 
-import type { StillEligibilityViewV1 } from './stillEligibility';
+import { stillPlaceInSentenceV1, type StillEligibilityViewV1 } from './stillEligibility';
 
 void React;
 
@@ -25,11 +25,15 @@ export function StillEligibilityBarV1({ view, busy = false, error = null, onConf
   const [checked, setChecked] = useState(false);
   if (!view || view.kind === 'clear') return null;
   if (view.kind === 'restricted') {
+    // What stays open comes first, said once (audit UI-11: a loan holder read two "not available" before
+    // learning a repayment works from here), and a person who is not there learns why they were placed there.
     return (
       <section className="still-eligibility is-restricted" role="status" aria-label="Where Still is offered">
-        <strong>Still is not available where you are connecting from</strong>
-        <p>{view.detail}</p>
-        <p className="still-eligibility-source">This connection is placed in {view.place} by its IP address. <Attribution /></p>
+        <strong>New loans, purchases and stock buys are not offered from here</strong>
+        <p>{view.open}</p>
+        <p>{view.reason}</p>
+        <p className="still-eligibility-source">This connection is placed in {stillPlaceInSentenceV1(view.place)} by its IP address. If you are not there,
+          the address may belong to a VPN, a proxy or a network that routes through it. <Attribution /></p>
       </section>
     );
   }
