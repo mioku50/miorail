@@ -149,6 +149,8 @@ export interface LendingExecutionWireV1 {
   release?: { offered: boolean; from: string } | null;
   /** A confirmed Repay all on Aave V4 that left interest owing: how much, in USDC base units. */
   remainingDebtAtomic?: string | null;
+  /** Confirmed, and at its receipt the position was moved by another hand too (audit LM-1). */
+  positionMovedOutside?: boolean;
   /** Still Spend: a loan in steps that stopped before its payment, whose Bitrefill invoice is still open
    * for the wallet to pay from its own USDC. */
   walletPay?: { orderId: string } | null;
@@ -245,7 +247,8 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
       (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps)) ||
       (value.release != null && !(object(value.release) && typeof value.release.offered === 'boolean' && text(value.release.from) && Number.isFinite(Date.parse(value.release.from)))) ||
       (value.remainingDebtAtomic != null && !(atomic(value.remainingDebtAtomic) && value.remainingDebtAtomic !== '0'))) return null;
-  return { ...(value as unknown as LendingExecutionWireV1), walletPay: spendWalletPayWireV1(value.walletPay) };
+  return { ...(value as unknown as LendingExecutionWireV1), walletPay: spendWalletPayWireV1(value.walletPay),
+    positionMovedOutside: value.state === 'confirmed' && value.positionMovedOutside === true };
 }
 function stepsStanding(value: unknown): boolean {
   return object(value) && Number.isSafeInteger(value.landed) && Number.isSafeInteger(value.total) && typeof value.stoppable === 'boolean' &&
@@ -284,12 +287,20 @@ export function lendingFollowsResultV1(input: {
   if (input.state === 'unknown' || input.state === 'awaiting_wallet') return Boolean(input.batchId || input.transactionHash);
   return false;
 }
-export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null, remainingDebtAtomic: string | null = null): string {
+/** Said of a confirmed result whose position another hand moved too (audit LM-1): what the receipt proves
+ * stands, and what the position holds now is not what the review showed. */
+export const LENDING_MOVED_OUTSIDE_COPY_V1 = 'Your position also changed outside this review around then: a liquidation, a repayment or pledge someone made for this wallet, or something done in the protocol’s own app. What it holds now differs from what this review showed, so check it on Home before your next step.';
+export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null, remainingDebtAtomic: string | null = null,
+  movedOutside = false): string {
   // A Repay all that landed and left a little owing (audit LEND-2): said as that, with the amount.
   if (state === 'confirmed' && remainingDebtAtomic !== null && atomic(remainingDebtAtomic) && remainingDebtAtomic !== '0') {
     const micro = BigInt(remainingDebtAtomic), fraction = (micro % BigInt(1_000_000)).toString().padStart(6, '0').replace(/0+$/, '');
-    return `Confirmed onchain: the repayment landed. Interest that added to the debt until it landed left ${micro / BigInt(1_000_000)}${fraction ? `.${fraction}` : ''} USDC owing: repay it to close the loan.`;
+    const owing = `${micro / BigInt(1_000_000)}${fraction ? `.${fraction}` : ''} USDC`;
+    // With another hand in the position, what is left is not only interest.
+    return movedOutside ? `Confirmed onchain: the repayment landed, and ${owing} is still owing: repay it to close the loan. ${LENDING_MOVED_OUTSIDE_COPY_V1}`
+      : `Confirmed onchain: the repayment landed. Interest that added to the debt until it landed left ${owing} owing: repay it to close the loan.`;
   }
+  if (state === 'confirmed' && movedOutside) return `Confirmed onchain: the approved calls landed exactly as reviewed. ${LENDING_MOVED_OUTSIDE_COPY_V1}`;
   // A loan in steps that stopped on purpose is final with what landed, not a revert.
   if (state === 'failed' && errorCode === 'loan_steps_stopped') return 'Stopped part way: the steps that landed are in place on Base, and the rest was never sent. You can repay or start a new review now.';
   // Released by its owner: no transaction exists, so nothing reverted (audit LEND-1).

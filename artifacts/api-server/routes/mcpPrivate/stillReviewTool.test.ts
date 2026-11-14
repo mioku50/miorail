@@ -153,6 +153,21 @@ test('a Repay all that landed and left interest owing is not told as a closed lo
   assert.match(status.next, /Interest that added to the debt until the repayment landed left 0\.000023 USDC owing: the loan is not closed until that is repaid too\.$/);
 });
 
+test('a result another hand moved the position of is told as confirmed, with the position said to differ (audit LM-1)', async () => {
+  const { deps } = await fixture({ payment: null });
+  const base = deps.refresh;
+  deps.refresh = async (input) => {
+    const record = await base(input);
+    return record && { ...record, state: 'confirmed' as const, transactionHash: TX,
+      run: { ...record.run, facts: { ...record.run.facts, operation: 'repay' as const, amountMode: 'all' as const } },
+      verification: { effect: { remainingDebtAssets: '23', outside: { debtShares: { expected: '0', actual: '1' } } } } };
+  };
+  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.equal(status.state, 'confirmed');
+  assert.match(status.next, /0\.000023 USDC is still owing after it: the loan is not closed until that is repaid too\. The position also changed outside this review around then/);
+  assert.doesNotMatch(status.next, /Interest that added/);
+});
+
 test('a reading Bitrefill could not give again stays, named as its last word and with the reason', async () => {
   const { deps, invoiceReads } = await fixture({ state: 'confirmed', allowRead: false, lastRead: 'payment_confirmed' });
   const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);

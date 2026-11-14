@@ -203,6 +203,14 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   return set('confirmed', candidate.hash, { ...baseProof, operationNonce: candidate.binding.operationNonce, effect: effect.proof }, null);
 }
 
+/** A confirmed loan or repayment whose position, at its receipt's block, was moved by another hand too: a
+ * liquidation, a repayment or pledge someone made for the wallet, or the person's own action in the
+ * protocol's app (audit LM-1). The receipt proves the action; the position is said as it is. */
+export function loanPositionMovedOutsideV1(record: Pick<LoanExecutionV1, 'state' | 'verification'>): boolean {
+  const outside = (record.verification?.effect as { outside?: unknown } | undefined)?.outside;
+  return record.state === 'confirmed' && outside !== null && typeof outside === 'object' && Object.keys(outside).length > 0;
+}
+
 export function loanExecutionWireV1(record: LoanExecutionV1): Record<string, unknown> {
   return { executionId: record.executionId, draftId: record.draftId, state: record.state, attemptId: record.attemptId, batchId: record.batchId,
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt };

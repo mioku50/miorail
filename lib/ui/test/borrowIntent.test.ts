@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { borrowAssetFromQueryV1, borrowCollateralDecimalsV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
 import { repayAllBoundAtomicV1, repayIntentAmountsV1, repayMaxV1, repayShortTextV1, repayTopUpAtomicV1 } from '../src/console/repayEntry.js';
-import { lendingExecutionCopyV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView.js';
+import { LENDING_MOVED_OUTSIDE_COPY_V1, lendingExecutionCopyV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
   for (const [text, decimals, atomic] of [['.00000001', 8, '1'], ['0001.20', 6, '1200000'], ['.000000000000000001', 18, '1'], ['0', 18, '0']] as const) {
@@ -201,6 +201,19 @@ describe('Max fills the amount from the server’s own read', () => {
     assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: '23' }, 'execution_1')?.remainingDebtAtomic, '23');
     assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: null }, 'execution_1')?.remainingDebtAtomic, null);
     for (const bad of ['0', '-1', '1.5', 23]) assert.equal(parseLendingExecutionWireV1({ ...row, remainingDebtAtomic: bad }, 'execution_1'), null);
+  });
+  it('a result whose position another hand moved too is confirmed, and says the position differs from the review (audit LM-1)', () => {
+    assert.equal(lendingExecutionCopyV1('confirmed', null, null, true), `Confirmed onchain: the approved calls landed exactly as reviewed. ${LENDING_MOVED_OUTSIDE_COPY_V1}`);
+    // What is left is not only interest then.
+    const tail = lendingExecutionCopyV1('confirmed', null, '23', true);
+    assert.equal(tail, `Confirmed onchain: the repayment landed, and 0.000023 USDC is still owing: repay it to close the loan. ${LENDING_MOVED_OUTSIDE_COPY_V1}`);
+    assert.doesNotMatch(tail, /Interest/);
+    assert.match(LENDING_MOVED_OUTSIDE_COPY_V1, /liquidation/);
+    const row = { executionId: 'execution_1', state: 'confirmed', transactionHash: `0x${'9'.repeat(64)}`, errorCode: null };
+    assert.equal(parseLendingExecutionWireV1({ ...row, positionMovedOutside: true }, 'execution_1')?.positionMovedOutside, true);
+    assert.equal(parseLendingExecutionWireV1({ ...row, positionMovedOutside: 'yes' }, 'execution_1')?.positionMovedOutside, false);
+    // Said only of a confirmed result.
+    assert.equal(parseLendingExecutionWireV1({ ...row, state: 'unknown', positionMovedOutside: true }, 'execution_1')?.positionMovedOutside, false);
   });
   it('Max for Repay all is the debt read, rounded up to the cent, plus one cent or 0.1% of it, whichever is more', () => {
     // 2026-11-10, the operator: Max put all 171.8 USDC of the wallet in for a debt of 0.850328 USDC.

@@ -184,7 +184,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           </details>
         </> : <p className="still-note">No executable calls are available for this refusal.</p>}
       </> : null}
-      {knownState ? <p className={knownState === 'confirmed' ? 'still-sub' : 'still-note'} role="status">{lendingExecutionCopyV1(knownState, model.execution?.errorCode ?? null, model.execution?.remainingDebtAtomic ?? null)}</p> : null}
+      {knownState ? <p className={knownState === 'confirmed' ? 'still-sub' : 'still-note'} role="status">{lendingExecutionCopyV1(knownState, model.execution?.errorCode ?? null, model.execution?.remainingDebtAtomic ?? null, model.execution?.positionMovedOutside === true)}</p> : null}
       {model.batchId && !model.execution ? <p className="still-note" role="status">Submitted from your wallet. A batch ID is a submission handle; it is not a confirmed blockchain result.</p> : null}
       {model.execution?.transactionHash ? <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>Transaction: {model.execution.transactionHash}</p> : null}
       {model.submissionLock && knownState !== 'confirmed' ? <p className="still-note" role="status">{model.submissionLock}</p> : null}

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { LOAN_WALLET_SENT_NOTHING_V1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
+import { loanPositionMovedOutsideV1 } from '../../lib/loanExecutionStatus.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendInvoiceDisplayV1 } from '../../lib/stillSpendInvoiceReads.js';
 import type { SpendOrderStoreV1, SpendOrderV1 } from '../../lib/stillSpendOrders.js';
@@ -131,6 +132,8 @@ export async function stillReviewStatusV1(
   // What a confirmed Repay all left owing, as the review page reads it from the same record.
   const left = (record.verification?.effect as { remainingDebtAssets?: unknown } | undefined)?.remainingDebtAssets;
   const tail = record.state === 'confirmed' && facts.operation === 'repay' && facts.amountMode === 'all' && typeof left === 'string' && /^[1-9][0-9]{0,38}$/.test(left) ? left : null;
+  // Confirmed, and another hand moved the position too around then (audit LM-1).
+  const movedOutside = loanPositionMovedOutsideV1(record);
   return {
     reviewId, state: record.state, operation: facts.operation, venue: facts.venue, collateral: facts.collateralSymbol,
     ...(returned === null ? {} : { collateralReturned: returned }),
@@ -140,7 +143,9 @@ export async function stillReviewStatusV1(
       : record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1 ? RELEASED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
       record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}${
       // A Repay all on Aave that landed and left interest owing (audit LEND-2): the loan is not closed yet.
-      tail === null ? '' : ` Interest that added to the debt until the repayment landed left ${usdcTextV1(tail)} USDC owing: the loan is not closed until that is repaid too.`}`,
+      tail === null ? '' : movedOutside ? ` ${usdcTextV1(tail)} USDC is still owing after it: the loan is not closed until that is repaid too.`
+        : ` Interest that added to the debt until the repayment landed left ${usdcTextV1(tail)} USDC owing: the loan is not closed until that is repaid too.`}${
+      movedOutside ? ' The position also changed outside this review around then (a liquidation, a repayment or pledge someone else made for this wallet, or the user’s own action in the protocol’s app), so what it holds now differs from what the review showed: read it again before suggesting a next step.' : ''}`,
   };
 }
 

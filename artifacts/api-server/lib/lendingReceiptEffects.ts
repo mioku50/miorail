@@ -227,20 +227,35 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     const p = await (deps.position ?? positionAt)(f, wallet as Address, receipt.blockNumber);
     if (!p) return unknown('loan_position_at_receipt_unread');
     if(native && p.nativeAuthorized!==native.authorizedBefore) return unknown('loan_native_authorization_at_receipt_unread');
+    // -------------------------------------------------------------------------
+    // The position at the receipt's block is a fact about the position, never a
+    // condition of the action (audit LM-1, 2026-11-14). Everything above proved
+    // the action from the receipt: the wallet's own approved calls, the
+    // protocol's own event for this wallet with the exact assets and shares, and
+    // every token the wallet moved. Anyone may repay or pledge for a wallet on
+    // Morpho and Aave, a liquidator may take part of it, and the person may act
+    // in the protocol's own app; any of those between the review and the
+    // receipt left a loan that landed "unknown" for ever, holding its market
+    // against the very repayment it needed. Now what the position shows beside
+    // what this action alone would have left is recorded as `outside`, and the
+    // result is what the receipt proves.
+    // -------------------------------------------------------------------------
+    const outside: Record<string, { expected: string; actual: string }> = {};
+    const differs = (name: string, expected: bigint, actual: bigint) => { if (expected !== actual) outside[name] = { expected: expected.toString(), actual: actual.toString() }; };
     if (f.venue === 'morpho') {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
       const before = BigInt(f.debtBeforeShares), expected = f.operation === 'borrow' ? before + shares : f.amountMode === 'all' ? 0n : before - shares;
-      if (expected < 0n || p.debtShares !== expected ||
-          p.collateralAssets !== (returned === null ? BigInt(f.collateralBeforeAssets) + BigInt(f.collateralSupplyAssets) : 0n)) return unknown('loan_position_changed_outside_receipt');
+      differs('debtShares', expected < 0n ? 0n : expected, p.debtShares);
+      differs('collateralAssets', returned === null ? BigInt(f.collateralBeforeAssets) + BigInt(f.collateralSupplyAssets) : 0n, p.collateralAssets);
     } else {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
-      // The principal shares the own event moved are the invariant. Repay all on Aave restores the smaller of
-      // the debt and the bound when it lands, so with interest past the bound a tail of shares stays: that is
+      // The principal shares the own event moved are what this action did. Repay all on Aave restores the smaller
+      // of the debt and the bound when it lands, so with interest past the bound a tail of shares stays: that is
       // a repayment that landed and left something owing, said below, never an unknown that holds the whole
       // spoke for ever (audit LEND-2). With the stock taken back in the same review nothing may be left.
       const expectedDebtShares = f.operation === 'borrow' ? BigInt(f.debtBeforeShares) + shares :
         f.amountMode === 'all' && returned !== null ? 0n : BigInt(f.debtBeforeShares) - shares;
-      if (expectedDebtShares < 0n || p.debtShares !== expectedDebtShares) return unknown('loan_debt_shares_changed');
+      differs('debtShares', expectedDebtShares < 0n ? 0n : expectedDebtShares, p.debtShares);
       if (f.collateralBeforeShares === undefined || f.collateralBeforeShares === null || p.collateralShares === undefined) return unknown('loan_collateral_shares_unread');
       let suppliedShares = 0n;
       const supplies = protocol.filter(row => row.name === 'Supply');
@@ -253,21 +268,19 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
           typeof supplies[0]!.args.suppliedShares !== 'bigint' || supplies[0]!.args.suppliedShares <= 0n) return mismatch('loan_collateral_event_mismatch');
         suppliedShares = supplies[0]!.args.suppliedShares;
       } else if (supplies.length !== 0) return mismatch('loan_unrequested_supply');
-      if (p.collateralShares !== (returned === null ? BigInt(f.collateralBeforeShares) + suppliedShares : 0n)) return unknown('loan_collateral_position_changed');
-      // Deposit value and premium can accrue after review. The exact own
-      // Repay event, USDC debit and principal-share delta prove repayment;
-      // comparing the final debt against a stale review would reject a real
-      // premium-only payment. Collateral SHARES above remain the invariant.
-      if (p.debtAssets < 0n || (returned === null ? p.collateralAssets < BigInt(f.collateralBeforeAssets) : p.collateralAssets !== 0n) ||
-          (f.operation === 'borrow' && p.debtAssets < assets)) return unknown('loan_position_changed_outside_receipt');
+      differs('collateralShares', returned === null ? BigInt(f.collateralBeforeShares) + suppliedShares : 0n, p.collateralShares);
+      // Deposit value and premium can accrue after review. The exact own Repay event, USDC debit and
+      // principal-share delta prove repayment; comparing the final debt against a stale review would reject a
+      // real premium-only payment. A debt below what was just borrowed was repaid by another hand.
+      if (f.operation === 'borrow' && p.debtAssets < assets) differs('debtAssets', assets, p.debtAssets);
+      if (returned !== null) differs('collateralAssets', 0n, p.collateralAssets);
     }
-    // Morpho repays all by shares, and a stock is taken back only from a closed loan: there nothing is left.
-    // On Aave alone what is left after a Repay all is carried as remainingDebtAssets, for its owner to repay.
-    if (f.operation === 'repay' && f.amountMode === 'all' && (f.venue === 'morpho' || returned !== null) && (p.debtAssets !== 0n || p.debtShares !== 0n)) return unknown('loan_full_repayment_not_closed');
     return { state: 'matched', proof: { operation: f.operation, venue: f.venue, appliedAssets: assets.toString(), appliedShares: shares.toString(),
       remainingDebtAssets: p.debtAssets.toString(), remainingDebtShares: p.debtShares.toString(), collateralAssets: p.collateralAssets.toString(), blockNumber: receipt.blockNumber.toString(),
       ...(returned !== null ? { collateralReturnedAssets: returned.toString() } : {}),
-      ...(payment ? { payment: { merchant: payment.merchant, orderId: payment.orderId, payTo: payment.payTo, assets: payment.assets } } : {}) } };
+      ...(payment ? { payment: { merchant: payment.merchant, orderId: payment.orderId, payTo: payment.payTo, assets: payment.assets } } : {}),
+      // What the position shows beside what this action alone would have left: another hand moved it too.
+      ...(Object.keys(outside).length > 0 ? { outside } : {}) } };
   };
 }
 export const verifyLendingEffectsAtReceiptV1: LoanEffectPositionCheckV1 = lendingReceiptVerifierV1();

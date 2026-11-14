@@ -12,7 +12,7 @@ import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
 import { loanExecutionRuntimeV1, type LoanExecutionV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
-import { refreshLoanExecutionV1, loanExecutionWireV1, positionMovedSinceReviewV1 } from '../lib/loanExecutionStatus.js';
+import { refreshLoanExecutionV1, loanExecutionWireV1, loanPositionMovedOutsideV1, positionMovedSinceReviewV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1, readBaseWalletBatchStatusV1 } from '../lib/stockExecutionStatus.js';
 import { LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1, walletMovedSinceReviewV1 } from '../lib/loanRelease.js';
@@ -263,6 +263,8 @@ function executionAnswerV1(record: LoanExecutionV1) {
     transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode, steps: loanStepsStandingV1(record),
     // A Repay all on Aave that landed and left interest owing (audit LEND-2): how much, for the page to say.
     remainingDebtAtomic: repayAllTailAtomicV1(record),
+    // Confirmed, and the position at its receipt was moved by another hand too (audit LM-1): the page says so.
+    positionMovedOutside: loanPositionMovedOutsideV1(record),
     // One sent as a single batch that its wallet may never have sent: whether its owner can ask to release it, and from when.
     release: loanReleaseStandingV1(record, rwaLendingRuntimeV1.now()),
     // Still Spend: a loan in steps stopped before it paid, whose invoice the wallet can still pay itself.

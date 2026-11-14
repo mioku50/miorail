@@ -68,6 +68,8 @@ async function check(record: LoanExecutionV1, logs: readonly VerifiedReceiptLogV
   const result = await verifier({ execution: record, receipt, logs, operationNonce: '7', transaction: { from: OTHER, to: OTHER, value: 0n, input: '0x' } });
   return { result, read };
 }
+/** What a matched receipt records beside the action: the position another hand moved too (audit LM-1). */
+const outsideOf = (result: Awaited<ReturnType<typeof check>>['result']) => result.state === 'matched' ? result.proof.outside : result.state;
 const outMorpho = (amount = 2_000_000n) => transfer(ADDRESSES.usdc, WALLET, MORPHO_BLUE_BUNDLES_BASE_V1, amount);
 const outAave = (amount = 2_000_000n) => transfer(ADDRESSES.usdc, WALLET, ADDRESSES.aaveHub, amount);
 
@@ -75,12 +77,20 @@ describe('protocol lending receipt effects and pinned positions', () => {
   it('Morpho exact repayment binds its market, owner, applied shares and remaining position without reading an oracle', async () => {
     const { result, read } = await check(execution(), [outMorpho(), morphoEvent('repay')]);
     assert.equal(result.state, 'matched'); assert.equal(read, 1);
+    assert.equal(outsideOf(result), undefined);
   });
-  it('Morpho full repayment permits a bounded pull and refund, but requires zero remaining debt shares', async () => {
+  it('a repayment that landed while a liquidator took part of the position is confirmed, with what the other hand moved recorded (audit LM-1)', async () => {
+    // Exact USDC: the own event repaid 200 of 300 shares; a liquidator repaid 60 more and seized 10 of the 100 pledged.
+    const { result } = await check(execution(), [outMorpho(), morphoEvent('repay')], { debtAssets: 400_000n, debtShares: 40n, collateralAssets: 90n });
+    assert.equal(result.state, 'matched');
+    assert.deepEqual(outsideOf(result), { debtShares: { expected: '100', actual: '40' }, collateralAssets: { expected: '100', actual: '90' } });
+    if (result.state === 'matched') assert.deepEqual([result.proof.remainingDebtAssets, result.proof.collateralAssets, result.proof.appliedShares], ['400000', '90', '200']);
+  });
+  it('Morpho full repayment permits a bounded pull and refund; debt shares left after it are recorded as another hand’s', async () => {
     const record = execution(); Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
     const logs = [outMorpho(4_000_000n), transfer(ADDRESSES.usdc, MORPHO_BLUE_BUNDLES_BASE_V1, WALLET, 1_000_000n), morphoEvent('repay', { assets: 3_000_000n, shares: 300n })];
     assert.equal((await check(record, logs, { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n })).result.state, 'matched');
-    assert.notEqual((await check(record, logs, { debtAssets: 0n, debtShares: 1n, collateralAssets: 100n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(record, logs, { debtAssets: 0n, debtShares: 1n, collateralAssets: 100n })).result), { debtShares: { expected: '0', actual: '1' } });
   });
   it('Morpho all follows the full sentinel at inclusion within the budget, even if another debt change preceded it', async () => {
     const record = execution(); Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
@@ -98,9 +108,9 @@ describe('protocol lending receipt effects and pinned positions', () => {
       assert.notEqual((await check(execution(), [outMorpho(), ...events])).result.state, 'matched');
     }
   });
-  it('does not confirm if applied shares disagree with the pinned remaining position or it could not be read', async () => {
+  it('records a remaining position the applied shares do not explain as another hand’s, and confirms nothing it could not read', async () => {
     const logs = [outMorpho(), morphoEvent('repay')];
-    assert.notEqual((await check(execution(), logs, { debtAssets: 1_000_000n, debtShares: 99n, collateralAssets: 100n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(execution(), logs, { debtAssets: 1_000_000n, debtShares: 99n, collateralAssets: 100n })).result), { debtShares: { expected: '100', actual: '99' } });
     assert.notEqual((await check(execution(), logs, null)).result.state, 'matched');
   });
   it('a Morpho borrow that BlueBundles forwards is matched only when all of it reaches the wallet from BlueBundles', async () => {
@@ -125,14 +135,14 @@ describe('protocol lending receipt effects and pinned positions', () => {
     assert.deepEqual((await check(record, [...pledge, borrowed[0]!, morphoEvent('borrow', { receiver: OTHER }), forward(WALLET, 2_000_000n)], position)).result,
       { state: 'mismatched', errorCode: 'loan_protocol_event_mismatch' });
   });
-  it('requires exact selected Morpho collateral event and preserved post-borrow position', async () => {
+  it('requires the exact selected Morpho collateral event, and records a post-borrow position another hand moved', async () => {
     const record = execution('morpho', 'borrow'); Object.assign(record.run.facts, { collateralSupplyAssets: '10' });
     const supplied: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SupplyCollateral', args: {
       id: CRYPTO[0]!.morphoMarket, caller: MORPHO_BLUE_BUNDLES_BASE_V1, onBehalf: WALLET as Address } }) as Hex[], data: encodeAbiParameters([{ type: 'uint256' }], [10n]) };
     const logs = [transfer(CRYPTO[0]!.token, WALLET, MORPHO_BLUE_BUNDLES_BASE_V1, 10n), supplied, transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 2_000_000n), morphoEvent('borrow')];
     assert.equal((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n })).result.state, 'matched');
     assert.notEqual((await check(record, logs.filter(log => log !== supplied), { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n })).result.state, 'matched');
-    assert.notEqual((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n })).result), { collateralAssets: { expected: '110', actual: '100' } });
   });
   it('Aave partial repayment can repay premium while drawn shares stay unchanged', async () => {
     const record = execution('aave-v4'); record.run.facts.debtBeforeAssets = '6000000';
@@ -144,7 +154,7 @@ describe('protocol lending receipt effects and pinned positions', () => {
     const logs = [outAave(), aaveEvent('repay', { shares: 0n, premium: 2_000_000n * 10n ** 27n })];
     const actual = { debtAssets: 3_100_000n, debtShares: 300n, collateralAssets: 101n, collateralShares: 100n };
     assert.equal((await check(record, logs, actual)).result.state, 'matched');
-    assert.notEqual((await check(record, logs, { ...actual, collateralShares: 99n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(record, logs, { ...actual, collateralShares: 99n })).result), { collateralShares: { expected: '100', actual: '99' } });
   });
   it('Aave repayment binds the actual USDC reserve and exact owner/caller', async () => {
     for (const event of [aaveEvent('repay', { reserveId: 0n }), aaveEvent('repay', { user: OTHER }), aaveEvent('repay', { caller: OTHER })]) {
@@ -166,12 +176,13 @@ describe('protocol lending receipt effects and pinned positions', () => {
     const premium = (await check(record, logs, { debtAssets: 1n, debtShares: 0n, collateralAssets: 100n })).result;
     assert.equal(premium.state, 'matched');
     if (premium.state === 'matched') assert.equal(premium.proof.remainingDebtAssets, '1');
-    // Shares that do not follow from the own event are another hand in the position: still unknown.
-    for (const p of [{ debtAssets: 0n, debtShares: 1n, collateralAssets: 100n }, { debtAssets: 23n, debtShares: 2n, collateralAssets: 100n }]) {
-      assert.notEqual((await check(record, p.debtShares === 2n ? tight : logs, p)).result.state, 'matched');
-    }
+    // Shares that do not follow from the own event are another hand in the position: recorded beside the
+    // repayment that landed, never an unknown that holds the spoke (audit LM-1).
+    assert.deepEqual(outsideOf((await check(record, logs, { debtAssets: 0n, debtShares: 1n, collateralAssets: 100n })).result), { debtShares: { expected: '0', actual: '1' } });
+    assert.deepEqual(outsideOf((await check(record, tight, { debtAssets: 23n, debtShares: 2n, collateralAssets: 100n })).result), { debtShares: { expected: '1', actual: '2' } });
+    assert.equal(outsideOf(tail), undefined);
   });
-  it('Aave borrow requires the selected stock supply event, destination and resulting pledge', async () => {
+  it('Aave borrow requires the selected stock supply event and destination, and records a pledge another hand moved', async () => {
     const record = execution('aave-v4', 'borrow'); record.run.facts.collateralSupplyAssets = '10';
     const supplyCall = { ...record.run.calls[1]!, data: encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'supply', args: [0n, 10n, WALLET as Address] }) };
     record.run.calls = [...record.run.calls.slice(0, 1), { ...supplyCall, index: 1 }, { ...record.run.calls[1]!, index: 2 }]; record.run.callsHash = hashApprovedCallsV1(record.run.calls);
@@ -181,7 +192,7 @@ describe('protocol lending receipt effects and pinned positions', () => {
     for (const bad of [logs.filter(log => log !== supplied), logs.map(log => log === supplied ? supplyAave(10n, { reserveId: 1n }) : log), logs.map(log => log === supplied ? supplyAave(10n, { caller: OTHER }) : log)]) {
       assert.notEqual((await check(record, bad, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n })).result.state, 'matched');
     }
-    assert.notEqual((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n })).result), { collateralShares: { expected: '110', actual: '100' } });
   });
   it('a loan that pays a Bitrefill invoice is matched only with one exact transfer to the invoice address', async () => {
     const record = execution('aave-v4', 'borrow'), PAY_TO = '0x3333333333333333333333333333333333333333';
@@ -205,9 +216,10 @@ describe('protocol lending receipt effects and pinned positions', () => {
     delete record.run.facts.payment;
     assert.equal((await check(record, logs, position)).result.state, 'mismatched');
   });
-  it('rejects an unrequested token movement or collateral change during repayment', async () => {
+  it('rejects an unrequested token movement, and records a collateral change another hand made during the repayment', async () => {
     assert.notEqual((await check(execution(), [outMorpho(), transfer(STOCKS[0]!.token, WALLET, OTHER, 1n), morphoEvent('repay')])).result.state, 'matched');
-    assert.notEqual((await check(execution(), [outMorpho(), morphoEvent('repay')], { debtAssets: 1_000_000n, debtShares: 100n, collateralAssets: 99n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(execution(), [outMorpho(), morphoEvent('repay')], { debtAssets: 1_000_000n, debtShares: 100n, collateralAssets: 99n })).result),
+      { collateralAssets: { expected: '100', actual: '99' } });
   });
   for (const authorizedBefore of [false, true]) {
     it(`native ETH Morpho borrow verifies WETH wrap, bundle supply, USDC sweep and ${authorizedBefore ? 'preserved' : 'temporary'} authorization`, async () => {
@@ -287,7 +299,7 @@ describe('repay all, then take the stock back: what the receipt must show', () =
     const { result } = await check(returning(false), [outAave(), aaveEvent('repay'), arrived(), withdrawn()], CLOSED);
     assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_protocol_event_not_unique');
   });
-  it('refuses a short withdrawal, a missing arrival, another reserve or caller, and a deposit still in the Spoke', async () => {
+  it('refuses a short withdrawal, a missing arrival, another reserve or caller, and records a deposit another hand left in the Spoke', async () => {
     for (const logs of [
       [outAave(), aaveEvent('repay'), arrived(), withdrawn(DEPOSIT - 1n)],
       [outAave(), aaveEvent('repay'), withdrawn()],
@@ -299,7 +311,7 @@ describe('repay all, then take the stock back: what the receipt must show', () =
       assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_withdraw_event_mismatch');
     }
     const held = await check(returning(), [outAave(), aaveEvent('repay'), arrived(), withdrawn()], { ...CLOSED, collateralAssets: DEPOSIT, collateralShares: DEPOSIT });
-    assert.equal(held.result.state, 'unavailable');
+    assert.deepEqual(outsideOf(held.result), { collateralShares: { expected: '0', actual: String(DEPOSIT) }, collateralAssets: { expected: '0', actual: String(DEPOSIT) } });
   });
   it('a plain repayment still refuses any withdrawal and any stock that arrives', async () => {
     const plain = execution('aave-v4', 'repay');
@@ -341,7 +353,7 @@ describe('repay all on Morpho, then the wallet takes its collateral back: what t
     const { result } = await check(returning(false), [arrived(), withdrawn()], CLOSED);
     assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
   });
-  it('refuses another receiver or caller, a short withdrawal, a missing arrival, and collateral still in the market', async () => {
+  it('refuses another receiver or caller, a short withdrawal, a missing arrival, and records collateral another hand left in the market', async () => {
     for (const logs of [
       [...repaid(), arrived(), withdrawn({ receiver: OTHER })],
       [...repaid(), arrived(), withdrawn({ caller: MORPHO_BLUE_BUNDLES_BASE_V1 })],
@@ -352,7 +364,7 @@ describe('repay all on Morpho, then the wallet takes its collateral back: what t
       assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_withdraw_event_mismatch');
     }
     const held = await check(returning(), [...repaid(), arrived(), withdrawn()], { ...CLOSED, collateralAssets: COLLATERAL });
-    assert.equal(held.result.state, 'unavailable');
+    assert.deepEqual(outsideOf(held.result), { collateralAssets: { expected: '0', actual: String(COLLATERAL) } });
   });
   it('a plain Morpho repayment still refuses any collateral withdrawal', async () => {
     const plain = execution('morpho', 'repay'); Object.assign(plain.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
@@ -390,9 +402,9 @@ describe('the wallet’s own calls to Morpho Blue: what the receipt must show', 
     assert.deepEqual((await check(borrowed(), loan({ receiver: MORPHO_BLUE_BUNDLES_BASE_V1 }), LOANED)).result, { state: 'mismatched', errorCode: 'loan_protocol_event_mismatch' });
     const routed = [...loan().slice(0, 2), transfer(ADDRESSES.usdc, OTHER, WALLET, 2_000_000n), morphoEvent('borrow', { caller: WALLET })];
     assert.deepEqual((await check(borrowed(), routed, LOANED)).result, { state: 'mismatched', errorCode: 'loan_borrow_source_mismatch' });
-    // The pledge must be exactly the one chosen, and the position must hold it.
+    // The pledge must be exactly the one chosen; a position that does not hold it was moved by another hand too.
     assert.notEqual((await check(borrowed(), loan().filter((_, i) => i !== 1), LOANED)).result.state, 'matched');
-    assert.notEqual((await check(borrowed(), loan(), { ...LOANED, collateralAssets: 100n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(borrowed(), loan(), { ...LOANED, collateralAssets: 100n })).result), { collateralAssets: { expected: String(LOANED.collateralAssets), actual: '100' } });
   });
 
   it('native ETH: the wallet wraps exactly the chosen ETH itself, pledges it and authorizes nobody', async () => {
@@ -437,10 +449,10 @@ describe('the wallet’s own calls to Morpho Blue: what the receipt must show', 
     const { result } = await check(repaidAll(), repay(), CLOSED);
     assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
     assert.deepEqual((await check(repaidAll(), repay(3_000_000n, MORPHO_BLUE_BUNDLES_BASE_V1), CLOSED)).result, { state: 'mismatched', errorCode: 'loan_protocol_caller_mismatch' });
-    // More than the cap, a refund, or a debt left: not this repayment.
+    // More than the cap, or a refund: not this repayment. A debt left after it is another hand's, recorded beside it.
     assert.notEqual((await check(repaidAll(), repay(4_000_001n), CLOSED)).result.state, 'matched');
     assert.notEqual((await check(repaidAll(), [...repay(), transfer(ADDRESSES.usdc, ADDRESSES.morpho, WALLET, 1n)], CLOSED)).result.state, 'matched');
-    assert.notEqual((await check(repaidAll(), repay(), { ...CLOSED, debtShares: 1n })).result.state, 'matched');
+    assert.deepEqual(outsideOf((await check(repaidAll(), repay(), { ...CLOSED, debtShares: 1n })).result), { debtShares: { expected: '0', actual: '1' } });
   });
 
   it('repay all, then take the collateral back: the wallet’s own repayment and its own withdrawal', async () => {
