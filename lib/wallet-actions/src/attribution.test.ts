@@ -115,22 +115,30 @@ test('the swap, both loan pages and the Spend payment send their calls through t
   }
   // Audit WAL-5 (2026-11-10): four more ways to the wallet sent only the capability, which MetaMask drops:
   // a stock action an assistant drafted, a B20 entry, the Action Inbox and the card in a chat.
-  for (const page of ['artifacts/interface/src/features/rwa/StockActionReviewPage.tsx', 'artifacts/interface/src/features/b20/B20WatchPage.tsx',
-    'lib/wallet-actions/src/useWalletConfirmAction.ts', 'artifacts/interface/src/mcp-app/stillCardWallet.ts']) {
+  for (const page of ['artifacts/interface/src/features/rwa/StockActionReviewPage.tsx', 'lib/wallet-actions/src/b20EntrySend.ts',
+    'lib/wallet-actions/src/useWalletConfirmAction.ts', 'artifacts/interface/src/mcp-app/stillCardWallet.ts', 'artifacts/miniapp/app/action/[draft]/page.tsx']) {
     assert.match(readFileSync(path.join(root, page), 'utf8'), /calls: attributedCallsV1\(\{ calls/, page);
   }
-  // Every wallet_sendCalls in the product sends its calls through the helper: a new one cannot forget it.
+  // A B20 entry, on the site and in the mini app, goes through the one send that attributes it (audit BASE-1, 2026-11-14:
+  // the mini app's sent only the capability, and this scan, matching `sendCalls.mutateAsync(` by case, never saw its
+  // `b20SendCalls.mutateAsync(`).
+  for (const page of ['artifacts/interface/src/features/b20/B20WatchPage.tsx', 'artifacts/miniapp/app/components/MiniConsole.tsx']) {
+    assert.match(readFileSync(path.join(root, page), 'utf8'), /sendB20EntryCallsV1\(\{/, page);
+  }
+  // Every wallet_sendCalls in the product sends its calls through the helper: a new one cannot forget it, whatever
+  // its hook is called and however its quotes are written.
   const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? (['node_modules', '.next', 'dist', 'e2e', 'test'].includes(entry.name) ? [] : sources(path.join(dir, entry.name)))
       : /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path.join(dir, entry.name)] : []);
   const senders = ['artifacts/interface/src', 'artifacts/miniapp/app', 'lib/wallet-actions/src'].flatMap((dir) => sources(path.join(root, dir)))
-    .filter((file) => /sendCalls\.mutateAsync\(|method: 'wallet_sendCalls'/.test(readFileSync(file, 'utf8')));
-  assert.ok(senders.length >= 9, `found ${senders.length} senders`);
+    .filter((file) => /sendcalls\.mutateasync\(|method:\s*['"]wallet_sendCalls['"]/i.test(readFileSync(file, 'utf8')));
+  assert.ok(senders.length >= 10, `found ${senders.length} senders`);
+  assert.ok(senders.some((file) => file.endsWith('MiniConsole.tsx')), 'the mini app console is a sender');
   // Found's claim is the one sender with no Builder Code at all: it collects a gift, and is not counted as Still's activity.
   // gasLimitOverride.ts is the request the others hand calls to once they carry their measured gas (2026-11-12): it
   // sends what it is given, and every caller gives it calls it attributed first (gasLimitOverride.test.ts).
   for (const file of senders.filter((file) => !file.endsWith('useFoundWalletClaim.ts') && !file.endsWith('gasLimitOverride.ts'))) {
-    assert.match(readFileSync(file, 'utf8'), /attributedCallsV1\(\{ calls/, path.relative(root, file));
+    assert.match(readFileSync(file, 'utf8'), /attributedCallsV1\(\{ calls|sendB20EntryCallsV1\(\{/, path.relative(root, file));
   }
   // Both loan pages send a sponsored batch as approved; Spend has no sponsor.
   for (const page of ['artifacts/interface/src/features/rwa/LendingReviewPage.tsx', 'artifacts/miniapp/app/lending/[draft]/page.tsx']) {

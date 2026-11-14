@@ -59,6 +59,9 @@ export {
   walletSubmissionFailureMessageV1,
 } from './src/walletBatchSupport';
 export type { AtomicBatchSupportV1 } from './src/walletBatchSupport';
+// 2026-11-14: a B20 entry, sent the same way on the site and in the mini app (audits WAL-5, WAL-6, BASE-1).
+export { B20EntryNotAskedErrorV1, b20EntryOtherAccountSentenceV1, sendB20EntryCallsV1 } from './src/b20EntrySend';
+export type { B20EntryPayloadV1, SendB20EntryCallsInputV1 } from './src/b20EntrySend';
 // 2026-11-09: a press first makes the page's connection to the wallet live (see the module).
 export { WalletAccountChangedErrorV1, WalletConnectionNotReadyErrorV1, connectedAccountsV1, liveConnectorV1, requireLiveWalletAccountV1,
   requireLiveWalletConnectionV1 } from './src/liveWalletConnection';

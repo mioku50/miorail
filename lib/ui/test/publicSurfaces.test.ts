@@ -54,7 +54,10 @@ test('every wallet call site in the repository wires ERC-8021 attribution', () =
       /sendCallsCapabilitiesV1\(\{\s*suffix:\s*(?!null\b|undefined\b)[A-Za-z_$][\w$]*/.test(text) ||
       // Or the server wrote the code into each call's data, and the file
       // refuses a call without it before the wallet opens (Found's claim).
-      /callBuilderCodesV1\(call\.data\)\.length === 0/.test(text);
+      /callBuilderCodesV1\(call\.data\)\.length === 0/.test(text) ||
+      // Or the B20 entry's own send takes the file's suffix, and attaches it as
+      // dataSuffix and in each call (b20EntrySend.test.ts, 2026-11-14).
+      /sendB20EntryCallsV1\(\{[\s\S]{0,300}suffix:\s*(?!null\b|undefined\b)[A-Za-z_$][\w$]*/.test(text);
     if (!attributed) unattributed.push(path.relative(root, file));
   }
   assert.deepEqual(
@@ -76,9 +79,11 @@ test('every wallet call site brings a restored connection back, and names the ac
     const text = readFileSync(file, 'utf8');
     if (!/\buseSendCalls\s*\(/.test(text)) continue;
     const name = path.relative(root, file);
-    if (!/\brequireLiveWalletAccountV1\(/.test(text)) unguarded.push(name);
+    // A B20 entry's own send makes the plan's account live and sends from it, and only from it (b20EntrySend.test.ts).
+    const b20Entry = /sendB20EntryCallsV1\(\{[\s\S]{0,300}payload: begun\.payload,\s*connectedAddress:/.test(text);
+    if (!/\brequireLiveWalletAccountV1\(/.test(text) && !b20Entry) unguarded.push(name);
     const sends = [...text.matchAll(/(?:[sS]endCalls\.mutateAsync\(|\bsendTransaction\(\s*config,\s*)\{/g)];
-    if (sends.length === 0) unnamed.push(`${name}: no send found`);
+    if (sends.length === 0 && !b20Entry) unnamed.push(`${name}: no send found`);
     for (const send of sends) {
       if (!/\baccount:/.test(text.slice(send.index, send.index + 400))) unnamed.push(`${name}:${text.slice(0, send.index).split('\n').length}`);
     }
@@ -95,9 +100,12 @@ test('every remaining Base Account call surface receives ERC-8021 attribution', 
 
   for (const walletSurface of [b20, mini]) {
     assert.match(walletSurface, /builderCodeToDataSuffix/);
-    assert.match(walletSurface, /dataSuffix:\s*\{\s*value:/);
-    assert.match(walletSurface, /optional:\s*true/);
+    // The B20 entry hands the surface's own suffix to its one send, which attaches it as an optional
+    // dataSuffix and in each call's data for a wallet that drops it (b20EntrySend.test.ts, audit BASE-1).
+    assert.match(walletSurface, /sendB20EntryCallsV1\(\{[\s\S]{0,300}suffix: (B20_BUILDER_SUFFIX_V1|BUILDER_SUFFIX),/);
   }
+  const send = source('lib/wallet-actions/src/b20EntrySend.ts');
+  assert.match(send, /dataSuffix:\s*\{\s*value: input\.suffix,\s*optional:\s*true\s*\}/);
   assert.match(earn, /builderCode=\{builderCode\}/);
   assert.match(routeHome, /builderCode=\{BUILDER_CODE\}/);
 });

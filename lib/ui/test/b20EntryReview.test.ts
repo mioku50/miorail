@@ -160,6 +160,10 @@ describe('the two surfaces share one projection', () => {
     path.join(here, '..', '..', '..', 'artifacts', 'interface', 'src', 'features', 'b20', 'B20WatchPage.tsx'),
     'utf8',
   );
+  const miniConsole = readFileSync(
+    path.join(here, '..', '..', '..', 'artifacts', 'miniapp', 'app', 'components', 'MiniConsole.tsx'),
+    'utf8',
+  );
 
   test('the interface renders the shared card rather than its own', () => {
     assert.match(interfacePage, /B20EntryReviewCard/);
@@ -174,10 +178,13 @@ describe('the two surfaces share one projection', () => {
 
   test('the interface passes the server payload through untouched', () => {
     // The server's calls go to the wallet as they came. The one thing that may follow a call's own bytes is
-    // the Builder Code, for a wallet that drops the dataSuffix capability (audit WAL-5): the shared helper
-    // appends it and changes nothing else, and no other expression touches the payload's calls.
-    assert.match(interfacePage, /calls: attributedCallsV1\(\{ calls: begun\.payload\.calls as \{ data\?: string \}\[\], suffix: B20_BUILDER_SUFFIX_V1, capabilities \}\) as never/);
-    assert.equal(interfacePage.split('begun.payload.calls').length - 1, 1);
+    // the Builder Code, for a wallet that drops the dataSuffix capability (audit WAL-5): the one B20 entry send
+    // appends it and changes nothing else (b20EntrySend.test.ts), and it is handed the payload whole, so it
+    // sends from the plan's own account (audit WAL-5, 2026-11-14). No expression here touches the payload's calls.
+    for (const page of [interfacePage, miniConsole]) {
+      assert.match(page, /sendB20EntryCallsV1\(\{[\s\S]{0,200}payload: begun\.payload,/);
+      assert.equal(page.split('begun.payload.calls').length - 1, 0);
+    }
     for (const forbidden of ['encodeFunctionData', 'new Interface(', '0x095ea7b3', 'router:']) {
       assert.ok(!interfacePage.includes(forbidden), `must not build ${forbidden} in the browser`);
     }
@@ -185,10 +192,6 @@ describe('the two surfaces share one projection', () => {
 
   // Audit WAL-2 / DIFF-1 (2026-11-14): the error was read by its words, so "connection closed" went in as the
   // person's No, the server freed the plan's one slot, and the same entry could go to the wallet again.
-  const miniConsole = readFileSync(
-    path.join(here, '..', '..', '..', 'artifacts', 'miniapp', 'app', 'components', 'MiniConsole.tsx'),
-    'utf8',
-  );
 
   test('a wallet error is read as a swap reads it: only the wallet’s own refusal is a rejection', () => {
     for (const [page, quote] of [[interfacePage, "'"], [miniConsole, '"']] as const) {
@@ -209,9 +212,10 @@ describe('the two surfaces share one projection', () => {
   });
 
   test('an error before the wallet was asked is a request that never left the page', () => {
-    // Set at the last step before the wallet opens, and nowhere else.
-    assert.ok(interfacePage.includes('asked = true;\n      const result = await sendCalls.mutateAsync({'));
-    assert.ok(miniConsole.includes('asked = true;\n      const result = await b20SendCalls.mutateAsync({'));
-    for (const page of [interfacePage, miniConsole]) assert.equal(page.split('asked = true;').length - 1, 1);
+    // Set by the send itself at the last step before the wallet opens (b20EntrySend.test.ts), and nowhere else.
+    for (const page of [interfacePage, miniConsole]) {
+      assert.ok(page.includes('onAsk: () => { asked = true; },'));
+      assert.equal(page.split('asked = true;').length - 1, 1);
+    }
   });
 });

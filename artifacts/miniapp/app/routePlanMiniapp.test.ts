@@ -67,8 +67,10 @@ test('B20 entry in Base App uses the shared proof flow and exact atomic Base Acc
   assert.ok(source.includes('useB20BeginEntrySubmission'));
   assert.ok(source.includes('useB20ReconcileEntrySubmission'));
   assert.ok(source.includes('<B20EntryReviewCard'));
-  assert.ok(source.includes('calls: begun.payload.calls'));
-  assert.ok(source.includes('forceAtomic: begun.payload.atomicRequired'));
+  // The plan's payload goes whole to the one B20 entry send, which keeps its calls and their atomic delivery
+  // and sends from the plan's account (lib/wallet-actions/src/b20EntrySend.test.ts, audit WAL-5).
+  assert.ok(source.includes('payload: begun.payload,'));
+  assert.ok(source.includes('sendB20EntryCallsV1({'));
   assert.ok(source.includes('transactionHashesFromReceipts'));
   assert.ok(source.includes('onBuildEntryPlan={buildB20EntryPlan}'));
 });

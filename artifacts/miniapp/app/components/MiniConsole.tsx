@@ -195,13 +195,15 @@ import {
   SubmissionRecoveryRail,
   builderCodeForSurfaceV1,
   builderCodeToDataSuffix,
-  requireLiveWalletAccountV1,
+  sendB20EntryCallsV1,
   submissionReconcilableV1,
   transactionHashesFromReceipts,
   useFoundWalletClaim,
   useSpendPermissionGrant,
+  useWalletBatchSupportV1,
   type BlueprintSubmitStatus,
   walletSendOutcomeV1,
+  walletSubmissionFailureMessageV1,
 } from "@mioagent/wallet-actions";
 import { SimulateButton, useB20ExitProofPayment, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
@@ -1286,6 +1288,10 @@ export function MiniConsole() {
   const b20ReconcileSubmission = useB20ReconcileEntrySubmission();
   const b20SendCalls = useSendCalls();
   const b20WagmiConfig = useConfig();
+  const b20WalletBatches = useWalletBatchSupportV1();
+  // A send that carried measured gas and failed for a reason but the person's own No: the next press goes
+  // with the wallet's own estimate.
+  const b20GasLimitsDeclined = useRef(false);
   const b20EntryStatus = useB20EntryStatus(b20EntryPlanId, { enabled: Boolean(b20EntryPlanId) });
   const b20EntryReview = b20EntryStatus.data?.review ?? b20PrepareEntry.data?.review ?? null;
   const b20EntryState = b20EntryStatus.data?.status ?? null;
@@ -1368,21 +1374,20 @@ export function MiniConsole() {
     // Whether the wallet was asked at all: an error before it is a request that never left this page.
     let asked = false;
     try {
-      // A restored connection is brought back before the wallet is asked (2026-11-09), and the send names
-      // the account this plan was made for: a wallet that answers as another is not asked (audit WAL-1).
-      if (!address) throw new Error("Your wallet is not connected");
-      await requireLiveWalletAccountV1(b20WagmiConfig, address);
-      asked = true;
-      const result = await b20SendCalls.mutateAsync({
-        account: address,
-        calls: begun.payload.calls as never,
-        chainId: 8453,
-        forceAtomic: begun.payload.atomicRequired,
-        capabilities: BUILDER_SUFFIX
-          ? { dataSuffix: { value: BUILDER_SUFFIX, optional: true } }
-          : undefined,
+      // As on the site (audits WAL-5, WAL-6, BASE-1, 2026-11-14): sent from the account the plan was made
+      // for, under the session's sign-in, which must be the one connected here; the Builder Code in each
+      // call's own data for a wallet that drops `dataSuffix`; each call's measured gas where it is taken.
+      const { batchId } = await sendB20EntryCallsV1({
+        config: b20WagmiConfig,
+        payload: begun.payload,
+        connectedAddress: address,
+        suffix: BUILDER_SUFFIX,
+        readCapabilities: async () => (await b20WalletBatches.readNow()).capabilities,
+        sendCalls: (request) => b20SendCalls.mutateAsync(request),
+        gasLimitsDeclined: b20GasLimitsDeclined.current,
+        onGasLimitsDeclined: () => { b20GasLimitsDeclined.current = true; },
+        onAsk: () => { asked = true; },
       });
-      const batchId = typeof result === "string" ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {
         // Accepted with no id to ask about later: it may well be on its way, so nothing is recorded and
         // this plan's one slot stays taken (audit DIFF-1, 2026-11-14).
@@ -1403,6 +1408,8 @@ export function MiniConsole() {
         setB20WalletError(B20_ENTRY_ANSWER_UNREAD_V1);
         return;
       }
+      // Refused before the wallet was asked (another account connected, a connection not live): said why.
+      if (!asked) setB20WalletError(walletSubmissionFailureMessageV1(error));
       await b20RecordSubmission.mutateAsync({
         planId: b20EntryPlanId,
         attemptId: begun.attemptId,
@@ -1410,7 +1417,7 @@ export function MiniConsole() {
         batchId: null,
       });
     }
-  }, [b20BeginSubmission, b20EntryPlanId, b20ProfileIdentityV1, b20RecordSubmission, b20SendCalls, b20WagmiConfig]);
+  }, [address, b20BeginSubmission, b20EntryPlanId, b20ProfileIdentityV1, b20RecordSubmission, b20SendCalls, b20WagmiConfig, b20WalletBatches]);
 
   const refreshB20EntryProof = useCallback(() => {
     const walletStatus = b20WalletBatchStatus.data as {
