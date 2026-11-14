@@ -32,6 +32,7 @@
  *   pnpm rwa:market-tail --dry
  *   pnpm rwa:market-tail --passes 4
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   B20_CORPORATE_ACTION_TOPIC_LIST_V1,
@@ -593,14 +594,14 @@ async function main(): Promise<void> {
       });
       if (outcome) console.log(marketTailRetentionLineV1({ days: keepDays, ...outcome }));
     } catch (error) {
-      console.log(`retention: skipped (${error instanceof Error ? error.message.slice(0, 120) : 'unknown'}); nothing more was removed`);
+      console.log(`retention: skipped (${describeErrorV1(error)}); nothing more was removed`);
     }
   }
 }
 
 main()
   .catch((error) => {
-    console.error('market tail failed:', error instanceof Error ? error.message : String(error));
+    console.error('market tail failed:', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(async () => {

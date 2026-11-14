@@ -1,3 +1,4 @@
+import { describeErrorV1 } from '@mioagent/utils';
 import { STILL_REGION_TABLE_PATH_DEFAULT_V1 } from './lib/stillRegion.js';
 import { fetchRegionTableBytesV1, updateStillRegionTableV1 } from './lib/stillRegionTableUpdate.js';
 
@@ -8,6 +9,6 @@ const path = process.env.STILL_REGION_TABLE_PATH_V1?.trim() || STILL_REGION_TABL
 updateStillRegionTableV1({ path, now: new Date(), fetch: fetchRegionTableBytesV1 })
   .then(result => { console.log(JSON.stringify({ event: 'still_region_table', ...result })); })
   .catch((cause: unknown) => {
-    console.error(JSON.stringify({ event: 'still_region_table_failed', message: cause instanceof Error ? cause.message : String(cause) }));
+    console.error(JSON.stringify({ event: 'still_region_table_failed', message: describeErrorV1(cause) }));
     process.exitCode = 1;
   });

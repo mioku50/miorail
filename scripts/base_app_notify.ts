@@ -14,6 +14,7 @@
  *   pnpm base-app:notify --dry     reads and plans, sends and writes nothing
  *   pnpm base-app:notify
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { callManyV1, createB20ReaderV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'found_rewards_read', dry, ...refreshed }));
   } catch (cause) {
     console.log(JSON.stringify({ event: 'found_rewards_read', outcome: 'failed',
-      error: cause instanceof Error ? cause.message.slice(0, 80) : 'unknown' }));
+      error: describeErrorV1(cause).slice(0, 120) }));
   }
   const aerodromeRewardsFor = (channel: NotificationChannelV1) => ({
     due: async () =>
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
   } catch (cause) {
     console.log(JSON.stringify({ event: 'still_loans_read', outcome: 'failed',
-      error: cause instanceof Error ? cause.message.slice(0, 80) : 'unknown' }));
+      error: describeErrorV1(cause).slice(0, 120) }));
   }
   const stillLoansFor = (channel: NotificationChannelV1) => ({
     due: async () =>
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error) => {
-    console.error('base app notify failed:', error instanceof Error ? error.message : String(error));
+    console.error('base app notify failed:', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(async () => {

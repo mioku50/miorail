@@ -37,6 +37,7 @@
  *   pnpm rwa:measure-cash-exit --corpus official
  *   pnpm rwa:measure-cash-exit --tickers AAPLc,NVDAc --gap-ms 3000
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { callManyV1, createB20ReaderV1, decodeStringV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
@@ -415,7 +416,7 @@ async function main(): Promise<void> {
         console.log(cashExitRetentionLineV1({ days: keepDays, removed, kept: plan.keep.length }));
       }
     } catch (error) {
-      console.log(`retention: skipped, the windows to keep could not be read (${error instanceof Error ? error.message.slice(0, 120) : 'unknown'}); nothing was removed`);
+      console.log(`retention: skipped, the windows to keep could not be read (${describeErrorV1(error)}); nothing was removed`);
     }
   }
   // A pass the router throttled out of most of its work did not do its work. The exit code says so, and
@@ -430,7 +431,7 @@ main()
   .catch((error) => {
     console.error(
       'cash-exit measurement failed:',
-      error instanceof Error ? error.message : String(error),
+      describeErrorV1(error),
     );
     process.exitCode = 1;
   })

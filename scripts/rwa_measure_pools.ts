@@ -24,6 +24,7 @@
  *   pnpm tsx scripts/rwa_measure_pools.ts
  *   pnpm tsx scripts/rwa_measure_pools.ts --gap-ms 2000 --max-tokens 20
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import {
   anchorThroughFirstAnsweringV1,
   callManyV1,
@@ -446,7 +447,7 @@ async function measurePoolYieldsV1(input: {
 
 main()
   .catch((error) => {
-    console.error(error);
+    console.error('pool measurement failed:', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(async () => {

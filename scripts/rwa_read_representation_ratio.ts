@@ -26,6 +26,7 @@
  *   pnpm rwa:read-ratio
  *   pnpm rwa:read-ratio --gap-ms 2000 --lanes 2
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import {
   B20_SELECTORS_V1,
   callManyV1,
@@ -380,7 +381,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(() => closeDb());

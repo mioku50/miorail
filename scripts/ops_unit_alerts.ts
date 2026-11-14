@@ -21,6 +21,7 @@
  *
  *   node --import tsx scripts/ops_unit_alerts.ts --dry   plans and prints, sends and writes nothing
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -284,7 +285,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error) => {
-    console.error('service alerts failed:', error instanceof Error ? error.message : String(error));
+    console.error('service alerts failed:', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(async () => {

@@ -1,3 +1,4 @@
+import { describeErrorV1 } from '@mioagent/utils';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
@@ -139,7 +140,7 @@ main()
     process.exitCode = code;
   })
   .catch(async (error: unknown) => {
-    console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`✗ ${describeErrorV1(error)}`);
     await closeDb();
     process.exitCode = 5;
   });

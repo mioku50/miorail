@@ -19,6 +19,7 @@
  *   pnpm rwa:watchlist-sweep
  *   pnpm rwa:watchlist-sweep --limit 5 --gap-ms 3000
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { createB20ReaderV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
@@ -242,14 +243,14 @@ async function main(): Promise<void> {
             // a provider failure nor creates an asset event.
             radarFailures += 1;
             console.log(
-              `         radar evaluation failed (${error instanceof Error ? error.message : 'unknown'})`,
+              `         radar evaluation failed (${describeErrorV1(error)})`,
             );
           }
         } catch (error) {
           // Our call, not the market. The clock moves and nothing is claimed.
           outcome = 'measurement_failed';
           console.log(
-            `${short}  measurement failed (${error instanceof Error ? error.message : 'unknown'})`,
+            `${short}  measurement failed (${describeErrorV1(error)})`,
           );
         }
       }
@@ -280,7 +281,7 @@ main()
   .catch((error) => {
     console.error(
       'watchlist sweep failed:',
-      error instanceof Error ? error.message : String(error),
+      describeErrorV1(error),
     );
     process.exitCode = 1;
   })

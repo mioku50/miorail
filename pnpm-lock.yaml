@@ -1666,6 +1666,9 @@ importers:
       '@mioagent/telegram':
         specifier: workspace:*
         version: link:../lib/telegram
+      '@mioagent/utils':
+        specifier: workspace:*
+        version: link:../lib/utils
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.4.3)

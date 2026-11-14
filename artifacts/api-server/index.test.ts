@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { createServer, type AddressInfo } from 'node:net';
 
-import { resolveBindV1, startServer } from './index';
+import { resolveBindV1, startServer, warmEarnContractPreflightV1 } from './index';
 
 async function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -84,4 +84,25 @@ test('startServer', async (t) => {
       else process.env.PORT = originalPort;
     }
   });
+});
+
+// The earn preflight threw viem's error at startup, and its message names the RPC URL with the project key and
+// the request body with a wallet address in it (audit OPS-2, 2026-11-14): the line now names the error only.
+test('a preflight that throws is logged by its error, without the RPC key or the request', async () => {
+  const key = '0123456789abcdef0123456789abcdef', wallet = `0x${'1a'.repeat(20)}`;
+  const thrown = Object.assign(new Error(['HTTP request failed.', 'Status: 429', `URL: https://base-mainnet.infura.io/v3/${key}`,
+    `Request body: {"params":["${wallet}"]}`].join('\n')), { name: 'HttpRequestError', status: 429, shortMessage: 'HTTP request failed.' });
+  const lines: string[] = [];
+  const [warn, log] = [console.warn, console.log];
+  console.warn = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  try {
+    await warmEarnContractPreflightV1({ env: { MIORAIL_ROUTE_INTELLIGENCE_V1: 'true', MIORAIL_EARN_ROUTE_V1: 'true' }, resolve: async () => { throw thrown; } });
+  } finally {
+    console.warn = warn; console.log = log;
+  }
+  assert.strictEqual(lines.length, 1);
+  assert.doesNotMatch(lines[0]!, new RegExp(`${key}|${wallet}|Request body`));
+  const entry = JSON.parse(lines[0]!);
+  assert.deepStrictEqual([entry.message, entry.errorName, entry.status, entry.detail], ['Earn contract preflight threw', 'HttpRequestError', 429, 'HTTP request failed.']);
 });

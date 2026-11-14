@@ -12,6 +12,7 @@
  *   pnpm rwa:scan-lookalikes --dry
  *   pnpm rwa:scan-lookalikes
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { client, closeDb } from '@mioagent/db';
 import { lookalikeMatchV1, type OfficialIdentityForMatchV1 } from '@mioagent/rwa-lookalike';
 import {
@@ -182,7 +183,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error) => {
-    console.error('lookalike scan failed:', error instanceof Error ? error.message : String(error));
+    console.error('lookalike scan failed:', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(async () => {

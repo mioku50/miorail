@@ -17,6 +17,7 @@
  * could not fetch changes nothing at all. Refuting a project because their host
  * was slow would take a badge away on the strength of a network error.
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseB20LaunchDeployerRepository,
@@ -156,7 +157,7 @@ main()
     process.exitCode = code;
   })
   .catch(async (error: unknown) => {
-    console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`✗ ${describeErrorV1(error)}`);
     await closeDb();
     process.exitCode = 1;
   });

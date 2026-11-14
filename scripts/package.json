@@ -29,6 +29,7 @@
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
     "@mioagent/telegram": "workspace:*",
+    "@mioagent/utils": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "drizzle-orm": "^0.45.2"
   },

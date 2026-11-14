@@ -1,4 +1,4 @@
-import { logger } from '@mioagent/utils';
+import { errorFactsV1, logger } from '@mioagent/utils';
 
 import { app } from './app';
 import { getMiorailProductMigrationFlags } from './lib/productMigrationConfig';
@@ -34,18 +34,24 @@ export function resolveBindV1(env: NodeJS.ProcessEnv = process.env): {
 // ON (no RPC while the surface is disabled); non-blocking and best-effort — the
 // gate re-runs it lazily anyway, and a failure only logs (the gate itself is
 // what fails a request closed with a 503).
-async function warmEarnContractPreflight(): Promise<void> {
-  const flags = getMiorailProductMigrationFlags(process.env);
+//
+// A preflight that throws is told by its error's name, status and code (audit OPS-2, 2026-11-14): viem's
+// message quotes the RPC URL with its key and the request body, and three such lines sat in the journal.
+export async function warmEarnContractPreflightV1(deps: {
+  env?: NodeJS.ProcessEnv;
+  resolve?: typeof resolveEarnContractPreflightV1;
+} = {}): Promise<void> {
+  const flags = getMiorailProductMigrationFlags(deps.env ?? process.env);
   if (!flags.routeIntelligenceV1 || !flags.earnRouteV1) return;
   try {
-    const verification = await resolveEarnContractPreflightV1();
+    const verification = await (deps.resolve ?? resolveEarnContractPreflightV1)();
     if (verification.ok) {
       console.log('Earn contract preflight passed — earn routes enabled');
     } else {
       console.warn(`Earn contract preflight FAILED — earn routes will 503: ${verification.failures.join(', ')}`);
     }
   } catch (error) {
-    console.warn(`Earn contract preflight threw: ${(error as Error).message}`);
+    logger.warn('Earn contract preflight threw', errorFactsV1(error));
   }
 }
 
@@ -54,7 +60,7 @@ export function startServer() {
   const server = app.listen(port, host, () => {
     console.log(`API Server listening on ${host}:${port}`);
     console.log(`API CHAIN_ENV=${process.env.CHAIN_ENV || 'sepolia'}`);
-    void warmEarnContractPreflight();
+    void warmEarnContractPreflightV1();
     // Learn at boot whether the simulator can serve requests. A key that is
     // present but out of monthly capacity used to leave every capability read
     // claiming a batch simulation this deployment could not run.

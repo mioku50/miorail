@@ -14,6 +14,7 @@
  *   pnpm rwa:ingest-official            # check and record
  *   pnpm rwa:ingest-official --dry      # check and print, write nothing
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   OFFICIAL_SOURCES_V1,
@@ -448,7 +449,7 @@ main()
   .catch((error) => {
     console.error(
       'official asset ingestion failed:',
-      error instanceof Error ? error.message : String(error),
+      describeErrorV1(error),
     );
     process.exitCode = 1;
   })

@@ -25,6 +25,7 @@
  *   pnpm rwa:verify-issuer
  *   pnpm rwa:verify-issuer --gap-ms 2000
  */
+import { describeErrorV1 } from '@mioagent/utils';
 import { createB20ReaderV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import { createDatabaseIssuerRepresentationRepository } from '@mioagent/route-storage';
@@ -168,7 +169,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(() => closeDb());
