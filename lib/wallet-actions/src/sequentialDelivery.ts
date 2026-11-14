@@ -173,8 +173,11 @@ export function sequentialAfterBatchFailureV1(walletName?: string | null): strin
   );
 }
 
+/** Said when the swap step was declined after its allowance landed. The allowance's hash is already in this
+ * swap's proof, so the server refuses the same calls again (`route_already_sent`, 00231dcf): pressing again
+ * cannot help, and the words no longer say it does (audit SW-2, 2026-11-14). */
 export const SEQUENTIAL_SWAP_DECLINED_V1 =
-  'The allowance for the exact amount is in place; the swap itself was not sent. Press again to go on from there while this quote holds.';
+  'The allowance for the exact amount is in place; the swap itself was not sent. These calls already reached Base once, so this quote is not sent again: compare again for a fresh one. An allowance already in place for the same amount is not asked for again.';
 
 export const SEQUENTIAL_ALLOWANCE_FAILED_V1 =
   'The allowance transaction failed onchain, so the swap was not sent. Nothing was swapped.';

@@ -7,6 +7,7 @@ import { encodeFunctionData, erc20Abi, maxUint256, type Hex } from 'viem';
 import { getCallsStatus } from 'viem/actions';
 import {
   SEQUENTIAL_BATCH_MAGIC_V1,
+  SEQUENTIAL_SWAP_DECLINED_V1,
   batchFailureInvitesStepsV1,
   batchRefusalContinuesInStepsV1,
   PERMIT2_ADDRESS_V1,
@@ -248,6 +249,13 @@ test('the page says before the first press that the wallet will be asked once pe
   assert.match(sequentialNoticeV1('Injected'), /^This wallet sends one transaction at a time/);
   assert.match(sequentialNoticeV1(null), /exactly the amount you swap/);
   assert.match(sequentialNoticeV1(null), /Stopping after the allowance leaves it in place/);
+});
+
+test('a swap step declined after its allowance landed does not promise a press the server refuses (audit SW-2)', () => {
+  // The allowance's hash is in the swap's proof, so the next press of the same calls is route_already_sent.
+  assert.doesNotMatch(SEQUENTIAL_SWAP_DECLINED_V1, /Press again/i);
+  assert.match(SEQUENTIAL_SWAP_DECLINED_V1, /not sent again: compare again for a fresh one/);
+  assert.match(SEQUENTIAL_SWAP_DECLINED_V1, /^The allowance for the exact amount is in place; the swap itself was not sent\./);
 });
 
 test('a step the wallet may have sent is unknown: only a refusal the wallet names sent nothing', () => {
