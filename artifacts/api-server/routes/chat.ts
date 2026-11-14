@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema, ChatReconcileResponseSchema } from '@mioagent/api-zod';
 import { Agent, AgentRunLimitErrorV1 } from '@mioagent/agent';
 import { chatRequestBoundaryV1, CHAT_DEADLINE_MS_V1, ChatRequestCancelledV1 } from '../lib/chatRequestBoundary.js';
+import { ModelBudgetSpentErrorV1, modelBudgetClientKeyV1, modelBudgetRuntimeV1 } from '../lib/modelBudget.js';
 import { chatLimitsV1 } from '../middleware/chatLimits.js';
 import { createLlmProvider, createStructuredLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
@@ -191,7 +192,8 @@ chatRouter.post('/reconcile', async (req, res, next) => {
 
 
 chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
-  const boundary = chatRequestBoundaryV1(res, chatRouteRuntime.timeoutMs);
+  // Every model call of this request takes its place in the server's one budget first (audit MCP-5).
+  const boundary = chatRequestBoundaryV1(res, chatRouteRuntime.timeoutMs, { budget: modelBudgetRuntimeV1.budget, clientKey: modelBudgetClientKeyV1(req) });
   const reply = (body: unknown) => { boundary.signal.throwIfAborted(); return res.json(body); };
   try {
     const { message } = ChatMessageRequestSchema.parse(req.body);
@@ -942,6 +944,14 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
     }
     if (error instanceof AgentRunLimitErrorV1) {
       res.status(422).json({ error: error.code, code: error.code });
+      return;
+    }
+    // The model budget is spent for this address or for everyone: said as that, and no provider was asked.
+    if (error instanceof ModelBudgetSpentErrorV1) {
+      if (!res.headersSent) {
+        res.setHeader('Retry-After', error.scope === 'day' ? '3600' : '60');
+        res.status(503).json({ error: 'model_busy', code: 'model_busy', detail: error.message });
+      }
       return;
     }
     next(error);

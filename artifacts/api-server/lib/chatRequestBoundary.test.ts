@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import type { Response } from 'express';
 import { ToolAggregator } from '@mioagent/tools';
 import { chatRequestBoundaryV1, ChatRequestCancelledV1 } from './chatRequestBoundary.js';
+import { ModelBudgetSpentErrorV1, ModelBudgetV1 } from './modelBudget.js';
 
 function response() {
   return Object.assign(new EventEmitter(), { writableEnded: false }) as unknown as Response;
@@ -67,4 +68,23 @@ test('normal completion removes the timer and listener without signalling cancel
   assert.equal(boundary.signal.aborted, false);
   assert.equal(closed, 1);
   assert.equal(res.listenerCount('close'), 0);
+});
+
+// Audit MCP-5, 2026-11-14: every model call of a chat request takes its place in the server's one budget.
+test('a model call the budget refuses never reaches the provider, and says why', async (t) => {
+  const res = response();
+  const budget = new ModelBudgetV1({ perClientPerMinute: 2 });
+  const boundary = chatRequestBoundaryV1(res, 1_000, { budget, clientKey: 'ip:198.51.100.7' });
+  t.after(() => boundary.dispose());
+  let asked = 0;
+  const llm = boundary.llm({ generate: async () => { asked++; return { message: { role: 'assistant', content: 'ok' } } as never; } });
+  await llm.generate({ messages: [] });
+  await llm.generate({ messages: [] });
+  await assert.rejects(llm.generate({ messages: [] }), (error) => error instanceof ModelBudgetSpentErrorV1 && error.scope === 'client');
+  assert.equal(asked, 2);
+  // Another address still has its own place.
+  const other = chatRequestBoundaryV1(response(), 1_000, { budget, clientKey: 'ip:198.51.100.8' });
+  t.after(() => other.dispose());
+  await other.llm({ generate: async () => { asked++; return { message: { role: 'assistant', content: 'ok' } } as never; } }).generate({ messages: [] });
+  assert.equal(asked, 3);
 });

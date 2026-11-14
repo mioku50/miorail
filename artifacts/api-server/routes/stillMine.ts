@@ -5,6 +5,7 @@ import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { AGENT_BASE_USDC_V2 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 import { answerStillAgentV3 } from '../lib/stillAgentServer.js';
+import { modelBudgetClientKeyV1 } from '../lib/modelBudget.js';
 import { readNativeEthV1, readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { rememberStillReadingV1 } from '../lib/stillReadings.js';
@@ -134,6 +135,8 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '8kb', inflate: false }
       read: () => service.reading(wallet as `0x${string}`),
       readUsdc: () => stillMineRuntimeV1.readUsdc(wallet),
       resolveName: (name) => stillMineRuntimeV1.resolveName(name),
+      // The model calls a question makes are counted under the asking address (audit MCP-5).
+      modelClient: modelBudgetClientKeyV1(req),
       onStage: (stage) => send({ type: 'stage', ...stage }),
     });
     if (stream) {

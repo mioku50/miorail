@@ -9,6 +9,7 @@ import type { LlmProvider, LlmRequest } from '@mioagent/llm';
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe, type Holdings } from '../../../lib/still-engine/test/fixtures.js';
 import type { BaseNameResolutionV1 } from '../lib/baseNameResolver.js';
 import { stillAgentLlmRuntimeV1 } from '../lib/stillAgentServer.js';
+import { ModelBudgetV1, modelBudgetRuntimeV1 } from '../lib/modelBudget.js';
 import { createMemoryStillReadingStoreV1, stillReadingsRuntimeV1 } from '../lib/stillReadings.js';
 import { stillMineRouter, stillMineRuntimeV1 } from './stillMine.js';
 
@@ -22,6 +23,8 @@ afterEach(() => {
   });
   Object.assign(stillAgentLlmRuntimeV1, originalLlm);
   Object.assign(stillReadingsRuntimeV1, originalReadings);
+  // Each test has the server's model budget to itself (audit MCP-5).
+  modelBudgetRuntimeV1.budget = new ModelBudgetV1();
 });
 
 const WALLET = `0x${'1'.repeat(40)}`;
@@ -255,6 +258,24 @@ test('a re-wording that rules liquidation out, promises safety or advises in sof
     assert.notEqual(res.body.answer.text, content, content);
     assert.ok(!res.body.answer.sources.some((source: string) => /^(?:AI|ИИ)/.test(source)), content);
   }
+});
+
+// Audit MCP-5, 2026-11-14: wallets are free, so the Agent's model calls count under the asking address and
+// the server's one budget, and a spent budget asks no provider.
+test('with the model budget spent, the Agent answers by its fixed rules and asks no model', async () => {
+  store = createMemoryStillReadingStoreV1();
+  modelBudgetRuntimeV1.budget = new ModelBudgetV1({ perMinute: 1 });
+  await modelBudgetRuntimeV1.budget.take('ip:elsewhere');
+  stillAgentLlmRuntimeV1.narrator = () => ({ generate: async () => assert.fail('no model is asked once the budget is spent') });
+  stillAgentLlmRuntimeV1.planner = () => ({ generate: async () => assert.fail('no model is asked once the budget is spent') });
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  // A calculation the rules read: the engine's own words, with no AI line.
+  const stress = await ask(server, 'Что будет при падении NVDA на 30%?');
+  assert.match(stress.body.answer.text, /^Если NVIDIA подешевеет на 30% \(до \$148\.33\), займ \$240\.17 на Aave V4 не доходит до ликвидации/);
+  assert.ok(!stress.body.answer.sources.some((source: string) => /^(?:AI|ИИ)/.test(source)));
+  // A question only a model would read is answered with the list, and says why.
+  const other = await ask(server, 'What will this loan cost me over 90 days?');
+  assert.match(other.body.answer.text, /^The model that reads questions in other words is busy for everyone just now, so I read this one by my fixed rules only\./);
 });
 
 test('a model reads what the rules do not, and every number it gives must be in the question', async () => {

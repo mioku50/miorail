@@ -17,6 +17,7 @@ import { stillAgentSendAnswerV1 } from './stillAgentSend.js';
 import { groundProposalV1, modelProposalV1, planSummaryV1, rulesProposalV1 } from './stillAgentPlan.js';
 import { stillAgentToolAnswerV1 } from './stillAgentTools.js';
 import { earlierStillReadingV1, rememberStillReadingV1, stillReadingChangeV1 } from './stillReadings.js';
+import { modelBudgetRuntimeV1 } from './modelBudget.js';
 
 // ---------------------------------------------------------------------------
 // The Still Agent, end to end, on the server.
@@ -163,11 +164,24 @@ function narratorPromptV2(ru: boolean): string {
       ].join('\n');
 }
 
-async function narrateV2(base: AgentAnswerV1, question: string, ru: boolean, stage: (s: StillAgentStageV1) => void): Promise<AgentAnswerV1> {
+/** Whether one more model call fits the server's one budget (audit MCP-5): a refusal is no call, and the
+ * Agent answers by its fixed rules alone. */
+async function modelPlaceV2(clientKey: string): Promise<boolean> {
+  try {
+    await modelBudgetRuntimeV1.budget.take(clientKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function narrateV2(base: AgentAnswerV1, question: string, ru: boolean, stage: (s: StillAgentStageV1) => void, modelClient: string): Promise<AgentAnswerV1> {
   const figures = evidenceFiguresV2(base).size;
   if (figures > STILL_NARRATION_MAX_FIGURES_V2) return base;
   const narrator = stillAgentLlmRuntimeV1.narrator();
   if (!narrator) return base;
+  // The calculation's own words stand when the model budget is spent.
+  if (!(await modelPlaceV2(modelClient))) return base;
   stage({ stage: 'wording' });
   try {
     const response = await narrator.generate({
@@ -191,8 +205,11 @@ async function narrateV2(base: AgentAnswerV1, question: string, ru: boolean, sta
   }
 }
 
-function capabilitiesAnswerV2(ru: boolean, unread = false): AgentAnswerV1 {
-  const lead = unread ? (ru ? 'Я не смог прочитать этот вопрос как расчёт. ' : 'I could not read that question as a calculation. ') : '';
+function capabilitiesAnswerV2(ru: boolean, unread = false, busy = false): AgentAnswerV1 {
+  const lead = busy
+    ? (ru ? 'Модель, которая читает вопросы своими словами, сейчас занята для всех, поэтому я прочитал этот вопрос только по своим правилам. '
+      : 'The model that reads questions in other words is busy for everyone just now, so I read this one by my fixed rules only. ')
+    : unread ? (ru ? 'Я не смог прочитать этот вопрос как расчёт. ' : 'I could not read that question as a calculation. ') : '';
   return { topic: null, text: lead + agentCapabilitiesV2(ru), sources: [] };
 }
 
@@ -204,6 +221,8 @@ export interface StillAgentAskV3 {
   read: () => Promise<MirrorReadingV1>;
   /** The wallet's USDC, for "swap all my USDC": the report reads only collateral. */
   readUsdc?: () => Promise<{ raw: string; decimals: number; block: string } | null>;
+  /** Who the model calls are counted under in the server's one budget (audit MCP-5): the asking address. */
+  modelClient?: string;
   /** A Basename a transfer's question writes, resolved on Base. */
   resolveName?: (name: string) => Promise<BaseNameResolutionV1>;
   onStage?: (stage: StillAgentStageV1) => void;
@@ -212,6 +231,7 @@ export interface StillAgentAskV3 {
 
 export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentAnswerV1> {
   const { question, wallet } = input;
+  const modelClient = input.modelClient ?? 'agent:unattributed';
   const ru = isRussianV1(question);
   const stage = input.onStage ?? (() => undefined);
   const { route } = agentRouteV2(question);
@@ -253,6 +273,7 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   if (!proposal) {
     const planner = stillAgentLlmRuntimeV1.planner();
     if (!planner) return capabilitiesAnswerV2(ru, route === 'analysis');
+    if (!(await modelPlaceV2(modelClient))) return capabilitiesAnswerV2(ru, false, true);
     stage({ stage: 'understanding' });
     by = 'model';
     proposal = await modelProposalV1(planner, question, report).catch(() => null);
@@ -287,5 +308,5 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   if (summary) stage({ stage: 'computed', figures: evidenceFiguresV2(base).size });
   // A refusal or a request for what is missing is ours, said plainly.
   if (base.mode !== 'analysis') return base;
-  return narrateV2(base, question, ru, stage);
+  return narrateV2(base, question, ru, stage, modelClient);
 }

@@ -2,6 +2,7 @@ import type { Response } from 'express';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ToolAggregator } from '@mioagent/tools';
 import { abortableV1 } from '@mioagent/utils';
+import type { ModelBudgetV1 } from './modelBudget.js';
 
 export const CHAT_DEADLINE_MS_V1 = 60_000;
 
@@ -12,8 +13,10 @@ export class ChatRequestCancelledV1 extends Error {
   }
 }
 
-/** One lifetime covers setup, direct reads, semantic routing and the tool loop. */
-export function chatRequestBoundaryV1(res: Response, timeoutMs = CHAT_DEADLINE_MS_V1) {
+/** One lifetime covers setup, direct reads, semantic routing and the tool loop. With `models`, every model
+ * call of the request first takes its place in the server's one budget (audit MCP-5): a call refused there
+ * never reaches the provider, and its ModelBudgetSpentErrorV1 says why. */
+export function chatRequestBoundaryV1(res: Response, timeoutMs = CHAT_DEADLINE_MS_V1, models?: { budget: ModelBudgetV1; clientKey: string }) {
   const controller = new AbortController();
   const { signal } = controller;
   let ownedTools: ToolAggregator | undefined;
@@ -47,10 +50,13 @@ export function chatRequestBoundaryV1(res: Response, timeoutMs = CHAT_DEADLINE_M
       });
     },
     llm(provider: LlmProvider): LlmProvider {
-      return { generate: request => abortableV1(signal, () => provider.generate({
-        ...request,
-        signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal,
-      })) };
+      return { generate: request => abortableV1(signal, async () => {
+        if (models) await models.budget.take(models.clientKey);
+        return provider.generate({
+          ...request,
+          signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal,
+        });
+      }) };
     },
     dispose() {
       clearTimeout(timer);

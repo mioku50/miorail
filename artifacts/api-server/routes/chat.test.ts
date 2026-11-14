@@ -14,10 +14,15 @@ import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import type { LlmRequest } from '@mioagent/llm';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { chatLimitsRuntimeV1 } from '../middleware/chatLimits.js';
+import { ModelBudgetV1, modelBudgetRuntimeV1 } from '../lib/modelBudget.js';
 
 const DB_TEST_USER_ID = testTenantId();
 const originalLimiter = chatLimitsRuntimeV1.limiter;
-beforeEach(() => { chatLimitsRuntimeV1.limiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }); });
+beforeEach(() => {
+  chatLimitsRuntimeV1.limiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 12 });
+  // Each test has the server's model budget to itself (audit MCP-5).
+  modelBudgetRuntimeV1.budget = new ModelBudgetV1();
+});
 
 before(async () => {
   await db.insert(users).values({ id: DB_TEST_USER_ID }).onConflictDoNothing();
