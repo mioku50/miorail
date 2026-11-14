@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   BITREFILL_MCP_TOKEN_URL_V1,
   BITREFILL_MCP_URL_V1,
+  SPEND_GIFT_CATEGORIES_V1,
   STILL_BITREFILL_CLIENT_ID_V1,
   ToonParseError,
   createBitrefillGuestCatalogV1,
@@ -133,6 +134,51 @@ describe('Still reads Bitrefill’s catalogue as a guest', () => {
     assert.equal(body.method, 'tools/call');
     assert.equal(body.params.name, 'search-products');
     assert.deepEqual([body.params.arguments.country, body.params.arguments.product_type, body.params.arguments.query], ['DE', 'esim', '*']);
+  });
+
+  it('a top-up is listed only when it names the asked country', async () => {
+    // 2026-11-14: Bitrefill's top-ups for every country carried an Italian calling PIN that names no
+    // country, and it was the one "top-up" Spend listed for Russia. The other two rows are made up.
+    const TOPUPS_V1 = `products[3]:
+  - _id: white-calling-pin-italy
+    name: White Calling PIN Italy
+    slug: white-calling-pin-italy
+  - _id: beeline-kazakhstan
+    countries[1]: KZ
+    name: Beeline Kazakhstan
+    slug: beeline-kazakhstan
+  - _id: roaming-bundle
+    countries[2]: KZ,UZ
+    name: Roaming Bundle
+    slug: roaming-bundle
+found: 3`;
+    const { fetchImpl } = bitrefill([token(), () => rpc(TOPUPS_V1), () => rpc(TOPUPS_V1), () => rpc(TOPUPS_V1), () => rpc(TOPUPS_V1)]);
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl });
+    const ids = async (input: Parameters<typeof catalog.search>[0]) => {
+      const found = await catalog.search(input);
+      assert.equal(found.ok, true);
+      return found.ok ? found.value.map((row) => row.id) : [];
+    };
+    assert.deepEqual(await ids({ type: 'refill', country: 'KZ' }), ['beeline-kazakhstan', 'roaming-bundle']);
+    assert.deepEqual(await ids({ type: 'refill', country: 'UZ' }), ['roaming-bundle']);
+    assert.deepEqual(await ids({ type: 'refill', country: 'RU' }), []);
+    // Gift cards and eSIMs are listed as Bitrefill answered: the rule is a top-up's.
+    assert.deepEqual(await ids({ type: 'giftcard', country: 'RU' }), ['white-calling-pin-italy', 'beeline-kazakhstan', 'roaming-bundle']);
+  });
+
+  it('a gift card category goes to Bitrefill as its own value, and only for gift cards', async () => {
+    const { fetchImpl, calls } = bitrefill([token(), () => rpc(SEARCH_V1), () => rpc(SEARCH_V1)]);
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl });
+    assert.equal((await catalog.search({ type: 'giftcard', country: 'DE', category: 'games' })).ok, true);
+    const asked = JSON.parse(calls[1]!.body).params.arguments;
+    assert.deepEqual([asked.product_type, asked.category, asked.query], ['giftcard', 'games', '*']);
+    assert.equal((await catalog.search({ type: 'giftcard', country: 'DE', query: 'Steam' })).ok, true);
+    assert.equal('category' in JSON.parse(calls[2]!.body).params.arguments, false, 'no category is sent unless one was asked');
+    // Refused here, before Bitrefill: a category for anything but gift cards, or one Spend does not offer.
+    assert.deepEqual(await catalog.search({ type: 'refill', country: 'DE', category: 'games' }), { ok: false, reason: 'bitrefill_refused' });
+    assert.deepEqual(await catalog.search({ type: 'giftcard', country: 'DE', category: 'payment-cards' as never }), { ok: false, reason: 'bitrefill_refused' });
+    assert.equal(calls.length, 3);
+    assert.deepEqual([...SPEND_GIFT_CATEGORIES_V1], ['games', 'entertainment', 'ai', 'online-marketplaces', 'food', 'travel']);
   });
 
   it('a client registered at Bitrefill sends its id and secret to the token endpoint only, as client_secret_post', async () => {

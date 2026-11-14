@@ -756,6 +756,10 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-spend .still-spend-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .still-spend .still-borrow-step .still-spend-search-row .still-btn { width: auto; height: 54px; padding: 0 22px; }
 .still-spend .still-spend-results { margin-top: 16px; }
+/* Gift cards by Bitrefill's own categories: chips under the brand search, the chosen one filled. */
+.still-spend .still-spend-categories { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.still-spend .still-spend-categories .still-chip[aria-pressed='true'] { background: var(--sm-accent); color: var(--sm-accent-on); }
+.still-spend .still-spend-empty { display: grid; gap: 10px; justify-items: start; }
 .still-spend .still-spend-results .still-borrow-choice { min-height: 56px; background: var(--sm-card); }
 .still-spend .still-spend-results .still-borrow-choice[aria-pressed='true'] { background: var(--sm-accent-soft); }
 .still-spend .still-spend-room { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; padding: 16px 18px; border-radius: 16px; background: var(--sm-accent-card); color: #FFFFFF; }

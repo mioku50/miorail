@@ -9,6 +9,7 @@ import { StillIconV1 } from './icons';
 import {
   SHARE_CARD_PRIVACY_NOTE_V1,
   SPEND_DELIVERY_UNSHOWN_V1,
+  SPEND_GIFT_CATEGORY_CHIPS_V1,
   SPEND_TYPES_V1,
   STILL_SPEND_COMMISSION_NOTE_V1,
   shareAmountWordsV1,
@@ -23,6 +24,7 @@ import {
   type LoanShareViewV1,
   type SpendShareViewV1,
   type SpendProductViewV1,
+  type SpendGiftCategoryV1,
   type SpendTypeV1,
 } from './spendView';
 import type { StillSpendWalletModelV1 } from './useSpendWalletPayment';
@@ -41,6 +43,10 @@ export interface StillSpendModelV1 {
   query: string;
   onQuery: (query: string) => void;
   onSearch: () => void;
+  /** Gift cards by one of Bitrefill's categories instead of a brand; null for none. */
+  category?: SpendGiftCategoryV1 | null;
+  /** Pressing the chosen category again lets it go. Without this, no category is offered. */
+  onCategory?: (category: SpendGiftCategoryV1 | null) => void;
   searching: boolean;
   products: SpendProductRowV1[] | null;
   searchError: string | null;
@@ -137,12 +143,32 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                 </div>
                 <button type="submit" className="still-btn" disabled={model.searching}>Search</button>
               </div>
+              {model.onCategory ? (
+                <div className="still-spend-categories" role="group" aria-label="Gift cards by category">
+                  {SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => (
+                    <button key={entry.category} type="button" className="still-chip" aria-pressed={model.category === entry.category}
+                      onClick={() => model.onCategory!(model.category === entry.category ? null : entry.category)}>{entry.label}</button>
+                  ))}
+                </div>
+              ) : null}
             </form>
           ) : null}
           <div className="still-spend-results" aria-live="polite">
             {model.searching ? <p className="still-note" role="status">Reading Bitrefill’s catalogue…</p>
               : model.searchError ? <p className="still-warn" role="alert">{model.searchError}</p>
-                : model.products && model.products.length === 0 ? <p className="still-note">Nothing in stock here for {spendCountryNameV1(model.country)}{model.query ? ` and “${model.query}”` : ''}.</p>
+                // Bitrefill has no top-up for a number in some countries (Russia, 2026-11-14): said so, with
+                // mobile data for the same country one press away, rather than "nothing in stock".
+                : model.products && model.products.length === 0 && model.type === 'refill' ? (
+                  <div className="still-spend-empty">
+                    <p className="still-note">Bitrefill lists no top-up for a number in {spendCountryNameV1(model.country)}.</p>
+                    <button type="button" className="still-chip" onClick={() => model.onType('esim')}>Mobile data for {spendCountryNameV1(model.country)}</button>
+                  </div>
+                )
+                : model.products && model.products.length === 0 ? (
+                  <p className="still-note">Nothing in stock here for {spendCountryNameV1(model.country)}{model.type === 'giftcard' && model.category
+                    ? ` in ${SPEND_GIFT_CATEGORY_CHIPS_V1.find((entry) => entry.category === model.category)?.label ?? model.category}`
+                    : model.query ? ` and “${model.query}”` : ''}.</p>
+                )
                   : model.products ? (
                     <div className="still-borrow-assets" role="group" aria-label="Products">
                       {model.products.map((row) => (

@@ -13,7 +13,22 @@ export type SpendTypeV1 = 'esim' | 'refill' | 'giftcard';
 export const SPEND_TYPES_V1: ReadonlyArray<{ type: SpendTypeV1; label: string; blurb: string }> = [
   { type: 'esim', label: 'Mobile data', blurb: 'An eSIM data plan for a trip' },
   { type: 'refill', label: 'Phone top-up', blurb: 'Credit for a mobile number' },
-  { type: 'giftcard', label: 'Gift cards', blurb: 'Shops, travel, food and games' },
+  { type: 'giftcard', label: 'Gift cards', blurb: 'Games, streaming, AI, shops and travel' },
+];
+
+/** Gift cards by Bitrefill's own categories; the server sends the value as it is and refuses any other.
+ * The operator asked on 2026-11-14 about games and subscriptions: Bitrefill sells them as gift cards, but
+ * only a brand typed in found one. Payment cards are not offered: Bitrefill sells prepaid Visa and
+ * Mastercard only after steps Still's guest client is not offered. */
+export type SpendGiftCategoryV1 = 'games' | 'entertainment' | 'ai' | 'online-marketplaces' | 'food' | 'travel';
+
+export const SPEND_GIFT_CATEGORY_CHIPS_V1: ReadonlyArray<{ category: SpendGiftCategoryV1; label: string }> = [
+  { category: 'games', label: 'Games' },
+  { category: 'entertainment', label: 'Entertainment' },
+  { category: 'ai', label: 'AI' },
+  { category: 'online-marketplaces', label: 'Marketplaces' },
+  { category: 'food', label: 'Food & groceries' },
+  { category: 'travel', label: 'Travel' },
 ];
 
 /** Where the product is used: every inhabited country, and Bitrefill says what

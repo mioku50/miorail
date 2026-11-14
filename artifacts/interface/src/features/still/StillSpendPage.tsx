@@ -12,6 +12,7 @@ import {
   spendProductViewV1,
   spendSearchViewV1,
   spendUsdcTextV1,
+  type SpendGiftCategoryV1,
   type SpendTypeV1,
 } from '@mioagent/ui/still';
 import { useStillSky, useStillWallet } from './useStillSky';
@@ -29,14 +30,15 @@ export function StillSpendPage() {
   const [country, setCountry] = useState(() => spendCountryDefaultV1(typeof navigator === 'undefined' ? undefined : navigator.language));
   const [query, setQuery] = useState('');
   const [asked, setAsked] = useState('');
+  const [category, setCategory] = useState<SpendGiftCategoryV1 | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [payError, setPayError] = useState<string | null>(null);
   const [method, setMethod] = useState<'loan' | 'wallet'>('loan');
-  // Gift cards are searched by brand when the person asks; data and top-ups list at once.
-  const search = useStillSpendSearchV1({ type, country, query: type === 'giftcard' ? asked : '' });
+  // Gift cards are searched by brand or by one of Bitrefill's categories when the person asks; data and top-ups list at once.
+  const search = useStillSpendSearchV1({ type, country, query: type === 'giftcard' ? asked : '', category: type === 'giftcard' ? category : null });
   const product = useStillSpendProductV1(selected);
   const order = useCreateStillSpendOrderV1();
   const room = mine.data?.headline.availableCents != null ? { cents: mine.data.headline.availableCents, complete: mine.data.headline.complete } : null;
@@ -69,7 +71,9 @@ export function StillSpendPage() {
         sky, signedIn: session.signedIn, signInHref: `/signin?next=${encodeURIComponent(location)}`,
         type, onType: (next) => { setType(next); setSelected(null); pick(null); },
         country, onCountry: (next) => { setCountry(next); setSelected(null); pick(null); },
-        query, onQuery: setQuery, onSearch: () => { setAsked(query.trim()); setSelected(null); pick(null); },
+        query, onQuery: setQuery, onSearch: () => { setAsked(query.trim()); setCategory(null); setSelected(null); pick(null); },
+        // A category replaces the brand searched for, and a brand replaces the category.
+        category, onCategory: (next) => { setCategory(next); setQuery(''); setAsked(''); setSelected(null); pick(null); },
         searching: search.isFetching,
         products: results?.products ?? null,
         searchError: search.error ? 'Bitrefill’s catalogue could not be read just now. Try again in a minute.' : results?.error ?? null,

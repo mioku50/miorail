@@ -67,7 +67,8 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean; 
       }
       if (url.searchParams.get('type') === 'giftcard') {
         return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'giftcard', country: 'DE', query: url.searchParams.get('q') ?? '', readAt: NOW.toISOString(),
-          products: url.searchParams.get('q') === 'Amazon' ? [{ id: 'amazon_de-germany', name: 'Amazon.de', countries: ['DE'], inStock: true }] : [] } });
+          products: url.searchParams.get('q') === 'Amazon' ? [{ id: 'amazon_de-germany', name: 'Amazon.de', countries: ['DE'], inStock: true }]
+            : url.searchParams.get('category') === 'games' ? [{ id: 'steam-usa', name: 'Steam USD', countries: [], inStock: true }] : [] } });
       }
       return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'esim', country: url.searchParams.get('country'), query: '', readAt: NOW.toISOString(), products: [
         { id: 'bitrefill-esim-germany', name: 'Bitrefill eSIM Germany', countries: ['DE'], inStock: true },
@@ -122,6 +123,34 @@ for (const width of [390, 1366]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test('gift cards by Bitrefill’s category, and a country with no top-up offers its mobile data', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  const state = await install(page, true);
+  await page.goto('/spend');
+  await page.getByRole('button', { name: /^Gift cards/ }).click();
+  await page.getByLabel('Country', { exact: true }).selectOption('DE');
+  const categories = page.getByRole('group', { name: 'Gift cards by category' });
+  await categories.getByRole('button', { name: 'Games', exact: true }).click();
+  await expect(categories.getByRole('button', { name: 'Games', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /^Steam USD/ }).waitFor();
+  expect(state.reads.some(path => path.startsWith('/api/public/still/spend/search?type=giftcard&country=DE&category=games'))).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // A brand replaces the category.
+  await page.getByLabel('Brand', { exact: true }).fill('Amazon');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByRole('button', { name: /^Amazon\.de/ }).waitFor();
+  await expect(categories.getByRole('button', { name: 'Games', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  // Russia: Bitrefill lists no top-up there, and its mobile data is one press away.
+  await page.getByRole('button', { name: /^Phone top-up/ }).click();
+  await page.getByLabel('Country', { exact: true }).selectOption('RU');
+  await expect(page.getByText('Bitrefill lists no top-up for a number in Russia.')).toBeVisible();
+  await page.getByRole('button', { name: 'Mobile data for Russia', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Kind of product' }).getByRole('button', { name: /^Mobile data/ })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /^Bitrefill eSIM Germany/ }).waitFor();
+  expect(state.reads.some(path => path.startsWith('/api/public/still/spend/search?type=esim&country=RU'))).toBe(true);
+  expect(state.writes).toEqual([]);
+});
 
 test('signed out, Spend shows the prices and offers sign-in instead of a comparison', async ({ page }) => {
   const state = await install(page, false);

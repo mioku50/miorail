@@ -8,6 +8,7 @@ import type { StillSpendWalletModelV1 } from '../src/still/useSpendWalletPayment
 import { skyStateV1 } from '../src/still/skyState';
 import {
   SPEND_COUNTRIES_V1,
+  SPEND_GIFT_CATEGORY_CHIPS_V1,
   spendCountryDefaultV1,
   spendCountryOptionsV1,
   spendOrderErrorV1,
@@ -238,6 +239,29 @@ describe('the Spend page', () => {
     const cards = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />);
     assert.match(cards, /<label class="still-borrow-label" for="[^"]+-brand">Brand<\/label>/);
     assert.match(cards, /Nothing in stock here for Germany\./);
+  });
+
+  it('gift cards offer Bitrefill’s categories beside the brand, the chosen one pressed, and no payment cards', () => {
+    const html = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', category: 'games', onCategory: noop, products: [], selected: null, product: null })} />);
+    assert.match(html, /<div class="still-spend-categories" role="group" aria-label="Gift cards by category">/);
+    for (const label of ['Entertainment', 'AI', 'Marketplaces', 'Food &amp; groceries', 'Travel']) {
+      assert.match(html, new RegExp(`<button type="button" class="still-chip" aria-pressed="false">${label}</button>`), label);
+    }
+    assert.match(html, /<button type="button" class="still-chip" aria-pressed="true">Games<\/button>/);
+    assert.doesNotMatch(html, /payment card|prepaid|visa|mastercard/i);
+    assert.match(html, /Nothing in stock here for Germany in Games\./);
+    // The server sends these values to Bitrefill as they are and refuses any other (commerce-engine
+    // SPEND_GIFT_CATEGORIES_V1 pins the same list).
+    assert.deepEqual(SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => entry.category), ['games', 'entertainment', 'ai', 'online-marketplaces', 'food', 'travel']);
+    // Without a handler, no category is offered.
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />), /still-spend-categories/);
+  });
+
+  it('a country with no top-up says so and offers its mobile data, rather than nothing in stock', () => {
+    const html = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', country: 'RU', products: [], selected: null, product: null })} />);
+    assert.match(html, /Bitrefill lists no top-up for a number in Russia\./);
+    assert.match(html, /<button type="button" class="still-chip">Mobile data for Russia<\/button>/);
+    assert.doesNotMatch(html, /Nothing in stock/);
   });
 
   it('with paying open, a price under the cap offers Pay with Still, and a chosen one asks for the receipt email', () => {

@@ -49,6 +49,13 @@ export const BITREFILL_GUEST_READ_TOOLS_V1 = ['search-products', 'get-product-de
 export const SPEND_PRODUCT_TYPES_V1 = ['esim', 'refill', 'giftcard'] as const;
 export type SpendProductTypeV1 = (typeof SPEND_PRODUCT_TYPES_V1)[number];
 
+/** Gift card categories Spend browses, by Bitrefill's own category values (the paths of its gift card
+ * categories, 2026-11-14). A word search cannot stand in for them: "ai" finds Airbnb and Aircash, "food"
+ * two brands. Payment cards are not among them: Bitrefill sells prepaid Visa and Mastercard only after
+ * steps its guest client is not offered, and a loan paid out as a card is cash. */
+export const SPEND_GIFT_CATEGORIES_V1 = ['games', 'entertainment', 'ai', 'online-marketplaces', 'food', 'travel'] as const;
+export type SpendGiftCategoryV1 = (typeof SPEND_GIFT_CATEGORIES_V1)[number];
+
 export interface SpendProductSummaryV1 {
   id: string;
   name: string;
@@ -160,7 +167,8 @@ const DetailSchemaV1 = z.object({
 }).passthrough();
 
 export interface BitrefillGuestCatalogV1 {
-  search(input: { type: SpendProductTypeV1; country: string; query?: string }): Promise<SpendResultV1<SpendProductSummaryV1[]>>;
+  /** `category` narrows gift cards only. A top-up is listed only when it names the asked country. */
+  search(input: { type: SpendProductTypeV1; country: string; query?: string; category?: SpendGiftCategoryV1 }): Promise<SpendResultV1<SpendProductSummaryV1[]>>;
   /** Only the server's checkout asks for priority; public product reads use the ordinary budget. */
   product(id: string, options?: { freshForCheckout?: true }): Promise<SpendResultV1<SpendProductV1>>;
 }
@@ -333,11 +341,15 @@ export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 =
   return {
     async search(input) {
       if (!COUNTRY_V1.test(input.country)) return { ok: false, reason: 'bitrefill_refused' };
+      if (input.category !== undefined && (input.type !== 'giftcard' || !(SPEND_GIFT_CATEGORIES_V1 as readonly string[]).includes(input.category))) {
+        return { ok: false, reason: 'bitrefill_refused' };
+      }
       const answer = await callTool('search-products', {
         query: input.query?.trim() || '*',
         intent: 'Show what a loan against tokenized stocks could pay for, with prices in USDC',
         country: input.country,
         product_type: input.type,
+        ...(input.category !== undefined ? { category: input.category } : {}),
         in_stock: true,
         per_page: 30,
       });
@@ -348,6 +360,11 @@ export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 =
         ok: true,
         value: parsed.value.products
           .filter((product) => SLUG_V1.test(product.slug))
+          // A top-up is credit for a number in the asked country. Bitrefill's top-ups for every country
+          // also carried an Italian calling PIN that names no country (2026-11-14: "White Calling PIN
+          // Italy" was the one top-up Spend listed for Russia, where Bitrefill has none), so a top-up
+          // that does not name the asked country is not listed for it.
+          .filter((product) => input.type !== 'refill' || (product.countries ?? []).includes(input.country))
           .map((product) => ({
             id: product.slug,
             name: product.name.slice(0, 120),

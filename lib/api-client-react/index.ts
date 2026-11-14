@@ -2041,13 +2041,13 @@ export function useStillUsdcV1(walletAddress: string | null, options?: { enabled
 }
 
 /** Still Spend: Bitrefill's catalogue as Still reads it, one product type and country at a time. */
-export function useStillSpendSearchV1(input: { type: 'esim' | 'refill' | 'giftcard'; country: string; query: string } | null) {
+export function useStillSpendSearchV1(input: { type: 'esim' | 'refill' | 'giftcard'; country: string; query: string; category?: string | null } | null) {
   return useQuery({
-    queryKey: ['still-spend-search', input?.type ?? null, input?.country ?? null, input?.query ?? ''],
+    queryKey: ['still-spend-search', input?.type ?? null, input?.country ?? null, input?.query ?? '', input?.category ?? null],
     enabled: input !== null,
     retry: false,
     staleTime: 10 * 60_000,
-    queryFn: async () => fetchApi<unknown>(`/api/public/still/spend/search?type=${encodeURIComponent(input!.type)}&country=${encodeURIComponent(input!.country)}${input!.query ? `&q=${encodeURIComponent(input!.query)}` : ''}`),
+    queryFn: async () => fetchApi<unknown>(`/api/public/still/spend/search?type=${encodeURIComponent(input!.type)}&country=${encodeURIComponent(input!.country)}${input!.query ? `&q=${encodeURIComponent(input!.query)}` : ''}${input!.category ? `&category=${encodeURIComponent(input!.category)}` : ''}`),
   });
 }
 

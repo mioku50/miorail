@@ -161,13 +161,29 @@ test('Spend reads Bitrefill’s catalogue once per half hour, and a failure is n
 test('Spend refuses what cannot be a product type, a country, a search or a product id, before asking anyone', async () => {
   const asked = fakeSpend({ search: async () => assert.fail('never asked'), product: async () => assert.fail('never asked') });
   const server = app(fakeService(async () => assert.fail('no wallet read')).service);
-  for (const query of [{ type: 'loan', country: 'DE' }, { type: 'esim', country: 'DEU' }, { type: 'esim', country: 'DE', q: '<script>' }, { type: 'esim', country: 'DE', q: 'x'.repeat(41) }]) {
+  for (const query of [
+    { type: 'loan', country: 'DE' }, { type: 'esim', country: 'DEU' }, { type: 'esim', country: 'DE', q: '<script>' }, { type: 'esim', country: 'DE', q: 'x'.repeat(41) },
+    // A category is one of the page's, for gift cards only: never prepaid payment cards.
+    { type: 'giftcard', country: 'DE', category: 'payment-cards' }, { type: 'giftcard', country: 'DE', category: 'Games' }, { type: 'refill', country: 'DE', category: 'games' },
+  ]) {
     assert.equal((await request(server).get('/api/public/still/spend/search').query(query)).status, 400, JSON.stringify(query));
   }
   for (const id of ['', '../buy-products', 'Amazon DE', 'x'.repeat(101)]) {
     assert.equal((await request(server).get('/api/public/still/spend/product').query({ id })).status, 400, id);
   }
   assert.deepEqual(asked, []);
+});
+
+test('a gift card category reaches the catalogue as its own search, apart from the plain one', async (t) => {
+  const { resetStillCardCachesV1 } = await import('./stillPublic.js');
+  resetStillCardCachesV1();
+  t.after(() => resetStillCardCachesV1());
+  const asked = fakeSpend({ search: async () => ({ ok: true, value: [{ id: 'steam-usa', name: 'Steam USD', countries: [], inStock: true }] }) });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  const games = await request(server).get('/api/public/still/spend/search').query({ type: 'giftcard', country: 'DE', category: 'games' });
+  const all = await request(server).get('/api/public/still/spend/search').query({ type: 'giftcard', country: 'DE' });
+  assert.deepEqual([games.status, games.body.products[0].id, all.status], [200, 'steam-usa', 200]);
+  assert.deepEqual(asked, ['search {"type":"giftcard","country":"DE","category":"games"}', 'search {"type":"giftcard","country":"DE"}']);
 });
 
 test('only Bitrefill’s own “not found” is remembered, and only so many of them', async (t) => {

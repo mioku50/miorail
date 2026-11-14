@@ -1,11 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import {
+  SPEND_GIFT_CATEGORIES_V1,
   SPEND_PRODUCT_TYPES_V1,
   createBitrefillGuestCatalogV1,
   spendCallingCodeV1,
   spendPhonePrefixesV1,
   type BitrefillGuestCatalogV1,
   type SpendFailureV1,
+  type SpendGiftCategoryV1,
   type SpendProductTypeV1,
   type SpendProductV1,
 } from '@mioagent/commerce-engine';
@@ -243,10 +245,14 @@ function spendReadFailedV1(found: { reason: SpendFailureV1; detail?: string }): 
   return new SpendReadFailedV1(found.reason);
 }
 
-/** One search, kept half an hour; the page and the assistants read the same one. Throws SpendReadFailedV1. */
-export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: string; query: string }) {
-  return spendSearchCacheV1.read(`${input.type}|${input.country}|${input.query.toLowerCase()}`, async () => {
-    const found = await publicStillRuntimeV1.spend().search({ type: input.type, country: input.country, query: input.query || undefined });
+/** One search, kept half an hour; the page and the assistants read the same one. Throws SpendReadFailedV1.
+ * A gift card category is the page's: Bitrefill's own value, never a word searched for. */
+export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: string; query: string; category?: SpendGiftCategoryV1 }) {
+  const key = `${input.type}|${input.country}|${input.query.toLowerCase()}${input.category ? `|${input.category}` : ''}`;
+  return spendSearchCacheV1.read(key, async () => {
+    const found = await publicStillRuntimeV1.spend().search({
+      type: input.type, country: input.country, query: input.query || undefined, ...(input.category ? { category: input.category } : {}),
+    });
     if (!found.ok) throw spendReadFailedV1(found);
     return { outcome: 'products' as const, type: input.type, country: input.country, query: input.query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
   });
@@ -278,12 +284,14 @@ publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
   const type = typeof req.query.type === 'string' ? req.query.type : '';
   const country = typeof req.query.country === 'string' ? req.query.country.trim().toUpperCase() : '';
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-  if (!(SPEND_PRODUCT_TYPES_V1 as readonly string[]).includes(type) || !/^[A-Z]{2}$/.test(country) || !SPEND_QUERY_V1.test(query)) {
+  const category = typeof req.query.category === 'string' ? req.query.category : '';
+  if (!(SPEND_PRODUCT_TYPES_V1 as readonly string[]).includes(type) || !/^[A-Z]{2}$/.test(country) || !SPEND_QUERY_V1.test(query) ||
+      (category !== '' && (type !== 'giftcard' || !(SPEND_GIFT_CATEGORIES_V1 as readonly string[]).includes(category)))) {
     res.status(400).json({ outcome: 'invalid' });
     return;
   }
   try {
-    const body = await readSpendSearchV1({ type: type as SpendProductTypeV1, country, query });
+    const body = await readSpendSearchV1({ type: type as SpendProductTypeV1, country, query, ...(category ? { category: category as SpendGiftCategoryV1 } : {}) });
     res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1() } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
