@@ -41,6 +41,21 @@ WalletConnect
   those packages as LICENSE.md.
   Portions © 2025 Reown, Inc. All Rights Reserved
 
+Libraries in the web app's bundle
+  Every package the web app's build bundles is listed with its licence text
+  in third-party-licenses.txt, written beside the built files by each build
+  (artifacts/interface/vite.config.ts) and served at /third-party-licenses.txt.
+
+Fonts
+  The web app and the mini app ask Google Fonts for Inter, JetBrains Mono,
+  Jost and Space Grotesk, each under the SIL Open Font License 1.1. The font
+  files are served by Google and are not part of this repository.
+
+forge-std
+  contracts/lib/forge-std is Foundry's standard library
+  (https://github.com/foundry-rs/forge-std), dual-licensed under MIT or
+  Apache-2.0; its LICENSE-MIT and LICENSE-APACHE files are kept beside it.
+
 Morpho Blue arithmetic
   lib/rwa-issuer/src/morphoBorrowMath.ts and morphoRepayMath.ts restate the
   arithmetic of Morpho Blue (https://github.com/morpho-org/morpho-blue) in

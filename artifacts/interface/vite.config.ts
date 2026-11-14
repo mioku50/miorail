@@ -10,6 +10,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      // The licences of everything the bundle carries, beside it at /third-party-licenses.txt (audit
+      // SUP-9, 2026-11-14): the minified chunks keep no licence comment, and the WalletConnect and MIT
+      // notices their packages ask to travel with the code were nowhere a reader of the site could find.
+      license: { fileName: 'third-party-licenses.txt' },
+    },
     resolve: {
       // WalletConnect's provider loads Reown's modal only for showQrModal, which
       // the app never sets (main.tsx draws its own pairing link): the modal's
