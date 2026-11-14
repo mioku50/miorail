@@ -4,7 +4,7 @@ import request from 'supertest';
 import express from 'express';
 import { app } from '../app.js';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
-import { mcpBaseRouteRuntime, mcpBaseRouter, startedOnAnotherSiteV1 } from './mcpBase.js';
+import { mcpBaseRouteRuntime, mcpBaseRouter, startedOutsideStillPageV1 } from './mcpBase.js';
 import { InMemoryAerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storage';
 import { foundRuntimeV1 } from '../lib/found.js';
 import { enforceTenantBinding } from '../middleware/tenantAuth.js';
@@ -131,14 +131,16 @@ test('GET /api/mcp/base/connect redirects with safe missing_config when Base MCP
 });
 
 // Audit AUTH-6 (2026-11-10): this GET clears the stored connection before it starts a new one, and the
-// session cookie rides along on a navigation from any site.
-test('a connect start that a browser says came from another site clears nothing and is sent back to the page', async () => {
-  for (const site of ['cross-site', 'same-site', 'Cross-Site']) {
+// session cookie rides along on a navigation from any site. 2026-11-14: and on `none`, a link opened from a
+// mail client or a messenger, or an address typed: only a start on Still's own page clears anything.
+test('a connect start that a browser says did not begin on Still\'s own page clears nothing and is sent back to the page', async () => {
+  for (const site of ['cross-site', 'same-site', 'Cross-Site', 'none', ' None ']) {
     const response = await request(app).get('/api/mcp/base/connect?returnTo=/extensions').set('Sec-Fetch-Site', site);
-    assert.strictEqual(response.status, 302);
-    assert.strictEqual(response.headers.location, '/extensions?mcp=error&code=started_elsewhere');
+    assert.strictEqual(response.status, 302, site);
+    assert.strictEqual(response.headers.location, '/extensions?mcp=error&code=started_elsewhere', site);
   }
-  assert.deepStrictEqual(['same-origin', 'none', undefined, '', ['cross-site'], 42].map(startedOnAnotherSiteV1), [false, false, false, false, true, false]);
+  assert.deepStrictEqual(['same-origin', ' Same-Origin', 'none', undefined, '', ['cross-site'], ['same-origin'], 42].map(startedOutsideStillPageV1),
+    [false, false, true, false, false, true, false, false]);
 });
 
 test('GET /api/mcp/base/connect reports missing SESSION_SECRET through a safe redirect', async () => {
