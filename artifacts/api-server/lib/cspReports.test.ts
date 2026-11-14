@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  CSP_REPORT_LINES_PER_HOUR_V1,
+  CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1,
+  CSP_REPORT_OWN_ORIGIN_RESERVE_V1,
   CSP_REPORTS_PER_REQUEST_V1,
   createCspReportRecorderV1,
   cspPageV1,
   cspPlaceV1,
   cspReportFactsV1,
+  type CspReportDroppedV1,
   type CspReportFactV1,
 } from './cspReports.js';
 
@@ -113,5 +117,53 @@ describe('the journal gets each fact once an hour, and only so many', () => {
     const recorder = createCspReportRecorderV1({ write: (value) => written.push(value), nowMs: () => 0, linesPerHour: 3 });
     for (let n = 0; n < 1_000; n += 1) recorder.record(fact(`https://host${n}.example`));
     assert.equal(written.length, 3);
+  });
+});
+
+// Four posts of made-up reports at the top of the hour took all 40 lines, and a real report after them left
+// no trace, not even a count (audit AUTH-2, 2026-11-14).
+describe('noise cannot hide a real report', () => {
+  const fact = (blocked: string, source = 'none'): CspReportFactV1 => ({ directive: 'script-src-elem', blocked, source, page: '/still', disposition: 'enforce' });
+  const OWN = 'https://miorail.xyz';
+
+  it('one sender writes only its share, and another sender\'s report is still written', () => {
+    const written: CspReportFactV1[] = [];
+    const recorder = createCspReportRecorderV1({ write: (value) => written.push(value), nowMs: () => 0, ownOrigins: [OWN] });
+    for (let n = 0; n < 1_000; n += 1) recorder.record(fact(`https://noise${n}.example`), '198.51.100.7');
+    assert.equal(written.length, CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1);
+    assert.equal(recorder.record(fact('chrome-extension://abcdefghijklmnopabcdefghijklmnop'), '203.0.113.9'), true);
+    assert.equal(written.length, CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1 + 1);
+  });
+
+  it('many senders fill the rest of the hour, and a report naming Still\'s own files keeps the lines saved for it', () => {
+    const written: CspReportFactV1[] = [];
+    const recorder = createCspReportRecorderV1({ write: (value) => written.push(value), nowMs: () => 0, ownOrigins: [OWN] });
+    for (let n = 0; n < 400; n += 1) recorder.record(fact(`https://noise${n}.example`), `2001:db8:${n.toString(16)}:1::/64`);
+    assert.equal(written.length, CSP_REPORT_LINES_PER_HOUR_V1 - CSP_REPORT_OWN_ORIGIN_RESERVE_V1);
+    assert.equal(recorder.record(fact('inline', OWN), '192.0.2.10'), true);
+    assert.equal(recorder.record(fact(`${OWN}`, 'none'), '192.0.2.11'), true);
+    assert.deepEqual(written.slice(-2).map((value) => value.source === OWN || value.blocked === OWN), [true, true]);
+  });
+
+  it('what was not written is counted once per report and said when the hour turns, without a sender', () => {
+    let now = Date.parse('2026-11-14T10:01:00.000Z');
+    const written: CspReportFactV1[] = [];
+    const dropped: CspReportDroppedV1[] = [];
+    const recorder = createCspReportRecorderV1({ write: (value) => written.push(value), writeDropped: (value) => dropped.push(value), nowMs: () => now,
+      linesPerHour: 4, linesPerSender: 2 });
+    for (const blocked of ['https://a.example', 'https://b.example', 'https://c.example', 'https://c.example', 'https://d.example']) recorder.record(fact(blocked), 'one');
+    recorder.record(fact('https://e.example'), 'two');
+    recorder.record(fact('https://f.example'), 'two');
+    recorder.record(fact('https://g.example'), 'three');
+    recorder.record(fact('https://g.example'), 'three');
+    assert.equal(written.length, 4);
+    assert.deepEqual(dropped, []);
+    // A quiet hour with nothing lost says nothing; the hour that lost some says how much, once.
+    now += 3_600_000;
+    recorder.record(fact('https://a.example'), 'one');
+    assert.deepEqual(dropped, [{ hour: '2026-11-14T10:00:00.000Z', overSenderShare: 2, overHourBudget: 1, senders: 2 }]);
+    now += 3_600_000;
+    recorder.record(fact('https://a.example'), 'one');
+    assert.equal(dropped.length, 1);
   });
 });

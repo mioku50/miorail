@@ -124,35 +124,102 @@ export function cspReportFactsV1(body: unknown): CspReportFactV1[] {
   return facts;
 }
 
+// ---------------------------------------------------------------------------
+// Noise cannot hide a real report (audit AUTH-2, 2026-11-14).
+//
+// The hour's 40 lines were one budget for everyone, and the endpoint takes no
+// session: four posts of ten made-up reports at the top of each hour took all
+// of it, and a real report after them (a wallet's script the enforced rule now
+// stops, so its people cannot sign) left no trace at all, not even a count.
+// Each browser extension with its own origin is a distinct fact, so that much
+// noise also comes without anyone meaning it.
+//
+// So one sender (an IPv4 address or an IPv6 /64) writes at most a few lines an
+// hour; the last lines of the hour are kept for reports that name Still's own
+// origin, the page's own files; and whatever is not written is counted, and the
+// count is written as one line when the hour turns.
+// ---------------------------------------------------------------------------
+
+/** Distinct lines one sender may write in an hour. */
+export const CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1 = 5;
+/** Lines of the hour kept for reports that name one of Still's own origins. */
+export const CSP_REPORT_OWN_ORIGIN_RESERVE_V1 = 10;
+/** Senders counted in one hour; one past this is counted as not written. */
+const CSP_REPORT_SENDERS_PER_HOUR_V1 = 5_000;
+
+/** What an hour did not write: distinct reports refused by the sender's share or by the hour's budget. */
+export interface CspReportDroppedV1 {
+  hour: string;
+  overSenderShare: number;
+  overHourBudget: number;
+  senders: number;
+}
+
 export interface CspReportRecorderV1 {
-  /** True when the fact was written: its first sighting this hour, within the hour's budget. */
-  record(fact: CspReportFactV1): boolean;
+  /** True when the fact was written: its first sighting this hour, within its sender's share and the hour's budget. */
+  record(fact: CspReportFactV1, sender?: string): boolean;
 }
 
 /**
  * Writes each distinct fact once an hour. A page that breaks the rule breaks it on every load, so the
  * journal needs the fact, not a line per visitor; and an endpoint anyone can post to must not be a way
- * to fill a disk.
+ * to fill a disk, nor a way to fill the hour.
  */
 export function createCspReportRecorderV1(input: {
   write: (fact: CspReportFactV1) => void;
+  /** The hour's count of what was not written, when there is one, as the next hour begins. */
+  writeDropped?: (dropped: CspReportDroppedV1) => void;
   nowMs?: () => number;
   linesPerHour?: number;
+  linesPerSender?: number;
+  /** Origins a report names when it is about Still's own page and files, such as `https://miorail.xyz`. */
+  ownOrigins?: readonly string[];
+  ownOriginReserve?: number;
 }): CspReportRecorderV1 {
   const nowMs = input.nowMs ?? Date.now;
   const budget = input.linesPerHour ?? CSP_REPORT_LINES_PER_HOUR_V1;
+  const perSender = input.linesPerSender ?? CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1;
+  const own = new Set(input.ownOrigins ?? []);
+  const reserve = Math.min(input.ownOriginReserve ?? (own.size > 0 ? CSP_REPORT_OWN_ORIGIN_RESERVE_V1 : 0), budget);
   let hour = -1;
   let seen = new Set<string>();
+  let refused = new Set<string>();
+  let bySender = new Map<string, number>();
+  let dropped = { overSenderShare: 0, overHourBudget: 0, senders: new Set<string>() };
+  const turn = (current: number) => {
+    if (hour >= 0 && (dropped.overSenderShare > 0 || dropped.overHourBudget > 0)) {
+      input.writeDropped?.({ hour: new Date(hour * 3_600_000).toISOString(), overSenderShare: dropped.overSenderShare,
+        overHourBudget: dropped.overHourBudget, senders: dropped.senders.size });
+    }
+    hour = current;
+    seen = new Set();
+    refused = new Set();
+    bySender = new Map();
+    dropped = { overSenderShare: 0, overHourBudget: 0, senders: new Set() };
+  };
   return {
-    record(fact) {
+    record(fact, sender = 'unknown') {
       const current = Math.floor(nowMs() / 3_600_000);
-      if (current !== hour) {
-        hour = current;
-        seen = new Set();
-      }
+      if (current !== hour) turn(current);
       const key = `${fact.disposition}|${fact.directive}|${fact.blocked}|${fact.source}|${fact.page}`;
-      if (seen.has(key) || seen.size >= budget) return false;
+      // A repeat is the same fact from another page load: written once, never counted as lost.
+      if (seen.has(key)) return false;
+      const ours = own.has(fact.blocked) || own.has(fact.source);
+      const room = ours ? budget : budget - reserve;
+      const written = bySender.get(sender) ?? 0;
+      const reason = written >= perSender || (!bySender.has(sender) && bySender.size >= CSP_REPORT_SENDERS_PER_HOUR_V1) ? 'overSenderShare'
+        : seen.size >= room ? 'overHourBudget' : null;
+      if (reason) {
+        // Each distinct report is counted once, however often it is posted again.
+        if (!refused.has(key)) {
+          refused.add(key);
+          dropped[reason] += 1;
+          if (dropped.senders.size < CSP_REPORT_SENDERS_PER_HOUR_V1) dropped.senders.add(sender);
+        }
+        return false;
+      }
       seen.add(key);
+      bySender.set(sender, written + 1);
       input.write(fact);
       return true;
     },
