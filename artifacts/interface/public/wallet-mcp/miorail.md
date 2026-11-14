@@ -89,7 +89,7 @@ The grant is bound to the ONE wallet that signed in. No argument can read, prepa
 | Find a company's tokenized stocks, prices on Base, cost to buy or sell, pools and lending | Miorail MCP read tools (external MCP). |
 | A personal daily read, or what the user's whole position would fetch | Miorail MCP wallet-bound tools (signed-in connector). |
 | Prepare a buy or sell | `miorail_prepare_stock_action` → a review link the user opens in a browser. |
-| Prepare a swap between USDC, ETH, WETH, cbBTC, PAXG and Still's stock tokens | `miorail_prepare_swap` → a Swap AI link; the user presses Compare there, Swap AI simulates it and the user's wallet signs. |
+| Prepare a swap between USDC, ETH, WETH, cbBTC, PAXG and Still's stock tokens | `miorail_prepare_swap` → a Swap AI link; the user presses Compare there, Swap AI checks the chosen route's calls against the swap (and simulates them where that route needs it) and the user's wallet signs. |
 | Submit a stock buy or sell after the user confirmed | `miorail_get_stock_base_mcp_action` → Wallet MCP `send_calls` → approval in the user's wallet. |
 
 No surface needs a shell or the `web_request` allowlist: every Miorail call is an MCP tool call. On a surface whose harness has no remote MCP connectors, stop and tell the user Miorail needs one.

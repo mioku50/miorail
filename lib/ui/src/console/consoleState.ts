@@ -110,7 +110,7 @@ export const CONSOLE_COPY_V1 = {
   simulationUnavailable: 'Simulation is not available yet, so nothing is signed from a guess.',
   // A route the server prepared with no simulation behind it was never simulated: nobody was asked.
   simulationNotRun:
-    'Miorail did not simulate this route. Its calls were checked by their structure, and your wallet shows its own estimate of the result before you confirm.',
+    'Miorail did not simulate this route. Its calls were decoded and checked against what you approve, and your wallet shows its own estimate of the result before you confirm.',
 } as const;
 
 /** Turns a raw backend/adapter reason into a sentence that keeps the honest

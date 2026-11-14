@@ -176,11 +176,18 @@ export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean;
   const acceptable = intent.verificationDepth === 'standard';
   return {
     acceptable,
+    // Said of a route nobody simulated because nobody was asked to (audit SW-3, 2026-11-14): the review
+    // used to say no simulator was configured, while one was and was simply not asked at this depth.
     detail: acceptable
-      ? 'No fork-simulation provider is configured; only static preflight and calldata checks ran.'
+      ? STANDARD_UNSIMULATED_DETAIL_V1
       : 'Enhanced/maximum verification depth requires simulation evidence that no provider currently supplies.',
   };
 }
+
+/** Why a Uniswap or KyberSwap route at standard verification shows no simulation: its calldata is read
+ * against the review instead (audit SW-1), and nothing ran it. */
+export const STANDARD_UNSIMULATED_DETAIL_V1 =
+  'Not simulated: at standard verification this route is checked by decoding its calldata against what you approve, not by running it.';
 
 /**
  * Providers whose calldata Miorail will not sign without an executed

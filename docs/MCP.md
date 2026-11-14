@@ -172,8 +172,9 @@ apps gets the same results as text. The Wallet MCP plugin is
 what they receive and how much (an exact amount, or all or half of the
 wallet's own, read at one block), and returns a link to Swap AI with that swap
 filled in by exact addresses. Nothing runs from the link: Swap AI waits for
-the person to press Compare, then compares the routes and simulates the swap,
-and the person's wallet signs. The reply carries no price, route or calldata.
+the person to press Compare, then compares the routes and checks the chosen
+route's calls against the swap the person approves (simulating them where that
+route needs it), and the person's wallet signs. The reply carries no price, route or calldata.
 
 ### The weekend game and measurements
 

@@ -13,8 +13,9 @@ import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 // The assistant gets a link and never a call. The link puts one sentence in
 // Swap AI's box and nothing runs from it: a goal that arrives in a URL waits
 // for the person to press Compare (goalHandoff.ts), because a link is text
-// anyone can write. Swap AI then compares routes, simulates the swap on a
-// fresh block, and the person's own wallet signs. So this reply carries no
+// anyone can write. Swap AI then compares routes, reads the chosen route's
+// calls against what the person approves (simulating them where that route
+// needs it: audit SW-3, 2026-11-14), and the person's own wallet signs. So this reply carries no
 // price, route or calldata: a route quote lives for about twenty seconds, and
 // the page is where terms are established.
 //
@@ -157,6 +158,6 @@ export async function stillPrepareSwapV1(
     amount,
     amountSource: said === 'all' ? 'wallet_all' : said === 'half' ? 'wallet_half' : 'stated',
     balance,
-    next: 'Give the user this link, to open signed in with this same wallet. It opens Swap AI with this exact swap written in its box, and nothing runs until the user presses Compare: Swap AI then compares the routes, simulates the swap on a fresh block, and the user signs in their own wallet. This reply is not a quote. It holds no price, route or calldata, so never state what the user would receive, and do not prepare it again to learn one.',
+    next: 'Give the user this link, to open signed in with this same wallet. It opens Swap AI with this exact swap written in its box, and nothing runs until the user presses Compare: Swap AI then compares the routes, checks the chosen route’s calls against the swap the user approves (and simulates them where that route needs it), and the user signs in their own wallet. This reply is not a quote. It holds no price, route or calldata, so never state what the user would receive, and do not prepare it again to learn one.',
   };
 }

@@ -22,8 +22,10 @@ import { dividendMoneyV1 } from './dividendMoney.js';
 //                   the agent never signs or sends, and points to the screen
 //                   where the person reviews and signs it themselves.
 //   `swap`        — a request to swap one token for another: written out as a
-//                   goal for Swap AI, where routes are compared and simulated
-//                   and the person signs. The agent reads an amount ("all my
+//                   goal for Swap AI, where routes are compared and the chosen
+//                   one's calls are read against what the person approves
+//                   (audit SW-3/UI-14: not every route is simulated), and the
+//                   person signs. The agent reads an amount ("all my
 //                   USDC") and never picks a route.
 //   `send`        — a request to send a stock from the wallet to an address or
 //                   a Basename the question writes: handed to Miorail's send
@@ -413,8 +415,8 @@ export function agentSwapAnswerV2(input: {
   if (!request?.from || !request.to) {
     return say(
       ru
-        ? 'Назовите, что на что обменять и сколько, например «обменяй 10 USDC на ETH». Обмены делает Swap AI: он сравнивает маршруты и проверяет обмен симуляцией, а подписываете вы в своём кошельке.'
-        : 'Name what to swap for what, and how much, for example “swap 10 USDC to ETH”. Swaps are made in Swap AI: it compares routes and simulates the swap, and you sign in your own wallet.',
+        ? 'Назовите, что на что обменять и сколько, например «обменяй 10 USDC на ETH». Обмены делает Swap AI: он сравнивает маршруты и сверяет вызовы выбранного с тем, что вы одобряете, а подписываете вы в своём кошельке.'
+        : 'Name what to swap for what, and how much, for example “swap 10 USDC to ETH”. Swaps are made in Swap AI: it compares routes and checks the chosen route’s calls against what you approve, and you sign in your own wallet.',
       null,
     );
   }
@@ -428,8 +430,8 @@ export function agentSwapAnswerV2(input: {
       : input.report?.assets.find((asset) => asset.symbol === symbol)?.token ?? symbol;
   const goalFor = (amount: string | null) => `Swap ${amount ? `${amount} ` : ''}${refOf(from)} to ${refOf(to)}`;
   const signs = ru
-    ? 'Swap AI сравнит маршруты и проверит обмен симуляцией; подписываете вы, в своём кошельке.'
-    : 'Swap AI compares routes and simulates the swap; you sign it in your own wallet.';
+    ? 'Swap AI сравнит маршруты и сверит вызовы выбранного с тем, что вы одобряете; подписываете вы, в своём кошельке.'
+    : 'Swap AI compares routes and checks the chosen route’s calls against what you approve; you sign it in your own wallet.';
 
   if (request.amount?.kind === 'exact') {
     return say(

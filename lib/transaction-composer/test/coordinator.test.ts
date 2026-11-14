@@ -12,6 +12,7 @@ import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from 
 import { createTransactionComposer, TransactionComposerBindingError,
   simulationIsRequiredV1,
   simulationRequirementV1,
+  STANDARD_UNSIMULATED_DETAIL_V1,
 } from '../src/coordinator.js';
 import type { TransactionComposerDependencies, TransactionComposerPrepareInput } from '../src/types.js';
 import { approveExecutionBlueprintV1 } from '../src/approval.js';
@@ -705,6 +706,9 @@ describe('a simulation is required by the provider OR by the intent', () => {
     const standard = simulationRequirementV1('kyberswap' as never, intentAt('standard'), unavailable);
     assert.equal(standard.acceptable, true);
     assert.equal(standard.outcome, null);
+    // And it says why nothing ran, without claiming no simulator exists (audit SW-3).
+    assert.equal(standard.detail, STANDARD_UNSIMULATED_DETAIL_V1);
+    assert.doesNotMatch(standard.detail, /No fork-simulation provider is configured/);
   });
 
   test('the same absent simulator DOES block where Miorail wrote the calldata', () => {
