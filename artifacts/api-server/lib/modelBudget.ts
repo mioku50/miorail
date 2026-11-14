@@ -1,4 +1,4 @@
-import { InMemoryRateLimiter } from '@mioagent/utils';
+import { InMemoryRateLimiter, rateLimitAddressKeyV1 } from '@mioagent/utils';
 
 // ---------------------------------------------------------------------------
 // One budget of model calls for the server (audit MCP-5, 2026-11-14).
@@ -63,7 +63,8 @@ export class ModelBudgetV1 {
 /** The process's one budget; swappable, so a test does not depend on what the tests before it spent. */
 export const modelBudgetRuntimeV1 = { budget: new ModelBudgetV1() };
 
-/** The address a request's model calls are counted under. */
+/** The address a request's model calls are counted under: an IPv6 client by its /64, as every address
+ * limiter counts it (audit AUTH-3), so one host cannot spend the budget again from each of its addresses. */
 export function modelBudgetClientKeyV1(req: { ip?: string; socket?: { remoteAddress?: string } }): string {
-  return `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+  return `ip:${rateLimitAddressKeyV1(req.ip || req.socket?.remoteAddress || 'unknown')}`;
 }

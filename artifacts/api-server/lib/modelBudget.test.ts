@@ -34,6 +34,10 @@ test('and at most its day’s calls, back only when the UTC day moves forwards',
 
 test('a request is counted under its address', () => {
   assert.equal(modelBudgetClientKeyV1({ ip: '198.51.100.7' }), 'ip:198.51.100.7');
-  assert.equal(modelBudgetClientKeyV1({ socket: { remoteAddress: '::1' } }), 'ip:::1');
+  assert.equal(modelBudgetClientKeyV1({ socket: { remoteAddress: '::1' } }), 'ip:0:0:0:0::/64');
+  // One IPv6 host holds a whole /64: its addresses share one count (audit AUTH-3), and an IPv4-mapped one is IPv4.
+  assert.equal(modelBudgetClientKeyV1({ ip: '2001:db8:1:2::a' }), modelBudgetClientKeyV1({ ip: '2001:db8:1:2:ffff::b' }));
+  assert.notEqual(modelBudgetClientKeyV1({ ip: '2001:db8:1:2::a' }), modelBudgetClientKeyV1({ ip: '2001:db8:1:3::a' }));
+  assert.equal(modelBudgetClientKeyV1({ ip: '::ffff:198.51.100.7' }), 'ip:198.51.100.7');
   assert.equal(modelBudgetClientKeyV1({}), 'ip:unknown');
 });
