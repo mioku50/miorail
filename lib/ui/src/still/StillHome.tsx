@@ -418,7 +418,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       ) : null}
       <p className="still-section still-note">
         Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
-        Not offered to US persons.
+        Offered only in eligible jurisdictions: not to US persons, nor in the countries <StillLink href="/safety">Safety</StillLink> names.
       </p>
       <StillSpendDoor />
       <StillDoors />

@@ -79,7 +79,8 @@ test('five tools under Still’s own name, every one a read, and instructions th
   assert.match(instructions, /Still is not a lender/);
   assert.match(instructions, /This server only reads: it prepares, signs and sends nothing/);
   assert.match(instructions, /null means unread, never zero/);
-  assert.match(instructions, /Not offered to US persons/);
+  // Eligible jurisdictions, with the places named (audit BASE-2).
+  assert.match(instructions, /Offered only in eligible jurisdictions: not to US persons, and not in the United States, Cuba, Iran, North Korea, Syria, Crimea/);
   assert.match(instructions, /miorail_prepare_still_purchase opens the invoice they chose/);
 });
 

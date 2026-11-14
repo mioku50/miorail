@@ -43,7 +43,7 @@ export function StillEligibilityBarV1({ view, busy = false, error = null, onConf
   }
   return (
     <section className="still-eligibility is-confirm" aria-label="Before a new loan, purchase or stock buy">
-      <p>Still is not offered to US persons. Before it prepares a new loan, purchase or stock buy, confirm once for this sign-in:</p>
+      <p>Still is offered only in eligible jurisdictions, and never to U.S. persons. Before it prepares a new loan, purchase or stock buy, confirm once for this sign-in:</p>
       <label className="still-eligibility-check">
         <input type="checkbox" checked={checked} disabled={busy} onChange={(event) => setChecked(event.target.checked)} />
         <span>{view.statement}</span>

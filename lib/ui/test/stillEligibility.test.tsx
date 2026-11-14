@@ -44,7 +44,10 @@ describe('where Still is offered, as a page says it', () => {
     assert.match(restricted, /<a href="https:\/\/db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP<\/a>/);
     assert.doesNotMatch(restricted, /type="checkbox"/);
     const confirm = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read())} onConfirm={() => {}} />);
-    assert.match(confirm, /<input type="checkbox"\/><span>I am not a U.S. person and I am not currently located in the United States.<\/span>/);
+    assert.equal(confirm.includes(`<input type="checkbox"/><span>${STILL_ELIGIBILITY_STATEMENT_V1}</span>`), true);
+    // Eligible jurisdictions, with the sanctioned places named in the sentence itself (audit BASE-2).
+    assert.equal(STILL_ELIGIBILITY_STATEMENT_V1, 'I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People’s Republics.');
+    assert.match(confirm, /Still is offered only in eligible jurisdictions, and never to U\.S\. persons\./);
     assert.match(confirm, /<button type="button" class="still-eligibility-confirm" disabled="">Confirm<\/button>/);
     assert.match(confirm, /Repaying, taking collateral back and selling never ask for this/);
     const failed = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read())} error="Your confirmation could not be saved." onConfirm={() => {}} />);

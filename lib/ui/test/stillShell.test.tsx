@@ -276,7 +276,7 @@ describe('Home', () => {
   it('signed out, it is the front door: a check for any wallet, the terms in one line, no example numbers', () => {
     const html = renderToStaticMarkup(<StillHomeSignedOut model={{ sky: skyStateV1({ now: WEDNESDAY }), result: null, checking: false, message: null, onCheck: () => {}, signInHref: '/signin' }} />);
     assert.match(html, /Spend without selling\./);
-    assert.match(html, /Not offered to US persons/);
+    assert.match(html, /Offered only in eligible jurisdictions: not to US persons, nor in the countries <a [^>]*href="\/safety"[^>]*>Safety<\/a> names\./);
     assert.doesNotMatch(html, /\$\d/);
     // No way to create a wallet was given (Base App, Farcaster, a wallet connected): none is drawn.
     assert.doesNotMatch(html, /Create a wallet|No wallet yet/);

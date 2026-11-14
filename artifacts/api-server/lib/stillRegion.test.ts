@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { STILL_ELIGIBILITY_VERSION_V1 } from '@mioagent/still-engine/eligibility';
 import { loadStillRegionTableV1, stillEligibilityConfirmedV1, stillEligibilityReadV1, stillEntryGateV1, stillRegionOfRequestV1, stillRegionRuntimeV1 } from './stillRegion.js';
-import { buildStillRegionTableV1 } from './stillRegionTable.js';
+import { buildStillRegionTableV1, parseStillRegionTableV1 } from './stillRegionTable.js';
 import { SYNTHETIC_REGION_CSV_V1, syntheticRegionTableV1 } from './stillRegionTable.fixture.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
@@ -54,13 +54,33 @@ describe('where a request comes from', () => {
     assert.equal(stillRegionRuntimeV1.enabled(), true);
   });
 
-  it('restricts a configured list of countries, and never leaves the United States out', () => {
+  it('restricts a configured list of countries, and never leaves out the United States or a sanctioned country (audit BASE-2)', () => {
     delete process.env.STILL_RESTRICTED_COUNTRIES_V1;
-    assert.deepEqual([...original.restricted()].sort(), ['AS', 'GU', 'MP', 'PR', 'UM', 'US', 'VI']);
+    assert.deepEqual([...original.restricted()].sort(), ['AS', 'CU', 'GU', 'IR', 'KP', 'MP', 'PR', 'SY', 'UM', 'US', 'VI']);
     process.env.STILL_RESTRICTED_COUNTRIES_V1 = 'ca, gb ,x1';
-    assert.deepEqual([...original.restricted()].sort(), ['CA', 'GB', 'US']);
+    assert.deepEqual([...original.restricted()].sort(), ['CA', 'CU', 'GB', 'IR', 'KP', 'SY', 'US']);
     process.env.STILL_RESTRICTED_COUNTRIES_V1 = 'nonsense';
     assert.equal(original.restricted().has('PR'), true);
+  });
+
+  it('refuses a connection from a sanctioned country, and says so of that country, not of the United States (audit BASE-2)', () => {
+    // A synthetic table: one range of addresses placed in Iran, the rest as the shared fixture has them.
+    const csv = SYNTHETIC_REGION_CSV_V1.replace('128.0.0.0,255.255.255.255,FR', '128.0.0.0,199.255.255.255,FR\n200.0.0.0,255.255.255.255,IR');
+    const withIran = parseStillRegionTableV1(buildStillRegionTableV1(csv, '2026-11'));
+    stillRegionRuntimeV1.table = () => withIran;
+    Object.assign(stillRegionRuntimeV1, { restricted: original.restricted });
+    delete process.env.STILL_RESTRICTED_COUNTRIES_V1;
+    assert.deepEqual(stillRegionOfRequestV1({ ip: '200.1.2.3' }), { state: 'restricted', country: 'IR' });
+    // Confirming the sentence does not open it, as it does not open the United States.
+    const gate = stillEntryGateV1(request('200.1.2.3', {}), { kind: 'loan', confirmation: true });
+    assert.equal(!gate.ok && gate.refusal, 'region_restricted');
+    assert.match(!gate.ok ? gate.detail : '', /^Still prepares no new loan, purchase or stock buy for a connection from Iran, a country under comprehensive US sanctions\. You can still repay a loan, take your collateral back and sell\.$/);
+    assert.doesNotMatch(!gate.ok ? gate.detail : '', /United States/);
+    const read = stillEligibilityReadV1(request('200.1.2.3'));
+    assert.deepEqual(read.region, { state: 'restricted', country: 'IR', reason: null });
+    assert.match(read.restrictedReason, /from Iran, a country under comprehensive US sanctions\.$/);
+    // France is placed and offered.
+    assert.deepEqual(stillRegionOfRequestV1({ ip: '150.1.2.3' }), { state: 'allowed', country: 'FR' });
   });
 });
 
@@ -90,7 +110,9 @@ describe('the check before a new position', () => {
     assert.equal(!missing.ok && missing.refusal, 'eligibility_required');
     assert.deepEqual(stillEntryGateV1(request('11.2.3.4', {}), { kind: 'loan', confirmation: true }), { ok: true });
     for (const stale of [{ wallet: '0x2222222222222222222222222222222222222222' }, { version: 'not-us-person-2026-01-01' },
-      { confirmedAt: new Date(NOW - 31 * 24 * 3600_000).toISOString() }, { confirmedAt: new Date(NOW + 3600_000).toISOString() }, { confirmedAt: 'yesterday' }]) {
+      { confirmedAt: new Date(NOW - 31 * 24 * 3600_000).toISOString() }, { confirmedAt: new Date(NOW + 3600_000).toISOString() }, { confirmedAt: 'yesterday' },
+      // The sentence of 2026-11-10 named the United States alone: a confirmation of it is not one of today's.
+      { version: 'not-us-person-2026-11-10' }]) {
       const gate = stillEntryGateV1(request('11.2.3.4', stale), { kind: 'purchase', confirmation: true });
       assert.equal(!gate.ok && gate.refusal, 'eligibility_required', JSON.stringify(stale));
     }
@@ -110,10 +132,12 @@ describe('the check before a new position', () => {
     assert.deepEqual(read.region, { state: 'allowed', country: 'DE', reason: null });
     assert.deepEqual(read.table, { loaded: true, month: '2026-11' });
     assert.equal(read.confirmed, true);
-    assert.equal(read.statement, 'I am not a U.S. person and I am not currently located in the United States.');
+    assert.equal(read.statement, 'I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People’s Republics.');
+    assert.equal(read.version, 'not-us-person-or-sanctioned-2026-11-14');
     assert.equal(stillEligibilityConfirmedV1(request('11.2.3.4')), null);
     const us = stillEligibilityReadV1(request('8.8.8.8'));
     assert.deepEqual(us.region, { state: 'restricted', country: 'US', reason: null });
+    assert.equal(us.restrictedReason, 'Still prepares no new loan, purchase or stock buy for a connection from the United States or its territories, or for a U.S. person.');
   });
 });
 

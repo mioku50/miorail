@@ -1,7 +1,7 @@
 import React from 'react';
 import { TERMS } from '@mioagent/still-engine/policy';
 import type { SkyStateV1 } from './skyState';
-import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_REGION_ATTRIBUTION_V1 } from '@mioagent/still-engine/eligibility';
+import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBLE_JURISDICTIONS_V1, STILL_REGION_ATTRIBUTION_V1 } from '@mioagent/still-engine/eligibility';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
 
 void React;
@@ -138,12 +138,13 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
       </section>
 
       <section className="still-section still-safety-part" aria-labelledby="still-safety-who">
-        <h2 id="still-safety-who" className="still-safety-head">Not offered in the United States.</h2>
+        <h2 id="still-safety-who" className="still-safety-head">Offered only in eligible jurisdictions.</h2>
         <p className="still-note">
-          Coinbase’s tokenized stocks are offered only outside the United States, so Still prepares no new loan, purchase or stock buy for
-          anyone in the United States or for a US person. Before it prepares one, the server reads which country your connection comes from
-          (by its IP address, <a href={STILL_REGION_ATTRIBUTION_V1.url} target="_blank" rel="noopener noreferrer">{STILL_REGION_ATTRIBUTION_V1.text}</a>),
-          and it asks you to confirm once for each sign-in: “{STILL_ELIGIBILITY_STATEMENT_V1}” Do not use a VPN or a proxy to get around it.
+          {STILL_ELIGIBLE_JURISDICTIONS_V1} Before it prepares one, the server reads which country your connection comes from (by its IP
+          address, <a href={STILL_REGION_ATTRIBUTION_V1.url} target="_blank" rel="noopener noreferrer">{STILL_REGION_ATTRIBUTION_V1.text}</a>),
+          and it asks you to confirm once for each sign-in: “{STILL_ELIGIBILITY_STATEMENT_V1}” An IP address cannot tell Crimea and the
+          so-called Donetsk and Luhansk People’s Republics apart from the rest of Ukraine, so for those regions the sentence is the check.
+          Do not use a VPN or a proxy to get around it.
         </p>
         <p className="still-note">
           What closes a position is never blocked: from anywhere you can repay a loan, take your collateral back and sell.

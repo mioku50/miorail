@@ -65,8 +65,10 @@ every row says whether the issuer's own naming or a Miorail alias found it.
 protocol's collateral factor, reduced to 40% for stocks in Still's reviewed
 closed-market or earnings window, or while their earnings calendar is unread.
 Returned windows and `calendarRead` are part of the answer. These are terms,
-not a personal borrowing quote or advice to borrow. Still is not offered to US
-persons or in the United States.
+not a personal borrowing quote or advice to borrow. Still is offered only in
+eligible jurisdictions: not to US persons, and not in the United States, Cuba,
+Iran, North Korea, Syria, Crimea or the so-called Donetsk and Luhansk People's
+Republics.
 
 The stock tools and `miorail_discover_status` include a free `evidencePackage`
 (`miorail-evidence-package/v1`). Each claim names JSON Pointers into the

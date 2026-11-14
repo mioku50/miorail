@@ -23,7 +23,7 @@ risk: [slippage, liquidation]
 > [!IMPORTANT]
 > Run Wallet MCP onboarding first (see `SKILL.md`). Wallet MCP, formerly Base MCP, is Coinbase's MCP server at `https://wallet-mcp.coinbase.com`. The Miorail connector must also be installed and signed in once, **with the same wallet** Wallet MCP uses (see `## Installation` and `## Auth`).
 >
-> Still uses Miorail's engine, a third-party service, not part of Base or Coinbase. Still and the tokenized stocks it reads are not offered to US persons; each issuer's own terms apply. Miorail reports measurements, not advice: never suggest what to buy or sell, or whether to borrow.
+> Still uses Miorail's engine, a third-party service, not part of Base or Coinbase. Still and the tokenized stocks it reads are offered only in eligible jurisdictions: not to US persons, and not in the United States, Cuba, Iran, North Korea, Syria, Crimea or the so-called Donetsk and Luhansk People's Republics; each issuer's own terms apply. Miorail reports measurements, not advice: never suggest what to buy or sell, or whether to borrow.
 
 ## Overview
 

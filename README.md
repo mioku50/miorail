@@ -10,7 +10,7 @@
 - **For assistants:** `https://miorail.xyz/mcp/still`, read-only, no sign-in
 - **Licence:** AGPL-3.0-only · **Security bugs:** report them privately, as [SECURITY.md](SECURITY.md) says, never as a public issue
 
-Not offered to US persons or in the United States. A loan creates debt, and its collateral can be liquidated.
+Offered only in eligible jurisdictions: not to US persons, and not in the United States, Cuba, Iran, North Korea, Syria, Crimea or the so-called Donetsk and Luhansk People's Republics. A loan creates debt, and its collateral can be liquidated.
 
 ## What Still does
 
@@ -53,7 +53,7 @@ The terms are versioned and live in [`lib/still-engine/src/policy.ts`](lib/still
 
 ## Who Still is for
 
-Coinbase's tokenized stocks are offered only outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase or a stock buy, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories. Everyone else confirms once per sign-in: "I am not a U.S. person and I am not currently located in the United States." A link an assistant prepares is checked when the person opens it in their own browser.
+Coinbase's tokenized stocks are available only to persons in eligible jurisdictions outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase or a stock buy, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories, and Cuba, Iran, North Korea and Syria, which are under comprehensive US sanctions. Everyone else confirms once per sign-in: "I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People's Republics." An IP address cannot tell those three regions apart from the rest of Ukraine, so for them the sentence is the check. A link an assistant prepares is checked when the person opens it in their own browser.
 
 What closes a position is never blocked: from anywhere, a wallet can repay its loan, take its collateral back and sell.
 
