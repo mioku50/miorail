@@ -1,5 +1,5 @@
 import React, { createContext, useState, type ReactNode } from 'react';
-import { STILL_REGION_ATTRIBUTION_V1 } from '@mioagent/still-engine/eligibility';
+import { STILL_REGION_ATTRIBUTION_V1, STILL_US_PERSON_DEFINITION_V1 } from '@mioagent/still-engine/eligibility';
 
 import type { StillEligibilityViewV1 } from './stillEligibility';
 
@@ -48,6 +48,7 @@ export function StillEligibilityBarV1({ view, busy = false, error = null, onConf
         <input type="checkbox" checked={checked} disabled={busy} onChange={(event) => setChecked(event.target.checked)} />
         <span>{view.statement}</span>
       </label>
+      <p className="still-eligibility-define">{STILL_US_PERSON_DEFINITION_V1}</p>
       <div className="still-eligibility-actions">
         <button type="button" className="still-eligibility-confirm" disabled={!checked || busy} onClick={onConfirm}>
           {busy ? 'Saving…' : 'Confirm'}

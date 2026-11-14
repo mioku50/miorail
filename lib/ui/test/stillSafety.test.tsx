@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { STILL_ELIGIBILITY_STATEMENT_V1 } from '@mioagent/still-engine/eligibility';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { skyStateV1 } from '../src/still/skyState';
 import { STILL_SAFETY_V1, StillSafety } from '../src/still/StillSafety';
@@ -54,5 +55,14 @@ describe('How Still keeps a loan safe', () => {
     assert.match(text, /Borrowing creates debt, and collateral can be liquidated\. Still measures; it gives no advice\./);
     assert.doesNotMatch(text, /liquidation[^.]*(?:impossible|excluded|cannot happen|never happens)|no liquidation|risk-free|guaranteed|you should/i);
     assert.match(html, /href="\/assistants"[^>]*>Still’s MCP server</);
+  });
+
+  it('says where Still is offered: eligible jurisdictions, the places named, and who a U.S. person is (audits BASE-2, UI-18)', () => {
+    assert.match(html, /<h2 id="still-safety-who" class="still-safety-head">Offered only in eligible jurisdictions\.<\/h2>/);
+    assert.match(text, /Coinbase’s tokenized stocks are available only to persons in eligible jurisdictions outside the United States\./);
+    assert.match(text, /for a U\.S\. person, or for anyone in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People’s Republics\./);
+    assert.ok(text.includes(`“${STILL_ELIGIBILITY_STATEMENT_V1}” A U.S. person is a U.S. citizen or green-card holder, wherever they live, or anyone resident in the United States.`));
+    assert.match(text, /An IP address cannot tell Crimea and the so-called Donetsk and Luhansk People’s Republics apart from the rest of Ukraine/);
+    assert.match(text, /from anywhere you can repay a loan, take your collateral back and sell\./);
   });
 });

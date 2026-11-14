@@ -48,6 +48,8 @@ describe('where Still is offered, as a page says it', () => {
     // Eligible jurisdictions, with the sanctioned places named in the sentence itself (audit BASE-2).
     assert.equal(STILL_ELIGIBILITY_STATEMENT_V1, 'I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People’s Republics.');
     assert.match(confirm, /Still is offered only in eligible jurisdictions, and never to U\.S\. persons\./);
+    // Who a U.S. person is, right under the box: a citizen abroad is one (audit UI-18).
+    assert.match(confirm, /<\/label><p class="still-eligibility-define">A U\.S\. person is a U\.S\. citizen or green-card holder, wherever they live, or anyone resident in the United States\.<\/p>/);
     assert.match(confirm, /<button type="button" class="still-eligibility-confirm" disabled="">Confirm<\/button>/);
     assert.match(confirm, /Repaying, taking collateral back and selling never ask for this/);
     const failed = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read())} error="Your confirmation could not be saved." onConfirm={() => {}} />);

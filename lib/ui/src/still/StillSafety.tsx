@@ -1,7 +1,7 @@
 import React from 'react';
 import { TERMS } from '@mioagent/still-engine/policy';
 import type { SkyStateV1 } from './skyState';
-import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBLE_JURISDICTIONS_V1, STILL_REGION_ATTRIBUTION_V1 } from '@mioagent/still-engine/eligibility';
+import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBLE_JURISDICTIONS_V1, STILL_REGION_ATTRIBUTION_V1, STILL_US_PERSON_DEFINITION_V1 } from '@mioagent/still-engine/eligibility';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
 
 void React;
@@ -142,7 +142,7 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
         <p className="still-note">
           {STILL_ELIGIBLE_JURISDICTIONS_V1} Before it prepares one, the server reads which country your connection comes from (by its IP
           address, <a href={STILL_REGION_ATTRIBUTION_V1.url} target="_blank" rel="noopener noreferrer">{STILL_REGION_ATTRIBUTION_V1.text}</a>),
-          and it asks you to confirm once for each sign-in: “{STILL_ELIGIBILITY_STATEMENT_V1}” An IP address cannot tell Crimea and the
+          and it asks you to confirm once for each sign-in: “{STILL_ELIGIBILITY_STATEMENT_V1}” {STILL_US_PERSON_DEFINITION_V1} An IP address cannot tell Crimea and the
           so-called Donetsk and Luhansk People’s Republics apart from the rest of Ukraine, so for those regions the sentence is the check.
           Do not use a VPN or a proxy to get around it.
         </p>

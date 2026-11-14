@@ -33,6 +33,9 @@ export const STILL_NOT_OFFERED_IN_V1 = 'the United States, Cuba, Iran, North Kor
 export const STILL_ELIGIBLE_JURISDICTIONS_V1 = 'Coinbase’s tokenized stocks are available only to persons in eligible jurisdictions outside the United States. '
   + `Still prepares no new loan, purchase or stock buy for a U.S. person, or for anyone in ${STILL_NOT_OFFERED_IN_V1}.`;
 export const STILL_ELIGIBILITY_STATEMENT_V1 = `I am not a U.S. person, and I am not currently located in ${STILL_NOT_OFFERED_IN_V1}.`;
+/** Who a U.S. person is, under the box: everyday reading takes it for "a person in the United States", and a US citizen
+ * abroad, whom no IP address places, is exactly whom the box is for (audit UI-18, 2026-11-14). */
+export const STILL_US_PERSON_DEFINITION_V1 = 'A U.S. person is a U.S. citizen or green-card holder, wherever they live, or anyone resident in the United States.';
 /** Names the sentence above: a confirmation of another sentence is not a confirmation of this one. */
 export const STILL_ELIGIBILITY_VERSION_V1 = 'not-us-person-or-sanctioned-2026-11-14';
 /** DB-IP's free country database is CC BY 4.0: where Still uses it, it says so. */
