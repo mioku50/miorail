@@ -4,6 +4,7 @@ import { morphoDirectRepayPlanV1 } from '@mioagent/rwa-issuer/morphoDirectPlan';
 import { toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { morphoRepayProjectionV1, type MorphoRepayAmountV1 } from '@mioagent/rwa-issuer/morphoRepayMath';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { repayAllBoundAtomicV1, repayAllMinimumAtomicV1 } from '@mioagent/still-engine/repay';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readRepayStandingV1 } from './stillRepayStanding.js';
 import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDirectWords.js';
@@ -71,16 +72,25 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
     const projected = morphoRepayProjectionV1({ totals, position: s.position, amount, maximumAssets: request.maximumAssets });
     // The debt as the contract rounds it against the borrower, for the words only.
     const debt = toAssetsUpV1(s.position.borrowShares, totals.totalBorrowAssets, totals.totalBorrowShares);
+    // Repay all repays every share, and the wallet pays what they are worth when the transaction lands. A
+    // bound with no room above the debt read let a ready review revert onchain once the debt had grown past
+    // it (audit LM-4, 2026-11-14: about 51 atoms in thirty seconds on a debt of 1,025 USDC). So the bound must
+    // leave room for the interest until it lands, as on Aave since LA-1, and the page's own bound is named.
+    const advised = amount.mode === 'all' ? repayAllBoundAtomicV1(debt) : undefined;
     if (!projected.ok) return fail(projected.refusal, projected.refusal === 'nothing_to_repay'
       ? 'No debt shares were recorded in this market at the reading block.'
       : projected.refusal === 'repay_maximum_exceeded' && amount.mode === 'all'
-        ? repayMaximumBelowDebtWordsV1({ debt, maximum: request.maximumAssets, wallet: s.walletLoanAssets })
+        ? repayMaximumBelowDebtWordsV1({ debt, maximum: request.maximumAssets, wallet: s.walletLoanAssets, minimum: advised, venue: 'morpho' })
         : projected.refusal === 'repay_exceeds_debt' && amount.mode === 'assets'
           ? repayExactOverDebtWordsV1({ assets: amount.assets, debt, block: s.block.number })
           : projected.refusal === 'repay_rounds_to_zero' && amount.mode === 'assets'
             ? repayExactRoundsToZeroWordsV1({ assets: amount.assets })
             : 'The exact repayment and maximum USDC budget could not be established.');
-    if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', repayWalletBelowMaximumWordsV1({ debt, maximum: encodedMaximum, wallet: s.walletLoanAssets }));
+    if (amount.mode === 'all' && request.maximumAssets < repayAllMinimumAtomicV1(debt)) {
+      return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt, maximum: request.maximumAssets, wallet: s.walletLoanAssets, minimum: advised, venue: 'morpho' }));
+    }
+    if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', repayWalletBelowMaximumWordsV1({ debt, maximum: encodedMaximum, wallet: s.walletLoanAssets,
+      ...(advised === undefined ? {} : { minimum: advised }) }));
   }
   if (sequential && repaying && typeof s.loanAllowanceToMorphoAssets !== 'bigint') {
     return fail('repay_allowance_unread', 'This wallet’s USDC allowance to Morpho Blue could not be read, and a repayment in steps needs it.');
@@ -151,8 +161,8 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
       ...(returning ? ['The collateral comes back by the wallet’s own call to Morpho Blue, so no authorization is granted; Morpho lets it go only once no debt is left.'] : []),
       ...(returning && s.collateral.symbol === 'WETH' ? ['A loan opened with native ETH holds WETH as its collateral, so it comes back as WETH.'] : []),
       ...(repaying && amount.mode === 'all' ? [sequential
-        ? 'Morpho Blue takes what the debt is worth when the repayment lands, never more than your cap.'
-        : 'Morpho Blue takes what the debt is worth when the transaction lands, never more than your cap, and the allowance is cleared in the same batch.'] : []),
+        ? 'Morpho Blue takes what the debt is worth when the repayment lands, never more than your cap, which leaves room above the debt for the interest until then.'
+        : 'Morpho Blue takes what the debt is worth when the transaction lands, never more than your cap, which leaves room above the debt for the interest until then; the allowance is cleared in the same batch.'] : []),
       MORPHO_DIRECT_CALLS_WARNING_V1,
       ...(hold ? [morphoCollateralHoldWordsV1({ symbol: s.collateral.symbol, hold, action: 'repay', blockNumber: s.block.number })] : []),
       ...(sequential ? [morphoStepsWarningV1(calls.length, 'repay', returning)] : [])] };

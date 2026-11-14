@@ -56,6 +56,30 @@ describe('canonical repayment runner proves the actual debt reduction', () => {
     }
     assert.equal(h.simulated(), 0);
   });
+  it('Repay all is refused below the debt and its room for interest until it lands, naming the bound, before any simulation (audit LM-4)', async () => {
+    // The debt is 0.5 USDC: a maximum one atom above it was ready, and reverted onchain once the debt grew past it.
+    const tight = harness(true), r = await runMorphoRepayV1({ ...tight.request, maximumAssets: 500_001n }, tight.deps);
+    assert.equal(r.state === 'refused' && r.refusal, 'repay_maximum_exceeded');
+    if (r.state === 'refused') {
+      assert.equal(r.detail, 'The debt is 0.5 USDC now and your maximum is 0.500001 USDC: interest adds to the debt every second, and with so little room the repayment '
+        + 'would revert onchain if the debt passed your maximum before it landed. Set the maximum to at least 0.51 USDC; what is not needed stays in your wallet.');
+    }
+    assert.equal(tight.simulated(), 0);
+    // The least taken is the debt and a hundredth of a percent of it; the page's own bound is what is named.
+    const least = harness(true), ready = await runMorphoRepayV1({ ...least.request, maximumAssets: 500_050n }, least.deps);
+    assert.equal(ready.state, 'ready', ready.state === 'refused' ? `${ready.refusal}: ${ready.detail}` : '');
+    if (ready.state === 'ready') assert(ready.facts.warnings.some(line => /never more than your cap, which leaves room above the debt for the interest until then/.test(line)));
+    const below = harness(true), short = await runMorphoRepayV1({ ...below.request, maximumAssets: 500_049n }, below.deps);
+    assert.equal(short.state === 'refused' && short.refusal, 'repay_maximum_exceeded');
+    // A wallet that cannot cover the bound is told how much more it needs for it.
+    const poor = harness(true); poor.s.walletLoanAssets = 500_020n;
+    const p = await runMorphoRepayV1({ ...poor.request, maximumAssets: 500_100n }, poor.deps);
+    assert.equal(p.state === 'refused' && p.refusal, 'repay_usdc_insufficient');
+    if (p.state === 'refused') assert.match(p.detail, /Repay all is asked with at least 0\.51 USDC, 0\.00998 USDC more than the wallet holds/);
+    // An exact repayment has no such bound.
+    const exact = harness(), e = await runMorphoRepayV1(exact.request, exact.deps);
+    assert.equal(e.state, 'ready', e.state === 'refused' ? `${e.refusal}: ${e.detail}` : '');
+  });
   it('an exact repayment above the debt is refused in its own numbers, pointing to Repay all, before any simulation', async () => {
     // 2026-11-07: Max put the 0.840001 USDC shown into Exact USDC, and the review said only that it could not be established.
     const h = harness(), r = await runMorphoRepayV1({ ...h.request, amount: { mode: 'assets', assets: 500_001n }, maximumAssets: 500_001n }, h.deps);

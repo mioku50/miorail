@@ -19,16 +19,19 @@ function shortWordsV1(debt: bigint, wallet: bigint): string {
     : '';
 }
 
-/** Repay all with a maximum below the debt as it is now, or below the least Aave is asked with.
+/** Repay all with a maximum below the debt as it is now, or below the least Repay all is asked with.
  *
  * On Aave a maximum at the debt itself is not enough: Aave takes the smaller of the two when the
  * repayment lands, so the interest since the read would be left owing, and "at least the debt" was the
- * advice that produced exactly that (audit LEND-2, 2026-11-10). `minimum` is the bound Repay all needs
- * there (still-engine's repayAllBoundAtomicV1); on Morpho, which repays by shares, none is named. */
-export function repayMaximumBelowDebtWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint; minimum?: bigint }): string {
+ * advice that produced exactly that (audit LEND-2, 2026-11-10). On Morpho, which repays all the shares,
+ * the wallet pays what they are worth when the transaction lands, and a debt that has passed the
+ * maximum by then makes the whole transaction revert (audit LM-4, 2026-11-14). `minimum` is the bound
+ * Repay all is asked with on both (still-engine's repayAllBoundAtomicV1). */
+export function repayMaximumBelowDebtWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint; minimum?: bigint; venue?: 'aave-v4' | 'morpho' }): string {
   const lead = input.maximum < input.debt
     ? `The debt is ${usdcWordsV1(input.debt)} now, more than your maximum of ${usdcWordsV1(input.maximum)}: interest adds to it every second. `
-    : `The debt is ${usdcWordsV1(input.debt)} now and your maximum is ${usdcWordsV1(input.maximum)}: interest adds to the debt every second, and with so little room a part of it would be left owing. `;
+    : `The debt is ${usdcWordsV1(input.debt)} now and your maximum is ${usdcWordsV1(input.maximum)}: interest adds to the debt every second, and with so little room ${
+      input.venue === 'morpho' ? 'the repayment would revert onchain if the debt passed your maximum before it landed' : 'a part of it would be left owing'}. `;
   if (input.minimum === undefined) {
     return `${lead}Set the maximum a little above the debt; what is not needed stays in your wallet.${shortWordsV1(input.debt, input.wallet)}`;
   }
@@ -38,8 +41,8 @@ export function repayMaximumBelowDebtWordsV1(input: { debt: bigint; maximum: big
   return `${lead}Set the maximum to at least ${usdcWordsV1(input.minimum)}; what is not needed stays in your wallet.${short}`;
 }
 
-/** A maximum the wallet's USDC does not cover. `minimum` is the least an Aave Repay all is asked with:
- * a maximum between the debt and the wallet's USDC is not enough there (audit LEND-2). */
+/** A maximum the wallet's USDC does not cover. `minimum` is the least a Repay all is asked with: a maximum
+ * between the debt and the wallet's USDC is not enough there (audits LEND-2, LM-4). */
 export function repayWalletBelowMaximumWordsV1(input: { debt: bigint; maximum: bigint; wallet: bigint; minimum?: bigint }): string {
   const lead = `This wallet holds ${usdcWordsV1(input.wallet)}, less than your maximum of ${usdcWordsV1(input.maximum)}.`;
   if (input.wallet < input.debt) {
