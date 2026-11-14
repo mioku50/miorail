@@ -34,10 +34,15 @@ export function getSystemStatus(envOverride?: string) {
     ? process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' 
     : process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
 
+  // Named by the URL's host, not by text anywhere in it (CodeQL #69, #70): a path or a query that says
+  // alchemy.com is not Alchemy.
+  let rpcHost = '';
+  try { rpcHost = new URL(rpcUrl).hostname.toLowerCase(); } catch { /* not a URL: custom */ }
+  const under = (domain: string) => rpcHost === domain || rpcHost.endsWith(`.${domain}`);
   let rpcProvider = 'custom';
-  if (rpcUrl.includes('alchemy.com')) {
+  if (under('alchemy.com')) {
     rpcProvider = 'alchemy';
-  } else if (rpcUrl.includes('base.org')) {
+  } else if (under('base.org')) {
     rpcProvider = 'base-public';
   }
 

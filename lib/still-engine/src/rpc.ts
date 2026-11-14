@@ -38,7 +38,8 @@ export function providerLabel(url: string): string {
   if (host.endsWith('.infura.io')) return 'infura';
   if (host === 'mainnet.base.org') return 'base-public';
   if (host.endsWith('.quiknode.pro')) return 'quicknode';
-  if (host.endsWith('drpc.org')) return 'drpc';
+  // The host itself or a subdomain of it: `evildrpc.org` is not dRPC (CodeQL #80).
+  if (host === 'drpc.org' || host.endsWith('.drpc.org')) return 'drpc';
   return 'rpc';
 }
 

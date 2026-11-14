@@ -83,6 +83,10 @@ describe('failure taxonomy', () => {
     assert.equal(providerLabel('https://base-mainnet.infura.io/v3/SECRET'), 'infura');
     assert.equal(providerLabel('https://mainnet.base.org'), 'base-public');
     assert.equal(providerLabel('not a url'), 'invalid-url');
+    // A host is dRPC's, or one of its subdomains', by its labels (CodeQL #80).
+    assert.equal(providerLabel('https://lb.drpc.org/ogrpc?network=base'), 'drpc');
+    assert.equal(providerLabel('https://drpc.org/'), 'drpc');
+    assert.equal(providerLabel('https://evildrpc.org/'), 'rpc');
     assert.doesNotMatch(new ChainUnavailable([{ provider: 'alchemy', kind: 'throttled' }]).message, /SECRET|https?:/);
   });
 });

@@ -565,7 +565,9 @@ export function verifyStocksNarrationV1(input: {
     .join(' ');
   for (const venue of KNOWN_VENUES_V1) {
     if (bundleVenues.includes(venue)) continue;
-    if (new RegExp(`\\b${venue.replace('1inch', '1inch')}\\b`, 'i').test(text)) {
+    // The name escaped as a pattern: `replace('1inch', '1inch')` here changed nothing (CodeQL #126), and a
+    // venue named with a dot or a bracket would have been read as a pattern of its own.
+    if (new RegExp(`\\b${venue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text)) {
       violations.push({
         code: 'invented_venue',
         detail: `${venue} was not asked for this question`,
