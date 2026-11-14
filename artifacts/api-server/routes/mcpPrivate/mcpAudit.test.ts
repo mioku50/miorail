@@ -195,6 +195,8 @@ beforeEach(async () => {
     reconciliationWired: true,
     routeProofWired: true,
   });
+  // Not a tokenized stock, without the corpus these tests have none of (audits AUTH-4, SS-5).
+  b20RouteRuntime.tokenizedStock = async () => false;
   mcpPrivateAuthRuntime.flags = () => ({ ...FLAGS });
   await plans.insertPreparedPlan(preparedPlan() as Parameters<typeof plans.insertPreparedPlan>[0]);
 });

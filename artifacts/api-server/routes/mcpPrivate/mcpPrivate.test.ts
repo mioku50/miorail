@@ -204,6 +204,8 @@ beforeEach(async () => {
     reconciliationWired: true,
     routeProofWired: true,
   });
+  // Not a tokenized stock, without the corpus these tests have none of (audits AUTH-4, SS-5).
+  b20RouteRuntime.tokenizedStock = async () => false;
   mcpPrivateAuthRuntime.flags = () => ({ ...FLAGS });
   process.env.MIORAIL_MCP_PRIVATE_V1 = 'true';
   process.env.MIORAIL_MCP_PRIVATE_EXECUTION_V1 = 'true';
@@ -529,6 +531,18 @@ describe('§5/§11 — the returned calls are the persisted calls', () => {
     const payload = payloadOf(await openAction(client));
     assert.equal(payload.outcome, 'refused');
     assert.equal(payload.reason, 'entry_plan_calls_tampered');
+    assert.equal(payload.action, null);
+    await client.close();
+  });
+
+  test('a plan for a tokenized stock yields no action: an assistant cannot buy a stock past the region gate (audits AUTH-4, SS-5)', async () => {
+    await storePlan();
+    b20RouteRuntime.tokenizedStock = async () => true;
+    const client = await connectedClient();
+    const payload = payloadOf(await openAction(client));
+    assert.equal(payload.outcome, 'refused');
+    assert.equal(payload.reason, 'b20_entry_tokenized_stock');
+    assert.match(String(payload.detail), /does not prepare it\. Nothing was sent\./);
     assert.equal(payload.action, null);
     await client.close();
   });

@@ -508,7 +508,13 @@ export function B20WatchSection() {
         // once rather than quoting the pool twice.
         requestId: `entry:${clearanceId}`,
       },
-      { onSuccess: (data) => setPlanId(data.planId) },
+      {
+        onSuccess: (data) => {
+          setPlanId(data.planId);
+          // A refused preparation says why (a tokenized stock is bought through its own review, audit AUTH-4).
+          if (data.outcome === 'refused' && data.refusalDetail) setWalletError(data.refusalDetail);
+        },
+      },
     );
   }, [exitResult, prepareEntry, profileIdentityV1]);
 

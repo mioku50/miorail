@@ -169,7 +169,8 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 import { analyseExitV1, analyseV4ExitV1 } from '../lib/exitAnalysis.js';
 import { runOpportunityV1 } from '../lib/opportunityRunner.js';
 import { buildClearanceV1 } from '../lib/opportunityClearance.js';
-import { prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
+import { B20_ENTRY_TOKENIZED_STOCK_DETAIL_V1, B20_ENTRY_TOKENIZED_STOCK_V1, prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
+import { isB20EntryTokenizedStockV1 } from '../lib/b20EntryStock.js';
 import { buildPreparedPlanV1 } from '../lib/b20EntryPlanStore.js';
 import {
   SUBMIT_REFUSAL_COPY_V1,
@@ -471,6 +472,8 @@ export const b20RouteRuntime = {
   /** Injected so a test can run the whole route without a chain or a provider. */
   runOpportunity: runOpportunityV1,
   prepareEntry: prepareB20EntryV1,
+  /** A tokenized stock is not bought through the B20 entry (audits AUTH-4, SS-5): it throws when unread. */
+  tokenizedStock: isB20EntryTokenizedStockV1,
   /** Checked separately from the snapshot tables: a server that can inspect
    * but has not run 0024 must keep inspecting rather than 503 the whole tab. */
   watchlistAvailable: async (): Promise<boolean> => {
@@ -3776,6 +3779,7 @@ export async function prepareEntryFromClearanceV1(input: {
       b20Reader: b20RouteRuntime.reader(),
       aerodromeReader: b20RouteRuntime.aerodromeReader(),
       now: () => now,
+      tokenizedStock: b20RouteRuntime.tokenizedStock,
     },
     {
       clearance,
@@ -4042,6 +4046,14 @@ export async function beginEntrySubmissionV1(input: {
   if (!entryExecutionAvailableV1(capabilities)) {
     return refused('submission_not_wired', 'Submission is not available on this server.', 503);
   }
+
+  // A plan for a tokenized stock hands out no calls, however it was prepared and whichever surface asks
+  // (audits AUTH-4, SS-5, 2026-11-14): one prepared before this rule, or a stock Coinbase listed since,
+  // is refused here, where the bytes would leave. Closed when it cannot be told.
+  let stock: boolean;
+  try { stock = await b20RouteRuntime.tokenizedStock(plan.tokenAddress); } catch { stock = true; }
+  // Answered as the other refusals are, so the page says it where the wallet would have been asked.
+  if (stock) return refused(B20_ENTRY_TOKENIZED_STOCK_V1, B20_ENTRY_TOKENIZED_STOCK_DETAIL_V1);
 
   // An attempt that already holds this plan's slot is RETURNED, never
   // replaced. A double click, a remount and a retried fetch all land here.

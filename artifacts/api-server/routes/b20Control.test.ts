@@ -247,6 +247,8 @@ beforeEach(async () => {
     reconciliationWired: true,
     routeProofWired: true,
   });
+  // Not a tokenized stock, without the corpus these tests have none of (audits AUTH-4, SS-5).
+  b20RouteRuntime.tokenizedStock = async () => false;
 });
 
 afterEach(() => {
@@ -1277,6 +1279,28 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
     profileIdentity: `${USDC}:100000000:300:300`,
     attemptRequestId: 'attempt-req-1',
   };
+
+  test('a plan for a tokenized stock hands out no calls, open attempt or not, and none when that cannot be told (audits AUTH-4, SS-5)', async () => {
+    const planId = await seedPlan();
+    const asked: string[] = [];
+    b20RouteRuntime.tokenizedStock = async (tokenAddress: string) => { asked.push(tokenAddress); return true; };
+    const refused = await begin(planId);
+    assert.equal(refused.status, 200, JSON.stringify(refused.body));
+    assert.deepEqual([refused.body.outcome, refused.body.reason], ['refused', 'b20_entry_tokenized_stock']);
+    assert.match(refused.body.detail, /stock review or Swap AI, which first ask where you are and that you are not a U\.S\. person/);
+    assert.equal(refused.body.payload, undefined);
+    assert.equal(refused.body.attemptId, undefined);
+    assert.deepEqual(asked, [TOKEN]);
+    // An attempt opened before the rule is not handed its calls again.
+    b20RouteRuntime.tokenizedStock = async () => false;
+    assert.equal((await begin(planId)).body.outcome, 'ready');
+    b20RouteRuntime.tokenizedStock = async () => true;
+    assert.equal((await begin(planId)).body.outcome, 'refused');
+    // A corpus that cannot be read is no answer: closed.
+    b20RouteRuntime.tokenizedStock = async () => { throw new Error('database down'); };
+    const unread = await begin(planId);
+    assert.deepEqual([unread.body.outcome, unread.body.reason], ['refused', 'b20_entry_tokenized_stock']);
+  });
 
   test('a prepared plan can enter awaiting_wallet_approval and get its wallet request', async () => {
     const planId = await seedPlan();

@@ -52,6 +52,8 @@ export interface PrepareEntryDepsV1 {
   aerodromeReader: AerodromeReaderV1;
   provider?: SimulationProvider | null;
   now: () => Date;
+  /** Whether a token is a tokenized stock (lib/b20EntryStock.ts); it throws when that cannot be read. */
+  tokenizedStock?: (tokenAddress: string) => Promise<boolean>;
 }
 
 export interface PrepareEntryInputV1 {
@@ -93,6 +95,22 @@ export interface PrepareEntryResultV1 {
 }
 
 const REFUSED_TOKEN_V1 = '0x0000000000000000000000000000000000000000';
+
+// ---------------------------------------------------------------------------
+// A stock is bought where the person is asked first (audits AUTH-4, SS-5,
+// 2026-11-14).
+//
+// All of Coinbase's tokenized stocks are B20 tokens, and some have a pool on
+// Aerodrome, the venue this entry buys through. Swap AI and the stock review
+// refuse a stock to a request from the United States, and ask the person to
+// confirm they are not a U.S. person (lib/stillRegion.ts); this path asked
+// neither, on the site and through the private MCP alike. It refused stocks
+// only because their issuer keeps a transfer policy that reads as one that may
+// block, which is a fact about the issuer, not a gate. A tokenized stock, or a
+// token that cannot be told from one, is not prepared here.
+// ---------------------------------------------------------------------------
+export const B20_ENTRY_TOKENIZED_STOCK_V1 = 'b20_entry_tokenized_stock';
+export const B20_ENTRY_TOKENIZED_STOCK_DETAIL_V1 = 'This token is a tokenized stock, or Still could not check that it is not one. Still buys a stock only through its stock review or Swap AI, which first ask where you are and that you are not a U.S. person, so the B20 entry does not prepare it. Nothing was sent.';
 
 export async function prepareB20EntryV1(
   deps: PrepareEntryDepsV1,
@@ -137,6 +155,15 @@ export async function prepareB20EntryV1(
   }
   if (clearance.quoteAsset.toLowerCase() !== OPPORTUNITY_QUOTE_ASSET_V1) {
     return refuse('clearance_profile_mismatch', CLEARANCE_REFUSAL_COPY_V1.clearance_profile_mismatch);
+  }
+
+  // 1b. A tokenized stock is not bought here (audits AUTH-4, SS-5, 2026-11-14): Coinbase's stocks are B20
+  // tokens, and this entry asks nobody where they are. Before anything is read from the chain, and closed
+  // when it cannot be told.
+  if (deps.tokenizedStock) {
+    let stock: boolean;
+    try { stock = await deps.tokenizedStock(clearance.tokenAddress); } catch { stock = true; }
+    if (stock) return refuse(B20_ENTRY_TOKENIZED_STOCK_V1, B20_ENTRY_TOKENIZED_STOCK_DETAIL_V1);
   }
 
   // 2. A FRESH control read. A clearance describes a past state; this is the

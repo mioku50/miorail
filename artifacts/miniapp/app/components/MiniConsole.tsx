@@ -1353,7 +1353,13 @@ export function MiniConsole() {
           profileIdentity: b20ProfileIdentityV1(),
           requestId: `entry:${clearanceId}`,
         },
-        { onSuccess: (data) => setB20EntryPlanId(data.planId) },
+        {
+          onSuccess: (data) => {
+            setB20EntryPlanId(data.planId);
+            // A refused preparation says why (a tokenized stock is bought through its own review, audit AUTH-4).
+            if (data.outcome === "refused" && data.refusalDetail) setB20WalletError(data.refusalDetail);
+          },
+        },
       );
     },
     [b20PrepareEntry, b20ProfileIdentityV1],
