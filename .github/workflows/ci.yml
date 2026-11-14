@@ -50,6 +50,19 @@ jobs:
       - name: Install dependencies
         run: if [ -f package.json ]; then if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi; else echo "No package.json found, skipping"; fi
 
+      # minimumReleaseAge holds only where pnpm resolves, and nothing here resolves: the install above is
+      # frozen, and Dependabot's security updates bypass the week by themselves ("bypassed for this
+      # security update", 2026-11-13). So every version a change adds to the lockfile is dated against the
+      # registry here, and one younger than a week fails the job (audit SUP-1). The way past it is a line in
+      # .github/release-age-exceptions.txt, in a reviewed commit.
+      - name: Lockfile versions are at least a week old
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then echo "No base commit to compare with; nothing to check."; exit 0; fi
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          node --import tsx scripts/check_lockfile_release_age.ts --base "$BASE_SHA"
+
       - name: Typecheck
         run: if [ -f package.json ] && pnpm run | grep -q typecheck; then pnpm typecheck; else echo "No typecheck script found, skipping"; fi
 

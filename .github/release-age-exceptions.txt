@@ -1,0 +1,8 @@
+# Versions allowed into pnpm-lock.yaml before they are as old as pnpm-workspace.yaml's
+# minimumReleaseAge (7 days). Read by scripts/check_lockfile_release_age.ts in CI (audit SUP-1).
+#
+# One `name@version` a line, then why and who decided, for example:
+#   hono@4.13.16  security fix for GHSA-xxxx, the operator decided 2026-11-20
+#
+# Keep it empty. A line here is the one way past the week, and it is a reviewed commit of its own;
+# remove it once the version is a week old.
