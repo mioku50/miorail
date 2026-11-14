@@ -1,5 +1,6 @@
 import { isNonPublicHostV1 } from './claimFile.js';
 import type { B20HttpFetchV1, B20HttpResponseV1 } from './collect.js';
+import { createPublicOnlyFetchV1 } from './publicAddress.js';
 
 // ---------------------------------------------------------------------------
 // The one place Miorail reaches a third party's server.
@@ -12,6 +13,8 @@ import type { B20HttpFetchV1, B20HttpResponseV1 } from './collect.js';
 //   HTTPS only, and re-checked after every redirect.
 //   No private, loopback or link-local host, before the request and after each
 //   hop — a public name whose redirect lands on 127.0.0.1 is the classic bypass.
+//   A name is resolved by the fetch itself, and the connection is made only to
+//   the addresses it checked (publicAddress.ts, audit AUTH-5).
 //   A hard cap on redirects, on time, and on how much body is read.
 //
 // Nothing Miorail holds is sent: no cookie, no authorization header, no API
@@ -78,7 +81,7 @@ async function readBoundedV1(response: Response, limit: number, signal: AbortSig
 /** The production fetcher. `fetchImpl` is injectable only so a test can drive
  * the redirect and size rules without a server; so are the clock and the limit. */
 export function createB20HttpFetchV1(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = createPublicOnlyFetchV1(),
   options: { timeoutMs?: number; bodyLimitBytes?: number } = {},
 ): B20HttpFetchV1 {
   const timeoutMs = options.timeoutMs ?? B20_PROBE_TIMEOUT_MS_V1;

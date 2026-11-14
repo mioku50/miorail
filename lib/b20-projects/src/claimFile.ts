@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { isAddressLiteralV1, nonPublicAddressV1 } from './publicAddress.js';
+
 // ---------------------------------------------------------------------------
 // The file a project serves on its own domain to claim a token.
 //
@@ -93,22 +95,15 @@ export function hostBelongsToDomainV1(host: string, domain: string): boolean {
 
 /** An address literal or a name that resolves inside this machine or a private
  * network. Rejected before any request is made — a claim file is third-party
- * input, and a fetcher that follows it is a request forgery primitive. */
+ * input, and a fetcher that follows it is a request forgery primitive. An
+ * address literal is public only in the global unicast space and outside every
+ * range kept for other uses, IPv6 forms included (audit AUTH-5, 2026-11-14). */
 export function isNonPublicHostV1(host: string): boolean {
-  const value = host.toLowerCase().replace(/^\[|\]$/g, '');
-  if (value === 'localhost' || value.endsWith('.localhost') || value.endsWith('.local')) return true;
-  if (value === '::1' || value.startsWith('fc') || value.startsWith('fd')) return true;
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
-    // A name. DNS may still point it anywhere, which is why the caller's own
-    // fetch must refuse redirects and non-public results as well.
-    return false;
-  }
-  const [a, b] = value.split('.').map(Number) as [number, number, number, number];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
+  const value = host.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (value === 'localhost' || value.endsWith('.localhost') || value.endsWith('.local') || value.endsWith('.internal') || value.endsWith('.home.arpa')) return true;
+  if (isAddressLiteralV1(value)) return nonPublicAddressV1(value);
+  // A name. DNS may still point it anywhere: the fetch resolves it itself and connects only to the
+  // addresses it checked (publicAddress.ts), on every hop.
   return false;
 }
 
