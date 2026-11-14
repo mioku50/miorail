@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi, type PublicClient } from 'viem';
+import { createPublicClient, fallback, http, parseAbi, type PublicClient } from 'viem';
 import { base } from 'viem/chains';
 import {
   addressesInTextV1,
@@ -40,6 +40,14 @@ const ERC20_SYMBOL_BYTES32_ABI_V1 = parseAbi(['function symbol() view returns (b
 export interface ChainTokenIdentityReaderOptionsV1 {
   /** Base mainnet JSON-RPC. Never stored, never logged, never returned. */
   rpcUrl: string;
+  /**
+   * Asked when `rpcUrl` fails. 2026-11-14: the primary endpoint answered
+   * invalid responses for a few seconds, the reads of AAPLc's symbol() and
+   * decimals() failed, and a sell of AAPLc from Assets was refused as an
+   * untrusted address ("asset_address_unsafe") twice in a row, while the
+   * chain-conditions read beside it went on through its fallback.
+   */
+  fallbackRpcUrl?: string;
   timeoutMs?: number;
   /** Injectable for tests; production builds its own from `rpcUrl`. */
   client?: PublicClient;
@@ -65,7 +73,12 @@ export function createChainTokenIdentityReaderV1(
     options.client ??
     (createPublicClient({
       chain: base,
-      transport: http(options.rpcUrl, { timeout: options.timeoutMs ?? 8_000, retryCount: 1 }),
+      transport: options.fallbackRpcUrl && options.fallbackRpcUrl !== options.rpcUrl
+        ? fallback([
+          http(options.rpcUrl, { timeout: options.timeoutMs ?? 8_000, retryCount: 1 }),
+          http(options.fallbackRpcUrl, { timeout: options.timeoutMs ?? 8_000, retryCount: 1 }),
+        ])
+        : http(options.rpcUrl, { timeout: options.timeoutMs ?? 8_000, retryCount: 1 }),
     }) as PublicClient);
 
   return {

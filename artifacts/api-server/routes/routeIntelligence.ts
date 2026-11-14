@@ -459,7 +459,7 @@ export const routePlanRouteRuntime = {
       // refused exactly as before.
       identifyToken:
         flags.tokenIdentityV1 && baseMainnetRpcUrlV1()
-          ? createChainTokenIdentityReaderV1({ rpcUrl: baseMainnetRpcUrlV1() })
+          ? createChainTokenIdentityReaderV1({ rpcUrl: baseMainnetRpcUrlV1(), fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1 })
           : undefined,
       // Server-side continuation: the half-finished goal is keyed by the
       // authenticated tenant and wallet and never passes through the client.
