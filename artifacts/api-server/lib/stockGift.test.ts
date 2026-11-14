@@ -16,6 +16,7 @@ import {
   isSendableTokenV1,
   resolveGiftRecipientV1,
 } from './stockGift.js';
+import { SendValuationBusyErrorV1 } from './sendValuationBudget.js';
 
 // ---------------------------------------------------------------------------
 // The gift policy: a reviewed Coinbase stock, bought with USDC, $0.10–$100, to
@@ -252,6 +253,11 @@ describe('a gift from what the wallet holds', () => {
     const small = await send({ valueInUsdc: async () => worth('41999') });
     assert.equal(small.ok, false);
     if (!small.ok) assert.match(small.message, /about \$0\.04 in USDC right now/);
+  });
+
+  test('a price the routers’ budget refuses is said as that, not as a failed read (audit SS-6)', async () => {
+    const busy = await send({ valueInUsdc: async () => { throw new SendValuationBusyErrorV1('wallet'); } });
+    assert.deepEqual(busy.ok || [busy.code, busy.message], ['gift_value_busy', new SendValuationBusyErrorV1('wallet').message]);
   });
 
   test('an unread balance or an unpriced amount is our failure, and says so', async () => {

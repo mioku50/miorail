@@ -3,6 +3,7 @@ import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPla
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { SEND_RECIPIENT_CONTRACTS_V1, sendRecipientChecksumBrokenV1 } from '@mioagent/transaction-composer';
 import type { BaseNameResolutionV1 } from './baseNameResolver.js';
+import { SendValuationBusyErrorV1 } from './sendValuationBudget.js';
 
 // ---------------------------------------------------------------------------
 // Growth plan step 4: give someone a tokenized stock.
@@ -245,6 +246,7 @@ export type StockGiftSendRefusalCodeV1 =
   | 'gift_balance_unavailable'
   | 'gift_balance_short'
   | 'gift_value_unavailable'
+  | 'gift_value_busy'
   | 'gift_value_out_of_range';
 
 export type StockGiftSendCheckV1 =
@@ -339,10 +341,16 @@ export async function checkStockGiftSendV1(input: {
 
   // USDC is counted at par, as Still counts it everywhere: the amount is its value. Anything else is
   // what a router would pay for it in USDC now.
+  // A price refused by the routers' budget (audit SS-6) is said as that, not as a failed read.
+  let busy: string | null = null;
   const valuation =
     coin?.symbol === 'USDC'
       ? { usdcAtomic: input.amountAtomic, provider: 'USDC at $1', observedAt: new Date().toISOString() }
-      : await input.valueInUsdc({ token: asset, amountAtomic: input.amountAtomic }).catch((): StockValuationV1 => null);
+      : await input.valueInUsdc({ token: asset, amountAtomic: input.amountAtomic }).catch((error: unknown): StockValuationV1 => {
+        if (error instanceof SendValuationBusyErrorV1) busy = error.message;
+        return null;
+      });
+  if (busy) return refuse('gift_value_busy', busy);
   if (!valuation || !/^[0-9]+$/.test(valuation.usdcAtomic)) {
     return refuse(
       'gift_value_unavailable',

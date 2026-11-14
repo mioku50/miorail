@@ -83,6 +83,7 @@ import { BASE_PUBLIC_RPC_URL_V1 } from '../lib/baseRpcSwapSimulation.js';
 import { STILL_KNOWN_CONTRACTS_V1, STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1, STOCK_GIFT_DAILY_LIMIT_V1, checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1, withSendApprovalLockV1 } from '../lib/stockGift.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
+import { reserveSendValuationV1 } from '../lib/sendValuationBudget.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
@@ -1183,8 +1184,9 @@ routeIntelligenceRouter.post('/gift/holding', async (req, res) => {
       );
       return;
     }
-    const valuation = await giftSendRouteRuntime
-      .valueInUsdc({
+    // Within the routers' budget for sends (audit SS-6): a price it refuses is no price here.
+    const valuation = await reserveSendValuationV1(user.address)
+      .then(() => giftSendRouteRuntime.valueInUsdc({
         token: {
           assetId: `eip155:8453/erc20:${token}`,
           chainId: 8453,
@@ -1196,7 +1198,7 @@ routeIntelligenceRouter.post('/gift/holding', async (req, res) => {
         amountAtomic: holding.balanceAtomic,
         walletAddress: user.address as `0x${string}`,
         now: giftSendRouteRuntime.now(),
-      })
+      }))
       .catch(() => null);
     res.json(
       GiftHoldingResponseV1Schema.parse({
@@ -1259,8 +1261,11 @@ routeIntelligenceRouter.post('/gift/send/prepare', async (req, res) => {
       resolveName: swapPrepareRouteRuntime.gift.resolveName,
       giftsApprovedToday: () => swapPrepareRouteRuntime.gift.giftsApprovedToday(user.id, now),
       readHolding: giftSendRouteRuntime.readHolding,
-      valueInUsdc: ({ token, amountAtomic }) =>
-        giftSendRouteRuntime.valueInUsdc({ token, amountAtomic, walletAddress: user.address as `0x${string}`, now }),
+      // Within the routers' budget for sends (audit SS-6); a refusal there is said as it is.
+      valueInUsdc: async ({ token, amountAtomic }) => {
+        await reserveSendValuationV1(user.address);
+        return giftSendRouteRuntime.valueInUsdc({ token, amountAtomic, walletAddress: user.address as `0x${string}`, now });
+      },
     });
     if (!verdict.ok) {
       logger.info('Gift send refused before prepare', { code: verdict.code });

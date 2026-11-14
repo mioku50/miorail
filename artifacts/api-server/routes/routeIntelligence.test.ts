@@ -34,6 +34,7 @@ import {
   swapBlueprintRouteRuntime,
   swapPrepareRouteRuntime,
 } from './routeIntelligence.js';
+import { sendValuationBudgetV1 } from '../lib/sendValuationBudget.js';
 
 const USER = { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 as const };
 const originalRuntime = { ...routePlanRouteRuntime };
@@ -1378,6 +1379,9 @@ describe('gifts from holdings: /gift/holding and /gift/send/prepare', () => {
       resolveName: async (name) => ({ outcome: 'resolved', name, address: FRIEND as `0x${string}` }),
       giftsApprovedToday: async () => 0,
     };
+    // No token of the corpus is a recipient here, and no database is asked (audit SS-4).
+    swapPrepareRouteRuntime.reviewedStock = async () => false;
+    sendValuationBudgetV1.reset();
     process.env.CHAIN_ENV = 'mainnet-readonly';
   });
 
@@ -1453,6 +1457,23 @@ describe('gifts from holdings: /gift/holding and /gift/send/prepare', () => {
       balance: { balanceAtomic: '44227', blockNumber: '51700000' },
       valuation: WORTH,
     });
+  });
+
+  // Audit SS-6, 2026-11-14: every price asks Uniswap and KyberSwap, and nothing bounded it per wallet.
+  test('a send is priced at most ten times a minute for one wallet, and a price refused asks no router', async () => {
+    for (let i = 0; i < 10; i++) {
+      await request(routeApp()).post('/api/route-intelligence/gift/send/prepare').send({ ...BODY, requestId: `gift-send-budget-${i}` }).expect(200);
+    }
+    assert.equal(valued.length, 10);
+    const busy = await request(routeApp()).post('/api/route-intelligence/gift/send/prepare').send({ ...BODY, requestId: 'gift-send-budget-10' }).expect(200);
+    assert.equal(busy.body.reason, 'gift_refused');
+    assert.match(busy.body.detail, /^Miorail prices a send at most 10 times a minute for one wallet, because each price asks two routers\. Nothing was prepared/);
+    assert.equal(valued.length, 10, 'a refused price asks no router');
+    assert.equal(prepared.length, 10);
+    // The holding read shares the budget: its value is simply unknown, and the holding is still read.
+    const held = await request(routeApp()).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(200);
+    assert.deepEqual([held.body.outcome, held.body.valuation], ['held', null]);
+    assert.equal(valued.length, 10);
   });
 
   test('another wallet, a missing migration or a signed-out caller never reach the rules', async () => {
