@@ -185,7 +185,16 @@ async function readLandedStepsV1(record: LoanExecutionV1, reader: BaseChainReade
 export function loanStoppedBeforePaymentV1(row: Pick<LoanExecutionV1, 'state' | 'errorCode' | 'run' | 'verification'>): boolean {
   const stoppedAt = row.verification?.stoppedAt;
   return row.run.delivery === 'sequential' && row.state === 'failed' && row.errorCode === LOAN_STEPS_STOPPED_V1 &&
-    typeof stoppedAt === 'number' && Number.isInteger(stoppedAt) && stoppedAt >= 0 && stoppedAt < row.run.calls.length;
+    typeof stoppedAt === 'number' && Number.isInteger(stoppedAt) && stoppedAt >= 0 && stoppedAt < row.run.calls.length && !loanPaymentMayStillBeSentV1(row);
+}
+
+/** A Still Spend loan in steps stopped by its owner after its payment step was handed to the wallet: the
+ * wallet may still send that payment, so the invoice stays held and is not offered to the wallet's own
+ * USDC, or it would be paid twice (audit SPEND-3, 2026-11-14). A payment the wallet declined, or one the
+ * server refused before asking, was never left open. */
+export function loanPaymentMayStillBeSentV1(row: Pick<LoanExecutionV1, 'state' | 'errorCode' | 'run' | 'verification'>): boolean {
+  return row.verification?.paymentAsked === true && row.verification?.stoppedBy === 'person' && Boolean(row.run.facts?.payment) &&
+    row.state === 'failed' && row.errorCode === LOAN_STEPS_STOPPED_V1;
 }
 
 /** Reads a loan sent in steps from the chain. Steps still being sent are not judged. */
@@ -219,10 +228,12 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
     // The block of the last step that landed says when the position last moved (positionMovedSinceReviewV1).
     const landed = { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint,
       blockNumber: steps.at(-1)!.receipt.blockNumber.toString() };
-    // Stopped by its owner: that, and the transaction count the stop was checked at, stay with it.
+    // Stopped by its owner: that, and the transaction count the stop was checked at, stay with it, and so
+    // does a payment step already handed to the wallet (audit SPEND-3).
     const byOwner = record.verification?.stoppedBy === 'person' ? { stoppedBy: 'person', nonceAfter: record.verification.nonceAfter } : {};
-    return stopped ? set('failed', steps.at(-1)!.hash, { ...landed, stoppedAt: steps.length, ...byOwner }, LOAN_STEPS_STOPPED_V1)
-      : set('unknown', steps.at(-1)!.hash, landed, 'loan_steps_incomplete');
+    const asked = record.verification?.paymentAsked === true ? { paymentAsked: true } : {};
+    return stopped ? set('failed', steps.at(-1)!.hash, { ...landed, stoppedAt: steps.length, ...byOwner, ...asked }, LOAN_STEPS_STOPPED_V1)
+      : set('unknown', steps.at(-1)!.hash, { ...landed, ...asked }, 'loan_steps_incomplete');
   }
   const last = steps.at(-1)!;
   let effect: Awaited<ReturnType<LoanExecutionStatusDepsV1['verifyEffectPosition']>>;
@@ -249,7 +260,11 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
 // ---------------------------------------------------------------------------
 
 export type LoanStepsStopRefusalV1 = 'lending_attempt_changed' | 'loan_steps_unread' | 'loan_receipt_unavailable' | 'loan_step_not_matched' |
-  'loan_step_reverted' | 'loan_receipt_changed' | 'loan_steps_complete' | 'loan_steps_count_unread' | 'loan_steps_later_transaction' | 'loan_steps_transaction_pending';
+  'loan_step_reverted' | 'loan_receipt_changed' | 'loan_steps_complete' | 'loan_steps_count_unread' | 'loan_steps_later_transaction' | 'loan_steps_transaction_pending' |
+  'loan_steps_next_found' | 'loan_steps_wallet_busy';
+
+/** The most later transactions of a wallet one search reads one by one (a stop here, a release in loanRelease.ts). */
+export const LOAN_WALLET_SEARCH_LIMIT_V1 = 16;
 
 /** What a refusal to stop tells the person; nothing was recorded. */
 export function loanStepsStopDetailV1(refusal: LoanStepsStopRefusalV1, landed: number, total: number, noun: 'loan' | 'repayment' = 'loan'): string {
@@ -265,6 +280,8 @@ export function loanStepsStopDetailV1(refusal: LoanStepsStopRefusalV1, landed: n
     case 'loan_steps_complete': return `Every step of this ${noun} landed, so there is nothing to stop. Check the onchain result.`;
     case 'loan_steps_later_transaction': return `Your wallet sent another transaction after step ${landed}. Still cannot tell from Base whether it was ${next}, so this ${noun} was not stopped. If it was, paste its hash below.`;
     case 'loan_steps_transaction_pending': return `Your wallet has a transaction waiting to land on Base, so this ${noun} was not stopped. Wait until it lands, then check the onchain result.`;
+    case 'loan_steps_next_found': return `Still found ${next} on Base, sent after step ${landed}, so this ${noun} was not stopped: it is read with that step now. Check the onchain result.`;
+    case 'loan_steps_wallet_busy': return `Your wallet sent more than ${LOAN_WALLET_SEARCH_LIMIT_V1} transactions after step ${landed}, more than Still reads one by one, so this ${noun} was not stopped. If one of them was ${next}, paste its hash below.`;
   }
 }
 
@@ -309,8 +326,24 @@ export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1;
     if (reader.getTransactionCount) [latest, pending] = await Promise.all([reader.getTransactionCount(record.walletAddress, 'latest'), reader.getTransactionCount(record.walletAddress, 'pending')]);
   } catch { /* unread below */ }
   if (nonce === undefined || !Number.isSafeInteger(nonce) || latest === null || pending === null || latest < nonce + 1 || pending < latest) return refuse('loan_steps_count_unread', landed);
-  if (latest > nonce + 1) return refuse('loan_steps_later_transaction', landed);
   if (pending > latest) return refuse('loan_steps_transaction_pending', landed);
+  // The wallet sent more after the last step that landed: each of those is read, and only one that is the
+  // next step keeps this loan from stopping (audit LL-2, 2026-11-14: any other transaction, a swap or a
+  // repayment made on the protocol's own site, made the stop refuse for ever).
+  let otherTransactions: HashV1[] = [];
+  if (latest > nonce + 1) {
+    const later = await laterThanStepsV1(record, read.hashes, read.steps.at(-1)!.receipt.blockNumber, landed, deps.reader);
+    if (later.state === 'unread') return refuse('loan_steps_count_unread', landed);
+    if (later.state === 'busy') return refuse('loan_steps_wallet_busy', landed);
+    if (later.state === 'next') {
+      // The next step itself: kept as the hint it is, and read with the steps before it.
+      const hinted = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state: 'unknown', transactionHash: later.hash, proof: null,
+        errorCode: 'loan_transaction_hint_unverified', now: deps.now() });
+      if (hinted) await refreshSequentialLoanExecutionV1(input, hinted, deps).catch(() => null);
+      return refuse('loan_steps_next_found', landed);
+    }
+    otherTransactions = later.others;
+  }
   // Since Denim (2026-11-05) Base's nodes answer `pending` with the latest block, so the line above no longer
   // sees a step on its way (audit BASE-2), and the wallet's own node, where such a step waits, was never
   // ours to ask. So the count is read once more a moment later: a step sent as the person pressed Stop lands
@@ -326,8 +359,32 @@ export async function stopSequentialLoanExecutionV1(input: { owner: LoanOwnerV1;
   const last = read.steps.at(-1)!;
   const stopped = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state: 'failed', transactionHash: last.hash,
     proof: { callsHash: record.run.callsHash, steps: read.hashes, stepsLanded: landed, receiptFingerprint: read.fingerprint, stoppedAt: landed,
-      stoppedBy: 'person', nonceAfter: latest, blockNumber: last.receipt.blockNumber.toString() }, errorCode: LOAN_STEPS_STOPPED_V1, batchId: sequentialBatchIdV1(read.hashes), now: deps.now() });
+      stoppedBy: 'person', nonceAfter: latest, blockNumber: last.receipt.blockNumber.toString(), ...(otherTransactions.length ? { otherTransactions } : {}),
+      ...(record.verification?.paymentAsked === true ? { paymentAsked: true } : {}) },
+    errorCode: LOAN_STEPS_STOPPED_V1, batchId: sequentialBatchIdV1(read.hashes), now: deps.now() });
   return stopped ? { ok: true, record: stopped } : refuse('lending_attempt_changed', landed);
+}
+
+/** The wallet's transactions after the last step that landed, read one by one: the next step among them, or
+ * the others, none of them this loan's, or why that cannot be said. From the block before that step's, so
+ * a transaction in the same block after it is read too. */
+async function laterThanStepsV1(record: LoanExecutionV1, steps: readonly HashV1[], lastBlock: bigint, landed: number, reader: BaseChainReaderV1):
+  Promise<{ state: 'next'; hash: HashV1 } | { state: 'others'; others: HashV1[] } | { state: 'busy' } | { state: 'unread' }> {
+  if (!reader.listOwnTransactionsAfter) return { state: 'unread' };
+  const listed = await reader.listOwnTransactionsAfter(record.walletAddress, lastBlock - 1n, LOAN_WALLET_SEARCH_LIMIT_V1).catch(() => null);
+  if (!listed) return { state: 'unread' };
+  const others: HashV1[] = [];
+  for (const hash of listed.hashes) {
+    if (steps.includes(hash)) continue;
+    let receipt: VerifiedReceiptSourceV1 | null, transaction: BaseTransactionSourceV1 | null;
+    try { [receipt, transaction] = await Promise.all([reader.getTransactionReceipt(hash), reader.getTransaction(hash)]); }
+    catch { return { state: 'unread' }; }
+    if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== hash) return { state: 'unread' };
+    if (bindLoanStepV1({ execution: record, index: landed, transaction, receipt }).state !== 'unknown') return { state: 'next', hash };
+    others.push(hash);
+  }
+  if (!listed.complete) return listed.hashes.length >= LOAN_WALLET_SEARCH_LIMIT_V1 ? { state: 'busy' } : { state: 'unread' };
+  return { state: 'others', others };
 }
 
 /** A step of a stopped loan that the wallet sent after all: taken back only when this hash is exactly the

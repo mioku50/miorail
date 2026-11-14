@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { LOAN_WALLET_SENT_NOTHING_V1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
-import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
+import { LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1 } from '../../lib/lendingSteps.js';
 import { loanPositionMovedOutsideV1 } from '../../lib/loanExecutionStatus.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendInvoiceDisplayV1 } from '../../lib/stillSpendInvoiceReads.js';
@@ -139,7 +139,8 @@ export async function stillReviewStatusV1(
     ...(returned === null ? {} : { collateralReturned: returned }),
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
     ...(purchase ? { purchase } : {}),
-    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1
+    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? `${STOPPED_NEXT_V1}${loanPaymentMayStillBeSentV1(record)
+      ? ' The user stopped it after their wallet was asked for the payment, and that request may still be open in the wallet: confirmed, it pays this invoice from the loan’s USDC; declined, the USDC stays in the wallet. Paying the invoice from the wallet another way is not offered, so it is never paid twice.' : ''}`
       : record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1 ? RELEASED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
       record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}${
       // A Repay all on Aave that landed and left interest owing (audit LEND-2): the loan is not closed yet.

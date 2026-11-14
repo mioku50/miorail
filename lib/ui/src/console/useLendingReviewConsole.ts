@@ -5,9 +5,9 @@ import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCo
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
 import { WALLET_CONNECTION_NOT_READY_V1, sendRetryingWalletNetworkV1, walletCannotSendSentenceV1, walletConnectionNotReadyV1, walletDidNotSendV1,
   walletNetworkFailureSentenceV1, walletNotAskedSentenceV1 } from './walletBatchSupport';
-import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFollowsResultV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1,
+import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFollowsResultV1, lendingHeldByWireV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1,
   parseLendingFeeSponsorV1, parseLendingReviewWireV1, type LendingExecutionStateV1, type LendingExecutionWireV1, type LendingFeeSponsorV1, type LendingReadyWireV1,
-  type LendingReviewWireV1 } from './lendingReviewView';
+  type LendingHeldByV1, type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
 type CallsV1 = LendingReadyWireV1['calls'];
@@ -68,10 +68,14 @@ interface StateV1 {
   following: boolean;
   /** Those reads ran out with no final answer from Base, so the press is offered. */
   followEnded: boolean;
+  /** The attempt that holds this market, as the arm's refusal named it (audit UI-19). */
+  heldBy: LendingHeldByV1 | null;
+  /** The first of the release's two readings: the page asks again with this note at its time (audit LL-1). */
+  releaseCheck: { check: string; checkAgainAt: string } | null;
 }
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
   walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null, stepsRefusal: null,
-  termsChanged: false, following: false, followEnded: false });
+  termsChanged: false, following: false, followEnded: false, heldBy: null, releaseCheck: null });
 const FINAL_STATES_V1: ReadonlySet<LendingExecutionStateV1> = new Set(['confirmed', 'failed']);
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
 /** The server's own sentence for a refusal it names (`code: detail`), or null for anything else. */
@@ -106,6 +110,10 @@ export interface LendingReviewConsoleModelV1 {
   onStop?: (() => void) | null;
   /** Releases an attempt its wallet never sent, when the server offers it. */
   onRelease?: (() => void) | null;
+  /** The release read Base once and found nothing of it: it reads again by itself at this time. */
+  releaseCheckAgainAt?: string | null;
+  /** The attempt that holds this market, with its own review, when an arm was refused for it (audit UI-19). */
+  heldBy?: LendingHeldByV1 | null;
   /** A loan in steps, while it is being sent. */
   step?: LendingStepProgressV1 | null;
   /** The page that asked this review, offered when it is refused or cannot be read. */
@@ -445,7 +453,10 @@ export function useLendingReviewConsoleV1(input: {
       confirmed.current = null;
       if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, stepsRefusal: error.refusal, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
-      update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
+      // Which attempt holds the market, with its own review: said under the refusal (audit UI-19).
+      const heldBy = !handedToWallet && /^execution_active: /.test(error instanceof Error ? error.message : '')
+        ? lendingHeldByWireV1((error as { body?: { heldBy?: unknown } }).body?.heldBy) : null;
+      update({ heldBy, walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? walletNetworkFailureSentenceV1(error, input.walletName)
           // The page's connection was not live, or the wallet answers as another account: it was never
           // asked, the review is ready again, and "the result is unknown" would be false both ways (audit WAL-3).
@@ -459,22 +470,30 @@ export function useLendingReviewConsoleV1(input: {
     } finally { opening.current = false; update({ walletBusy: false, step: null }); }
   }, [active, eligible, identity, input, read, request, session, update]);
 
-  // Released only when Base bears out that the wallet sent nothing since the review; the server says why not.
-  const onRelease = useCallback(async () => {
-    if (!eligible || !executionId || active.checking || active.walletBusy || current.current !== identity) return;
+  // Released only when Base bears out, twice and a minute apart, that the wallet sent nothing of it since the
+  // review (audit LL-1). The first press reads once; the page reads again by itself at the time the server
+  // names, with the note of the first reading, while the page is open. The server says why not.
+  const onRelease = useCallback(async (check: string | null = null) => {
+    if (!eligible || !executionId || active.walletBusy || current.current !== identity) return;
     update({ checking: true, walletError: null });
     try {
       const released = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}/release`, {
-        method: 'POST', body: JSON.stringify({}),
+        method: 'POST', body: JSON.stringify(check ? { check } : {}),
       }), executionId);
       if (!released) throw new Error('lending_execution_unreadable');
-      update({ execution: released });
+      update({ execution: released, releaseCheck: released.releasing ?? null });
     } catch (error) {
-      update({ walletError: serverDetailV1(error, /^(?:lending_attempt_changed|loan_release_[a-z_]+)$/)
+      update({ releaseCheck: null, walletError: serverDetailV1(error, /^(?:lending_attempt_changed|loan_release_[a-z_]+)$/)
         ?? 'Still could not release this review just now. Nothing was changed; check the onchain result.' });
     }
     finally { update({ checking: false }); }
-  }, [active.checking, active.walletBusy, eligible, executionId, identity, request, update]);
+  }, [active.walletBusy, eligible, executionId, identity, request, update]);
+  const releaseCheck = active.releaseCheck;
+  useEffect(() => {
+    if (!releaseCheck) return undefined;
+    const timer = setTimeout(() => { void onRelease(releaseCheck.check); }, Math.max(0, Date.parse(releaseCheck.checkAgainAt) - Date.now()) + 250);
+    return () => clearTimeout(timer);
+  }, [onRelease, releaseCheck]);
 
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
   // A review released as never sent still takes a transaction its wallet sent after all, by that transaction's hash.
@@ -509,7 +528,9 @@ export function useLendingReviewConsoleV1(input: {
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
     onFindTransaction: eligible && executionId && locked && (!['confirmed','failed'].includes(active.execution?.state ?? '') || stoppedInSteps || releasedUnsent) ? () => void onFindTransaction() : null,
     onStop: eligible && executionId && active.execution?.steps?.stoppable && !active.walletBusy && !active.step ? () => void onStop() : null,
-    onRelease: eligible && executionId && active.execution?.release?.offered && !active.walletBusy && !active.step ? () => void onRelease() : null,
+    onRelease: eligible && executionId && active.execution?.release?.offered && !active.walletBusy && !active.step && !active.releaseCheck ? () => void onRelease() : null,
+    releaseCheckAgainAt: eligible && active.releaseCheck ? active.releaseCheck.checkAgainAt : null,
+    heldBy: eligible ? active.heldBy : null,
     step: eligible ? active.step : null,
     back: lendingBackLinkV1(input.draft),
     // A wallet that sends in steps pays each step's fee itself, so it is told nothing about a sponsor.

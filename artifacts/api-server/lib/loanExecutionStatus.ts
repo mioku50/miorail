@@ -5,7 +5,7 @@ import { sameCallDataV1, stripErc8021SuffixV1, userOperationCallsV1 } from './sp
 import { createViemBaseReceiptReader, type BaseChainReaderV1, type BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from './stockExecutionStatus.js';
 import { LOAN_WALLET_SENT_NOTHING_V1, loanExecutionRuntimeV1, settledFingerprintV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
-import { refreshSequentialLoanExecutionV1 } from './lendingSteps.js';
+import { LOAN_WALLET_SEARCH_LIMIT_V1, bindLoanStepV1, refreshSequentialLoanExecutionV1, sequentialHashesV1 } from './lendingSteps.js';
 
 const HANDLE_OPS_ABI = parseAbi([
   'function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address beneficiary)',
@@ -117,6 +117,89 @@ export function bindLoanTransactionV1(input: {
   return { state: 'matched', logs: receipt.logs.slice(start + 1, event.index), operationNonce: operation.nonce.toString() };
 }
 
+
+// ---------------------------------------------------------------------------
+// What Base shows of an attempt since a block, transaction by transaction
+// (audit LL-2, 2026-11-14). A count that moved said only that the wallet sent
+// something; a release then refused for ever, though the swap or the repayment
+// made on the protocol's own site was not this review. Each later transaction
+// or operation is read and bound against the attempt's own calls instead.
+// ---------------------------------------------------------------------------
+/** The most later transactions or operations of the wallet one search reads one by one. */
+export const LOAN_RELEASE_SEARCH_LIMIT_V1 = LOAN_WALLET_SEARCH_LIMIT_V1;
+type ReadV1<T> = T | 'unread';
+async function readBoth(reader: BaseChainReaderV1, hash: HashV1) {
+  try {
+    const [receipt, transaction] = await Promise.all([reader.getTransactionReceipt(hash), reader.getTransaction(hash)]);
+    return receipt && transaction && receipt.transactionHash.toLowerCase() === hash ? { receipt, transaction } : null;
+  } catch { return null; }
+}
+/** Whether a landed transaction is this attempt's: its batch, or, for a loan in steps, step `index`. */
+async function carriesAttemptV1(record: LoanExecutionV1, hash: HashV1, reader: BaseChainReaderV1, stepIndex: number | null): Promise<ReadV1<boolean>> {
+  const read = await readBoth(reader, hash);
+  if (!read) return 'unread';
+  if (stepIndex !== null) return bindLoanStepV1({ execution: record, index: stepIndex, transaction: read.transaction, receipt: read.receipt }).state !== 'unknown';
+  return bindLoanTransactionV1({ execution: record, receipt: read.receipt, transaction: read.transaction }).state !== 'unknown';
+}
+
+/** What Base shows of an attempt since a block: one of the wallet's transactions carries it (`found`);
+ * none of them does (`nothing`, with what the reading was, for a second one to equal); there were more than
+ * Still reads (`busy`); or it cannot be said. For a loan in steps the transaction looked for is step
+ * `stepIndex`; for a batch, the batch. */
+export async function attemptOnBaseSinceV1(record: LoanExecutionV1, reader: BaseChainReaderV1, input: { afterBlock: bigint; stepIndex: number | null; exclude?: ReadonlySet<string> }):
+  Promise<{ state: 'found'; hash: HashV1 } | { state: 'nothing'; reading: string; proof: Record<string, unknown> } | { state: 'busy' } | { state: 'pending' } | { state: 'unread' }> {
+  const unread = { state: 'unread' as const };
+  const wallet = record.walletAddress, block = input.afterBlock;
+  const kind = reader.getAccountKind ? await reader.getAccountKind(wallet) : null;
+  if (kind === null) return unread;
+  const others: HashV1[] = [];
+  // Each later transaction, read and bound against this attempt's own calls.
+  const sift = async (listed: { hashes: HashV1[]; complete: boolean } | null): Promise<{ state: 'found'; hash: HashV1 } | { state: 'busy' } | { state: 'unread' } | null> => {
+    if (!listed) return unread;
+    for (const hash of listed.hashes) {
+      // A transaction already recorded for another attempt of this wallet is that attempt's, even with the same calls (audit LL-1).
+      if (others.includes(hash)) continue;
+      if (input.exclude?.has(hash)) { others.push(hash); continue; }
+      const carries = await carriesAttemptV1(record, hash, reader, input.stepIndex);
+      if (carries === 'unread') return unread;
+      if (carries) return { state: 'found', hash };
+      others.push(hash);
+    }
+    if (!listed.complete) return listed.hashes.length >= LOAN_RELEASE_SEARCH_LIMIT_V1 ? { state: 'busy' } : unread;
+    return null;
+  };
+  if (kind === 'contract') {
+    if (!reader.getEntryPointNonce || !reader.listOwnOperationsAfter) return unread;
+    const nonces: Array<{ entryPoint: string; nonce: string; nonceNow: string }> = [];
+    for (const entryPoint of ENTRY_POINT_ADDRESSES_V1) {
+      const [then, now] = await Promise.all([reader.getEntryPointNonce(entryPoint, wallet, block), reader.getEntryPointNonce(entryPoint, wallet, 'latest')]);
+      if (then === null || now === null || now < then) return unread;
+      if (now > then) {
+        const settled = await sift(await reader.listOwnOperationsAfter(entryPoint, wallet, block, LOAN_RELEASE_SEARCH_LIMIT_V1));
+        if (settled) return settled;
+      }
+      nonces.push({ entryPoint, nonce: then.toString(), nonceNow: now.toString() });
+    }
+    return { state: 'nothing', reading: nonces.map(row => `${row.entryPoint}:${row.nonceNow}`).join('|'),
+      proof: { account: kind, operationNonces: nonces.map(({ entryPoint, nonce }) => ({ entryPoint, nonce })),
+        ...(nonces.some(row => row.nonceNow !== row.nonce) ? { operationNoncesNow: nonces.map(({ entryPoint, nonceNow }) => ({ entryPoint, nonce: nonceNow })) } : {}),
+        ...(others.length ? { otherTransactions: others } : {}) } };
+  }
+  if (!reader.getTransactionCountAt || !reader.getTransactionCount) return unread;
+  const [then, latest, pending] = await Promise.all([reader.getTransactionCountAt(wallet, block), reader.getTransactionCount(wallet, 'latest'), reader.getTransactionCount(wallet, 'pending')]);
+  if (then === null || latest === null || pending === null || latest < then || pending < latest) return unread;
+  // A node that does hold a pending transaction of this wallet says so; since Denim most answer with the
+  // latest block, which is why a second reading follows a minute later.
+  if (pending > latest) return { state: 'pending' };
+  if (latest > then) {
+    if (!reader.listOwnTransactionsAfter) return unread;
+    const settled = await sift(await reader.listOwnTransactionsAfter(wallet, block, LOAN_RELEASE_SEARCH_LIMIT_V1));
+    if (settled) return settled;
+  }
+  return { state: 'nothing', reading: `count:${latest}`,
+    proof: { account: kind, transactionCount: then, ...(latest !== then ? { transactionCountNow: latest } : {}), ...(others.length ? { otherTransactions: others } : {}) } };
+}
+
 export type LoanEffectPositionCheckV1 = (input: {
   execution: LoanExecutionV1;
   receipt: VerifiedReceiptSourceV1;
@@ -140,14 +223,59 @@ export function receiptFingerprintV1(receipt: VerifiedReceiptSourceV1): string {
 /** This function is read-only with respect to wallets and chain. It updates
  * only the owned record from independent chain evidence. Neither an SDK status
  * nor a borrowed amount supplied by the browser can produce confirmed. */
+/** A released attempt is still read from Base this long after its release (audit LL-1). */
+export const LOAN_RELEASED_WATCH_MS_V1 = 24 * 60 * 60_000;
+
+/** The transactions already recorded for this wallet's other attempts in the same market: theirs, even
+ * when their calls are the same as this one's (audit LL-1). */
+async function takenByOthersV1(store: LoanExecutionStoreV1, input: { owner: LoanOwnerV1; executionId: string }): Promise<Set<string>> {
+  const [landed, active] = await Promise.all([store.listLandedInScope(input), store.listActiveInScope(input)]);
+  return new Set([...landed, ...active].flatMap(row => [...(row.transactionHash ? [row.transactionHash] : []),
+    ...(row.run.delivery === 'sequential' && row.batchId ? sequentialHashesV1(row.batchId) ?? [] : [])]));
+}
+
+/**
+ * A review its owner released as never sent, whose wallet sent it after all: a request left open in the
+ * wallet and confirmed later, or a transaction stuck on its way that landed (audit LL-1, 2026-11-14). The
+ * release made the record final, and nothing read it again, so the loan stood on Base while Still said it
+ * was not sent, and a second loan could be armed on a position without it. For a day after the release it
+ * is read from Base like any other attempt: the wallet's own service where it named the batch, else the
+ * wallet's transactions or operations since the review, each bound against the review's own calls. The
+ * transaction found is read by the ordinary binding below, and a loan or repayment it proves is recorded
+ * as what it is.
+ */
+async function releasedLandedAfterAllV1(record: LoanExecutionV1, input: { owner: LoanOwnerV1; executionId: string }, deps: LoanExecutionStatusDepsV1): Promise<HashV1 | null> {
+  const releasedAt = Date.parse(record.updatedAt);
+  if (!Number.isFinite(releasedAt) || deps.now().getTime() - releasedAt > LOAN_RELEASED_WATCH_MS_V1) return null;
+  try {
+    const exclude = await takenByOthersV1(deps.store, input);
+    const sequential = record.run.delivery === 'sequential';
+    if (record.batchId && !sequential) {
+      const named = (await deps.readBatchHashes(record.batchId).catch(() => null))?.filter(value => hash(value) && !exclude.has(value)) ?? [];
+      if (named.length === 1) return named[0]!;
+    }
+    const found = await attemptOnBaseSinceV1(record, deps.reader, { afterBlock: BigInt(record.run.measured.blockNumber), stepIndex: sequential ? 0 : null, exclude });
+    return found.state === 'found' ? found.hash : null;
+  } catch { return null; }
+}
+
 export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string; refresh: boolean }, deps: LoanExecutionStatusDepsV1): Promise<LoanExecutionV1 | null> {
-  const record = await deps.store.get(input);
-  if (!record || !input.refresh || record.state === 'ready' || record.errorCode === 'conflicting_batch_hints') return record;
-  // Released by its owner as never sent (lib/loanRelease.ts): there is no transaction to read, and a
-  // reading that finds none must not hold the market again. One that landed after all comes back by its hash.
-  if (record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1) return record;
+  const stored = await deps.store.get(input);
+  if (!stored || !input.refresh || stored.state === 'ready' || stored.errorCode === 'conflicting_batch_hints') return stored;
+  // Released by its owner as never sent (lib/loanRelease.ts): no transaction is on record, and a reading that
+  // finds none must not hold the market again. One that landed after all is found and read (audit LL-1).
+  let record = stored, late: HashV1 | null = null;
+  if (stored.state === 'failed' && stored.errorCode === LOAN_WALLET_SENT_NOTHING_V1) {
+    late = await releasedLandedAfterAllV1(stored, input, deps);
+    if (!late) return stored;
+    record = { ...stored, transactionHash: late };
+  }
   // A loan in steps is read step by step, and not while its steps are still being sent.
-  if (record.run.delivery === 'sequential') return refreshSequentialLoanExecutionV1(input, record, deps);
+  if (record.run.delivery === 'sequential') {
+    const read = await refreshSequentialLoanExecutionV1(input, record, deps);
+    // A released one whose late step could not be written (another attempt holds the market) stays released.
+    return late && read.errorCode === 'loan_execution_changed_while_reading' ? stored : read;
+  }
   // A result already read from Base is not read into doubt (audit LEND-4, 2026-11-10). Every view read a
   // confirmed loan again from nothing, and one answer the RPC did not give turned it back into "unknown",
   // which holds its market against the repayment. The receipt is the evidence, and its fingerprint is kept:
@@ -164,7 +292,7 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   const set = async (state: 'confirmed' | 'failed' | 'unknown', transactionHash: HashV1 | null, proof: Record<string, unknown> | null, errorCode: string | null) => {
     const next = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state, transactionHash, proof, errorCode, now: deps.now() });
     // A conflicting concurrent update must never cause a stale confirmed view.
-    return next ?? { ...record, state: 'unknown' as const, errorCode: 'loan_execution_changed_while_reading' };
+    return next ?? (late ? stored : { ...record, state: 'unknown' as const, errorCode: 'loan_execution_changed_while_reading' });
   };
   let hints = record.transactionHash ? [record.transactionHash] : record.batchId ? await deps.readBatchHashes(record.batchId) : null;
   // A batch the wallet sent as its own transaction has a handle only that wallet can name (MetaMask,
@@ -174,6 +302,12 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   if (!hints?.length && record.batchId && deps.reader.findOwnTransactionsAfter) {
     hints = await deps.reader.findOwnTransactionsAfter(record.walletAddress, BigInt(record.run.measured.blockNumber)).catch(() => null);
     ownSearch = true;
+    // The account's transactions include its other attempts': one already recorded for another is that one's,
+    // even with the same calls, so two loans of the same amount do not hold each other for ever (audit LL-1).
+    if (hints?.length) {
+      const taken = await takenByOthersV1(deps.store, input).catch(() => null);
+      hints = taken ? hints.filter(value => !taken.has(value)) : null;
+    }
   }
   if (!hints?.length || hints.length > 16 || hints.some(value => !hash(value))) {
     return record.state === 'confirmed' || record.state === 'failed' ? set('unknown', record.transactionHash, null, 'loan_receipt_unavailable') : record;
@@ -191,6 +325,8 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   }
   // The account's later transactions that are not this batch say nothing about it: it may not have landed yet.
   if (ownSearch && candidates.length === 0) return record;
+  // A released attempt is written again only from a transaction Base proves is its own (audit LL-1).
+  if (late && candidates.length !== 1) return stored;
   if (candidates.length !== 1) return set('unknown', record.transactionHash, null, candidates.length > 1 ? 'loan_multiple_matching_transactions' : 'loan_receipt_not_matched');
   const candidate = candidates[0]!;
   const baseProof = { receiptFingerprint: receiptFingerprintV1(candidate.receipt), blockNumber: candidate.receipt.blockNumber.toString(), callsHash: record.run.callsHash };
@@ -198,8 +334,10 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
   let effect: Awaited<ReturnType<LoanEffectPositionCheckV1>>;
   try { effect = await deps.verifyEffectPosition({ execution: record, transaction: candidate.transaction, receipt: candidate.receipt,
     logs: candidate.binding.logs, operationNonce: candidate.binding.operationNonce }); }
-  catch { return set('unknown', candidate.hash, null, 'loan_effect_read_unavailable'); }
-  if (effect.state !== 'matched') return set('unknown', candidate.hash, null, effect.errorCode);
+  catch { return late ? stored : set('unknown', candidate.hash, null, 'loan_effect_read_unavailable'); }
+  // Unread just now, a released one stays as it is and is read again; one that did something else than its
+  // review holds its market as unknown, as any other would.
+  if (effect.state !== 'matched') return late && effect.state === 'unavailable' ? stored : set('unknown', candidate.hash, null, effect.errorCode);
   return set('confirmed', candidate.hash, { ...baseProof, operationNonce: candidate.binding.operationNonce, effect: effect.proof }, null);
 }
 

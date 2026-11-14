@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { install, ready, attempts, OTHER, type FixtureWindow } from './fixtures/lending-review.js';
+import { install, ready, attempts, NOW, OTHER, type FixtureWindow } from './fixtures/lending-review.js';
 
 // After a batch the page reads its result from Base by itself (2026-11-12), so those reads ('result')
 // come after what was sent; the order of what was sent is read without them.
@@ -141,21 +141,26 @@ test('an attempt the wallet never sent is released by its owner, on the serverâ€
   await expect(release).toHaveCount(0);
   state.release = { offered: true, from: '2026-10-29T03:57:30.000Z' };
   await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
-  await expect(page.getByText(/If your wallet never sent it, release it\. Still first checks on Base that your wallet has sent nothing since this review/)).toBeVisible();
+  await expect(page.getByText(/If your wallet never sent it, release it\. Still reads Base twice, a minute apart/)).toBeVisible();
   // Refused, the server's own reason is what the page says, and the offer stays.
-  state.releaseAnswers.push({ status: 409, json: { error: 'loan_release_later_transaction',
-    detail: 'Your wallet sent a transaction after this review. Still cannot tell from Base whether it was this one, so the review was not released. If it was, paste its hash below.' } });
+  state.releaseAnswers.push({ status: 409, json: { error: 'loan_release_wallet_unread',
+    detail: 'Still could not read from Base what your wallet has sent since this review, so nothing was changed. Try again in a minute.' } });
+  // The first reading finds nothing of it; the page reads again by itself, with the note, at the time named (audit LL-1).
+  state.releaseAnswers.push({ status: 200, json: { executionId: 'execution_1', state: 'unknown', transactionHash: null, errorCode: null,
+    release: { offered: true, from: '2026-10-29T03:57:30.000Z' }, releasing: { check: 'fixture-first-reading', checkAgainAt: new Date(NOW.getTime() + 1_000).toISOString() } } });
   state.releaseAnswers.push({ status: 200, json: { executionId: 'execution_1', state: 'failed', transactionHash: null, errorCode: 'loan_wallet_sent_nothing', release: null } });
   await release.click();
-  await expect(page.getByText(/^Your wallet sent a transaction after this review\. Still cannot tell from Base whether it was this one/)).toBeVisible();
+  await expect(page.getByText(/^Still could not read from Base what your wallet has sent since this review/)).toBeVisible();
   await release.click();
-  await expect(page.getByText(/^Released as not sent: Base shows your wallet has sent nothing since this review/)).toBeVisible();
+  await expect(page.getByText(/Base shows nothing of this review since it was prepared\. Still reads it once more at/)).toBeVisible();
+  await expect(page.getByText(/^Released as not sent: twice, a minute apart, Base showed none of your walletâ€™s transactions since this review was this one/)).toBeVisible();
+  expect(state.releaseBodies).toEqual([{}, {}, { check: 'fixture-first-reading' }]);
   await expect(release).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open in your wallet', exact: true })).toHaveCount(0);
   // A transaction that landed after all is still taken, by its hash.
   await expect(page.getByText('Your wallet sent it after all?')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('reverted onchain');
-  expect(state.order.filter(entry => entry === 'release')).toHaveLength(2);
+  expect(state.order.filter(entry => entry === 'release')).toHaveLength(3);
   expect(await attempts(page)).toBe(1);
 });
 test('only an explicit wallet rejection permits a repeat lending attempt', async ({ page }) => {
@@ -206,9 +211,14 @@ test('an arm refused while another loan holds the market says so, and the wallet
   // 2026-11-09: a repayment said only "could not be armed" while the loan before it, landed, was still being read.
   const state = await install(page); await page.goto('/lending/fixture-lending');
   const detail = 'Another loan or repayment in this market is still being read from Base, so this one was not sent and your wallet was not asked. Open that review and check its onchain result; once Still has read it, this one can be sent.';
-  state.armRefusal = { status: 409, json: { error: 'execution_active', detail } };
+  // Which attempt holds the market, and the way to its own review (audit UI-19, 2026-11-14).
+  state.armRefusal = { status: 409, json: { error: 'execution_active', detail, heldBy: { executionId: 'execution_0', operation: 'borrow', collateralSymbol: 'NVDAc',
+    state: 'awaiting_wallet', reviewPath: '/lending/fixture-held-review', releaseFrom: '2026-10-29T03:57:30.000Z', steps: null } } };
   await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
   await expect(page.getByText(detail, { exact: true })).toBeVisible();
+  const held = page.getByRole('link', { name: 'Open the loan that holds this market (NVDAc)' });
+  await expect(held).toHaveAttribute('href', '/lending/fixture-held-review');
+  await expect(page.getByText(/If your wallet never sent it, it can be released there from \d\d:\d\d\./)).toBeVisible();
   await expect(page.locator('body')).not.toContainText('could not be armed');
   expect(await attempts(page)).toBe(0);
 });

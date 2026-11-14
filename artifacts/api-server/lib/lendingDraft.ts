@@ -65,17 +65,20 @@ const signature = (secret: string, body: string, prefix: string = LENDING_DRAFT_
 
 /** A signed, owned question. No price, permission, simulation result or calls
  * can be supplied by the browser or remembered in this link. */
-export function issueLendingDraftV1(input: { tenantId: string; walletAddress: string; question: LendingQuestionV1; secret: string; now: Date }): {
+/** `draftId`: a link to an attempt already made, which opens that attempt's own review and its result
+ * (audit UI-19, 2026-11-14: a refusal named "that review" and gave no way to it). Its question is the
+ * attempt's; the review route reads the attempt by its draft id and hands no calls for it. */
+export function issueLendingDraftV1(input: { tenantId: string; walletAddress: string; question: LendingQuestionV1; secret: string; now: Date; draftId?: string }): {
   draft: string; draftId: string; expiresAt: string;
 } {
   if (input.secret.length < 16 || !/^0x[0-9a-f]{40}$/.test(input.walletAddress) || input.tenantId !== `eip155:8453:${input.walletAddress}`
-    || !questionV1(input.question) || !Number.isFinite(input.now.getTime())) throw new Error('lending_question_invalid');
+    || !questionV1(input.question) || !Number.isFinite(input.now.getTime()) || (input.draftId !== undefined && !/^[0-9a-f-]{36}$/.test(input.draftId))) throw new Error('lending_question_invalid');
   const market = lendingMarketV1(input.question.collateralTokenAddress)!;
   const native = input.question.operation === 'borrow' && input.question.nativeFundingAssets !== undefined;
   const paying = input.question.operation === 'borrow' && input.question.payment !== undefined;
   const prefix = native ? LENDING_NATIVE_DRAFT_PREFIX_V2 : paying ? LENDING_PAYMENT_DRAFT_PREFIX_V3 : LENDING_DRAFT_PREFIX_V1;
   const claims: LendingDraftClaimsV1 = { version: native ? 2 : paying ? 3 : 1, chainId: 8453, tenantId: input.tenantId, walletAddress: input.walletAddress,
-    draftId: crypto.randomUUID(), ...market, question: input.question, issuedAt: input.now.toISOString(), expiresAt: new Date(input.now.getTime() + 300_000).toISOString() };
+    draftId: input.draftId ?? crypto.randomUUID(), ...market, question: input.question, issuedAt: input.now.toISOString(), expiresAt: new Date(input.now.getTime() + 300_000).toISOString() };
   const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
   return { draft: `${prefix}.${body}.${signature(input.secret, body, prefix)}`, draftId: claims.draftId, expiresAt: claims.expiresAt };
 }

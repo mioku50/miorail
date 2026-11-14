@@ -57,6 +57,8 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     // An attempt sent as one batch that its wallet may never have sent: the server's offer to release it, and its answers, in order.
     release: null as { offered: boolean; from: string } | null,
     releaseAnswers: [] as Array<{ status: number; json: Record<string, unknown> }>,
+    // What each press of release sent: nothing on a first reading, the note of the first on the second (audit LL-1).
+    releaseBodies: [] as Array<Record<string, unknown>>,
     // Holds the arm's answer until it settles, as a slow server would.
     armHeld: null as Promise<void> | null,
     // What the arm says about the network fee: Still's offer to pay it (2026-11-08), or nothing.
@@ -115,7 +117,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     }
     if (path.endsWith('/executions/execution_1/release') && request.method() === 'POST') {
       state.order.push('release');
-      expect(request.postDataJSON()).toEqual({});
+      const sent = request.postDataJSON() as Record<string, unknown>;
+      state.releaseBodies.push(sent);
+      expect(Object.keys(sent).every(key => key === 'check')).toBe(true);
       const answer = state.releaseAnswers.shift() ?? { status: 503, json: { error: 'fixture_unavailable' } };
       if (answer.status === 200) {
         state.executionState = String(answer.json.state); state.errorCode = answer.json.errorCode as string | null; state.release = null;

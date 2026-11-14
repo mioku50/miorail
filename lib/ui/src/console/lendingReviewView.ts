@@ -151,6 +151,11 @@ export interface LendingExecutionWireV1 {
   remainingDebtAtomic?: string | null;
   /** Confirmed, and at its receipt the position was moved by another hand too (audit LM-1). */
   positionMovedOutside?: boolean;
+  /** Stopped by its owner after the payment step went to the wallet, whose request may still be open (audit SPEND-3). */
+  paymentMayStillBeSent?: boolean;
+  /** The first of two readings a minute apart found nothing of it: the page asks again at `checkAgainAt`
+   * with this note, and only an equal second reading releases it (audit LL-1). */
+  releasing?: { check: string; checkAgainAt: string } | null;
   /** Still Spend: a loan in steps that stopped before its payment, whose Bitrefill invoice is still open
    * for the wallet to pay from its own USDC. */
   walletPay?: { orderId: string } | null;
@@ -247,8 +252,28 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
       (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps)) ||
       (value.release != null && !(object(value.release) && typeof value.release.offered === 'boolean' && text(value.release.from) && Number.isFinite(Date.parse(value.release.from)))) ||
       (value.remainingDebtAtomic != null && !(atomic(value.remainingDebtAtomic) && value.remainingDebtAtomic !== '0'))) return null;
+  const releasing = object(value.releasing) && typeof value.releasing.check === 'string' && value.releasing.check.length > 0 && value.releasing.check.length <= 2000 &&
+    text(value.releasing.checkAgainAt) && Number.isFinite(Date.parse(value.releasing.checkAgainAt as string))
+    ? { check: value.releasing.check, checkAgainAt: value.releasing.checkAgainAt as string } : null;
   return { ...(value as unknown as LendingExecutionWireV1), walletPay: spendWalletPayWireV1(value.walletPay),
-    positionMovedOutside: value.state === 'confirmed' && value.positionMovedOutside === true };
+    positionMovedOutside: value.state === 'confirmed' && value.positionMovedOutside === true, releasing,
+    paymentMayStillBeSent: value.state === 'failed' && value.paymentMayStillBeSent === true };
+}
+
+/** The attempt that holds a lending market, as an arm refusal names it (audit UI-19). */
+export interface LendingHeldByV1 {
+  operation: 'borrow' | 'repay'; collateralSymbol: string;
+  /** Its own review, where its result is read and it can be released or stopped; null when none could be made. */
+  href: string | null;
+  /** From when its owner can release it, if it is one that can be released. */
+  releaseFrom: string | null;
+}
+/** The holder as the server sent it, or null: only a review link of this site's own shape is followed. */
+export function lendingHeldByWireV1(value: unknown): LendingHeldByV1 | null {
+  if (!object(value) || (value.operation !== 'borrow' && value.operation !== 'repay') || !text(value.collateralSymbol) || String(value.collateralSymbol).length > 24) return null;
+  const href = typeof value.reviewPath === 'string' && /^\/lending\/[A-Za-z0-9._-]{1,6000}$/.test(value.reviewPath) ? value.reviewPath : null;
+  const releaseFrom = typeof value.releaseFrom === 'string' && Number.isFinite(Date.parse(value.releaseFrom)) ? value.releaseFrom : null;
+  return { operation: value.operation, collateralSymbol: String(value.collateralSymbol), href, releaseFrom };
 }
 function stepsStanding(value: unknown): boolean {
   return object(value) && Number.isSafeInteger(value.landed) && Number.isSafeInteger(value.total) && typeof value.stoppable === 'boolean' &&
@@ -291,7 +316,7 @@ export function lendingFollowsResultV1(input: {
  * stands, and what the position holds now is not what the review showed. */
 export const LENDING_MOVED_OUTSIDE_COPY_V1 = 'Your position also changed outside this review around then: a liquidation, a repayment or pledge someone made for this wallet, or something done in the protocol’s own app. What it holds now differs from what this review showed, so check it on Home before your next step.';
 export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null, remainingDebtAtomic: string | null = null,
-  movedOutside = false): string {
+  movedOutside = false, paymentMayStillBeSent = false): string {
   // A Repay all that landed and left a little owing (audit LEND-2): said as that, with the amount.
   if (state === 'confirmed' && remainingDebtAtomic !== null && atomic(remainingDebtAtomic) && remainingDebtAtomic !== '0') {
     const micro = BigInt(remainingDebtAtomic), fraction = (micro % BigInt(1_000_000)).toString().padStart(6, '0').replace(/0+$/, '');
@@ -301,10 +326,26 @@ export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode
       : `Confirmed onchain: the repayment landed. Interest that added to the debt until it landed left ${owing} owing: repay it to close the loan.`;
   }
   if (state === 'confirmed' && movedOutside) return `Confirmed onchain: the approved calls landed exactly as reviewed. ${LENDING_MOVED_OUTSIDE_COPY_V1}`;
+  // Stopped after the wallet was asked for the payment: that request may still be open there (audit SPEND-3).
+  if (state === 'failed' && errorCode === 'loan_steps_stopped' && paymentMayStillBeSent) {
+    return 'Stopped part way: the steps that landed are in place on Base. Your wallet was asked for the payment to Bitrefill, and that request may still be open there: confirmed, it pays this invoice from the loan’s USDC; declined, the USDC stays in your wallet. Paying this invoice from your wallet another way is not offered, so it is never paid twice.';
+  }
   // A loan in steps that stopped on purpose is final with what landed, not a revert.
   if (state === 'failed' && errorCode === 'loan_steps_stopped') return 'Stopped part way: the steps that landed are in place on Base, and the rest was never sent. You can repay or start a new review now.';
-  // Released by its owner: no transaction exists, so nothing reverted (audit LEND-1).
-  if (state === 'failed' && errorCode === 'loan_wallet_sent_nothing') return 'Released as not sent: Base shows your wallet has sent nothing since this review, so it borrowed and repaid nothing. You can start a new review now.';
+  // Released by its owner: none of the wallet's transactions since the review was this one, read twice a
+  // minute apart (audits LEND-1 and LL-1). "Borrowed and repaid nothing" was more than Base can show: one
+  // still on its way could land later, and Still reads it then.
+  if (state === 'failed' && errorCode === 'loan_wallet_sent_nothing') return 'Released as not sent: twice, a minute apart, Base showed none of your wallet’s transactions since this review was this one. If your wallet still sends it, Still reads it from Base and records it. You can start a new review now.';
+  // Unknown with Still's own reading named: what it found, not a release offered for what was sent (audit LL-5).
+  if (state === 'unknown' && errorCode !== null) {
+    if (/^loan_(?:effect_read_unavailable|position_at_receipt_unread|receipt_unavailable|initial_shares_unread|collateral_shares_unread)$/.test(errorCode)) {
+      return 'Still found this review’s transaction on Base and could not read its result just now. It holds this market until it is read: check again in a minute.';
+    }
+    if (errorCode === 'loan_multiple_matching_transactions') return 'More than one transaction of your wallet matches this review, so Still does not say which one was it. Check your wallet activity, then paste the right hash below.';
+    if (/^loan_[a-z_]+_mismatch$/.test(errorCode) || errorCode === 'loan_unrequested_supply' || errorCode === 'loan_unrequested_collateral_withdrawal') {
+      return 'Still found this review’s transaction on Base, and what it did is not exactly what this review approved, so Still does not record it as done. Check your wallet activity and your position on Home.';
+    }
+  }
   switch (state) {
     case 'ready': return 'The review is ready. Nothing has been submitted.';
     case 'awaiting_wallet': return 'A wallet request was armed. Its outcome is not yet confirmed. This review will not be sent again.';
@@ -404,11 +445,21 @@ function unitsV1(value: string | null | undefined): bigint | null {
   return BigInt(value);
 }
 
-/** The same debt to a reader: equal, or apart by no more than interest accrues between two reads. */
+/** A signed amount in base units: a repayment's loan delta is negative ("-1000000004"). */
+function signedUnitsV1(value: string | null | undefined): { negative: boolean; units: bigint } | null {
+  if (value == null || !/^-?\d+$/.test(value)) return null;
+  return { negative: value.startsWith('-') && !/^-0+$/.test(value), units: BigInt(value.replace(/^-/, '')) };
+}
+
+/** The same debt to a reader: equal, or apart by no more than interest accrues between two reads. A
+ * signed amount keeps its sign exactly and its size within the same drift (audit LA-4, 2026-11-14: a
+ * Repay all's delta is negative, was never read, and the first press almost always said "the terms
+ * changed" over four units of interest). */
 function sameDebtV1(a: string | null | undefined, b: string | null | undefined): boolean {
   if ((a ?? null) === (b ?? null)) return true;
-  const x = unitsV1(a), y = unitsV1(b);
-  if (x === null || y === null) return false;
+  const sx = signedUnitsV1(a), sy = signedUnitsV1(b);
+  if (sx === null || sy === null || (sx.negative !== sy.negative && sx.units !== BigInt(0) && sy.units !== BigInt(0))) return false;
+  const x = sx.units, y = sy.units;
   const apart = x > y ? x - y : y - x, larger = x > y ? x : y;
   const allowed = (larger * DEBT_DRIFT_PER_MILLION_V1) / BigInt(1_000_000);
   return apart <= (allowed > DEBT_DRIFT_FLOOR_ASSETS_V1 ? allowed : DEBT_DRIFT_FLOOR_ASSETS_V1);

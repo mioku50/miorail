@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { logger } from '@mioagent/utils';
 import { STOCKS } from '@mioagent/still-engine/registry';
-import { issueLendingDraftV1, lendingMarketV1, verifyLendingDraftV1, type LendingDraftClaimsV1 } from '../lib/lendingDraft.js';
+import { issueLendingDraftV1, lendingMarketV1, verifyLendingDraftV1, type LendingDraftClaimsV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { lendingWireV1, type LendingRunV1 } from '../lib/lendingReview.js';
 import { runMorphoRepayV1 } from '../lib/morphoRepayRunner.js';
@@ -12,16 +12,16 @@ import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
 import { loanExecutionRuntimeV1, type LoanExecutionV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
-import { refreshLoanExecutionV1, loanExecutionWireV1, loanPositionMovedOutsideV1, positionMovedSinceReviewV1 } from '../lib/loanExecutionStatus.js';
+import { LOAN_RELEASED_WATCH_MS_V1, refreshLoanExecutionV1, loanExecutionWireV1, loanPositionMovedOutsideV1, positionMovedSinceReviewV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1, readBaseWalletBatchStatusV1 } from '../lib/stockExecutionStatus.js';
-import { LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1, walletMovedSinceReviewV1 } from '../lib/loanRelease.js';
+import { LOAN_RELEASE_AGAIN_MS_V1, LOAN_WALLET_SENT_NOTHING_V1, loanReleaseStandingV1, releaseUnsentLoanExecutionV1, releasedLoanLandedV1, walletMovedSinceReviewV1 } from '../lib/loanRelease.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { spendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDeliveryV1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1, type SpendDeliveryV1 } from '../lib/stillSpendOrders.js';
-import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, loanStoppedBeforePaymentV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
+import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1, loanStepsStandingV1, loanStoppedBeforePaymentV1, nextStoppedStepLandedV1, recheckLoanStepsV1, remainingQuestionV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
@@ -43,6 +43,8 @@ export const rwaLendingRuntimeV1 = {
   stepReadDelayMs: 1_500,
   // Stopping a loan in steps: how long to wait before the wallet's transaction count is read a second time.
   stopSettleMs: 1_200,
+  // Releasing an attempt never sent: the second of two equal readings comes this long after the first.
+  releaseAgainMs: LOAN_RELEASE_AGAIN_MS_V1,
   // The network fee of a loan sent as one batch, offered to Still's fee sponsor (2026-11-08).
   sponsorship: offerSponsorshipV1,
   // A new loan is not offered in the United States or to US persons; a repayment always is (lib/stillRegion.ts).
@@ -269,6 +271,8 @@ function executionAnswerV1(record: LoanExecutionV1) {
     release: loanReleaseStandingV1(record, rwaLendingRuntimeV1.now()),
     // Still Spend: a loan in steps stopped before it paid, whose invoice the wallet can still pay itself.
     walletPay: spendWalletPayOfferV1(record),
+    // Stopped by its owner after the payment step went to the wallet: that request may still be open there (audit SPEND-3).
+    paymentMayStillBeSent: loanPaymentMayStillBeSentV1(record),
     // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
     share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) };
 }
@@ -299,6 +303,14 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
     // again after what held the market was read, which is exactly when the first of two reviews has landed.
     const moved = async () => execution?.run.facts.operation === 'borrow' && execution.state === 'ready' &&
       positionMovedSinceReviewV1(execution, await store.listLandedInScope({ owner, executionId }));
+    // A review its owner released as never sent in the last day may have been sent after all: read from Base
+    // first, so one that landed is a landed attempt above, and this loan is prepared again on top of it (audit LL-1).
+    if (execution?.run.facts.operation === 'borrow' && execution.state === 'ready') {
+      const since = new Date(rwaLendingRuntimeV1.now().getTime() - LOAN_RELEASED_WATCH_MS_V1);
+      for (const released of await store.listReleasedInScope({ owner, executionId, since })) {
+        await refreshLoanExecutionV1({ owner, executionId: released.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
+      }
+    }
     if (await moved()) return { ok: false as const, refusal: 'lending_position_changed' as const };
     // And Base is asked once whether the wallet itself has sent anything since that block: a batch its window
     // reported as declined may have been sent all the same (audit WAL-6). Not answered is not a yes.
@@ -320,12 +332,43 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const result = paying ? await withSpendInvoiceLockV1(paying.orderId, arm) : await arm();
   if (!result.ok) {
     const error = result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal;
-    res.status(409).json({ error, ...(error === 'execution_active' ? { detail: EXECUTION_ACTIVE_DETAIL_V1 }
+    // Which attempt holds the market, with a link to its own review and when it can be released (audit UI-19).
+    const heldBy = error === 'execution_active' ? await heldByWireV1(store, owner, executionId).catch(() => null) : null;
+    res.status(409).json({ error, ...(error === 'execution_active' ? { detail: EXECUTION_ACTIVE_DETAIL_V1, ...(heldBy ? { heldBy } : {}) }
       : error === 'lending_position_changed' ? { detail: POSITION_CHANGED_DETAIL_V1 }
       : error === 'lending_wallet_moved' ? { detail: WALLET_MOVED_DETAIL_V1 } : {}) }); return;
   }
   res.json({ attemptId: result.attemptId, sponsorship: loanSponsorshipV1(owner, result.execution) });
 });
+/** The question an attempt was made for, as its review link carries it: the same facts, so the link opens
+ * that attempt's own review. Null when its facts cannot be put back as a question. */
+function attemptQuestionV1(record: LoanExecutionV1): LendingQuestionV1 | null {
+  const f = record.run.facts;
+  if (f.operation === 'repay') return remainingQuestionV1(record, 0);
+  if (f.requestedAssets === null) return null;
+  return { operation: 'borrow', collateralTokenAddress: f.collateralTokenAddress.toLowerCase(), borrowAssets: f.requestedAssets, collateralSupplyAssets: f.collateralSupplyAssets,
+    ...(f.nativeFunding ? { nativeFundingAssets: f.nativeFunding.maximumNativeAssets } : {}), ...(f.payment ? { payment: f.payment } : {}) };
+}
+/**
+ * The attempt that holds this one's market, said to its owner (audit UI-19, 2026-11-14): what it was, a link
+ * to its own review, where its result is read and from where it can be released, and from when. The
+ * refusal named "that review" and nothing led to it, so on a phone whose tab was lost a loan could not be
+ * repaid through Still at all.
+ */
+async function heldByWireV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>, owner: LoanOwnerV1, executionId: string) {
+  const held = (await store.listActiveInScope({ owner, executionId })).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  return held ? heldWireOfV1(owner, held) : null;
+}
+function heldWireOfV1(owner: LoanOwnerV1, held: LoanExecutionV1) {
+  const now = rwaLendingRuntimeV1.now(), question = attemptQuestionV1(held);
+  let reviewPath: string | null = null;
+  try {
+    if (question) reviewPath = `/lending/${issueLendingDraftV1({ ...owner, question, secret: rwaLendingRuntimeV1.secret(), now, draftId: held.draftId }).draft}`;
+  } catch { reviewPath = null; }
+  const standing = loanReleaseStandingV1(held, now);
+  return { executionId: held.executionId, operation: held.run.facts.operation, collateralSymbol: held.run.facts.collateralSymbol, state: held.state,
+    reviewPath, releaseFrom: standing?.from ?? null, steps: loanStepsStandingV1(held) };
+}
 /** Why a new loan was not armed: its review was read before another one of this wallet landed. */
 const POSITION_CHANGED_DETAIL_V1 = 'Another loan or repayment of yours in this market landed after this review was prepared, so its numbers are no longer current. '
   + 'Your wallet was not asked and nothing was sent. Open the review again: it is prepared on your position as it is now.';
@@ -468,7 +511,25 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
     if (stopped) await settleStoppedStepsV1(store, owner, executionId);
     res.json({ state: 'stopped', refusal: check.refusal, detail: check.detail, batchId: stopped?.batchId ?? saved.batchId }); return;
   }
+  // The payment step goes to the wallet now: kept, so a stop after this never offers the invoice to the
+  // wallet's own USDC as well (audit SPEND-3). A note that could not be kept stops the steps here instead.
+  if (payment && body.data.index + 1 === saved.run.calls.length - 1) {
+    const asked = await store.markPaymentAsked({ owner, executionId, attemptId: body.data.attemptId, now: rwaLendingRuntimeV1.now() }).catch(() => null);
+    if (!asked) {
+      const stopped = await store.recordSubmission({ owner, executionId, attemptId: body.data.attemptId, outcome: 'stopped', batchId: saved.batchId, now: rwaLendingRuntimeV1.now() });
+      if (stopped) await settleStoppedStepsV1(store, owner, executionId);
+      res.json({ state: 'stopped', refusal: 'lending_attempt_changed', detail: 'This loan changed while its payment was being prepared, so the payment was not sent.', batchId: saved.batchId }); return;
+    }
+  }
   res.json({ state: 'next', index: body.data.index + 1, batchId: saved.batchId });
+});
+/** The owner's attempts that still hold a market, each with its own review, for Repay and Get money to say
+ * before a refusal does (audit UI-19). Reads the store only. */
+rwaLendingRouter.get('/rwa/lending/held', async (req, res) => {
+  const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
+  if (rwaLendingRuntimeV1.secret().length < 16) { res.status(503).json({ error: 'lending_unavailable' }); return; }
+  const held = await (await rwaLendingRuntimeV1.store()).listActiveForOwner({ owner });
+  res.json({ held: held.slice(0, 5).map(record => heldWireOfV1(owner, record)) });
 });
 rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
@@ -482,10 +543,16 @@ rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
  * It sends and signs nothing, and a refusal changes nothing. */
 rwaLendingRouter.post('/rwa/lending/executions/:id/release', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
-  if (!id.safeParse(req.params.id).success || !z.object({}).strict().safeParse(req.body ?? {}).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const result = await releaseUnsentLoanExecutionV1({ owner, executionId: String(req.params.id) },
-    { ...lendingStatusDepsV1(await rwaLendingRuntimeV1.store()), readBatchStatus: rwaLendingRuntimeV1.readBatchStatus });
+  // `check`: the signed note of the first of two readings a minute apart (lib/loanRelease.ts, audit LL-1).
+  const body = z.object({ check: z.string().min(1).max(2000).optional() }).strict().safeParse(req.body ?? {});
+  if (!id.safeParse(req.params.id).success || !body.success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  const secret = rwaLendingRuntimeV1.secret();
+  if (secret.length < 16) { res.status(503).json({ error: 'lending_unavailable' }); return; }
+  const result = await releaseUnsentLoanExecutionV1({ owner, executionId: String(req.params.id), check: body.data.check ?? null },
+    { ...lendingStatusDepsV1(await rwaLendingRuntimeV1.store()), readBatchStatus: rwaLendingRuntimeV1.readBatchStatus, secret, againMs: rwaLendingRuntimeV1.releaseAgainMs });
   if (!result) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
+  // The first reading found nothing of it: the page asks again with this note a minute from now.
+  if (result.ok === 'checking') { res.json({ ...executionAnswerV1(result.record), releasing: { check: result.check, checkAgainAt: result.checkAgainAt } }); return; }
   if (!result.ok) { res.status(409).json({ error: result.refusal, detail: result.detail }); return; }
   res.json(executionAnswerV1(result.record));
 });

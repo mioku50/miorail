@@ -258,18 +258,22 @@ describe('a loan in steps is confirmed from the chain only when every step lande
 describe('a loan in steps left part way is stopped by its owner only when Base shows the wallet sent nothing since (re-audit R3)', () => {
   // Step n is the wallet's own transaction number 6 + n; `count` is what Base says the wallet has sent so far.
   type CountV1 = { latest: number | null; pending: number | null } | null;
-  function stopDeps(store: MemoryLoanExecutionStoreV1, count: CountV1, receipts: Map<string, VerifiedReceiptSourceV1>): LoanExecutionStatusDepsV1 {
+  /** The wallet's transactions after a step, as the search lists them; hash(5) is something else it did. */
+  type LaterV1 = { hashes: HashV1[]; complete: boolean } | null;
+  function stopDeps(store: MemoryLoanExecutionStoreV1, count: CountV1, receipts: Map<string, VerifiedReceiptSourceV1>, later: LaterV1 = { hashes: [], complete: true }): LoanExecutionStatusDepsV1 {
     return {
       store, now: () => NOW, readBatchHashes: async () => null,
       reader: {
         async getTransactionReceipt(h) { return receipts.get(h) ?? null; },
-        async getTransaction(h) { const n = Number(BigInt(h)); return n >= 1 && n <= 3 ? tx(n - 1, { nonce: 6 + n }) : n === 4 ? tx(0, { nonce: 10 }) : null; },
+        async getTransaction(h) { const n = Number(BigInt(h)); return n >= 1 && n <= 3 ? tx(n - 1, { nonce: 6 + n }) : n === 4 ? tx(0, { nonce: 10 })
+          : n === 5 || n >= 100 ? { from: WALLET, to: `0x${'7'.repeat(40)}`, value: 0n, input: '0xdeadbeef', nonce: 9 } : null; },
         ...(count ? { async getTransactionCount(_address: string, tag: 'latest' | 'pending') { return tag === 'latest' ? count.latest : count.pending; } } : {}),
+        async listOwnTransactionsAfter() { return later; },
       } as LoanExecutionStatusDepsV1['reader'],
       verifyEffectPosition: async () => ({ state: 'matched', proof: { operation: 'borrow' } }),
     };
   }
-  const receipts = new Map([1, 2, 3, 4].map((n) => [hash(n), receipt(n)] as const));
+  const receipts = new Map([1, 2, 3, 4, 5].map((n) => [hash(n), receipt(n)] as const));
   const at = (record: LoanExecutionV1) => ({ owner: OWNER, executionId: record.executionId });
   /** The stop, with its moment of waiting before the second read passed at once. */
   const stopNowV1 = (input: Parameters<typeof stopSequentialLoanExecutionV1>[0], deps: LoanExecutionStatusDepsV1, options: Parameters<typeof stopSequentialLoanExecutionV1>[2] = {}) =>
@@ -332,26 +336,48 @@ describe('a loan in steps left part way is stopped by its owner only when Base s
     assert.equal((await store.arm({ owner: OWNER, executionId: ready.executionId, callsHash: ready.run.callsHash, signingTermsHash: ready.run.signingTermsHash, now: NOW })).ok, true);
   });
 
-  it('refuses while Base shows a later transaction, one waiting, or cannot say, and changes nothing', async () => {
+  it('refuses while Base shows one waiting, more than it reads, or cannot say, and changes nothing', async () => {
     const { store, record } = await twoLanded();
     const before = (await store.get(at(record)))!;
-    const cases: Array<[CountV1, string]> = [
-      [{ latest: 10, pending: 10 }, 'loan_steps_later_transaction'],
-      [{ latest: 9, pending: 10 }, 'loan_steps_transaction_pending'],
+    const many = { hashes: Array.from({ length: 16 }, (_, i) => hash(100 + i)), complete: false };
+    const cases: Array<[CountV1, LaterV1, string]> = [
+      [{ latest: 9, pending: 10 }, undefined as never, 'loan_steps_transaction_pending'],
       // A node behind the last step, a count it could not read, a reader that cannot count.
-      [{ latest: 8, pending: 8 }, 'loan_steps_count_unread'],
-      [{ latest: null, pending: 9 }, 'loan_steps_count_unread'],
-      [null, 'loan_steps_count_unread'],
+      [{ latest: 8, pending: 8 }, undefined as never, 'loan_steps_count_unread'],
+      [{ latest: null, pending: 9 }, undefined as never, 'loan_steps_count_unread'],
+      [null, undefined as never, 'loan_steps_count_unread'],
+      // The wallet sent more since the last step: a search that cannot be read, or one with more than Still reads.
+      [{ latest: 10, pending: 10 }, null, 'loan_steps_count_unread'],
+      [{ latest: 10, pending: 10 }, { hashes: [], complete: false }, 'loan_steps_count_unread'],
+      [{ latest: 30, pending: 30 }, many, 'loan_steps_wallet_busy'],
     ];
-    for (const [count, refusal] of cases) {
-      const result = await stopNowV1(at(record), stopDeps(store, count, receipts));
+    const all = new Map([...receipts, ...many.hashes.map((h, i) => [h, receipt(100 + i)] as const)]);
+    for (const [count, later, refusal] of cases) {
+      const result = await stopNowV1(at(record), stopDeps(store, count, all, later === undefined ? { hashes: [], complete: true } : later));
       assert.deepEqual(result && !result.ok ? result.refusal : 'stopped', refusal);
     }
-    const later = await stopNowV1(at(record), stopDeps(store, { latest: 11, pending: 11 }, receipts));
-    assert.equal(later && !later.ok ? later.detail : null,
-      'Your wallet sent another transaction after step 2. Still cannot tell from Base whether it was step 3 of 3, so this loan was not stopped. If it was, paste its hash below.');
     const after = (await store.get(at(record)))!;
     assert.deepEqual([after.state, after.version, after.verification], ['awaiting_wallet', before.version, null]);
+  });
+
+  it('stops past the wallet’s other transactions after the last step, and keeps them with the stop (audit LL-2)', async () => {
+    const { store, record } = await twoLanded();
+    // The wallet's transaction 9 after step 2 was something else: a swap, a repayment on the protocol's own site.
+    const result = await stopNowV1(at(record), stopDeps(store, { latest: 10, pending: 10 }, receipts, { hashes: [hash(2), hash(5)], complete: true }));
+    assert.ok(result?.ok);
+    assert.deepEqual([result.record.state, result.record.errorCode, ...proofOf(result.record)], ['failed', 'loan_steps_stopped', 2, 2, 'person', 10]);
+    assert.deepEqual((result.record.verification as { otherTransactions?: string[] }).otherTransactions, [hash(5)]);
+  });
+
+  it('does not stop a loan whose next step is among the later transactions, and reads it with that step', async () => {
+    const { store, record } = await twoLanded();
+    const result = await stopNowV1(at(record), stopDeps(store, { latest: 10, pending: 10 }, receipts, { hashes: [hash(3)], complete: true }));
+    assert.equal(result && !result.ok ? result.refusal : 'stopped', 'loan_steps_next_found');
+    assert.equal(result && !result.ok ? result.detail : null,
+      'Still found step 3 of 3 on Base, sent after step 2, so this loan was not stopped: it is read with that step now. Check the onchain result.');
+    // Every step is on Base now, so the loan is read as confirmed, and nothing holds the market.
+    const after = (await store.get(at(record)))!;
+    assert.deepEqual([after.state, after.transactionHash], ['confirmed', hash(3)]);
   });
 
   it('stops after a step whose hash was pasted, and keeps that step with the ones Still recorded', async () => {

@@ -778,6 +778,12 @@ describe('a loan in steps that stopped before it paid', () => {
   it('is the only loan that leaves its invoice to the wallet: stopped on record, read from Base, short of the last step', () => {
     assert.equal(loanStoppedBeforePaymentV1(row({})), true);
     assert.equal(loanStoppedBeforePaymentV1(row({ verification: { stoppedAt: 0 } })), true);
+    // Stopped by its owner after the payment step went to the wallet: that request may still pay it (audit SPEND-3).
+    assert.equal(loanStoppedBeforePaymentV1(row({ verification: { stoppedAt: 3, paymentAsked: true, stoppedBy: 'person' },
+      run: { delivery: 'sequential', calls: [0, 1, 2, 3], facts: { payment: { orderId: 'fixture' } } } })), false);
+    // Declined in the wallet, or refused before it was asked: nothing was left open.
+    assert.equal(loanStoppedBeforePaymentV1(row({ verification: { stoppedAt: 3, paymentAsked: true },
+      run: { delivery: 'sequential', calls: [0, 1, 2, 3], facts: { payment: { orderId: 'fixture' } } } })), true);
     for (const held of [{ state: 'submitted' }, { state: 'unknown' }, { state: 'awaiting_wallet' }, { state: 'confirmed', errorCode: null },
       { errorCode: 'loan_step_reverted' }, { verification: null }, { verification: {} }, { verification: { stoppedAt: 4 } }, { verification: { stoppedAt: '3' } },
       { run: { calls: [0, 1, 2, 3] } }]) {

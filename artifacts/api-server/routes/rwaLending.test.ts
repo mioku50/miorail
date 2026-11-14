@@ -139,6 +139,29 @@ describe('session-owned lending HTTP boundary', () => {
     assert.match(refused.body.detail, /^Another loan or repayment in this market has not settled yet, so this one was not sent and your wallet was not asked\./);
     assert.match(refused.body.detail, /If your wallet never sent that one, its review lets you release it\.$/);
     assert.doesNotMatch(refused.body.detail, /still being read/);
+    // Which attempt holds it, and a link to its own review, which opens that attempt and hands no calls (audit UI-19).
+    const from = new Date(Date.parse(first.body.expiresAt) + 10 * 60_000).toISOString();
+    assert.deepEqual({ ...refused.body.heldBy, reviewPath: typeof refused.body.heldBy.reviewPath },
+      { executionId: first.body.executionId, operation: 'repay', collateralSymbol: first.body.facts.collateralSymbol, state: 'awaiting_wallet', reviewPath: 'string', releaseFrom: from, steps: null });
+    assert.match(refused.body.heldBy.reviewPath, /^\/lending\/miorail-lending-v1\./);
+    const opened = await request(app()).get(`${base}/lending/review/${String(refused.body.heldBy.reviewPath).slice('/lending/'.length)}`).expect(200);
+    assert.deepEqual([opened.body.state, opened.body.refusal, opened.body.executionId, opened.body.executionState],
+      ['refused', 'lending_submission_pending', first.body.executionId, 'awaiting_wallet']);
+    assert.equal(opened.body.calls, undefined);
+    // Another wallet cannot open it.
+    await request(app(other)).get(`${base}/lending/review/${String(refused.body.heldBy.reviewPath).slice('/lending/'.length)}`).expect(403);
+  });
+  it('lists the owner’s attempts that hold a market, each with its own review, for Repay and Get money (audit UI-19)', async () => {
+    assert.deepEqual((await request(app()).get(`${base}/lending/held`).expect(200)).body, { held: [] });
+    const first = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    await arm(first);
+    const listed = (await request(app()).get(`${base}/lending/held`).expect(200)).body.held;
+    assert.equal(listed.length, 1);
+    assert.deepEqual([listed[0].executionId, listed[0].operation, listed[0].state], [first.body.executionId, 'repay', 'awaiting_wallet']);
+    assert.match(listed[0].reviewPath, /^\/lending\/miorail-lending-v1\./);
+    // Another wallet sees none of it, and nobody signed out sees anything.
+    assert.deepEqual((await request(app(other)).get(`${base}/lending/held`).expect(200)).body, { held: [] });
+    await request(app(null)).get(`${base}/lending/held`).expect(401);
   });
   it('a new loan is not armed on a review read before another one of this wallet landed, and a repayment always is (audit LEND-3)', async () => {
     // Two tabs, or the assistant's card beside the page: both reviews read at one block, each for all the room there was.
@@ -249,16 +272,25 @@ describe('session-owned lending HTTP boundary', () => {
     await request(app(other)).post(`${path}/release`).send({}).expect(404);
     await request(app(null)).post(`${path}/release`).send({}).expect(401);
     await request(app()).post(`${path}/release`).send({ force: true }).expect(400);
-    // The wallet sent something since the review: refused in the server's own words, and still held.
+    // The wallet sent something since the review that Still cannot read one by one: refused in the server's own words, and still held.
     Object.assign(chain, { latest: 42, pending: 42 });
     const refused = await request(app()).post(`${path}/release`).send({}).expect(409);
-    assert.equal(refused.body.error, 'loan_release_later_transaction');
-    assert.match(refused.body.detail, /Still cannot tell from Base whether it was this one, so the review was not released\. If it was, paste its hash below\.$/);
+    assert.equal(refused.body.error, 'loan_release_wallet_unread');
+    assert.match(refused.body.detail, /so nothing was changed\. Try again in a minute\.$/);
     assert.equal((await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId })).length, 1);
     Object.assign(chain, { latest: 41, pending: 41 });
-    const released = await request(app()).post(`${path}/release`).send({}).expect(200);
-    assert.deepEqual([released.body.state, released.body.errorCode, released.body.transactionHash, released.body.release], ['failed', 'loan_wallet_sent_nothing', null, null]);
-    assert.deepEqual(released.body.verification, { callsHash: first.body.callsHash, releasedBy: 'person', reviewBlock: '53100000', account: 'eoa', transactionCount: 41 });
+    // The first reading finds nothing of it, and says when the second comes: nothing is released yet (audit LL-1).
+    const checking = await request(app()).post(`${path}/release`).send({}).expect(200);
+    assert.deepEqual([checking.body.state, typeof checking.body.releasing?.check, checking.body.releasing?.checkAgainAt],
+      ['awaiting_wallet', 'string', new Date(from.getTime() + 60_000).toISOString()]);
+    assert.equal((await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId })).length, 1);
+    await request(app()).post(`${path}/release`).send({ check: 42 }).expect(400);
+    clock = new Date(from.getTime() + 60_000);
+    const released = await request(app()).post(`${path}/release`).send({ check: checking.body.releasing.check }).expect(200);
+    assert.deepEqual([released.body.state, released.body.errorCode, released.body.transactionHash, released.body.release, released.body.releasing],
+      ['failed', 'loan_wallet_sent_nothing', null, null, undefined]);
+    assert.deepEqual(released.body.verification, { callsHash: first.body.callsHash, releasedBy: 'person', reviewBlock: '53100000', account: 'eoa', transactionCount: 41,
+      firstReadAt: from.toISOString(), secondReadAt: clock.toISOString() });
     // Nothing holds the market now, and a later read does not put the released review back.
     assert.deepEqual(await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, executionId: second.body.executionId }), []);
     assert.equal((await request(app()).get(path)).body.state, 'failed');
@@ -286,7 +318,9 @@ describe('session-owned lending HTTP boundary', () => {
     await arm(first);
     const path = `${base}/lending/executions/${first.body.executionId}`;
     clock = new Date(Date.parse(first.body.expiresAt) + 10 * 60_000);
-    await request(app()).post(`${path}/release`).send({}).expect(200);
+    const checking = await request(app()).post(`${path}/release`).send({}).expect(200);
+    clock = new Date(clock.getTime() + 60_000);
+    await request(app()).post(`${path}/release`).send({ check: checking.body.releasing.check }).expect(200);
     const wrong = await request(app()).post(`${path}/transaction`).send({ transactionHash: `0x${'55'.repeat(32)}` }).expect(409);
     assert.equal(wrong.body.error, 'loan_receipt_not_matched');
     assert.match(wrong.body.detail, /so the released review was left as it is\.$/);

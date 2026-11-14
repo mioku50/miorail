@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { LendingHeldNoticeV1 } from '../src/console/LendingHeldNotice';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFeeNoteV1, lendingFollowsResultV1, lendingReviewReadsTheSameV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, LENDING_FOLLOW_MS_V1, lendingBackLinkV1, lendingFeeNoteV1, lendingFollowsResultV1, lendingHeldByWireV1, lendingReviewReadsTheSameV1, parseLendingFeeSponsorV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
 import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayExactCoversDebtV1, repayExactWholeDebtTextV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
@@ -298,6 +299,11 @@ describe('lending review presentation does not call a submission a repayment', (
     const owing = (before: string, after: string) => changed(c => { c.facts.debtBeforeAssets = before; c.facts.debtAfterAssets = after; });
     assert.equal(lendingReviewReadsTheSameV1(owing('1000000000', '1000050001'), owing('1000000019', '1000050020')), true, 'ten seconds of interest on $1,000');
     assert.equal(lendingReviewReadsTheSameV1(owing('1000000000', '1000050001'), owing('1000010000', '1000060001')), false, 'a cent appeared: not interest');
+    // A Repay all's delta is negative: its size drifts with the interest like a debt, and its sign never (audit LA-4).
+    const repaying = (delta: string) => changed(c => { c.measured = { ...c.measured, loanDeltaAssets: delta }; });
+    assert.equal(lendingReviewReadsTheSameV1(repaying('-1000000000'), repaying('-1000000004')), true, 'four units of interest on a Repay all');
+    assert.equal(lendingReviewReadsTheSameV1(repaying('-1000000000'), repaying('-1000010000')), false, 'a cent more repaid: not interest');
+    assert.equal(lendingReviewReadsTheSameV1(repaying('-1000000000'), repaying('1000000000')), false, 'a repayment is not a loan');
     // A risk note whose distance moved by a tenth reads the same; a note that says something else does not.
     const noted = (text: string) => changed(c => { c.facts.warnings = [...c.facts.warnings, text]; });
     const fall = noted('A 49.9% fall in the NVDAc price liquidates this position.');
@@ -569,10 +575,24 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
     const execution = { executionId: 'execution_1', state: 'unknown' as const, transactionHash: null, errorCode: null, release: { offered: true, from: '2026-10-29T03:57:30.000Z' } };
     const html = render({ body: ready(), execution, onRelease: NOOP });
     assert.match(html, /Still has found no transaction for this review on Base, and while it waits this market takes no other loan or repayment from your wallet\./);
-    assert.match(html, /If your wallet never sent it, release it\. Still first checks on Base that your wallet has sent nothing since this review and has nothing\s+waiting; only then is the review recorded as not sent/);
+    assert.match(html, /If your wallet never sent it, release it\. Still reads Base twice, a minute apart, and checks that none of your wallet’s transactions since this\s+review is this one; only then is the review recorded as not sent/);
+    // It promises no reading of what Base cannot show (audit LL-1: since Denim, `pending` is the latest block).
+    assert.doesNotMatch(html, /nothing\s+waiting/);
     assert.match(html, /decline or cancel it there first\./);
     assert.match(html, />It was not sent: release it</);
-    assert.doesNotMatch(render({ body: ready(), execution }), /release it/);
+    assert.doesNotMatch(render({ body: ready(), execution }), /release it</);
+    // Before it is offered, the time it will be is said (audit UI-19).
+    const later = render({ body: ready(), execution: { ...execution, release: { offered: false, from: '2026-10-29T03:57:30.000Z' } } });
+    assert.match(later, /If your wallet never sent this repayment, it can be released here from\s+\d\d:\d\d: until then your wallet may still send it\./);
+    assert.doesNotMatch(later, />It was not sent: release it</);
+    // The first reading found nothing: the page says when it reads again, and offers no second press meanwhile.
+    const reading = render({ body: ready(), execution, releaseCheckAgainAt: '2026-10-29T03:58:30.000Z' });
+    assert.match(reading, /Base shows nothing of this review since it was prepared\. Still reads it once more at\s+\d\d:\d\d:\d\d to be sure nothing is still on its way; keep this page open\. Nothing is released until then\./);
+    assert.deepEqual(parseLendingExecutionWireV1({ ...execution, releasing: { check: 'note.mac', checkAgainAt: '2026-10-29T03:58:30.000Z' } }, 'execution_1')?.releasing,
+      { check: 'note.mac', checkAgainAt: '2026-10-29T03:58:30.000Z' });
+    for (const releasing of [{ check: '', checkAgainAt: '2026-10-29T03:58:30.000Z' }, { check: 'note', checkAgainAt: 'soon' }, 'now']) {
+      assert.equal(parseLendingExecutionWireV1({ ...execution, releasing }, 'execution_1')?.releasing, null);
+    }
     // The wire carries the offer as the server gave it, and nothing malformed.
     assert.deepEqual(parseLendingExecutionWireV1(execution, 'execution_1')?.release, { offered: true, from: '2026-10-29T03:57:30.000Z' });
     assert.equal(parseLendingExecutionWireV1({ ...execution, release: null }, 'execution_1')?.release, null);
@@ -584,12 +604,46 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
   it('a released attempt is said as not sent, never as a revert, and still takes its transaction by hash', () => {
     const execution = { executionId: 'execution_1', state: 'failed' as const, transactionHash: null, errorCode: 'loan_wallet_sent_nothing', release: null };
     assert.equal(lendingExecutionCopyV1('failed', 'loan_wallet_sent_nothing'),
-      'Released as not sent: Base shows your wallet has sent nothing since this review, so it borrowed and repaid nothing. You can start a new review now.');
+      'Released as not sent: twice, a minute apart, Base showed none of your wallet’s transactions since this review was this one. If your wallet still sends it, Still reads it from Base and records it. You can start a new review now.');
+    // "Borrowed and repaid nothing" was more than Base can show (audit LL-1).
+    assert.doesNotMatch(lendingExecutionCopyV1('failed', 'loan_wallet_sent_nothing'), /borrowed and repaid nothing/);
     const html = render({ body: ready(), execution, onFindTransaction: NOOP });
     assert.match(html, /Released as not sent:/);
     assert.doesNotMatch(html, /reverted onchain|release it</);
     assert.match(html, /Your wallet sent it after all\?/);
     assert.match(html, /Still takes this repayment back only if that transaction is exactly this review’s, landed on Base; it will not send anything\./);
+  });
+
+  // Audit UI-19, 2026-11-14: "Open that review" with nothing that led to it.
+  it('names the attempt that holds the market, with a link to its own review and when it can be released', () => {
+    const heldBy = lendingHeldByWireV1({ executionId: 'execution_0', operation: 'borrow', collateralSymbol: 'NVDAc', state: 'awaiting_wallet',
+      reviewPath: '/lending/miorail-lending-v1.abc.def', releaseFrom: '2026-10-29T03:57:30.000Z', steps: null });
+    assert.deepEqual(heldBy, { operation: 'borrow', collateralSymbol: 'NVDAc', href: '/lending/miorail-lending-v1.abc.def', releaseFrom: '2026-10-29T03:57:30.000Z' });
+    const html = render({ body: ready(), heldBy, walletError: 'Another loan or repayment in this market has not settled yet, so this one was not sent and your wallet was not asked.' });
+    assert.match(html, /href="\/lending\/miorail-lending-v1\.abc\.def"/);
+    assert.match(html, /Open the loan that holds this market \(NVDAc\)/);
+    assert.match(html, /If your wallet never sent it, it can be released there from \d\d:\d\d\./);
+    // Only a review link of this site's own shape is followed.
+    for (const reviewPath of ['https://evil.example/lending/x', '/lending/<script>', 'javascript:alert(1)']) {
+      assert.equal(lendingHeldByWireV1({ operation: 'repay', collateralSymbol: 'AAPLc', reviewPath, releaseFrom: null })?.href, null);
+    }
+    assert.equal(lendingHeldByWireV1({ operation: 'withdraw', collateralSymbol: 'AAPLc' }), null);
+    assert.doesNotMatch(render({ body: ready(), heldBy: { ...heldBy!, href: null } }), /holds this market/);
+  });
+
+  it('Repay and Get money say which attempt holds a market, with its review, before any refusal does (audit UI-19)', () => {
+    const held = [{ operation: 'borrow' as const, collateralSymbol: 'NVDAc', href: '/lending/miorail-lending-v1.abc.def', releaseFrom: null }];
+    const html = renderToStaticMarkup(<LendingHeldNoticeV1 held={held} />);
+    assert.match(html, /Your loan against NVDAc has not settled yet, and while it waits that market takes no\s+other loan or repayment from your wallet\./);
+    assert.match(html, /<a href="\/lending\/miorail-lending-v1\.abc\.def">Open it<\/a> to see its result\./);
+    assert.equal(renderToStaticMarkup(<LendingHeldNoticeV1 held={[]} />), '');
+  });
+
+  it('says what Still found of a transaction it could not settle, instead of offering a release (audit LL-5)', () => {
+    assert.match(lendingExecutionCopyV1('unknown', 'loan_effect_read_unavailable'), /^Still found this review’s transaction on Base and could not read its result just now\./);
+    assert.match(lendingExecutionCopyV1('unknown', 'loan_protocol_event_mismatch'), /not exactly what this review approved, so Still does not record it as done/);
+    assert.match(lendingExecutionCopyV1('unknown', 'loan_multiple_matching_transactions'), /More than one transaction of your wallet matches this review/);
+    assert.equal(lendingExecutionCopyV1('unknown', null), 'The submission result is unknown. Check your wallet activity and the onchain result before taking another action.');
   });
 
   it('a stopped loan in steps takes a step the wallet sent after all, by its hash', () => {

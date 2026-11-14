@@ -184,7 +184,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           </details>
         </> : <p className="still-note">No executable calls are available for this refusal.</p>}
       </> : null}
-      {knownState ? <p className={knownState === 'confirmed' ? 'still-sub' : 'still-note'} role="status">{lendingExecutionCopyV1(knownState, model.execution?.errorCode ?? null, model.execution?.remainingDebtAtomic ?? null, model.execution?.positionMovedOutside === true)}</p> : null}
+      {knownState ? <p className={knownState === 'confirmed' ? 'still-sub' : 'still-note'} role="status">{lendingExecutionCopyV1(knownState, model.execution?.errorCode ?? null, model.execution?.remainingDebtAtomic ?? null, model.execution?.positionMovedOutside === true, model.execution?.paymentMayStillBeSent === true)}</p> : null}
       {model.batchId && !model.execution ? <p className="still-note" role="status">Submitted from your wallet. A batch ID is a submission handle; it is not a confirmed blockchain result.</p> : null}
       {model.execution?.transactionHash ? <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>Transaction: {model.execution.transactionHash}</p> : null}
       {model.submissionLock && knownState !== 'confirmed' ? <p className="still-note" role="status">{model.submissionLock}</p> : null}
@@ -220,11 +220,18 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       </> : null}
       {model.onRelease ? <>
         <p className="still-note" role="status">Still has found no transaction for this review on Base, and while it waits this market takes no other loan or repayment from your wallet.</p>
-        <p className="still-note">If your wallet never sent it, release it. Still first checks on Base that your wallet has sent nothing since this review and has nothing
-          waiting; only then is the review recorded as not sent, and the market works again. If your wallet still shows this request, or a transaction of it waiting,
-          decline or cancel it there first.</p>
+        <p className="still-note">If your wallet never sent it, release it. Still reads Base twice, a minute apart, and checks that none of your wallet’s transactions since this
+          review is this one; only then is the review recorded as not sent, and the market works again. Base cannot show a transaction still on its way, so if your wallet still
+          shows this request, or a transaction of it waiting, decline or cancel it there first.</p>
         <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onRelease}>{model.checking ? 'Checking Base…' : 'It was not sent: release it'}</button>
       </> : null}
+      {/* The first of the two readings found nothing of it: the page reads again by itself (audit LL-1). */}
+      {model.releaseCheckAgainAt ? <p className="still-note" role="status">Base shows nothing of this review since it was prepared. Still reads it once more at{' '}
+        {new Date(model.releaseCheckAgainAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} to be sure nothing is still on its way; keep this page open. Nothing is released until then.</p> : null}
+      {/* Not yet: the time it can be released is said, so nobody waits on a button that is not there (audit UI-19). */}
+      {!model.onRelease && !model.releaseCheckAgainAt && model.execution?.release && !model.execution.release.offered ? <p className="still-note">
+        If your wallet never sent this {repay ? 'repayment' : 'loan'}, it can be released here from{' '}
+        {new Date(model.execution.release.from).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}: until then your wallet may still send it.</p> : null}
       {model.onFindTransaction ? <details className="still-lending-details">
         <summary>{stoppedInSteps ? `Your wallet sent step ${standing.landed + 1} after all?` : releasedUnsent ? 'Your wallet sent it after all?' : 'Wallet sent it, but the result is still unknown?'}</summary>
         <p className="still-note">{stoppedInSteps
@@ -238,6 +245,10 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         <button type="button" className="still-btn sec" onClick={model.onFindTransaction} disabled={model.checking || model.walletBusy}>Find this transaction</button>
       </details> : null}
       {model.walletError && !model.termsChanged && !(body.state === 'refused' && body.detail === model.walletError) ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
+      {/* The attempt that holds this market, and the way to it (audit UI-19). */}
+      {model.heldBy?.href ? <p className="still-note"><a className="still-btn sec" href={model.heldBy.href}>
+        Open the {model.heldBy.operation === 'repay' ? 'repayment' : 'loan'} that holds this market ({model.heldBy.collateralSymbol})</a>
+        {model.heldBy.releaseFrom ? ` If your wallet never sent it, it can be released there from ${new Date(model.heldBy.releaseFrom).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}.` : ''}</p> : null}
       {/* A Spend loan in steps that stopped before its payment only because Bitrefill could not be read: the invoice is still open. */}
       {model.walletPayPath ? <p className="still-note"><a href={model.walletPayPath}>Pay this invoice from your wallet</a></p> : null}
       <p className="still-note">Still prepares unsigned calls and verifies evidence. Only your wallet can approve and submit them. This page does not automatically open your wallet.</p>

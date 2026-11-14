@@ -24,3 +24,13 @@ export function loanReadyFixture(patch: Partial<Extract<LendingRunV1, { state: '
     calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${'9'.repeat(64)}`, expiresAt: new Date(LOAN_NOW_FIXTURE.getTime() + 30_000).toISOString(), atomicRequired: true,
     steps: [], measured: { provider: 'fixture', blockNumber: 53000000, loanDeltaAssets: '-2000000' }, ...patch } as Extract<LendingRunV1, { state: 'ready' }>;
 }
+
+/** A Still Spend loan in steps: the same calls, the last one the payment of one Bitrefill invoice. */
+export function loanPayingStepsFixture(): Extract<LendingRunV1, { state: 'ready' }> {
+  const run = loanReadyFixture({ atomicRequired: false, delivery: 'sequential' } as never);
+  run.facts.payment = { merchant: 'bitrefill', orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: `0x${'3'.repeat(40)}`, assets: '2000000',
+    productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' } as never;
+  run.calls = run.calls.map((call, index) => index === run.calls.length - 1 ? { ...call, callType: 'transfer' as const } : call);
+  run.callsHash = hashApprovedCallsV1(run.calls);
+  return run;
+}

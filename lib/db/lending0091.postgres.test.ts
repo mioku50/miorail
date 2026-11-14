@@ -6,7 +6,7 @@ import { after, before, describe, it, test } from 'node:test';
 import postgres from 'postgres';
 import { assertSafeTestDatabaseEnvironment } from './testDatabaseGuard.js';
 import { createDatabaseLoanExecutionStoreV1, type LoanExecutionStoreV1 } from '../../artifacts/api-server/lib/loanExecutionStore.js';
-import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX } from '../../artifacts/api-server/lib/loanExecutionTestFixtures.js';
+import { loanPayingStepsFixture, loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX } from '../../artifacts/api-server/lib/loanExecutionTestFixtures.js';
 
 const migrationUrl = resolve(process.cwd(), process.cwd().endsWith('lib/db') ? 'drizzle/0091_lending_executions.sql' : 'lib/db/drizzle/0091_lending_executions.sql');
 test('migration0091 makes ownership, run identity and one active market attempt database constraints', async () => {
@@ -41,6 +41,8 @@ describe('lending execution SQL races in an isolated temporary schema', { skip: 
     // whole; that it names the role is checked above.
     const migration = (await readFile(migrationUrl, 'utf8')).replaceAll('--> statement-breakpoint', '');
     await sql.unsafe(migration);
+    // A release names no transaction (0096): the rows the reads below list are made as production makes them.
+    await sql.unsafe((await readFile(migrationUrl.replace('0091_lending_executions.sql', '0096_lending_release_unsent.sql'), 'utf8')).replaceAll('--> statement-breakpoint', ''));
     const execute: Parameters<typeof createDatabaseLoanExecutionStoreV1>[0] = async (strings, ...values) =>
       await sql(strings, ...(values as never[])) as unknown as Record<string, unknown>[];
     store = createDatabaseLoanExecutionStoreV1(execute);
@@ -92,6 +94,36 @@ describe('lending execution SQL races in an isolated temporary schema', { skip: 
     assert.equal((await store.arm({ owner: OWNER, executionId: first.executionId, callsHash: first.run.callsHash, signingTermsHash: first.run.signingTermsHash, now: NOW })).ok, false);
     const result = await store.arm({ owner: OWNER, executionId: updated.executionId, callsHash: updated.run.callsHash, signingTermsHash: updated.run.signingTermsHash, now: NOW }); assert(result.ok);
     await store.recordSubmission({ owner: OWNER, executionId: updated.executionId, attemptId: result.attemptId, outcome: 'rejected', now: NOW });
+  });
+  // Audits UI-19, LL-1 and SPEND-3 (2026-11-14): the reads and the one note the release, the held list and
+  // a paid loan in steps add, in SQL as in the memory store.
+  it('lists an owner’s held attempts, the released ones in a market, and keeps a payment step handed to the wallet', async () => {
+    const owner = OWNER, other = { tenantId: `eip155:8453:${OTHER}`, walletAddress: OTHER };
+    const held = await create('db-held-a');
+    const armed = await store.arm({ owner, executionId: held.executionId, callsHash: held.run.callsHash, signingTermsHash: held.run.signingTermsHash, now: NOW });
+    assert(armed.ok);
+    assert.deepEqual((await store.listActiveForOwner({ owner })).map(row => row.executionId), [held.executionId]);
+    assert.deepEqual(await store.listActiveForOwner({ owner: other }), []);
+    // Released as never sent: listed for a neighbour in the same market since a given time, and not before.
+    const unknown = await store.recordSubmission({ owner, executionId: held.executionId, attemptId: armed.attemptId, outcome: 'unknown', now: NOW });
+    assert(unknown);
+    const released = await store.recordVerification({ owner, executionId: held.executionId, expectedVersion: unknown.version, state: 'failed', transactionHash: null,
+      proof: { releasedBy: 'person' }, errorCode: 'loan_wallet_sent_nothing', now: NOW });
+    assert(released);
+    const neighbour = await create('db-held-b');
+    assert.deepEqual((await store.listReleasedInScope({ owner, executionId: neighbour.executionId, since: new Date(NOW.getTime() - 60_000) })).map(row => row.executionId), [held.executionId]);
+    assert.deepEqual(await store.listReleasedInScope({ owner, executionId: neighbour.executionId, since: new Date(NOW.getTime() + 60_000) }), []);
+    assert.deepEqual(await store.listActiveForOwner({ owner }), []);
+    // A paid loan in steps: the note is kept on the attempt, and only on an armed one of its own.
+    const paying = loanPayingStepsFixture();
+    const loan = await store.putReady({ owner, draftId: 'db-paying', run: paying, now: NOW });
+    assert.equal(await store.markPaymentAsked({ owner, executionId: loan.executionId, attemptId: randomUUID(), now: NOW }), null);
+    const loanArmed = await store.arm({ owner, executionId: loan.executionId, callsHash: loan.run.callsHash, signingTermsHash: loan.run.signingTermsHash, now: NOW });
+    assert(loanArmed.ok);
+    const asked = await store.markPaymentAsked({ owner, executionId: loan.executionId, attemptId: loanArmed.attemptId, now: NOW });
+    assert.deepEqual([asked?.state, asked?.verification], ['awaiting_wallet', { paymentAsked: true }]);
+    assert.equal(await store.markPaymentAsked({ owner: other, executionId: loan.executionId, attemptId: loanArmed.attemptId, now: NOW }), null);
+    await store.recordSubmission({ owner, executionId: loan.executionId, attemptId: loanArmed.attemptId, outcome: 'rejected', now: NOW });
   });
   it('Aave reviews for different stock reserves share one database lock', async () => {
     const make = async (symbol: string) => { const run = loanReadyFixture(); run.facts.venue = 'aave-v4'; run.facts.marketId = `aave-v4:${symbol}`;

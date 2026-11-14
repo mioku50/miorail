@@ -28,9 +28,14 @@ export interface LoanExecutionStoreV1 {
   listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]>;
   /** The other attempts holding this execution's market (Aave: its whole spoke). */
   listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
+  /** Every attempt of this owner still holding a market, oldest first (audit UI-19: said on Repay and Get money). */
+  listActiveForOwner(input: { owner: LoanOwnerV1 }): Promise<LoanExecutionV1[]>;
   /** The other attempts in this execution's market that ended with a transaction on Base, newest first:
    * what may have changed the position since this review was read (audit LEND-3). */
   listLandedInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
+  /** The other attempts in this execution's market its owner released as never sent since `since`, newest
+   * first: one of them may have been sent after all (audit LL-1). */
+  listReleasedInScope(input: { owner: LoanOwnerV1; executionId: string; since: Date }): Promise<LoanExecutionV1[]>;
   arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): Promise<
     { ok: true; execution: LoanExecutionV1; attemptId: string } | { ok: false; refusal: 'execution_not_ready' | 'execution_active' | 'invoice_has_attempt' }>;
   /** `stopped`: the steps in `batchId` landed and the rest was never sent (declined in the wallet, or refused
@@ -44,6 +49,9 @@ export interface LoanExecutionStoreV1 {
    * far are kept as one viem fallback batch id; the last step submits it, and
    * `stop` submits what landed when the rest will not be sent. */
   recordStep(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; index: number; transactionHash: HashV1; stop?: boolean; now: Date }): Promise<LoanExecutionV1 | null>;
+  /** A Still Spend loan in steps: its payment step was handed to the wallet, which may send it at any time
+   * from then on, even after the loan is stopped (audit SPEND-3). Kept with the attempt's verification. */
+  markPaymentAsked(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; now: Date }): Promise<LoanExecutionV1 | null>;
 }
 
 /** An attempt its owner released because the wallet never sent it (lib/loanRelease.ts): final, with no transaction. */
@@ -120,12 +128,24 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     if (!row || !sameOwner(row, input.owner)) return [];
     return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) && active(other.state)).map(copy);
   }
+  async listActiveForOwner(input: { owner: LoanOwnerV1 }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner);
+    return [...this.rows.values()].filter(row => sameOwner(row, input.owner) && active(row.state))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, 10).map(copy);
+  }
   async listLandedInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
     if (!row || !sameOwner(row, input.owner)) return [];
     return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) &&
       (other.state === 'confirmed' || other.state === 'failed') && other.transactionHash !== null)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50).map(copy);
+  }
+  async listReleasedInScope(input: { owner: LoanOwnerV1; executionId: string; since: Date }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner); const row = this.rows.get(input.executionId);
+    if (!row || !sameOwner(row, input.owner)) return [];
+    return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) && other.state === 'failed' &&
+      other.errorCode === LOAN_WALLET_SENT_NOTHING_V1 && Date.parse(other.updatedAt) >= input.since.getTime())
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10).map(copy);
   }
   async arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): ReturnType<LoanExecutionStoreV1['arm']> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
@@ -161,6 +181,11 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     row.state = input.state; row.transactionHash = input.transactionHash; row.verification = copy(input.proof); row.errorCode = input.errorCode;
     if (input.batchId !== undefined) row.batchId = input.batchId;
     row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
+  }
+  async markPaymentAsked(input: Parameters<LoanExecutionStoreV1['markPaymentAsked']>[0]): Promise<LoanExecutionV1 | null> {
+    assertOwner(input.owner); const row = this.rows.get(input.executionId);
+    if (!row || !sameOwner(row, input.owner) || row.attemptId !== input.attemptId || row.state !== 'awaiting_wallet' || row.run.delivery !== 'sequential' || !row.run.facts.payment) return null;
+    row.verification = { ...(row.verification ?? {}), paymentAsked: true }; row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
   }
   async recordStep(input: Parameters<LoanExecutionStoreV1['recordStep']>[0]): Promise<LoanExecutionV1 | null> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
@@ -262,6 +287,12 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
           AND other.execution_id <> self.execution_id AND other.state IN ('awaiting_wallet', 'submitted', 'unknown')`;
       return rows.map(rowFromDb);
     },
+    async listActiveForOwner({ owner }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
+          AND state IN ('awaiting_wallet', 'submitted', 'unknown') ORDER BY created_at ASC LIMIT 10`;
+      return rows.map(rowFromDb);
+    },
     async listLandedInScope({ owner, executionId }) {
       assertOwner(owner);
       const rows = await sql`SELECT other.* FROM lending_executions AS self JOIN lending_executions AS other
@@ -270,6 +301,17 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
         WHERE self.execution_id = ${executionId} AND self.tenant_id = ${owner.tenantId} AND self.wallet_address = ${owner.walletAddress}
           AND other.execution_id <> self.execution_id AND other.state IN ('confirmed', 'failed') AND other.transaction_hash IS NOT NULL
         ORDER BY other.updated_at DESC LIMIT 50`;
+      return rows.map(rowFromDb);
+    },
+    async listReleasedInScope({ owner, executionId, since }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT other.* FROM lending_executions AS self JOIN lending_executions AS other
+          ON other.tenant_id = self.tenant_id AND other.wallet_address = self.wallet_address AND other.venue = self.venue
+          AND (self.venue = 'aave-v4' OR other.market_id = self.market_id)
+        WHERE self.execution_id = ${executionId} AND self.tenant_id = ${owner.tenantId} AND self.wallet_address = ${owner.walletAddress}
+          AND other.execution_id <> self.execution_id AND other.state = 'failed' AND other.error_code = ${LOAN_WALLET_SENT_NOTHING_V1}
+          AND other.updated_at >= ${since.toISOString()}::timestamptz
+        ORDER BY other.updated_at DESC LIMIT 10`;
       return rows.map(rowFromDb);
     },
     async arm({ owner, executionId, callsHash, signingTermsHash, now }) {
@@ -317,6 +359,15 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
         WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
           AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' AND version = ${row.version} RETURNING *`;
       return updated[0] ? rowFromDb(updated[0]) : null;
+    },
+    async markPaymentAsked(input) {
+      assertOwner(input.owner); const { owner } = input;
+      const rows = await sql`UPDATE lending_executions SET verification_json = COALESCE(verification_json, '{}'::jsonb) || '{"paymentAsked": true}'::jsonb,
+          updated_at = ${input.now.toISOString()}::timestamptz, version = version + 1
+        WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
+          AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' AND run_json->>'delivery' = 'sequential'
+          AND run_json->'facts'->'payment' IS NOT NULL RETURNING *`;
+      return rows[0] ? rowFromDb(rows[0]) : null;
     },
     async recordVerification(input) {
       assertOwner(input.owner); validateVerification(input); const { owner } = input;

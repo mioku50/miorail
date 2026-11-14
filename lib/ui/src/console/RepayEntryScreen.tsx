@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { tokenDecimalV1 } from './stockSellAmount';
+import { LendingHeldNoticeV1, useLendingHeldV1 } from './LendingHeldNotice';
+import type { LendingHeldByV1 } from './lendingReviewView';
 import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayExactCoversDebtV1, repayExactWholeDebtTextV1, repayIntentAmountsV1, repayMaxV1, repayShortTextV1,
   type RepayCapacityWireV1, type RepayModeV1 } from './repayEntry';
 
@@ -17,6 +19,8 @@ export interface RepayEntryModelV1 {
   read: RepayCapacityWireV1 | null; reading: boolean; preparing: boolean; error: string | null;
   /** The read shows an Aave V4 deposit, which Repay all can take back. */
   canReturn: boolean;
+  /** This wallet's loans and repayments that have not settled and hold their market (audit UI-19). */
+  held?: readonly LendingHeldByV1[];
   onAsset: (asset: string) => void; onMode: (mode: RepayModeV1) => void;
   onAmount: (value: string) => void; onMaximum: (value: string) => void; onRead: () => void; onReview: () => void;
   /** Nothing owed: prepares the stock's return alone. */
@@ -35,6 +39,7 @@ export function useRepayEntryConsoleV1(input: {
   onReview: (href: string) => void;
 }): { model: RepayEntryModelV1 } {
   const owner = input.signedIn ? input.walletIdentity?.toLowerCase() ?? '' : '';
+  const held = useLendingHeldV1({ signedIn: input.signedIn, walletIdentity: input.walletIdentity });
   const firstAsset = REPAY_COLLATERALS_V1.some(asset => asset.id === input.initialAsset) ? input.initialAsset! : null;
   const [state, setState] = useState<EntryStateV1>(() => initial(owner, firstAsset));
   const active = state.owner === owner ? state : initial(owner, firstAsset);
@@ -76,7 +81,7 @@ export function useRepayEntryConsoleV1(input: {
   };
   return { model: { signedIn: Boolean(owner), signInHref: input.signInHref, asset: active.asset, mode: active.mode,
     amount: active.amount, maximum: active.maximum, read, reading: active.reading, preparing: active.preparing, error: active.error,
-    canReturn: repayCanReturnV1(read),
+    canReturn: repayCanReturnV1(read), held,
     onAsset: asset => { if (!busy.current && REPAY_COLLATERALS_V1.some(row => row.id === asset)) patch({ asset, read: null, error: null }); },
     onMode: mode => { if (!busy.current) patch({ mode, error: null }); },
     onAmount: amount => { if (!busy.current) patch({ amount, error: null }); },
@@ -107,6 +112,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
   return <div className="still-borrow">
     <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC, or repay all of a loan and take its collateral back to your wallet.</p></div>
     {!model.signedIn ? <section className="still-section still-card"><p className="still-sub">Sign in to read your repayment position.</p><a className="still-btn" href={model.signInHref}>Sign in</a></section> : <>
+      <LendingHeldNoticeV1 held={model.held ?? []} />
       {model.error && !errorAtForm ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       <div className="still-borrow-grid">
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-position-title`}>

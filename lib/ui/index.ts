@@ -4,4 +4,5 @@ export * from './src/console/useLendingReviewConsole';
 export * from './src/console/LendingReviewScreen';
 export * from './src/console/repayEntry';
 export * from './src/console/RepayEntryScreen';
+export * from './src/console/LendingHeldNotice';
 export * from './src/console/walletBatchSupport';

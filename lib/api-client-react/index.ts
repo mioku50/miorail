@@ -48,8 +48,10 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   if (!response.ok) {
     let errorMsg = `API error: ${response.status} ${response.statusText}`;
+    let body: unknown = null;
     try {
       const errJson = await response.json();
+      body = errJson;
       // The `detail` is what makes a stable code actionable. Dropping it put
       // bare codes like "nft_compare_failed" on the screen while the server
       // had already said exactly what went wrong.
@@ -61,7 +63,9 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       // Preserve the HTTP status message when the error body is not JSON.
     }
-    throw new Error(errorMsg);
+    // The refusal's own body travels with the error, for a page that reads more of it than its words
+    // (audit UI-19: which attempt holds a lending market, and the link to it).
+    throw Object.assign(new Error(errorMsg), { status: response.status, body });
   }
   return response.json();
 }

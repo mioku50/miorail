@@ -41,6 +41,8 @@ let store: MemoryLoanExecutionStoreV1, chain: { allowance: boolean; supplied: bo
 let asked: Array<{ question: LendingQuestionV1; delivery?: string; atLeastBlock?: bigint }>, sent: Map<string, { tx: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }>;
 // What Base says the wallet has sent, mined and with what the node holds pending.
 let count: { latest: number; pending: number };
+/** The wallet's transactions after a step, as the search lists them (audit LL-2). */
+let later: { hashes: HashV1[]; complete: boolean } | null;
 
 /** The block a review is read at: the chain's head, which is past every step that has landed (a review is
  * true of its own block, and a later one is not made stale by what landed before it: audit LEND-3). */
@@ -101,7 +103,7 @@ function app() {
 }
 
 beforeEach(() => {
-  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; morphoAsked = []; sent = new Map(); count = { latest: 0, pending: 0 };
+  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; morphoAsked = []; sent = new Map(); count = { latest: 0, pending: 0 }; later = { hashes: [], complete: true };
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0, stopSettleMs: 0,
     runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => review(input),
@@ -110,6 +112,7 @@ beforeEach(() => {
       async getTransactionReceipt(h: HashV1) { return sent.get(h)?.receipt ?? null; },
       async getTransaction(h: HashV1) { return sent.get(h)?.tx ?? null; },
       async getTransactionCount(_address: string, tag: 'latest' | 'pending') { return tag === 'latest' ? count.latest : count.pending; },
+      async listOwnTransactionsAfter() { return later; },
     }) });
 });
 afterEach(() => {
@@ -243,11 +246,12 @@ describe('each step is read from the chain, and the review runs again before the
     const other = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' })).body;
     const arm = () => request(app()).post(`${ROOT}/${other.executionId}/arm`).send({ callsHash: other.callsHash, signingTermsHash: other.signingTermsHash });
     assert.deepEqual([(await arm()).status, (await arm()).body.error], [409, 'execution_active']);
-    // Base shows a later transaction from the wallet: not stopped, and nothing recorded.
-    count = { latest: 10, pending: 10 };
+    // Base shows a later transaction from the wallet that Still could not read one by one: not stopped, and nothing recorded.
+    count = { latest: 10, pending: 10 }; later = null;
     const refused = await request(app()).post(`${ROOT}/${id}/stop`).send({});
-    assert.deepEqual([refused.status, refused.body.error], [409, 'loan_steps_later_transaction']);
-    assert.match(refused.body.detail, /^Your wallet sent another transaction after step 2\./);
+    assert.deepEqual([refused.status, refused.body.error], [409, 'loan_steps_count_unread']);
+    assert.match(refused.body.detail, /could not be read from Base just now, so nothing was changed\./);
+    later = { hashes: [], complete: true };
     // Nothing sent after step 2, nothing waiting: stopped after step 2, and the market is free.
     count = { latest: 9, pending: 9 };
     const stopped = await request(app()).post(`${ROOT}/${id}/stop`).send({});
@@ -400,6 +404,30 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     const later = (await request(app()).get(`/api/route-intelligence/rwa/lending/executions/${first.id}`)).body;
     assert.deepEqual([later.state, later.errorCode, later.walletPay], ['failed', 'loan_steps_stopped', null]);
     assert.equal((await request(app()).get(`/api/route-intelligence/rwa/lending/review/${first.link}`).query({ delivery: 'sequential' })).body.walletPay, null);
+  });
+
+  // Audit SPEND-3, 2026-11-14: stopped after the payment step went to a mobile wallet, the page offered to pay
+  // the same invoice from the wallet's USDC, and the old request confirmed later paid it a second time.
+  it('a loan stopped by its owner after its payment step went to the wallet does not offer the invoice to the wallet again', async () => {
+    const { id, attemptId } = await start();
+    land(1, APPROVE, { nonce: 7 }); await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
+    land(2, SUPPLY, { nonce: 8 }); await steps(id, { attemptId, index: 1, transactionHash: hash(2) });
+    land(3, BORROW, { nonce: 9 });
+    const pay = (await steps(id, { attemptId, index: 2, transactionHash: hash(3) })).body;
+    assert.deepEqual([pay.state, pay.index], ['next', 3]);
+    const owner = { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET };
+    assert.equal((await store.get({ owner, executionId: id }))!.verification?.paymentAsked, true);
+    // The page was reloaded and its owner pressed Stop here: nothing more on Base, so it stops after step 3.
+    count = { latest: 10, pending: 10 };
+    const stopped = await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${id}/stop`).send({});
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+    assert.deepEqual([stopped.body.state, stopped.body.errorCode, stopped.body.walletPay, stopped.body.paymentMayStillBeSent], ['failed', 'loan_steps_stopped', null, true]);
+    const record = (await store.get({ owner, executionId: id }))!;
+    assert.deepEqual([record.verification?.paymentAsked, record.verification?.stoppedBy], [true, 'person']);
+    // The invoice stays with the loan, whose payment the wallet may still send.
+    assert.equal(loanStoppedBeforePaymentV1(record), false);
+    const read = (await request(app()).get(`/api/route-intelligence/rwa/lending/executions/${id}`)).body;
+    assert.deepEqual([read.walletPay, read.paymentMayStillBeSent], [null, true]);
   });
 
   it('offers no wallet payment for a loan that paid, or one still on its way', async () => {
