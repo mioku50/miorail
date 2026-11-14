@@ -3,6 +3,11 @@ import { appManifest } from "@/manifest";
 import { RootProvider } from "./rootProvider";
 import "./globals.css";
 
+// Every page is rendered per request, so Next can put that request's script nonce on the inline scripts it
+// writes (middleware.ts, audit AUTH-1): a page built once at deploy time could not carry a nonce made later,
+// and the policy would stop its scripts.
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata(): Promise<Metadata> {
   return {
     title: appManifest.miniapp.name,

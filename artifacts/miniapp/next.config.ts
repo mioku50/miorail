@@ -47,6 +47,8 @@ const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "/app";
 
 const nextConfig: NextConfig = {
   basePath: BASE_PATH,
+  // No `x-powered-by: Next.js` (audit AUTH-1): a page need not say what serves it.
+  poweredByHeader: false,
   // The miniapp draws no <Image>, so Next's optimizer is off: /_next/image
   // answers 404 before any image is decoded, and sharp is never reached.
   images: { unoptimized: true },
