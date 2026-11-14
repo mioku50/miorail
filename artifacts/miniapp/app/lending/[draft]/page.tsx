@@ -1,5 +1,5 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useAccount, useCapabilities, useConfig, useSendCalls } from 'wagmi';
@@ -10,6 +10,7 @@ import { builderCodeFromEnvV1 } from '@mioagent/route-domain/builder-code';
 import { builderCodeToDataSuffix, attributedCallsV1, gasLimitedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, publicGasMeterV1, requireLiveWalletAccountV1,
   sendCallsCapabilitiesV1, sendCallsKeepingCallCapabilitiesV1, sponsoredGasPlanV1 } from '@mioagent/wallet-actions';
 import { WalletConnect } from '../../components/WalletConnect';
+import { MiniStillEligibilityLine, useMiniStillEligibilityV1 } from '../../components/StillEligibilityLine';
 import '@mioagent/ui/still.css';
 
 const LENDING_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeFromEnvV1({
@@ -34,8 +35,12 @@ export default function BaseAppLendingReviewPage() {
     walletTakesSponsor: sponsorDeclined ? false : paymasterServiceSupportV1(capabilities.data),
     dailyLimitPerWallet: sponsoredGas.data?.dailyLimitPerWallet ?? null,
   });
+  // A new loan's review waits for this sign-in's confirmation, given in the line above it; once that lands,
+  // a review refused for want of it is read again, once, as on the web (audit UI-15).
+  const eligibility = useMiniStillEligibilityV1();
+  const [reread, setReread] = useState(0);
   const review = useLendingReviewConsoleV1({ draft, walletAddress: address ?? null,
-    sessionWalletAddress: session.data?.user?.address ?? null, feeNote,
+    sessionWalletAddress: session.data?.user?.address ?? null, feeNote, rereadKey: reread,
     sendCalls: async ({ calls, sponsorship, beforeWallet }) => {
       // A restored connection is brought back before the wallet is asked, and outside the try below:
       // a connection that was not ready is not the sponsor's failure (2026-11-09). The send names the
@@ -71,6 +76,8 @@ export default function BaseAppLendingReviewPage() {
       }
     },
   });
+  const waitingForConfirmation = review.model.body?.state === 'refused' && review.model.body.refusal === 'eligibility_required';
+  useEffect(() => { if (eligibility.clear && waitingForConfirmation && reread === 0) setReread(1); }, [eligibility.clear, waitingForConfirmation, reread]);
   return <main className="still" data-sky={palette} style={{ minHeight: '100dvh', padding: '16px 0 32px' }}>
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <header className="still-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -79,6 +86,7 @@ export default function BaseAppLendingReviewPage() {
       {!session.data?.user && !session.isPending ? <p className="still-section still-note">
         Connecting is separate from signing in. <a href={`/signin?next=${encodeURIComponent(`/app/lending/${draft ?? ''}`)}`}>Sign in to this review</a>.
       </p> : null}
+      <MiniStillEligibilityLine />
       <LendingReviewScreen model={review.model} />
     </div>
   </main>;

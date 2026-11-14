@@ -10,6 +10,8 @@ import {
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
 import { SubmissionRecoveryRail, attributedCallsV1, builderCodeToDataSuffix, gasLimitedCallsV1, isWalletRejectionError, publicGasMeterV1, requireLiveWalletAccountV1,
   sendCallsKeepingCallCapabilitiesV1, useWalletBatchSupportV1 } from "@mioagent/wallet-actions";
+import { MiniStillEligibilityLine } from "../../components/StillEligibilityLine";
+import "@mioagent/ui/still.css";
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review, in Base App.
@@ -90,6 +92,8 @@ export default function BaseAppStockActionReviewPage() {
         chainId={chainId ?? null}
         enabled={Boolean(status.data?.productMigration?.submissionRecoveryV1)}
       />
+      {/* Where Still is offered, and the one box a buy asks for first: its refusal says "Confirm at the top of this page" (audit UI-15). */}
+      <MiniStillEligibilityLine scoped />
       <StockActionReviewScreen model={reviewConsole.model} />
     </main>
   );
