@@ -40,6 +40,35 @@ test('the daily allowance resets only when the UTC day moves forwards', () => {
   assert.throws(() => budget.reserveSearch(), B20PublicContextBudgetError);
 });
 
+// Audit MCP-4, 2026-11-14: one anonymous address spent the whole day's pool in 17 to 34 minutes.
+test('one client reserves at most ten searches a day, and another client is unaffected', () => {
+  const budget = new B20PublicContextBudgetV1();
+  for (let i = 0; i < 10; i++) budget.reserveSearch('public-ip:198.51.100.7');
+  assert.throws(() => budget.reserveSearch('public-ip:198.51.100.7'), (error) =>
+    error instanceof B20PublicContextBudgetError && error.reason === 'client_daily_limit' && /its share of today's public lookups/.test(error.message));
+  budget.reserveSearch('public-ip:198.51.100.8');
+});
+
+test('clients that are not connected grants share 150 searches, and the last 50 stay for grants', () => {
+  const budget = new B20PublicContextBudgetV1();
+  for (let client = 0; client < 15; client++) {
+    for (let i = 0; i < 10; i++) budget.reserveSearch(`public-ip:203.0.113.${client}`);
+  }
+  assert.throws(() => budget.reserveSearch('public-ip:203.0.113.200'), (error) =>
+    error instanceof B20PublicContextBudgetError && error.reason === 'daily_limit');
+  // A connected grant still has its own ten.
+  for (let i = 0; i < 10; i++) budget.reserveSearch('private:["eip155:8453:0xabc","grant-1"]');
+});
+
+test('a client’s share returns with the UTC day', () => {
+  let now = Date.parse('2026-11-14T23:59:00Z');
+  const budget = new B20PublicContextBudgetV1({ now: () => now });
+  for (let i = 0; i < 10; i++) budget.reserveSearch('public-ip:192.0.2.1');
+  assert.throws(() => budget.reserveSearch('public-ip:192.0.2.1'), B20PublicContextBudgetError);
+  now = Date.parse('2026-11-15T00:00:01Z');
+  budget.reserveSearch('public-ip:192.0.2.1');
+});
+
 const tokenAddress = `0x${'5'.repeat(40)}`;
 const input = { chainId: 8453, tokenAddress, name: 'Budget fixture', symbol: 'BUDGET' };
 

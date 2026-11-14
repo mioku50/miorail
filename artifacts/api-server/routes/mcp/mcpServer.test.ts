@@ -1175,6 +1175,39 @@ describe('public context is opt-in and never sits inside the verified layer', ()
     assert.equal(fetch.mock.callCount(), 0);
   });
 
+  test('a client that used its share of the day is refused, and another client is not (audit MCP-4)', async (t) => {
+    const saved = { url: process.env.B20_PUBLIC_SEARCH_BASE_URL, key: process.env.B20_PUBLIC_SEARCH_API_KEY };
+    process.env.B20_PUBLIC_SEARCH_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.B20_PUBLIC_SEARCH_API_KEY = 'unit-test-only-not-a-credential';
+    clearB20PublicContextCacheV1();
+    t.after(() => {
+      clearB20PublicContextCacheV1();
+      if (saved.url === undefined) delete process.env.B20_PUBLIC_SEARCH_BASE_URL;
+      else process.env.B20_PUBLIC_SEARCH_BASE_URL = saved.url;
+      if (saved.key === undefined) delete process.env.B20_PUBLIC_SEARCH_API_KEY;
+      else process.env.B20_PUBLIC_SEARCH_API_KEY = saved.key;
+    });
+    const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected network'); });
+    const budget = new B20PublicContextBudgetV1({ clientDailySearchMax: 1 });
+    budget.reserveSearch('share-spent-client');
+    const reasonFor = async (clientKey: string) => {
+      const client = await connectedClient({ publicContext: { clientKey, budget } });
+      try {
+        const payload = payloadOf(await client.callTool({
+          name: 'miorail_get_b20_opportunity',
+          arguments: { tokenAddress: LAUNCH.tokenAddress, includePublicContext: true },
+        }));
+        assert.ok(payload.opportunity);
+        return (payload.possiblePublicContext as { unavailableReason?: string }).unavailableReason ?? '';
+      } finally { await client.close(); }
+    };
+    assert.match(await reasonFor('share-spent-client'), /used its share of today's public lookups/);
+    assert.equal(fetch.mock.callCount(), 0);
+    // Another client still reaches the search (here a provider that does not answer).
+    assert.doesNotMatch(await reasonFor('fresh-client'), /share of today's|daily budget/);
+    assert.ok(fetch.mock.callCount() > 0);
+  });
+
   test('fresh stateless MCP instances share a client budget and preserve core evidence on refusal', async (t) => {
     const previous = process.env.B20_PUBLIC_SEARCH_BASE_URL;
     process.env.B20_PUBLIC_SEARCH_BASE_URL = 'https://unconfigured.example';

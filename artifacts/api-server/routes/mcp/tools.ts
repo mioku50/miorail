@@ -506,7 +506,8 @@ export async function miorailGetOpportunityV1(input: {
             deps: {
               search: search ?? (async () => { throw new Error('no search provider'); }),
               now: () => b20RouteRuntime.now(),
-              beforeSearch: () => budget.reserveSearch(),
+              // This client's share of the day, and the day's pool (audit MCP-4).
+              beforeSearch: () => budget.reserveSearch(request.clientKey),
             },
           });
           possiblePublicContext = {
