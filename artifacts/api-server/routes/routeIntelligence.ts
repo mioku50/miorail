@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@mioagent/utils';
 import { firstOwnFrameV1, safeErrorMessageV1, safeFailureMetaV1 } from '../lib/safeZodIssues.js';
+import { logRouteFailureV1 } from '../lib/routeFailureLog.js';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   ConfirmSpendPermissionRequestV1Schema,
@@ -872,6 +873,8 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
   const guard = earnRouteGuard(req, res, SwapBlueprintSubmissionRequestV1Schema, 'invalid_blueprint_submission_request');
   if (!guard) return;
   const { user, data } = guard;
+  // Which step a failure came at, for the line that names it (audit OPS-1).
+  let stage = 'verify_attempt';
   try {
     if (!(await earnGateReady(res))) return;
     const attempts = earnBlueprintRouteRuntime.attemptRepository();
@@ -885,6 +888,7 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
       res.status(link.code === 'submission_attempt_mismatch' ? 409 : 404).json({ error: link.code, code: link.code });
       return;
     }
+    stage = 'record_submission';
     const result = await earnBlueprintRouteRuntime.recordSubmission({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
@@ -898,6 +902,7 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
       error: data.error,
       now: earnBlueprintRouteRuntime.now(),
     });
+    stage = 'record_attempt_outcome';
     await recordAttemptOutcomeV1(attempts, {
       attempt: link.attempt,
       tenantId: user.id,
@@ -907,12 +912,14 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
       errorCode: data.error ? 'wallet_error' : null,
       now: earnBlueprintRouteRuntime.now(),
     });
+    stage = 'response';
     res.json(SwapBlueprintSubmissionResponseV1Schema.parse(result));
   } catch (cause) {
     if (cause instanceof BlueprintSubmissionConflictError) {
       res.status(409).json({ error: 'blueprint_submission_conflict', code: 'blueprint_submission_conflict' });
       return;
     }
+    logRouteFailureV1('Earn submission record failed', cause, stage);
     res.status(500).json({ error: 'blueprint_submission_failed', code: 'blueprint_submission_failed' });
   }
 });
@@ -935,6 +942,7 @@ routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req
   const guard = earnRouteGuard(req, res, RouteProofReconcileRequestV1Schema, 'invalid_route_proof_reconcile_request');
   if (!guard) return;
   const { user, data } = guard;
+  let stage = 'reconcile';
   try {
     if (!(await earnGateReady(res))) return;
     const result = await earnReconcileRouteRuntime.reconcile({
@@ -944,6 +952,7 @@ routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req
       routeProofId: req.params.proofId,
       now: earnReconcileRouteRuntime.now(),
     });
+    stage = 'response';
     res.json(RouteProofReconcileResponseV1Schema.parse(result));
   } catch (cause) {
     if (cause instanceof RouteProofReconcileBindingError) {
@@ -958,6 +967,7 @@ routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req
       res.status(409).json({ error: 'route_proof_conflict', code: 'route_proof_conflict' });
       return;
     }
+    logRouteFailureV1('Earn route proof reconcile failed', cause, stage);
     res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
   }
 });
@@ -1575,6 +1585,8 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
     res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
     return;
   }
+  // Which step a failure came at, for the line that names it (audit OPS-1).
+  let stage = 'verify_attempt';
   try {
     if (!(await swapBlueprintRouteRuntime.migrationAvailable())) {
       res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
@@ -1591,6 +1603,7 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       res.status(link.code === 'submission_attempt_mismatch' ? 409 : 404).json({ error: link.code, code: link.code });
       return;
     }
+    stage = 'record_submission';
     const result = await swapBlueprintRouteRuntime.recordSubmission({
       tenantId: user.id,
       walletAddress: user.address,
@@ -1604,6 +1617,7 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       error: parsed.data.error,
       now: swapBlueprintRouteRuntime.now(),
     });
+    stage = 'record_attempt_outcome';
     await recordAttemptOutcomeV1(attempts, {
       attempt: link.attempt,
       tenantId: user.id,
@@ -1613,12 +1627,14 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       errorCode: parsed.data.error ? 'wallet_error' : null,
       now: swapBlueprintRouteRuntime.now(),
     });
+    stage = 'response';
     res.json(SwapBlueprintSubmissionResponseV1Schema.parse(result));
   } catch (cause) {
     if (cause instanceof BlueprintSubmissionConflictError) {
       res.status(409).json({ error: 'blueprint_submission_conflict', code: 'blueprint_submission_conflict' });
       return;
     }
+    logRouteFailureV1('Swap submission record failed', cause, stage);
     res.status(500).json({ error: 'blueprint_submission_failed', code: 'blueprint_submission_failed' });
   }
 });
@@ -1737,6 +1753,7 @@ routeIntelligenceRouter.post('/route-proofs/:proofId/reconcile', async (req, res
     res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
     return;
   }
+  let stage = 'reconcile';
   try {
     if (!(await routeProofRouteRuntime.migrationAvailable())) {
       res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
@@ -1749,6 +1766,7 @@ routeIntelligenceRouter.post('/route-proofs/:proofId/reconcile', async (req, res
       routeProofId: req.params.proofId,
       now: routeProofRouteRuntime.now(),
     });
+    stage = 'response';
     res.json(RouteProofReconcileResponseV1Schema.parse(result));
   } catch (cause) {
     if (cause instanceof RouteProofReconcileBindingError) {
@@ -1763,6 +1781,7 @@ routeIntelligenceRouter.post('/route-proofs/:proofId/reconcile', async (req, res
       res.status(409).json({ error: 'route_proof_conflict', code: 'route_proof_conflict' });
       return;
     }
+    logRouteFailureV1('Route proof reconcile failed', cause, stage);
     res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
   }
 });
@@ -1801,7 +1820,7 @@ routeIntelligenceRouter.get('/route-proofs/:proofId', async (req, res) => {
     }
     res.json(RouteProofGetResponseV1Schema.parse(result));
   } catch (cause) {
-    logger.error('Route proof reconcile failed', safeFailureMetaV1(cause));
+    logRouteFailureV1('Route proof read failed', cause, 'read');
     res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
   }
 });

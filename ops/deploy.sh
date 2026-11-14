@@ -304,7 +304,7 @@ install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts db-backup region-table; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts db-backup region-table route-proofs; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then

@@ -1,6 +1,7 @@
 import { client, closeDb } from '@mioagent/db';
 import { createRouteProofReconciler } from '@mioagent/route-proof';
 import { createDatabaseRouteStorageRepository } from '@mioagent/route-storage';
+import { describeErrorV1 } from '@mioagent/utils';
 
 import { createViemBaseReceiptReader } from '../artifacts/api-server/lib/baseReceiptReader.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -11,6 +12,9 @@ import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 // swaps stayed `pending` after they had landed. Read-only onchain; writes only
 // the same append-only Proof events/projection as the normal reconciliation
 // route. It never signs, broadcasts, pays, or changes an approved call.
+//
+// Hourly since 2026-11-14 (ops/systemd/miorail-route-proofs.timer, audit OPS-1): a proof whose
+// reconcile failed stayed pending with nothing to finish it. Errors are told by name and status.
 
 interface PendingProofRowV1 {
   proof_id: string;
@@ -68,7 +72,7 @@ async function main(): Promise<void> {
       counts.set(`${result.outcome}/${result.proof.finalStatus}`, (counts.get(`${result.outcome}/${result.proof.finalStatus}`) ?? 0) + 1);
     } catch (error) {
       failures += 1;
-      console.error(`Proof ${row.proof_id} failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      console.error(`Proof ${row.proof_id} failed: ${describeErrorV1(error)}`);
     }
   }
   for (const [outcome, count] of [...counts].sort()) console.log(`${outcome}: ${count}`);
@@ -78,7 +82,7 @@ async function main(): Promise<void> {
 
 main()
   .catch((error: unknown) => {
-    console.error('FAILED —', error instanceof Error ? error.message : String(error));
+    console.error('FAILED —', describeErrorV1(error));
     process.exitCode = 1;
   })
   .finally(() => closeDb().catch(() => {}));

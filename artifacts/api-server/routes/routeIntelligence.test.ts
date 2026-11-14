@@ -915,6 +915,28 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/submission',
     assert.equal(JSON.stringify(failed.body).includes('secret submission detail'), false);
   });
 
+  // 2026-11-12: a submission 500 left its proof pending for good, and the journal held no line saying why (audit OPS-1).
+  test('a submission that fails says why in the journal, with the step it failed at, and nothing secret', async () => {
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = (line: string) => { lines.push(String(line)); };
+    try {
+      swapBlueprintRouteRuntime.migrationAvailable = async () => true;
+      swapBlueprintRouteRuntime.recordSubmission = async () => {
+        throw new Error(`fetch failed https://base-mainnet.infura.io/v3/${'a1'.repeat(16)} for ${WALLET}`);
+      };
+      assert.equal((await request(routeApp()).post(url).send(SUBMISSION_BODY)).status, 500);
+    } finally {
+      console.error = original;
+    }
+    const entry = lines.map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return null; } })
+      .find((value) => value?.message === 'Swap submission record failed');
+    assert.ok(entry, 'no line said why');
+    assert.deepEqual([entry.level, entry.stage, entry.name], ['error', 'record_submission', 'Error']);
+    assert.match(String(entry.detail), /^fetch failed/);
+    assert.doesNotMatch(JSON.stringify(entry), new RegExp(`${'a1'.repeat(16)}|${WALLET}`, 'i'));
+  });
+
   test('maps a submission conflict to a stable 409', async () => {
     swapBlueprintRouteRuntime.recordSubmission = async () => {
       throw new BlueprintSubmissionConflictError('a different batch is already recorded');
@@ -1052,10 +1074,22 @@ describe('POST /api/route-intelligence/route-proofs/:proofId/reconcile', () => {
     assert.deepEqual(conflict.body, { error: 'route_proof_conflict', code: 'route_proof_conflict' });
 
     routeProofRouteRuntime.reconcile = async () => { throw new Error('secret reconcile detail'); };
-    const failed = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = (line: string) => { lines.push(String(line)); };
+    let failed: Awaited<ReturnType<ReturnType<typeof request>['post']>>;
+    try {
+      failed = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    } finally {
+      console.error = original;
+    }
     assert.equal(failed.status, 500);
     assert.deepEqual(failed.body, { error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
     assert.equal(JSON.stringify(failed.body).includes('secret reconcile detail'), false);
+    // The answer stays opaque; the journal says why (audit OPS-1).
+    const entry = lines.map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return null; } })
+      .find((value) => value?.message === 'Route proof reconcile failed');
+    assert.deepEqual([entry?.stage, entry?.name], ['reconcile', 'Error']);
   });
 
   test('fails closed on missing storage', async () => {

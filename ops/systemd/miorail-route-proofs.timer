@@ -1,0 +1,16 @@
+[Unit]
+# Every hour.
+#
+# A proof the page did not settle is read again within the hour, not never: the
+# pass leaves alone any proof touched in the last ten minutes, so a page still
+# reconciling its own is not raced, and it reads at most fifty a pass.
+Description=Reconcile pending Route Proofs from Base
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=1h
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

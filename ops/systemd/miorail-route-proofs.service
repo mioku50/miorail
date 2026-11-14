@@ -1,0 +1,44 @@
+[Unit]
+# Route Proofs whose transactions were recorded and never settled, read again from Base.
+#
+# Only the page reconciled a proof, once, and a page that closed early
+# (2026-10-31: a first press the wallet refused) or a reconcile that failed
+# (2026-11-12: four 500s in two days, audit OPS-1) left a proof pending after
+# its transactions had landed, with nothing to finish it. Each pass settles them
+# as the reconcile route would: receipts read from Base, written as the same
+# append-only proof events. Read-only onchain: no signer, no key, no chain
+# write, no wallet. A proof with no transaction recorded is left as it is.
+#
+# Oneshot, driven by miorail-route-proofs.timer.
+Description=Miorail pending Route Proof reconcile
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+# Receipts are read on the same operator-reviewed RPC as the API. This file is
+# deliberately second: its BASE_MAINNET_RPC_URL overrides the repository
+# fallback without copying provider credentials into git.
+EnvironmentFile=/etc/miorail/api-rpc.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/reconcile_pending_route_proofs.ts
+
+TimeoutStartSec=900
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/miorail/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-route-proofs

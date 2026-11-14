@@ -156,6 +156,17 @@ the database is the thing that is down. A pass that sends something writes
 the copy, and so does a quiet pass once the copy is missing or six hours old,
 so a new chat is in it within six hours, before anything fails.
 
+## Pending Route Proofs
+
+`miorail-route-proofs` is a oneshot on an hourly timer, installed by the same
+loop (audit OPS-1, 2026-11-14). Only the page reconciled a Route Proof, once,
+so a page that closed early or a reconcile that failed left a proof `pending`
+after its transactions had landed. A pass reads at most fifty proofs that
+recorded transactions, untouched for ten minutes and less than thirty days
+old, and settles each as the reconcile route would: receipts from Base, the
+same append-only proof events. It signs and sends nothing. A proof with no
+transaction recorded is left as it is. `--dry-run` only counts them.
+
 ## Prerequisites
 
 `B20_DISCOVER_START_BLOCK` must be set once, before the first run, or discovery
