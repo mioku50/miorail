@@ -169,6 +169,40 @@ describe('repay all and take the collateral back on Morpho', () => {
     assert.deepEqual([r.facts.maximumDebitAssets, r.measured.loanDeltaAssets, r.facts.debtBeforeAssets], ['0', '0', '0']);
     assert.match(r.facts.warnings[0]!, /No USDC debt is open in this Morpho market/);
   });
+  it('a take-back while the collateral is held is refused by its hold, with the repayment that still works (audit LM-2)', async () => {
+    for (const [transfers, words] of [
+      [{ paused: true, marketFrozen: false, walletFrozen: false }, /^cbBTC transfers are paused onchain \(Base block 53,100,000\)\. The collateral cannot come back to this wallet now/],
+      [{ paused: false, marketFrozen: true, walletFrozen: null }, /^cbBTC’s issuer has frozen the cbBTC held by Morpho Blue \(Base block 53,100,000\)/],
+      [{ paused: null, marketFrozen: false, walletFrozen: true }, /^cbBTC’s issuer has frozen this wallet’s cbBTC \(Base block 53,100,000\)/],
+    ] as const) {
+      const h = returning(); h.s.collateralTransfers = transfers;
+      const r = await runMorphoRepayV1(h.request, h.deps);
+      assert.equal(r.state === 'refused' && r.refusal, 'repay_collateral_held');
+      if (r.state === 'refused') {
+        assert.match(r.detail, words);
+        assert.match(r.detail, /Repay all debt without taking it back works: the cbBTC stays deposited until (transfers resume|the freeze is lifted), and a loan repaid in full has nothing left to liquidate\.$/);
+      }
+      assert.equal(h.simulated(), 0);
+    }
+    // With no debt left there is only the take-back, and nothing to repay instead.
+    const free = returning(false); free.s.collateralTransfers = { paused: true, marketFrozen: false, walletFrozen: false };
+    const only = await runMorphoRepayV1(free.request, free.deps);
+    assert.equal(only.state === 'refused' && only.refusal, 'repay_collateral_held');
+    if (only.state === 'refused') assert.match(only.detail, /It stays deposited until transfers resume; with no debt open in this market there is nothing to liquidate\.$/);
+    // Read as free, or unread: the take-back is reviewed as before.
+    for (const transfers of [{ paused: false, marketFrozen: false, walletFrozen: false }, null]) {
+      const h = returning(); h.s.collateralTransfers = transfers;
+      assert.equal((await runMorphoRepayV1(h.request, h.deps)).state, 'ready');
+    }
+  });
+  it('a plain repayment while the collateral is held goes ahead, and says the collateral stays where it is (audit LM-2)', async () => {
+    const h = harness(true); h.s.collateralTransfers = { paused: true, marketFrozen: false, walletFrozen: false };
+    const r = await runMorphoRepayV1(h.request, h.deps);
+    assert.equal(r.state, 'ready', r.state === 'refused' ? `${r.refusal}: ${r.detail}` : ''); if (r.state !== 'ready') return;
+    assert(r.facts.warnings.includes('cbBTC transfers are paused onchain (Base block 53,100,000). This repayment works, and the cbBTC stays deposited until transfers resume.'), r.facts.warnings.join(' | '));
+    const free = harness(true), plain = await runMorphoRepayV1(free.request, free.deps);
+    assert.equal(plain.state === 'ready' && plain.facts.warnings.some(line => /paused|frozen/.test(line)), false);
+  });
   it('refuses with nothing deposited, short collateral, USDC moving without debt, or collateral arriving unasked', async () => {
     const empty = returning(); empty.s.position = { ...empty.s.position, collateral: 0n };
     const a = await runMorphoRepayV1(empty.request, empty.deps); assert.equal(a.state === 'refused' && a.refusal, 'nothing_to_return'); assert.equal(empty.simulated(), 0);

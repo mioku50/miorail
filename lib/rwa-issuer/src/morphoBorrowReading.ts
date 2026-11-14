@@ -107,6 +107,9 @@ export interface MorphoBorrowStandingV1 {
   /** This wallet's allowance of the collateral to Morpho Blue at the same
    * block, for a loan in steps. Null when it could not be read. */
   collateralAllowanceToMorphoAssets?: bigint | null;
+  /** Whether the collateral can move at the reading block: its pause, and whether its issuer blocked Morpho
+   * Blue or this wallet (Still's cbBTC and PAXG, audit LM-2); absent or null when unread. */
+  collateralTransfers?: { paused: boolean | null; marketFrozen: boolean | null; walletFrozen: boolean | null } | null;
 }
 
 export type MorphoBorrowReadingV1 =

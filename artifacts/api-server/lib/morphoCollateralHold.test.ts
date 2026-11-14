@@ -80,6 +80,10 @@ describe('what can keep a Morpho collateral from moving (audits LM-2, LM-3)', ()
     assert.match(morphoCollateralHoldWordsV1({ ...at, hold: 'wallet_frozen', action: 'take_back' }), /stays deposited until the freeze is lifted, and a loan repaid in full has nothing left to liquidate\.$/);
     assert.equal(morphoCollateralHoldWordsV1({ ...at, hold: 'market_frozen', action: 'repay' }),
       'PAXG’s issuer has frozen the PAXG held by Morpho Blue (Base block 57,208,503), so no PAXG moves into or out of this market. This repayment works, and the PAXG stays deposited until the freeze is lifted.');
+    // A reading with no block named says it without one.
+    assert.equal(morphoCollateralHoldWordsV1({ symbol: 'cbBTC', blockNumber: null, hold: 'paused', action: 'borrow' }),
+      'cbBTC transfers are paused onchain. Still opens no new loan against it while they are: cbBTC could not be taken back. Repaying works.');
+    assert.match(morphoCollateralHoldWordsV1({ symbol: 'cbBTC', blockNumber: null, hold: 'market_frozen', action: 'borrow' }), /^cbBTC’s issuer has frozen the cbBTC held by Morpho Blue, so no cbBTC/);
     for (const hold of ['paused', 'market_frozen', 'wallet_frozen'] as const) {
       for (const action of ['borrow', 'take_back', 'repay'] as const) {
         const words = morphoCollateralHoldWordsV1({ ...at, hold, action });

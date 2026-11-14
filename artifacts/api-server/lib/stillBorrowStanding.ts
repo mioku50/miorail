@@ -23,6 +23,7 @@ import { loadMorphoUniverse, readWallet, type Universe, type WalletSnapshot } fr
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import { stillLimitComparisonV1 } from './stillLimitComparison.js';
 import { headAtLeastV1 } from './stillAaveStanding.js';
+import { morphoCollateralHoldableV1, readMorphoCollateralTransfersV1, type MorphoCollateralTransfersV1 } from './morphoCollateralHold.js';
 
 // Still uses these two immutable markets, not the first page of an API's market
 // directory. Reuse the Mirror's chain reader and accrual, at one reading block.
@@ -65,6 +66,8 @@ export interface StillBorrowSnapshotV1 {
   nativeDeployment?: NativeMorphoDeploymentV1;
   /** This wallet's allowance of the collateral to Morpho Blue at the snapshot block; null when unread. */
   collateralAllowanceToMorpho?: bigint | null;
+  /** Whether cbBTC or PAXG can move at the snapshot block; null when unread, absent for WETH. */
+  collateralTransfers?: MorphoCollateralTransfersV1 | null;
 }
 
 export interface StillBorrowReaderDepsV1 {
@@ -100,7 +103,11 @@ function freshSnapshotV1(wallet: Address, asset: CryptoAsset, native: boolean, a
           break;
         } catch { /* the next configured provider; unread stays null */ }
       }
-      if (!native) return { universe, snapshot, collateralAllowanceToMorpho };
+      // Whether the collateral can move at all, read at the same block (audit LM-2): a fresh pledge of a held
+      // cbBTC or PAXG only reverts in simulation, and the review said no more than that.
+      const collateralTransfers = !native && morphoCollateralHoldableV1(selected)
+        ? await readMorphoCollateralTransfersV1(providers.map(provider => provider.client), selected, address, snapshot.block.number) : null;
+      if (!native) return { universe, snapshot, collateralAllowanceToMorpho, collateralTransfers };
       for (const { client } of providers) {
         try {
           const [chainId, bundle, weth, multicall, authorized] = await Promise.all([
@@ -216,6 +223,7 @@ export async function readBorrowStandingV1(input: {
       venuePublishedDebtAssets: null,
       marketParams: { loanToken: params.loanToken, collateralToken: params.collateralToken, oracle: params.oracle, irm: params.irm, lltv: params.lltv },
       collateralAllowanceToMorphoAssets: typeof read.collateralAllowanceToMorpho === 'bigint' ? read.collateralAllowanceToMorpho : null,
+      collateralTransfers: read.collateralTransfers ?? null,
     }],
   };
 }

@@ -29,7 +29,7 @@ import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } fro
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingFactsV1 } from './lendingReview.js';
 import { morphoLendingStressV1 } from './lendingStress.js';
-import { morphoCollateralHoldWordsV1 } from './morphoCollateralHold.js';
+import { morphoCollateralHoldOfV1, morphoCollateralHoldWordsV1 } from './morphoCollateralHold.js';
 
 // ---------------------------------------------------------------------------
 // The whole borrow, from a measured market to a reviewed batch — or to the one
@@ -300,6 +300,15 @@ export async function runMorphoBorrowV1(
   }
   if (supply > 0n && supply > standing.walletCollateralAssets!) {
     return refusedV1('capacity', 'wallet_collateral_insufficient', null, marketId, render(standing.position, null, 'wallet_collateral_insufficient'));
+  }
+  // A Still loan against cbBTC or PAXG that cannot move, as read with the position, is refused before the venue
+  // and the simulation are asked: a fresh pledge of it only reverted in simulation, and the review said no more
+  // than that (audit LM-2, 2026-11-14). The simulated state is read again below, for a loan on what is pledged.
+  const heldAtRead = stillAsset ? morphoCollateralHoldOfV1(standing.collateralTransfers) : null;
+  if (stillAsset && heldAtRead) {
+    const code = heldAtRead === 'paused' ? 'collateral_transfers_paused' : 'collateral_frozen';
+    return refusedV1('reading', code, morphoCollateralHoldWordsV1({ symbol: stillAsset.symbol, hold: heldAtRead, action: 'borrow',
+      blockNumber: market.state.blockNumber }), marketId, render(standing.position, null, code));
   }
 
   // --- 2. Does the ask fit, and which side is short ------------------------

@@ -49,6 +49,14 @@ describe('Repay reads one exact registered market without borrowing gates', () =
       if (result.state === 'read') assert.equal(result.standing.loanAllowanceToMorphoAssets, null);
     }
   });
+  it('carries whether the collateral can move, as read at the same block, and keeps an unread one unread (audit LM-2)', async () => {
+    const f = fixture(); f.collateralTransfers = { paused: false, marketFrozen: true, walletFrozen: false };
+    const held = await read(f);
+    assert.deepEqual(held.state === 'read' && held.standing.collateralTransfers, { paused: false, marketFrozen: true, walletFrozen: false });
+    const g = fixture();
+    const unread = await read(g);
+    assert.equal(unread.state === 'read' && unread.standing.collateralTransfers, null);
+  });
   it('reads a repayment in steps again only at a block that holds the step that just landed', async () => {
     const seen: Array<bigint | undefined> = [];
     const at = (atLeastBlock: bigint) => readRepayStandingV1({ collateralTokenAddress: ADDRESSES.cbbtc, marketId: CRYPTO[0]!.morphoMarket, walletAddress: WALLET, atLeastBlock,

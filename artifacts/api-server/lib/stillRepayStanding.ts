@@ -5,6 +5,7 @@ import { loadMorphoUniverse, readWallet, type MorphoParams, type Universe, type 
 import { ADDRESSES, CRYPTO, type CryptoAsset } from '@mioagent/still-engine/registry';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import { headAtLeastV1 } from './stillAaveStanding.js';
+import { morphoCollateralHoldableV1, readMorphoCollateralTransfersV1, type MorphoCollateralTransfersV1 } from './morphoCollateralHold.js';
 
 // Official Base BlueBundlesV1 runtime, matched to verified Sourcify source and
 // eth_getCode on 2026-10-28. An upgrade or a different deployment is unread until
@@ -20,6 +21,8 @@ export interface StillRepaySnapshotV1 {
   blueBundlesRuntimeHash: Hex | null;
   /** This wallet's USDC allowance to Morpho Blue at the snapshot block, for a repayment in steps; null when unread. */
   loanAllowanceToMorpho?: bigint | null;
+  /** Whether the collateral can move at the snapshot block (cbBTC and PAXG); null when unread or not holdable. */
+  collateralTransfers?: MorphoCollateralTransfersV1 | null;
 }
 export interface StillRepayReaderDepsV1 {
   now?: () => Date;
@@ -42,6 +45,9 @@ export interface StillRepayStandingV1 {
   blueBundlesRuntimeHash: Hex | null;
   /** This wallet's USDC allowance to Morpho Blue at the same block; null when unread. */
   loanAllowanceToMorphoAssets: bigint | null;
+  /** Whether the collateral can move at the same block: its pause, and whether its issuer blocked Morpho
+   * Blue or this wallet (audit LM-2). Absent or null when unread; WETH is never asked. */
+  collateralTransfers?: MorphoCollateralTransfersV1 | null;
 }
 export type StillRepayReadingV1 =
   | { state: 'read'; readAt: string; standing: StillRepayStandingV1 }
@@ -83,7 +89,10 @@ async function freshSnapshotV1(wallet: Address, asset: CryptoAsset, atLeastBlock
       if (code && code !== '0x') { blueBundlesRuntimeHash = keccak256(code); break; }
     } catch { /* Read for the record only. */ }
   }
-  return { universe, snapshot, chainId: 8453, blueBundlesRuntimeHash, loanAllowanceToMorpho };
+  // Taking the collateral back moves it out of Morpho Blue: read at the same block whether it can (audit LM-2).
+  const collateralTransfers = morphoCollateralHoldableV1(asset)
+    ? await readMorphoCollateralTransfersV1(ordered.map(provider => provider.client), asset, wallet, snapshot.block.number) : null;
+  return { universe, snapshot, chainId: 8453, blueBundlesRuntimeHash, loanAllowanceToMorpho, collateralTransfers };
 }
 
 const UINT128_MAX = (1n << 128n) - 1n;
@@ -149,5 +158,6 @@ export async function readRepayStandingV1(input: {
     walletLoanAssets: loan.value, walletCollateralAssets: collateral.value, block,
     blueBundlesRuntimeHash: read.blueBundlesRuntimeHash,
     loanAllowanceToMorphoAssets: typeof read.loanAllowanceToMorpho === 'bigint' ? read.loanAllowanceToMorpho : null,
+    collateralTransfers: read.collateralTransfers ?? null,
   } };
 }

@@ -54,6 +54,13 @@ describe('Still execution reads the registered market, on chain', () => {
       assert.equal('markets' in result, false);
     });
   }
+  it('carries whether cbBTC can move, as read at the same block, and keeps an unread one unread (audit LM-2)', async () => {
+    const held = await readBorrowStandingV1({ tokenAddress: ADDRESSES.cbbtc, walletAddress: WALLET,
+      deps: { snapshot: async () => ({ ...readFixture(), collateralTransfers: { paused: true, marketFrozen: false, walletFrozen: null } }) } });
+    assert.deepEqual(held.state === 'read' && held.markets[0]!.collateralTransfers, { paused: true, marketFrozen: false, walletFrozen: null });
+    const unread = await readBorrowStandingV1({ tokenAddress: ADDRESSES.cbbtc, walletAddress: WALLET, deps: { snapshot: async () => readFixture() } });
+    assert.equal(unread.state === 'read' && unread.markets[0]!.collateralTransfers, null);
+  });
   it('refuses a different loan asset or market even if a snapshot was otherwise readable', async () => {
     const read = readFixture();
     read.snapshot.morpho.get('cbBTC')!.info = { ...read.snapshot.morpho.get('cbBTC')!.info,

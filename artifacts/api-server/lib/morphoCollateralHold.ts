@@ -107,14 +107,17 @@ export async function readMorphoCollateralTransfersV1(
 
 /** Said when the collateral is held: a new loan is not opened, the collateral cannot be taken back now, or a
  * plain repayment goes ahead with the collateral staying where it is. Repaying works in every case. */
-export function morphoCollateralHoldWordsV1(input: { symbol: string; hold: MorphoCollateralHoldV1; blockNumber: number | bigint;
+export function morphoCollateralHoldWordsV1(input: { symbol: string; hold: MorphoCollateralHoldV1; blockNumber: number | bigint | null;
   action: 'borrow' | 'take_back' | 'repay'; /** A take-back with no debt left to repay first. */ debtOpen?: boolean }): string {
   const { symbol, hold, action } = input;
-  const at = `Base block ${BigInt(input.blockNumber).toLocaleString('en-US')}`;
-  if (hold === 'paused' && action === 'borrow') return collateralTransfersPausedWordsV1({ symbol, venue: 'morpho', blockNumber: Number(input.blockNumber) });
-  const what = hold === 'paused' ? `${symbol} transfers are paused onchain (${at})`
-    : hold === 'market_frozen' ? `${symbol}’s issuer has frozen the ${symbol} held by Morpho Blue (${at}), so no ${symbol} moves into or out of this market`
-      : `${symbol}’s issuer has frozen this wallet’s ${symbol} (${at}), so it can neither pledge ${symbol} nor take it back`;
+  const at = input.blockNumber === null ? '' : ` (Base block ${BigInt(input.blockNumber).toLocaleString('en-US')})`;
+  if (hold === 'paused' && action === 'borrow' && input.blockNumber !== null) {
+    return collateralTransfersPausedWordsV1({ symbol, venue: 'morpho', blockNumber: Number(input.blockNumber) });
+  }
+  if (hold === 'paused' && action === 'borrow') return `${symbol} transfers are paused onchain. Still opens no new loan against it while they are: ${symbol} could not be taken back. Repaying works.`;
+  const what = hold === 'paused' ? `${symbol} transfers are paused onchain${at}`
+    : hold === 'market_frozen' ? `${symbol}’s issuer has frozen the ${symbol} held by Morpho Blue${at}, so no ${symbol} moves into or out of this market`
+      : `${symbol}’s issuer has frozen this wallet’s ${symbol}${at}, so it can neither pledge ${symbol} nor take it back`;
   const until = hold === 'paused' ? 'until transfers resume' : 'until the freeze is lifted';
   if (action === 'borrow') {
     return hold === 'market_frozen'

@@ -11,6 +11,7 @@ import { buildMorphoRepayProbesV1, verifyMorphoRepayPoststateV1 } from './morpho
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 import { repayExactOverDebtWordsV1, repayExactRoundsToZeroWordsV1, repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
+import { morphoCollateralHoldOfV1, morphoCollateralHoldWordsV1 } from './morphoCollateralHold.js';
 
 export interface MorphoRepayRequestV1 {
   collateralTokenAddress: string;
@@ -56,6 +57,14 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
   if (returning && s.position.collateral === 0n) return fail('nothing_to_return', `No ${s.collateral.symbol} is deposited in this Morpho market at the reading block, so there is nothing to take back.`);
   // Taking the collateral back repays first while any debt is left; with none, it only withdraws.
   const repaying = !returning || s.position.borrowShares > 0n;
+  // The collateral comes back out of Morpho Blue, and cannot while its transfers are paused or its issuer has
+  // blocked Morpho Blue or this wallet: the review said only "The repayment reverted", and nothing of the
+  // repayment that still works (audit LM-2, 2026-11-14). A plain repayment moves only USDC and goes ahead.
+  const hold = morphoCollateralHoldOfV1(s.collateralTransfers);
+  if (returning && hold) {
+    return fail('repay_collateral_held', morphoCollateralHoldWordsV1({ symbol: s.collateral.symbol, hold, action: 'take_back', blockNumber: s.block.number,
+      debtOpen: s.position.borrowShares > 0n }));
+  }
   const encodedMaximum = !repaying ? 0n : amount.mode === 'assets' ? amount.assets : request.maximumAssets;
   if (repaying) {
     const totals = { ...s.storedTotals, ...s.accruedTotals };
@@ -145,6 +154,7 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
         ? 'Morpho Blue takes what the debt is worth when the repayment lands, never more than your cap.'
         : 'Morpho Blue takes what the debt is worth when the transaction lands, never more than your cap, and the allowance is cleared in the same batch.'] : []),
       MORPHO_DIRECT_CALLS_WARNING_V1,
+      ...(hold ? [morphoCollateralHoldWordsV1({ symbol: s.collateral.symbol, hold, action: 'repay', blockNumber: s.block.number })] : []),
       ...(sequential ? [morphoStepsWarningV1(calls.length, 'repay', returning)] : [])] };
   const signingTermsHash = stableHashV1('still-repay-signing-terms/v1', {
     wallet: s.walletAddress,

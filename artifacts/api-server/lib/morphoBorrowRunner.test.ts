@@ -672,6 +672,29 @@ describe('a Still loan on Morpho says what a fall at once and a paused collatera
       assert.match(wallet.detail!, /Repaying works\.$/);
     }
   });
+  test('a fresh pledge of a cbBTC held at the reading block is refused by its hold, before the simulation (audit LM-2)', async () => {
+    const asset = CRYPTO[0]!, supply = 1_000_000_000n, ask = 200_000_000n;
+    for (const [transfers, code, words] of [
+      [{ paused: true, marketFrozen: false, walletFrozen: false }, 'collateral_transfers_paused', /^cbBTC transfers are paused onchain \(Base block 53,000,000\)\./],
+      [{ paused: false, marketFrozen: null, walletFrozen: true }, 'collateral_frozen', /^cbBTC’s issuer has frozen this wallet’s cbBTC \(Base block 53,000,000\)/],
+    ] as const) {
+      let simulated = 0;
+      const chain: SimulationChainV1 = { providers: [{ providerId: 'must-not-run', async simulate() { simulated++; throw new Error('not asked'); } }], batchCapableIds: new Set(['must-not-run']) };
+      const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
+        read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [{ ...cryptoStanding(), collateralTransfers: transfers }] }),
+        venue: NO_VENUE, chain,
+      }));
+      assert.equal(run.state === 'refused' && run.refusal, code);
+      if (run.state === 'refused') { assert.match(run.detail!, words); assert.match(run.detail!, /Repaying works\.$/); assert.equal('calls' in run, false); }
+      assert.equal(simulated, 0);
+    }
+    // Unread at the reading block is no refusal: the simulated state is read as before.
+    const unread = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [{ ...cryptoStanding(), collateralTransfers: { paused: null, marketFrozen: null, walletFrozen: false } }] }),
+      venue: NO_VENUE, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask),
+    }));
+    assert.equal(unread.state, 'ready', unread.state === 'refused' ? `${unread.refusal}: ${unread.detail}` : '');
+  });
   test('a pause that was not answered stays unread, and the loan is still reviewed', async () => {
     const run = await borrow('unanswered');
     assert.equal(run.state, 'ready', run.state === 'refused' ? `${run.refusal}: ${run.detail}` : '');
