@@ -468,6 +468,14 @@ test('the Wallet MCP plugin is served as markdown and follows the plugin spec', 
   assert.doesNotMatch(plugin, /github\.com\/base\/skills/);
   assert.match(plugin, /Wallet MCP, formerly Base MCP, is Coinbase's MCP server/);
   assert.match(plugin, /https:\/\/github\.com\/coinbase\/agents\/blob\/main\/skills\/wallet-mcp\/references\/approval-mode\.md/);
+  // All four Still review tools, the purchase from the wallet's own USDC among them (audit DOC-6).
+  for (const tool of ['miorail_prepare_still_loan', 'miorail_prepare_still_purchase', 'miorail_prepare_still_wallet_purchase', 'miorail_prepare_still_repay']) {
+    assert.ok((plugin.match(new RegExp(`\`${tool}\``, 'g')) ?? []).length >= 3, `${tool} is routed, prepared and given no Wallet MCP submission`);
+  }
+  assert.match(plugin, /the four Still review tools/);
+  // A Still market's borrow is the wallet's own calls with no authorisation; only a market outside it may carry one (audit DOC-5).
+  assert.match(plugin, /For Still's registered markets \(cbBTC, WETH and PAXG against USDC\) the calls are the wallet's own calls to Morpho Blue/);
+  assert.doesNotMatch(plugin, /including any authorisation that outlives the loan|including persistent adapter authorisations/);
 });
 
 

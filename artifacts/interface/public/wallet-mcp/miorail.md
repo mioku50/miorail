@@ -3,7 +3,7 @@ title: "Miorail Plugin"
 description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.5.0
+version: 0.5.1
 integration: external-mcp
 chains: [base]
 requires:
@@ -32,7 +32,7 @@ risk: [slippage, liquidation]
 ## Detection
 
 - If `get_still_terms` is exposed, the client can read Still's current terms. `miorail_get_my_still` requires the signed-in connector and reads only its own wallet.
-- If `miorail_prepare_still_loan`, `miorail_prepare_still_purchase` and `miorail_prepare_still_repay` are exposed, the signed-in connector can prepare Still reviews and `miorail_get_still_review_status` follows them; `still_find_spend` and `still_spend_product` read Bitrefill's catalogue for a purchase.
+- If `miorail_prepare_still_loan`, `miorail_prepare_still_purchase`, `miorail_prepare_still_wallet_purchase` and `miorail_prepare_still_repay` are exposed, the signed-in connector can prepare Still reviews and `miorail_get_still_review_status` follows them; `still_find_spend` and `still_spend_product` read Bitrefill's catalogue for a purchase.
 - If tools named `list_reviewed_stocks`, `get_representations` and `miorail_prepare_stock_action` are exposed, the Miorail connector is installed and signed in.
 - If only public tools are exposed, the user installed `https://miorail.xyz/mcp`. Public readings work; the wallet Mirror, personal borrowing checks and actions need the signed-in connector (see `## Installation`).
 - Read the live tool descriptions before choosing a flow. If stock tools are present but a Still tool is missing, refresh the connector's catalogue once or report that the tool is unavailable. Do not substitute a website fetch or assume a missing action is supported.
@@ -84,7 +84,7 @@ The grant is bound to the ONE wallet that signed in. No argument can read, prepa
 | Still's Mirror for the connected wallet: holdings, loans and amounts | `miorail_get_my_still` (signed-in connector only, no wallet argument). |
 | Check a specifically requested Morpho loan | `miorail_read_borrow_capacity`, then `miorail_review_borrow` for an exact amount and market → the user's browser review. |
 | What a Still loan could pay for at Bitrefill | `still_find_spend`, then `still_spend_product` for packages and USDC prices (signed-in connector, or Still's own MCP). |
-| Prepare a Still loan, a purchase paid by a loan, or a repayment | `miorail_prepare_still_loan`, `miorail_prepare_still_purchase` or `miorail_prepare_still_repay` → a review link the user opens in a browser. |
+| Prepare a Still loan, a purchase paid by a loan or from the wallet's own USDC, or a repayment | `miorail_prepare_still_loan`, `miorail_prepare_still_purchase`, `miorail_prepare_still_wallet_purchase` or `miorail_prepare_still_repay` → a review link, or Spend's payment page for a purchase from the wallet, that the user opens in a browser. |
 | What happened after the user signed | `miorail_get_still_review_status` with the `reviewId` the prepare call returned. |
 | Find a company's tokenized stocks, prices on Base, cost to buy or sell, pools and lending | Miorail MCP read tools (external MCP). |
 | A personal daily read, or what the user's whole position would fetch | Miorail MCP wallet-bound tools (signed-in connector). |
@@ -107,7 +107,7 @@ No surface needs a shell or the `web_request` allowlist: every Miorail call is a
 ### Still: a loan, a purchase or a repayment the user asked for
 
 1. Proceed only when the user names what to do: the collateral and the USDC amount for a loan; the product, package, email for Bitrefill's receipt and, for a top-up, the number, plus the collateral, for a purchase; the loan and an exact amount, or "all" with a maximum, for a repayment. Never pick an amount, a product, a package or collateral for them.
-2. A loan: `miorail_prepare_still_loan` with `collateral`, `addCollateral` and `borrowUsdc`. A purchase: `still_find_spend` for the type and country, `still_spend_product` for the packages, their USDC prices and a top-up's calling code, then `miorail_prepare_still_purchase`. A repayment: `miorail_get_my_still` for the debt, then `miorail_prepare_still_repay`.
+2. A loan: `miorail_prepare_still_loan` with `collateral`, `addCollateral` and `borrowUsdc`. A purchase: `still_find_spend` for the type and country, `still_spend_product` for the packages, their USDC prices and a top-up's calling code, then `miorail_prepare_still_purchase`, or `miorail_prepare_still_wallet_purchase` to pay from the USDC already in the wallet, with no loan. A repayment: `miorail_get_my_still` for the debt, then `miorail_prepare_still_repay`.
 3. Each returns `reviewUrl`, `reviewId`, `expiresAt` and `next`. Give the user the link with its expiry and stop. The page reads the position again, applies Still's limit and simulates the exact calls; the user signs in their own wallet. A purchase borrows exactly the invoice's price and pays it in the same transaction; Bitrefill holds that price until `purchase.invoiceExpiresAt`, and an unpaid invoice lapses.
 4. The email and a top-up's number go to Bitrefill only: the tool does not return them; do not repeat them. A refusal names its reason (for example `spend_over_cap` or `spend_phone_invalid`): report it as returned and stop.
 5. A link is not a completed loan, purchase or repayment, and no tool here turns it into calls for Wallet MCP `send_calls`.
@@ -118,7 +118,7 @@ No surface needs a shell or the `web_request` allowlist: every Miorail call is a
 1. Proceed only when the user explicitly asks for a loan review and names the collateral and exact amount. Resolve the exact collateral address from Miorail's returned identity or terms; do not invent a contract from a ticker. Native ETH does not authorise an improvised wrapping or collateral-supply step.
 2. Call `miorail_read_borrow_capacity` for that exact collateral. Give every market its own row, keeping the market id, loan asset, block and `bound` (collateral or market liquidity). A protocol maximum is not Still's allowance. For a Still request, stop if the tools cannot establish its bound for that exact market.
 3. Have the user select a market if more than one is returned. Call `miorail_review_borrow` with the same `collateralTokenAddress`, the user's `borrowAmountAtomic` in the loan asset's units, and that `marketId`. Never choose a larger amount, a different market or a looser limit to get a pass.
-4. Read its warnings and every `steps` row, including any authorisation that outlives the loan. Report `refusalText` as returned and stop on a refusal; a failed simulation is not a ready review. Do not retry with a smaller amount unless the user asks.
+4. Read its warnings and every `steps` row. For Still's registered markets (cbBTC, WETH and PAXG against USDC) the calls are the wallet's own calls to Morpho Blue, written and decoded by Miorail, and nothing is authorised to act for the wallet. For any other market the venue writes the calldata, and a step may authorise an adapter to act for the wallet until it is revoked: carry that step to the user, because it outlives the borrow. Report `refusalText` as returned and stop on a refusal; a failed simulation is not a ready review. Do not retry with a smaller amount unless the user asks.
 5. Only `verdict: ready_for_your_approval` supplies a `reviewUrl`. Give the user that link with its expiry and stop. The page refreshes the checks, and the user decides and signs with their own wallet. This response contains no calldata and has no follow-up tool that releases borrow calls for Wallet MCP `send_calls`. Never suggest whether they should borrow or report a loan as completed from the review alone.
 
 ### Read: which contract, at what price
@@ -169,7 +169,7 @@ Map it to `send_calls` unchanged:
 - `value` and `data` are already hex.
 - If `send_calls` returns `{ approvalUrl, requestId }`, follow the approval flow in the Wallet MCP skill's [approval-mode.md](https://github.com/coinbase/agents/blob/main/skills/wallet-mcp/references/approval-mode.md).
 
-For Still's terms, Mirror, Spend and borrow-capacity reads, submission is **none**: they only read. For `miorail_review_borrow` and the three Still review tools, submission through Wallet MCP is also **none**: they return a review link, not a batch. The person opens the review and signs there; do not apply the stock `send_calls` mapping to a lending review.
+For Still's terms, Mirror, Spend and borrow-capacity reads, submission is **none**: they only read. For `miorail_review_borrow` and the four Still review tools, submission through Wallet MCP is also **none**: they return a review link, not a batch. The person opens the review and signs there; do not apply the stock `send_calls` mapping to a lending review.
 
 ## Example Prompts
 
@@ -208,7 +208,7 @@ For Still's terms, Mirror, Spend and borrow-capacity reads, submission is **none
 ## Risks & Warnings
 
 - **slippage**: a router quote moves within seconds, which is why terms are confirmed on the review page and not in chat. Miorail re-simulates after the confirmation and refuses if the market moved past the reviewed bounds. Never restate a price from earlier in the conversation, and never raise a tolerance to make a call go through.
-- **liquidation**: collateral prices, accrued debt and protocol terms can move a borrowing position toward liquidation. Preserve the review's current health, liquidation warnings, block and expiry, including persistent adapter authorisations. Still's allowance is not a guarantee against liquidation; do not increase it or suggest borrowing.
+- **liquidation**: collateral prices, accrued debt and protocol terms can move a borrowing position toward liquidation. Preserve the review's current health, liquidation warnings, block and expiry, and, for a market outside Still's own, any adapter authorisation its calls carry. Still's allowance is not a guarantee against liquidation; do not increase it or suggest borrowing.
 - **purchase**: a paid Bitrefill order is final, and a top-up sent to a wrong number cannot be taken back. Use only the product, number and email the user gave; the loan that pays it is debt like any other.
 - **Submitting stock calls**: send only after the user confirmed on the review page AND approves in their wallet, and only when `action.from` is their Wallet MCP wallet. Never auto-approve. Submit each clearance once. A borrow review stays on its own browser approval path.
 - **Tokenized stocks** are tokens issued by their issuers, and each issuer has its own terms and transfer rules. Wall Street's weekend and holiday closures do not stop trading on Base, so a price there can sit away from the last close. Say so when it matters, and never present a weekend price as a forecast of the reopen.
