@@ -73,14 +73,14 @@ const dividends: DividendWalletResponseV1 = {
 };
 
 describe('the visual sky and separate US market state', () => {
-  it('uses Berlin dusk while the US market is still open and names the full limits', () => {
+  it('uses Berlin dusk while the US market is still open and names the usual limits', () => {
     const sky = skyStateV1({ now: new Date('2026-10-26T18:05:00Z'), earnings: [] }); // Mon 2:05 PM
     assert.equal(sky.phase, 'dusk');
     assert.equal(sky.clock, 'MON 19:05');
     assert.equal(sky.marketClock, 'MON 2:05 PM');
     assert.equal(sky.marketPhase, 'open');
     assert.equal(sky.sunShare, null);
-    assert.deepEqual(skyCaptionV1(sky), { headline: 'Market open · full limits', detail: null });
+    assert.deepEqual(skyCaptionV1(sky), { headline: 'Market open · usual limits', detail: null });
   });
 
   it('can be visually day while Wall Street is closed, and says until when', () => {
@@ -93,8 +93,8 @@ describe('the visual sky and separate US market state', () => {
   });
 
   it('keeps before-open and after-hours financial captions independent of the visual phase', () => {
-    assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-27T12:00:00Z'), earnings: [] })).headline, 'Before the open · full limits');
-    assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-28T02:00:00Z'), earnings: [] })).headline, 'After hours · full limits');
+    assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-27T12:00:00Z'), earnings: [] })).headline, 'Before the open · usual limits');
+    assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-28T02:00:00Z'), earnings: [] })).headline, 'After hours · usual limits');
   });
 
   it('keeps the early US close separate from the Berlin sun and draws reviewed earnings clouds', () => {
@@ -108,7 +108,7 @@ describe('the visual sky and separate US market state', () => {
     });
     assert.equal(reporting.clouds.length, 1);
     assert.deepEqual(skyCaptionV1(reporting), {
-      // Audit UI-5: the headline names whom the earnings limits are for; the rest are at full limits.
+      // Audit UI-5: the headline names whom the earnings limits are for; the rest are at the usual limits.
       headline: 'Market open · earnings limits for Alphabet',
       detail: 'Alphabet reports now: new loans against it count at 40% of the protocol’s limit until Thu 8 PM New York.',
     });

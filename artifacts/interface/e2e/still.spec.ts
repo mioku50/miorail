@@ -62,7 +62,7 @@ for (const width of [390, 1280]) {
     const { writes } = await install(page, false, MONDAY);
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Spend without selling.', exact: true })).toBeVisible();
-    await expect(page.getByText('Market open · full limits', { exact: true })).toBeVisible();
+    await expect(page.getByText('Market open · usual limits', { exact: true })).toBeVisible();
     const nav = page.getByRole('navigation', { name: 'Main' });
     for (const label of ['Home', 'Assets', 'Agent', 'Stocks', 'More']) await expect(nav.getByRole('link', { name: label, exact: true })).toBeVisible();
     await expect(nav.getByRole('link', { name: 'Home', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -316,7 +316,7 @@ test('after hours the sky is dark, so the name and the mobile over it are drawn 
   await page.setViewportSize({ width: 390, height: 844 });
   await install(page, true, new Date('2026-10-26T21:48:00Z')); // Berlin22:48 night; New York17:48 after hours
   await page.goto('/');
-  await expect(page.getByText('After hours · full limits', { exact: true })).toBeVisible();
+  await expect(page.getByText('After hours · usual limits', { exact: true })).toBeVisible();
   await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'night');
   await expect(page.locator('.still-wallet-brand')).toBeVisible();
   expect(await page.locator('.still-wallet-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');

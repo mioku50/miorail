@@ -36,7 +36,9 @@ describe('Still visual time follows Europe/Berlin without changing financial win
     assert.equal(monday.phase, 'night');
     assert.equal(friday.marketPhase, 'open');
     assert.equal(monday.marketPhase, 'open');
-    assert.equal(skyCaptionV1(monday).headline, 'Market open · full limits');
+    assert.equal(skyCaptionV1(monday).headline, 'Market open · usual limits');
+    // Never "full": the sky does not read each stock's price age, and a stale price lowers its stock (audit UI-17).
+    assert.doesNotMatch(skyCaptionV1(monday).headline, /full limits/);
   });
 
   it('uses the European autumn transition before the US changes its clock', () => {
@@ -56,7 +58,7 @@ describe('Still visual time follows Europe/Berlin without changing financial win
     const sky = skyStateV1({ now: new Date('2026-10-28T19:30:00Z'), earnings: [] });
     assert.equal(sky.phase, 'night');
     assert.equal(sky.marketPhase, 'open');
-    assert.equal(skyCaptionV1(sky).headline, 'Market open · full limits');
+    assert.equal(skyCaptionV1(sky).headline, 'Market open · usual limits');
     const pill = renderToStaticMarkup(React.createElement(StillClockPill, { sky }));
     assert.match(pill, /Market open/);
     assert.doesNotMatch(pill, /Market closed|After hours/);

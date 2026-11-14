@@ -160,7 +160,9 @@ export function skyCaptionV1(sky: SkyStateV1): SkyCaptionV1 {
   // The headline is the page's, not a wallet's: "earnings limits" over every page read as the whole site's
   // mode while seven stocks of eight, and all the crypto, were at full limits (audit UI-5). It names whom.
   const lowered = [...new Set([...reporting, ...sky.unread])];
-  const limits = !sky.limitsRead ? null : lowered.length === 0 ? 'full limits'
+  // "Usual", not "full": the sky reads the calendar from the terms, not each stock's price age, and a stock whose
+  // reference price went stale counts at the closed-market share on its own row (audit UI-17, 2026-11-14).
+  const limits = !sky.limitsRead ? null : lowered.length === 0 ? 'usual limits'
     : `earnings limits for ${lowered.length > 2 ? `${lowered.length} stocks` : listV1(lowered)}`;
   if (sky.marketPhase === 'closed') {
     return {
