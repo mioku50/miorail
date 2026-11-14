@@ -1,8 +1,11 @@
-# MioAgent — Base App (standard web app)
+# @mioagent/miniapp — the earlier Next.js surface, served at `/app`
 
-Mobile-first MioAgent shell that runs as a **standard Next.js web app**, registered
-on [Base.dev](https://base.dev). It opens inside Base App with automatic wallet
-context (no manual connect) and works in any browser with a normal connect flow.
+The Base App and Farcaster open Still itself (`artifacts/interface`, the
+manifest at `/.well-known/farcaster.json`), not this app. This one is served
+at `/app` on the same origin, for direct links. Its lending and stock review
+pages send the server-reviewed calls through the person's own wallet
+(`wallet_sendCalls`); it never signs or broadcasts.
+
 It shares the **data layer** (`@mioagent/api-client-react`) and **design tokens +
 UI primitives** (`@mioagent/ui`) with the web `interface` — no logic fork. The
 shell/IA is its own (reduced: Autonomy status + kill, Action Inbox, Agent Stream;
@@ -18,8 +21,8 @@ Stack: Next.js 15 (app router) + wagmi + viem + `@base-org/account`. The Base
 Account (`baseAccount()` connector) is the default wallet — passkey sign-in,
 automatic context inside Base App, popup connect in a browser; Coinbase Wallet and
 injected browser wallets are fallbacks. **No-custody is preserved** — this UI never
-signs or broadcasts; execution still goes through the Base MCP `send_calls` /
-approval URL flow.
+signs or broadcasts: the person's own wallet signs the server-reviewed calls on
+the lending and stock review pages.
 
 ## Develop
 
@@ -94,8 +97,8 @@ from the app's runtime; nothing in the app imports a Farcaster SDK.
 4. **Testnet gasless confirmation (Paymaster).** End-to-end gasless confirmation via
    Paymaster requires testnet funds + your Base Account. Drive it manually from
    inside Base App on Base Sepolia after deploying. (Wiring `paymasterUrls` into the
-   Base Account SDK is a future config.) Execution still routes through the Base MCP
-   approval URL — no signing from this UI.
+   Base Account SDK is a future config.) The person's own wallet signs; this UI
+   never does.
 
 ## Notifications + deep-links
 
