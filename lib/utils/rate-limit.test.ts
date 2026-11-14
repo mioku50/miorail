@@ -1,6 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { InMemoryRateLimiter } from './rate-limit.js';
+import { InMemoryRateLimiter, rateLimitAddressKeyV1 } from './rate-limit.js';
+
+// IPv6 by its /64, IPv4 and IPv4-mapped by the address (audit AUTH-3, 2026-11-14).
+test('rateLimitAddressKeyV1 counts an IPv6 network once and an IPv4 address as it is', () => {
+  for (const [address, key] of [
+    ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64'], ['2001:db8:1:2::7', '2001:db8:1:2::/64'], ['2001:0DB8:0001:0002:ffff::1', '2001:db8:1:2::/64'],
+    ['[2001:db8::1]', '2001:db8:0:0::/64'], ['fe80::1%eth0', 'fe80:0:0:0::/64'], ['::1', '0:0:0:0::/64'],
+    ['::ffff:192.0.2.1', '192.0.2.1'], ['::ffff:c000:201', '192.0.2.1'], ['0:0:0:0:0:ffff:192.0.2.1', '192.0.2.1'],
+    ['192.0.2.1', '192.0.2.1'], [' 192.0.2.1 ', '192.0.2.1'], ['', 'unknown'], ['unknown', 'unknown'],
+    ['1:2:3:4:5:6:7:8:9', '1:2:3:4:5:6:7:8:9'], ['::ffff:999.0.2.1', '::ffff:999.0.2.1'], ['1::2::3', '1::2::3'],
+  ] as const) assert.strictEqual(rateLimitAddressKeyV1(address), key, address);
+});
+
+test('a client rotating addresses inside one /64 is refused like one address', async () => {
+  const limiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
+  let refused = 0;
+  for (let i = 0; i < 200; i++) {
+    const address = `2001:db8:aa:bb:${(i % 65_536).toString(16)}:${((i * 7) % 65_536).toString(16)}::${(i + 1).toString(16)}`;
+    if (!(await limiter.consume(rateLimitAddressKeyV1(address))).success) refused++;
+  }
+  assert.strictEqual(refused, 180);
+  assert.strictEqual(limiter.size, 1);
+});
 
 test('InMemoryRateLimiter - consume tokens successfully', async () => {
   const limiter = new InMemoryRateLimiter({ windowMs: 1000, max: 2 });

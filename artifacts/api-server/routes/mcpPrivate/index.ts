@@ -7,6 +7,7 @@ import { STILL_CARD_LENDING_TOOL_V1 } from './stillCardLending.js';
 import { MCP_PRIVATE_AUTH_COPY_V1, resolvePrivateIdentityV1 } from './session.js';
 import { mcpOAuthResourceUrlV1 } from '../../lib/mcpOAuthProvider.js';
 import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
+import { requestAddressKeyV1 } from '../../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §1/§10 — the authenticated Streamable HTTP endpoint.
@@ -107,7 +108,7 @@ function jsonRpcError(res: Response, status: number, message: string, id: string
 }
 
 mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const auth = await resolvePrivateIdentityV1(req);
 
   if (!auth.ok) {

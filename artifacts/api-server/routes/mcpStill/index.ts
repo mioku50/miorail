@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { createStillMcpServerV1 } from './server.js';
+import { requestAddressKeyV1 } from '../../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // The Still MCP endpoint, /mcp/still. Stateless like /mcp: a fresh server and
@@ -21,7 +22,7 @@ export const stillMcpRuntimeV1 = {
 };
 
 async function limited(req: Request, res: Response): Promise<boolean> {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const result = await stillMcpRuntimeV1.limiter.consume(`mcp-still:${ip}`);
   res.setHeader('X-RateLimit-Limit', result.limit);
   res.setHeader('X-RateLimit-Remaining', result.remaining);

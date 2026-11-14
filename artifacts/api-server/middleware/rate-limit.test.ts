@@ -38,6 +38,25 @@ test('Rate Limit Middleware', async (t) => {
   });
 });
 
+// A client handed an IPv6 /64 sent each request from a new address and was never limited (audit AUTH-3).
+test('addresses inside one IPv6 /64 share one budget, and an IPv4 address counts the same mapped or not', async () => {
+  const app = express();
+  app.set('trust proxy', true);
+  const addressLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 2 });
+  app.use(rateLimit(new InMemoryRateLimiter({ windowMs: 60_000, max: 100 }), addressLimiter));
+  app.get('/test', (_req, res) => res.sendStatus(200));
+  const from = (address: string) => request(app).get('/test').set('X-Forwarded-For', address);
+  assert.strictEqual((await from('2001:db8:aa:bb::1')).status, 200);
+  assert.strictEqual((await from('2001:db8:aa:bb:ffff:1:2:3')).status, 200);
+  assert.strictEqual((await from('2001:db8:aa:bb::9')).status, 429);
+  // Another /64 is another client.
+  assert.strictEqual((await from('2001:db8:aa:bc::1')).status, 200);
+  assert.strictEqual((await from('192.0.2.7')).status, 200);
+  assert.strictEqual((await from('::ffff:192.0.2.7')).status, 200);
+  assert.strictEqual((await from('192.0.2.7')).status, 429);
+  assert.strictEqual(addressLimiter.size, 3);
+});
+
 test('case and a trailing slash cannot obtain a second route budget', async () => {
   const app = express();
   app.use(rateLimit(new InMemoryRateLimiter({ windowMs: 60_000, max: 1 })));

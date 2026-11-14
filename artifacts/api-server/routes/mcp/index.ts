@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { createMiorailMcpServerV1 } from './server.js';
 import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
+import { requestAddressKeyV1 } from '../../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // T72 §1/§6 — the Streamable HTTP endpoint.
@@ -31,7 +32,7 @@ export const mcpServerRouter = Router();
 const mcpLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 30 });
 
 async function limited(req: Request, res: Response): Promise<boolean> {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const result = await mcpLimiter.consume(`mcp:${ip}`);
   res.setHeader('X-RateLimit-Limit', result.limit);
   res.setHeader('X-RateLimit-Remaining', result.remaining);
@@ -51,7 +52,7 @@ mcpServerRouter.post('/', async (req: Request, res: Response) => {
   if (await limited(req, res)) return;
 
   const server = createMiorailMcpServerV1({
-    publicContext: { clientKey: `public-ip:${req.ip || req.socket.remoteAddress || 'unknown'}` },
+    publicContext: { clientKey: `public-ip:${requestAddressKeyV1(req)}` },
     onEvidenceRead: evidenceReadUsageV1({
     surface: 'public', actorKey: req.ip || req.socket.remoteAddress || 'unknown',
     userAgent: req.get('user-agent') ?? '',

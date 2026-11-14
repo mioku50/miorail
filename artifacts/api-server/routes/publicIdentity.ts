@@ -5,6 +5,7 @@ import {
   miorailCheckAddressIdentityV1,
   identityCheckRuntime,
 } from './mcp/identityTools.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // The identity check, over plain HTTP, with no session.
@@ -38,7 +39,7 @@ export const publicIdentityRuntime = {
 };
 
 publicIdentityRouter.get('/identity/:tokenAddress', async (req: Request, res: Response) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const allowed = await identityLimiter.consume(`public-identity:${ip}`);
   res.setHeader('X-RateLimit-Limit', allowed.limit);
   res.setHeader('X-RateLimit-Remaining', allowed.remaining);

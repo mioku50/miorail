@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { InMemoryRateLimiter, type RateLimitResult } from '@mioagent/utils';
+import { InMemoryRateLimiter, rateLimitAddressKeyV1, type RateLimitResult } from '@mioagent/utils';
+
+/** The client as every limiter counts it: an IPv4 address, or an IPv6 address's /64 (audit AUTH-3). */
+export function requestAddressKeyV1(req: Request): string {
+  return rateLimitAddressKeyV1(req.ip || req.socket.remoteAddress || 'unknown');
+}
 
 /** Case and a trailing slash share an Express route. Decoding also groups
  * encoded spellings conservatively, including paths Express would reject. */
@@ -18,7 +23,7 @@ function setRateLimitHeaders(res: Response, result: RateLimitResult) {
 export function rateLimit(limiter: InMemoryRateLimiter, addressLimiter?: InMemoryRateLimiter) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const ip = requestAddressKeyV1(req);
       // Reject an exhausted address before allocating another path counter.
       const overall = addressLimiter ? await addressLimiter.consume(ip) : null;
       if (overall && !overall.success) {

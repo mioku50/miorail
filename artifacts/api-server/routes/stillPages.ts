@@ -12,6 +12,7 @@ import {
   stockPagesRuntime,
   type StockPageMetaV1,
 } from './stockPages.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // Still's wallet links, /w/<address or name>, with a head of their own.
@@ -128,7 +129,7 @@ stillPagesRouter.get('/w/:subject', async (req: Request, res: Response) => {
     sendDocumentV1(res, status, renderStockPageHtmlV1(html, meta));
     return;
   }
-  const allowed = await publicStillRuntimeV1.limiter.consume(`public-still:${req.ip || req.socket.remoteAddress || 'unknown'}`);
+  const allowed = await publicStillRuntimeV1.limiter.consume(`public-still:${requestAddressKeyV1(req)}`);
   let outcome: MirrorOutcome | null = null;
   if (allowed.success) {
     let timer: NodeJS.Timeout | undefined;

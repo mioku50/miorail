@@ -18,6 +18,7 @@ import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirro
 import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillBitrefillClientV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { stillSpendShareWordsV1, verifyStillLoanShareV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // Still's public door: any Base wallet, by address or name, and how much it
@@ -95,7 +96,7 @@ export class SpendReadFailedV1 extends Error {
 
 publicStillRouter.use(async (req: Request, res: Response, next) => {
   res.setHeader('Cache-Control', 'no-store');
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const allowed = await publicStillRuntimeV1.limiter.consume(`public-still:${ip}`);
   res.setHeader('X-RateLimit-Limit', allowed.limit);
   res.setHeader('X-RateLimit-Remaining', allowed.remaining);

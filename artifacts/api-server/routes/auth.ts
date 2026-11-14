@@ -7,6 +7,7 @@ import { InMemoryRateLimiter } from '@mioagent/utils';
 import { BASE_CHAIN_ID, type TenantUser } from '../middleware/tenantAuth';
 import { invalidatePreparedTransactionsForUser } from '../lib/preparedTransactionStore.js';
 import { reverseBaseNameV1 } from '../lib/baseNameResolver.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 export const authRouter = Router();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -47,7 +48,7 @@ export function setWalletSignatureVerifierForTests(verifier?: SignatureVerifier)
 function authRateLimit(kind: 'challengeLimiter' | 'verifyLimiter') {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const ip = requestAddressKeyV1(req);
       const result = await authRouteRuntime[kind].consume(ip);
       if (!result.success) {
         res.setHeader('X-RateLimit-Limit', result.limit);

@@ -24,6 +24,7 @@ import {
 import { databaseWeekendRunsV1 } from '../lib/weekendMarketRead';
 import { createPublicReadCacheV1, publicStocksCachesV1, publicStocksRuntime } from './publicStocks';
 import { rwaMarketRealityRuntime } from './rwaMarketReality';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // Call the reopen, over HTTP.
@@ -143,7 +144,7 @@ function sendPrivate(res: Response, body: unknown): void {
 }
 
 function ipOf(req: Request): string {
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  return requestAddressKeyV1(req);
 }
 
 /** A wallet a real sign-in proved, or null. Never the development user. */

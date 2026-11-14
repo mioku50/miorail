@@ -27,6 +27,7 @@ import {
   readStockChartV1,
   readStockQuotesV1,
 } from '../lib/stockQuotesRead.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // The Stocks board, readable without a wallet.
@@ -231,7 +232,7 @@ function failed(res: Response, read: string, code: string, error: unknown): void
 }
 
 publicStocksRouter.use(async (req: Request, res: Response, next) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const allowed = await publicStocksRuntime.limiter.consume(`public-stocks:${ip}`);
   res.setHeader('X-RateLimit-Limit', allowed.limit);
   res.setHeader('X-RateLimit-Remaining', allowed.remaining);
@@ -586,7 +587,7 @@ export const publicStockIconsRuntime = {
 };
 
 publicStockIconsRouter.get('/icons/:file', async (req: Request, res: Response) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ip = requestAddressKeyV1(req);
   const allowed = await publicStockIconsRuntime.limiter.consume(`public-stock-icons:${ip}`);
   if (!allowed.success) {
     refuse(res, 429, 'rate_limited');

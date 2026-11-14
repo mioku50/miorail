@@ -13,6 +13,7 @@ import {
   type StockPageMetaV1,
 } from './stockPages.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
+import { requestAddressKeyV1 } from '../middleware/rate-limit.js';
 
 // ---------------------------------------------------------------------------
 // Found's share pages: `/found/<code>` is the app under a head drawn from the
@@ -86,7 +87,7 @@ foundPagesRouter.get('/found/:file', async (req: Request, res: Response) => {
     const shape: CardShapeV1 = picture[2] ? 'embed' : 'link';
     const fallback = `${origin}/og-stocks${cardFileSuffixV1(shape)}.png`;
     const code = picture[1]!;
-    const address = req.ip || req.socket.remoteAddress || 'unknown';
+    const address = requestAddressKeyV1(req);
     try {
       const png = await foundPictureCacheV1.read(`${code}|${shape}`, async () => {
         let share: FoundShareV1 | null;

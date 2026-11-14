@@ -90,3 +90,55 @@ export class InMemoryRateLimiter {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// One counter per network, not per address (audit AUTH-3, 2026-11-14).
+//
+// Every limiter keyed by the client's address took the address whole. An IPv6
+// client is routinely handed a whole /64, so it could send each request from a
+// new address: no limit applied to it at all (200 requests against a limit of
+// 20 a minute, 0 refused), and each new key pushed another client's counter out
+// of the 50,000-key store. IPv6 is counted by its /64 prefix now; IPv4, and
+// IPv4 carried in IPv6 (::ffff:a.b.c.d), by its own address.
+// ---------------------------------------------------------------------------
+
+/** The eight groups of an IPv6 address, or null when the text is not one. */
+function ipv6GroupsV1(text: string): number[] | null {
+  let head = text;
+  const tail: number[] = [];
+  // An IPv4 tail (::ffff:192.0.2.1) is the last two groups.
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (v4) {
+    const parts = v4.slice(1).map(Number);
+    if (parts.some((part) => part > 255)) return null;
+    tail.push((parts[0]! << 8) | parts[1]!, (parts[2]! << 8) | parts[3]!);
+    head = text.slice(0, v4.index);
+    if (head.endsWith(':') && !head.endsWith('::')) head = head.slice(0, -1);
+  }
+  const halves = head.split('::');
+  if (halves.length > 2) return null;
+  const groupsOf = (part: string) => (part === '' ? [] : part.split(':'));
+  const left = groupsOf(halves[0]!), right = halves.length === 2 ? groupsOf(halves[1]!) : [];
+  if ([...left, ...right].some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  const written = left.length + right.length + tail.length;
+  if (halves.length === 1 ? written !== 8 : written > 7) return null;
+  const zeros = Array.from({ length: 8 - written }, () => 0);
+  return [...left.map((group) => parseInt(group, 16)), ...zeros, ...right.map((group) => parseInt(group, 16)), ...tail];
+}
+
+/** The key a limiter counts a client address under: an IPv4 address as it is, an IPv6 address by its /64. */
+export function rateLimitAddressKeyV1(address: string): string {
+  let text = address.trim().toLowerCase();
+  if (text.startsWith('[') && text.endsWith(']')) text = text.slice(1, -1);
+  const zone = text.indexOf('%');
+  if (zone >= 0) text = text.slice(0, zone);
+  if (text === '') return 'unknown';
+  if (!text.includes(':')) return text;
+  const groups = ipv6GroupsV1(text);
+  if (!groups) return text;
+  // IPv4-mapped (::ffff:0:0/96): the IPv4 address is the client.
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    return `${groups[6]! >> 8}.${groups[6]! & 0xff}.${groups[7]! >> 8}.${groups[7]! & 0xff}`;
+  }
+  return `${groups.slice(0, 4).map((group) => group.toString(16)).join(':')}::/64`;
+}
