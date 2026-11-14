@@ -185,6 +185,12 @@ describe('a declaration is the company’s own sentence, in full', () => {
     assert.equal(declared('Additionally, on July 23, 2026, the Board of Directors of the Company'), '2026-10-27');
     // A day that belongs to another sentence is not taken.
     assert.equal(declared('The quarter ended on September 30, 2026. The Board of Directors of the Company'), '2026-10-27');
+    // Whether the day came from the sentence travels with the reading (audit DATA-1): only such a day can
+    // contradict the one on file.
+    const stated = (sentence: string) => read('CAKE', cake(sentence), '2026-10-27T20:10:00Z').declarations[0]?.declaredOnStated;
+    assert.equal(stated('On October 21, 2026, the Company&#8217;s Board of Directors'), true);
+    assert.equal(stated('The Board of Directors of the Company'), false);
+    assert.equal(stated('Additionally, on July 23, 2026, the Board of Directors of the Company'), false);
     // And the day stated must still not be after the record date: that release is refused, not corrected.
     assert.deepEqual(read('CAKE', cake('On October 21, 2026, the Board of Directors'), '2026-10-27T20:10:00Z').refused, []);
   });

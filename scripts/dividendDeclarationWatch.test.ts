@@ -153,6 +153,21 @@ describe('new dividend declarations, from the companies’ own releases', () => 
     assert.deepEqual([again.recorded, again.known, again.signalled], [0, 2, 0]);
   });
 
+  test('a re-read that states the board’s day against the release day on file is left for review (audit DATA-1)', async () => {
+    const declarations = new InMemoryDividendDeclarationRepositoryV1();
+    const signals = createMemoryRwaSignalRepository();
+    const now = new Date('2026-10-30T02:00:00Z');
+    await runDividendDeclarationWatchV1({ fetch: webV1(pagesV1()).fetch, now, declarations, signals, tokensOf });
+    assert.equal((await declarations.declarations()).find((row) => row.symbol === 'AAPL')?.declaredOn, '2026-10-29');
+    // The same payment, its sentence now naming the day the board decided: not "already recorded" in silence.
+    const dated = pagesV1({ [`${APPLE_FOLDER}/a8-kex991q4.htm`]: appleExhibit('0.27', 'November 12, 2026', 'November 9, 2026')
+      .replace('<p>Apple&#8217;s board', '<p>On October 28, 2026, Apple&#8217;s board') });
+    const pass = await runDividendDeclarationWatchV1({ fetch: webV1(dated).fetch, now, declarations, signals, tokensOf });
+    assert.deepEqual(pass.conflicts, ['AAPL:2026-11-12']);
+    // What is on file is kept until it is reviewed.
+    assert.equal((await declarations.declarations()).find((row) => row.symbol === 'AAPL')?.declaredOn, '2026-10-29');
+  });
+
   test('what the registry names is the registry’s; a second release that disagrees is left for review', async () => {
     const declarations = new InMemoryDividendDeclarationRepositoryV1();
     const signals = createMemoryRwaSignalRepository();

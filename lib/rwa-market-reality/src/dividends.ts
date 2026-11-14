@@ -147,6 +147,9 @@ export interface DividendDeclarationV1 {
   amountPerShare: string;
   /** New York dates, YYYY-MM-DD. */
   declaredOn: string;
+  /** A release read by the watcher: true when its own sentence gave the day the board decided, false when
+   * declaredOn is the day the release went out (audit DATA-1). Absent on a reviewed registry entry. */
+  declaredOnStated?: boolean;
   /** Only when the source states it. */
   exDate: string | null;
   recordDate: string;

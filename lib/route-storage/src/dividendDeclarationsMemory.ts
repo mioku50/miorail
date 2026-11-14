@@ -14,7 +14,10 @@ export class InMemoryDividendDeclarationRepositoryV1 implements DividendDeclarat
     const key = `${input.underlyingKey}|${input.payDate}`;
     const existing = this.rows.get(key);
     if (existing) return sameDividendDeclarationV1(existing, input) ? 'already_recorded' : 'conflict';
-    this.rows.set(key, { ...input, source: { ...input.source } });
+    // Kept as Postgres keeps it: whether the day was stated is not a column.
+    const { declaredOnStated: _stated, ...row } = input;
+    void _stated;
+    this.rows.set(key, { ...row, source: { ...input.source } });
     return 'recorded';
   }
 

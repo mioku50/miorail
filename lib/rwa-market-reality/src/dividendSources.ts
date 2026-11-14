@@ -525,6 +525,7 @@ export function readDividendReleaseV1(input: {
         company: input.issuer.company,
         amountPerShare: amount,
         declaredOn,
+        declaredOnStated: declaredOn === stated,
         exDate,
         recordDate: recordDate!,
         payDate: payDate!,

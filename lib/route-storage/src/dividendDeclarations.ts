@@ -14,6 +14,9 @@ export interface ObservedDividendDeclarationV1 {
   company: string;
   amountPerShare: string;
   declaredOn: string;
+  /** Read this time from the release's own sentence, not from the day it went out. Never stored: it only
+   * says whether a reading's declaredOn can contradict the row on file (audit DATA-1). */
+  declaredOnStated?: boolean;
   exDate: string | null;
   recordDate: string;
   payDate: string;
@@ -51,10 +54,19 @@ export function assertObservedDividendDeclarationV1(input: ObservedDividendDecla
   }
 }
 
-/** The same payment, said the same way: amount and all three dates. */
+/**
+ * The same payment, said the same way: amount and all three dates, and the day it was declared when the
+ * new reading's sentence states one (audit DATA-1, 2026-11-14). Wingstop's December dividend was stored
+ * before the parser read the board's day from the sentence, with the day the release went out; every
+ * reading after the fix found October 27 against October 28 on file and counted it "already recorded", so
+ * the wrong day stayed with nothing to show it. A stated day that differs is now a conflict, left for
+ * review like any other. A day taken from when a release went out is not compared: an 8-K and a wire
+ * release of the same payment go out on different days.
+ */
 export function sameDividendDeclarationV1(
-  a: Pick<ObservedDividendDeclarationV1, 'amountPerShare' | 'recordDate' | 'payDate' | 'exDate'>,
-  b: Pick<ObservedDividendDeclarationV1, 'amountPerShare' | 'recordDate' | 'payDate' | 'exDate'>,
+  a: Pick<ObservedDividendDeclarationV1, 'amountPerShare' | 'recordDate' | 'payDate' | 'exDate' | 'declaredOn'>,
+  b: Pick<ObservedDividendDeclarationV1, 'amountPerShare' | 'recordDate' | 'payDate' | 'exDate' | 'declaredOn' | 'declaredOnStated'>,
 ): boolean {
-  return a.amountPerShare === b.amountPerShare && a.recordDate === b.recordDate && a.payDate === b.payDate && a.exDate === b.exDate;
+  return a.amountPerShare === b.amountPerShare && a.recordDate === b.recordDate && a.payDate === b.payDate && a.exDate === b.exDate &&
+    !(b.declaredOnStated === true && a.declaredOn !== b.declaredOn);
 }

@@ -38,6 +38,23 @@ describe('dividend declarations Miorail read', () => {
     assert.equal(rows[0]!.observedAt, '2026-10-30T02:00:00.000Z');
   });
 
+  test('a re-read whose sentence states another day of declaration is a conflict; a release day is not compared (audit DATA-1)', async () => {
+    const repository = new InMemoryDividendDeclarationRepositoryV1();
+    // Stored before the parser read the board's day from the sentence: the day the release went out.
+    assert.equal(await repository.record(declaration({ declaredOn: '2026-10-29' })), 'recorded');
+    // Read again, the sentence says the board declared it the day before: left for review, never merged.
+    assert.equal(await repository.record(declaration({ declaredOn: '2026-10-28', declaredOnStated: true })), 'conflict');
+    // The same day stated is the same declaration.
+    assert.equal(await repository.record(declaration({ declaredOn: '2026-10-29', declaredOnStated: true })), 'already_recorded');
+    // Another source of the same payment that went out a day later, with no day in its sentence: the same.
+    assert.equal(await repository.record(declaration({ declaredOn: '2026-10-30', declaredOnStated: false })), 'already_recorded');
+    assert.equal(await repository.record(declaration({ declaredOn: '2026-10-30' })), 'already_recorded');
+    const [row] = await repository.declarations();
+    assert.equal(row!.declaredOn, '2026-10-29');
+    // Kept as Postgres keeps it: whether the day was stated is not stored.
+    assert.equal('declaredOnStated' in row!, false);
+  });
+
   test('refused the way Postgres refuses it', async () => {
     const repository = new InMemoryDividendDeclarationRepositoryV1();
     const cases: Array<[Partial<ObservedDividendDeclarationV1>, RegExp]> = [
