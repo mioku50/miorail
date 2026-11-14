@@ -3,7 +3,7 @@ import test from 'node:test';
 import { encodeFunctionData, erc20Abi } from 'viem';
 import { ExecutionBlueprintV1Schema } from '@mioagent/route-domain';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from '../src/blueprint.js';
-import { NOW, USDC_BASE, WALLET, ETH_BASE } from './fixtures.js';
+import { KYBER_ROUTER, NOW, USDC_BASE, WALLET, ETH_BASE, routerCallDataV1 } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
 const SPENDER = ROUTER;
@@ -23,16 +23,31 @@ test('classifySwapCallV1 decodes an ERC-20 approval and pins the spender/amount'
   assert.equal(call.asset?.symbol, 'USDC');
 });
 
-test('classifySwapCallV1 recognizes the pinned router call as a swap bound to the wallet', () => {
+test('classifySwapCallV1 recognizes the pinned router call as a swap, and names who its bytes pay', () => {
   const call = classifySwapCallV1({
     index: 1,
-    call: { to: ROUTER, value: '0', data: '0x12345678' },
+    call: { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: '100000000' }) },
     routerAddress: ROUTER,
     inputAsset: USDC_BASE,
     walletAddress: WALLET,
   });
   assert.equal(call.callType, 'swap');
   assert.equal(call.recipient, WALLET);
+  // Read from the bytes, not filled in with the wallet (audit SW-1, 2026-11-14): a call that pays someone else
+  // names them, and one that cannot be read names nobody, so the kernel's "recipient is the wallet" fails.
+  const elsewhere = classifySwapCallV1({
+    index: 1,
+    call: { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: '100000000', wallet: '0x000000000000000000000000000000000000beef' }) },
+    routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET,
+  });
+  assert.equal(elsewhere.recipient, '0x000000000000000000000000000000000000beef');
+  for (const router of [ROUTER, KYBER_ROUTER] as const) {
+    const unread = classifySwapCallV1({ index: 1, call: { to: router, value: '0', data: '0x12345678' }, routerAddress: router, inputAsset: USDC_BASE, walletAddress: WALLET });
+    assert.equal(unread.recipient, null, router);
+  }
+  const kyber = classifySwapCallV1({ index: 1, call: { to: KYBER_ROUTER, value: '0', data: routerCallDataV1({ router: KYBER_ROUTER, amountAtomic: '100000000' }) },
+    routerAddress: KYBER_ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET });
+  assert.equal(kyber.recipient, WALLET);
 });
 
 test('classifySwapCallV1 marks an unrecognized target as other rather than throwing', () => {

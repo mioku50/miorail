@@ -13,6 +13,10 @@ import {
   type RequiredApprovalV1,
   type SimulationStateV1,
 } from '@mioagent/route-domain';
+import { KYBERSWAP_BASE_ROUTER } from '@mioagent/security/kyberGuard';
+import { kyberSwapRecipientV1 } from '@mioagent/security/kyberRouterCalldata';
+import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
+import { uniswapExecuteRecipientsV1 } from '@mioagent/security/uniswapRouterCalldata';
 import type { SwapBuildCallV1 } from './types.js';
 
 const PERMIT2_APPROVE_ABI = [
@@ -42,9 +46,29 @@ export interface ClassifySwapCallInput {
 }
 
 /**
+ * Who a router call pays, as the review names it (audit SW-1, 2026-11-14).
+ *
+ * For the Universal Router and KyberSwap's router it is read from the call's
+ * own bytes: this field used to be the wallet for any call to the router, so
+ * the Safety Kernel's "recipient is the wallet" check compared a value with
+ * itself and the review said so in green. A call that pays anyone else, or
+ * cannot be read, names that address or nobody, and the check fails. Every
+ * other router's guard decodes its recipient from the bytes itself.
+ */
+function routerCallRecipientV1(router: string, data: string, walletAddress: `0x${string}`): `0x${string}` | null {
+  if (router === BASE_UNISWAP_UNIVERSAL_ROUTER_2) {
+    const recipients = uniswapExecuteRecipientsV1(data, walletAddress);
+    return recipients?.length === 1 ? (recipients[0] as `0x${string}`) : null;
+  }
+  if (router === KYBERSWAP_BASE_ROUTER) return kyberSwapRecipientV1(data) as `0x${string}` | null;
+  return walletAddress;
+}
+
+/**
  * Classifies one server-built unsigned call. ERC-20 / Permit2 approvals are
  * decoded via viem `decodeFunctionData` (never trusted from provider labels)
- * and the pinned router call is recognized by address. A call that matches
+ * and the pinned router call is recognized by address, with its recipient read
+ * from its bytes (routerCallRecipientV1). A call that matches
  * neither known pattern is classified 'other' (never mislabeled as a known
  * approval/swap) — the Safety Kernel's provider guard (validateUniswapSwap /
  * validateKyberSwap) then fails closed on the unrecognized target, so
@@ -108,7 +132,7 @@ export function classifySwapCallV1(input: ClassifySwapCallInput): ExecutionCallV
       data: call.data,
       asset: null,
       amountAtomic: null,
-      recipient: input.walletAddress,
+      recipient: routerCallRecipientV1(toLower, call.data, input.walletAddress),
       spender: null,
     };
   }

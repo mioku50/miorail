@@ -31,6 +31,8 @@ import {
   humanDecimalToAtomic,
 } from '@mioagent/swap-adapters';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
+import { encodeKyberSwapV1, KYBERSWAP_NATIVE_TOKEN_V1 } from '@mioagent/security/kyberRouterCalldata';
+import { encodeUniswapExecuteV1, encodeUniswapV3PathV1, type UniswapCommandV1 } from '@mioagent/security/uniswapRouterCalldata';
 import type { SwapAdapterId, SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from '@mioagent/swap-adapters';
 import type { SwapBuildAdapter, SwapBuildInput, SwapBuildProviderId, SwapBuildResultV1 } from '../src/types.js';
 
@@ -353,7 +355,47 @@ export function buildSideOutputs(intent: RouteIntentV1, expectedAtomic: string) 
   };
 }
 
-export function defaultBuiltCalls(input: { amountAtomic: string; router?: `0x${string}` }) {
+export const KYBER_ROUTER = '0x6131b5fae19ea4f9d964eac0408e4408b66337b5' as const;
+const MSG_SENDER = '0x0000000000000000000000000000000000000001';
+const ROUTER_ITSELF = '0x0000000000000000000000000000000000000002';
+/** A minimum no test's reviewed minimum reaches: the calldata guarantees at least what the review states. */
+export const ROUTER_CALL_MINIMUM_ATOMIC = '1000000000000000000000000';
+
+/**
+ * The router call a provider builds for this swap, encoded as the router reads
+ * it. Since 2026-11-14 the Safety Kernel decodes Uniswap's and KyberSwap's
+ * calls (audit SW-1), so a placeholder selector is no longer a swap.
+ */
+export function routerCallDataV1(input: {
+  router?: `0x${string}`;
+  from?: AssetRefV1;
+  to?: AssetRefV1;
+  amountAtomic: string;
+  wallet?: `0x${string}`;
+  minimumAtomic?: string;
+  deadlineSec?: number;
+}): `0x${string}` {
+  const router = (input.router ?? ROUTER).toLowerCase();
+  const from = input.from ?? USDC_BASE, to = input.to ?? ETH_BASE;
+  const amount = BigInt(input.amountAtomic), minimum = BigInt(input.minimumAtomic ?? ROUTER_CALL_MINIMUM_ATOMIC);
+  const wallet = input.wallet ?? WALLET;
+  // The Trading API names the wallet by the router's MSG_SENDER marker; a test that names a wallet gets it spelled out.
+  const payee = input.wallet ?? MSG_SENDER;
+  if (router === KYBER_ROUTER) {
+    const side = (asset: AssetRefV1) => asset.kind === 'native' ? KYBERSWAP_NATIVE_TOKEN_V1 : asset.address!;
+    return encodeKyberSwapV1({ srcToken: side(from), dstToken: side(to), dstReceiver: wallet, amount, minReturnAmount: minimum });
+  }
+  const weth = '0x4200000000000000000000000000000000000006';
+  const token = (asset: AssetRefV1) => asset.kind === 'native' ? weth : asset.address!;
+  const commands: UniswapCommandV1[] = [];
+  if (from.kind === 'native') commands.push({ command: 'WRAP_ETH', recipient: ROUTER_ITSELF, amount });
+  commands.push({ command: 'V3_SWAP_EXACT_IN', recipient: to.kind === 'native' ? ROUTER_ITSELF : payee, amountIn: amount,
+    amountOutMin: to.kind === 'native' ? 0n : minimum, path: encodeUniswapV3PathV1([token(from), token(to)], [500]), payerIsUser: from.kind !== 'native' });
+  if (to.kind === 'native') commands.push({ command: 'UNWRAP_WETH', recipient: payee, amount: minimum });
+  return encodeUniswapExecuteV1(commands, BigInt(input.deadlineSec ?? Math.floor((NOW.getTime() + 5 * 60_000) / 1000)));
+}
+
+export function defaultBuiltCalls(input: { amountAtomic: string; router?: `0x${string}`; from?: AssetRefV1; to?: AssetRefV1 }) {
   const router = input.router ?? '0x6ff5693b99212da76ad316178a184ab56d299b43';
   return [
     {
@@ -361,7 +403,7 @@ export function defaultBuiltCalls(input: { amountAtomic: string; router?: `0x${s
       value: '0',
       data: encodeApprove(router, BigInt(input.amountAtomic)),
     },
-    { to: router, value: '0', data: '0x12345678' as `0x${string}` },
+    { to: router, value: '0', data: routerCallDataV1({ router, amountAtomic: input.amountAtomic, from: input.from, to: input.to }) },
   ];
 }
 

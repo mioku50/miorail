@@ -5,6 +5,7 @@ import {
   normalizeSwapAssetV1,
   type SwapGuardAssetV1,
 } from './swapAsset.js';
+import { readKyberSwapV1 } from './kyberRouterCalldata.js';
 
 // Pinned independently of @mioagent/swap-adapters (which depends on
 // @mioagent/security, so the reverse dependency is not available here). Must
@@ -28,6 +29,12 @@ export interface KyberSwapContext {
   recipient: string;
   routerAddress: string;
   expiresAt: string;
+  /**
+   * The least the review says the wallet receives, in base units of the
+   * output (audit SW-1, 2026-11-14): the router's own minimum must be at
+   * least this. The Safety Kernel always passes it.
+   */
+  minimumOutputAtomic?: string;
 }
 
 export interface KyberSwapSemantics {
@@ -40,6 +47,8 @@ export interface KyberSwapSemantics {
   /** False whenever the input is not canonical USDC: the figure above is then
    * 0, and a dollar budget must refuse rather than read that as free. */
   spendAmountIsUsd: boolean;
+  /** The router's own minimum for the wallet, decoded from the call's bytes. */
+  guaranteedOutputRaw: string;
 }
 
 export type KyberGuardResult =
@@ -124,7 +133,13 @@ export function validateKyberSwap(input: {
   let routerCalls = 0;
   let approvalCalls = 0;
   let attachedValue = 0n;
+  let guaranteedOutput = 0n;
   const spenders = new Set<string>();
+  let minimumOutput: bigint | null = null;
+  if (context.minimumOutputAtomic !== undefined) {
+    if (!/^[1-9][0-9]{0,77}$/.test(context.minimumOutputAtomic)) return fail('kyberswap_minimum_invalid', 'Reviewed minimum output is invalid', checks);
+    minimumOutput = BigInt(context.minimumOutputAtomic);
+  }
 
   for (const call of input.calls) {
     const to = String(call.to || '').toLowerCase();
@@ -147,6 +162,19 @@ export function validateKyberSwap(input: {
 
     if (to === router) {
       routerCalls += 1;
+      // The bytes the wallet will sign, read the way the router reads them (audit SW-1, 2026-11-14). The
+      // sender-equals-recipient check above compares two values Still wrote itself; this one reads the call.
+      const reading = readKyberSwapV1(data, {
+        wallet: swapper,
+        inputToken: inputAddress,
+        outputToken: outputAsset.address,
+        amountInAtomic: amountRaw,
+      });
+      if (!reading.ok) return fail(reading.code, reading.reason, checks);
+      if (minimumOutput !== null && reading.minReturnAtomic < minimumOutput) {
+        return fail('kyberswap_minimum_below_review', 'The router call guarantees the wallet less than the reviewed minimum', checks);
+      }
+      guaranteedOutput = reading.minReturnAtomic;
       continue;
     }
 
@@ -185,6 +213,7 @@ export function validateKyberSwap(input: {
     return fail('kyberswap_native_input_approval', 'A native-input swap must contain no approval', checks);
   }
   checks.push('Pinned KyberSwap router target and at most one exact approval');
+  checks.push(`Router calldata decoded: the reviewed input drawn exactly, the wallet paid, no fee or permit, at least ${guaranteedOutput} base units of the output guaranteed by the router`);
   return {
     success: true,
     code: 'allowed',
@@ -197,6 +226,7 @@ export function validateKyberSwap(input: {
       spendAmountRaw: amountRaw.toString(),
       spendAmountUsdc: isCanonicalBaseUsdcV1(inputAddress) ? Number(amountRaw) / 1_000_000 : 0,
       spendAmountIsUsd: isCanonicalBaseUsdcV1(inputAddress),
+      guaranteedOutputRaw: guaranteedOutput.toString(),
     },
   };
 }

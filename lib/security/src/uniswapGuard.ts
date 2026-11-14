@@ -5,6 +5,7 @@ import {
   normalizeSwapAssetV1,
   type SwapGuardAssetV1,
 } from './swapAsset.js';
+import { readUniswapExecuteV1 } from './uniswapRouterCalldata.js';
 
 export const BASE_UNISWAP_UNIVERSAL_ROUTER_2 = '0x6ff5693b99212da76ad316178a184ab56d299b43';
 /**
@@ -37,7 +38,19 @@ export interface UniswapSwapContext {
   swapper: string;
   routerVersion: '2.0';
   expiresAt: string;
+  /**
+   * The least the review says the wallet receives, in base units of the
+   * output (audit SW-1, 2026-11-14). The router call's own minimums must add
+   * up to at least this. Absent, the call must still guarantee something; the
+   * Safety Kernel always passes it.
+   */
+  minimumOutputAtomic?: string;
 }
+
+/** How long past the quote a router call's deadline may run (audit SW-1). The build asks for the quote's
+ * own expiry; a later deadline only lets a delayed transaction land at a price its minimum still bounds,
+ * so half an hour is tolerated, and a deadline of 2^255 is not. */
+export const UNISWAP_DEADLINE_SLACK_SEC_V1 = 1_800;
 
 export interface UniswapSwapSemantics {
   actionType: 'uniswap_swap';
@@ -49,6 +62,8 @@ export interface UniswapSwapSemantics {
   /** False whenever the input is not canonical USDC: the figure above is then
    * 0, and a dollar budget must refuse rather than read that as free. */
   spendAmountIsUsd: boolean;
+  /** What the router call itself guarantees reaches the wallet, decoded from its bytes. */
+  guaranteedOutputRaw: string;
 }
 
 export type UniswapGuardResult =
@@ -118,7 +133,13 @@ export function validateUniswapSwap(input: {
   const inputIsNative = inputAddress === null;
   let routerCalls = 0;
   let attachedValue = 0n;
+  let guaranteedOutput = 0n;
   const spenders = new Set<string>();
+  let minimumOutput: bigint | null = null;
+  if (context.minimumOutputAtomic !== undefined) {
+    if (!/^[1-9][0-9]{0,77}$/.test(context.minimumOutputAtomic)) return fail('uniswap_minimum_invalid', 'Reviewed minimum output is invalid', checks);
+    minimumOutput = BigInt(context.minimumOutputAtomic);
+  }
 
   for (const call of input.calls) {
     const to = String(call.to || '').toLowerCase();
@@ -139,6 +160,22 @@ export function validateUniswapSwap(input: {
 
     if (to === router) {
       routerCalls += 1;
+      // The bytes the wallet will sign, read the way the router reads them (audit SW-1, 2026-11-14): the
+      // address alone said nothing about who is paid, what is drawn, or how little may come back.
+      const reading = readUniswapExecuteV1(data, {
+        wallet: context.swapper,
+        input: inputAddress ? { kind: 'erc20', address: inputAddress } : { kind: 'native' },
+        output: outputAsset.address ? { kind: 'erc20', address: outputAsset.address } : { kind: 'native' },
+        amountInAtomic: amountRaw,
+      });
+      if (!reading.ok) return fail(reading.code, reading.reason, checks);
+      if (reading.deadline <= BigInt(Math.floor(nowMs / 1000)) || reading.deadline > BigInt(Math.floor(expiry / 1000) + UNISWAP_DEADLINE_SLACK_SEC_V1)) {
+        return fail('uniswap_deadline_invalid', 'The router call’s deadline is not within the prepared quote', checks);
+      }
+      if (minimumOutput !== null && reading.guaranteedOutputAtomic < minimumOutput) {
+        return fail('uniswap_minimum_below_review', 'The router call guarantees the wallet less than the reviewed minimum', checks);
+      }
+      guaranteedOutput = reading.guaranteedOutputAtomic;
       continue;
     }
 
@@ -188,6 +225,7 @@ export function validateUniswapSwap(input: {
     return fail('uniswap_native_input_approval', 'A native-input swap must contain no approval', checks);
   }
   checks.push('Pinned Universal Router target and exact bounded approvals');
+  checks.push(`Router calldata decoded: only exact-input swap commands, the reviewed input drawn exactly, every payment to the wallet, at least ${guaranteedOutput} base units of the output guaranteed by the router`);
   return {
     success: true,
     code: 'allowed',
@@ -195,7 +233,8 @@ export function validateUniswapSwap(input: {
     semantics: {
       actionType: 'uniswap_swap',
       tokenAddresses: inputAddress ? [inputAddress] : [],
-      recipients: [],
+      // Read from the bytes: every payment the router call makes goes to the wallet.
+      recipients: [context.swapper.toLowerCase()],
       spenders: [...spenders],
       spendAmountRaw: amountRaw.toString(),
       // Only meaningful for a canonical USDC input; any other input is not a
@@ -203,6 +242,7 @@ export function validateUniswapSwap(input: {
       // that calls itself USDC does not become dollars by saying so.
       spendAmountUsdc: isCanonicalBaseUsdcV1(inputAddress) ? Number(amountRaw) / 1_000_000 : 0,
       spendAmountIsUsd: isCanonicalBaseUsdcV1(inputAddress),
+      guaranteedOutputRaw: guaranteedOutput.toString(),
     },
   };
 }

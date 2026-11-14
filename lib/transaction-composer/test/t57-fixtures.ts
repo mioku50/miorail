@@ -17,7 +17,7 @@ export async function seededBlueprint(
 ): Promise<SeededBlueprint> {
   const scenario = buildScenario();
   const repository = await seedRepository(scenario);
-  const calls = defaultBuiltCalls({ amountAtomic: scenario.intent.amount.amountAtomic }).map((call, index) =>
+  const calls = defaultBuiltCalls({ amountAtomic: scenario.intent.amount.amountAtomic, from: scenario.intent.fromAsset!, to: scenario.intent.toAsset! }).map((call, index) =>
     classifySwapCallV1({
       index,
       call,

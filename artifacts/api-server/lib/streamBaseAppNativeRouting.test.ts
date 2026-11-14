@@ -3,6 +3,7 @@ import test, { afterEach } from 'node:test';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
 import { canonicalGuardAssetV1 } from '@mioagent/security/swapAsset';
+import { encodeUniswapExecuteV1, encodeUniswapV3PathV1 } from '@mioagent/security/uniswapRouterCalldata';
 import {
   baseAppNativeRuntime,
   runDirectBaseAppNativeSend,
@@ -63,6 +64,17 @@ function usableSecurity() {
       status: 'ok' as const,
     })),
   });
+}
+
+/** 0.5 USDC to ETH as the Trading API writes it: the router swaps to WETH and unwraps it to the caller.
+ * The guard reads this call since 2026-11-14 (audit SW-1), so a placeholder selector is no longer a swap. */
+function usdcToEthRouterCall(expiresAt: string): `0x${string}` {
+  const usdc = canonicalGuardAssetV1('USDC') as { address: string };
+  return encodeUniswapExecuteV1([
+    { command: 'V3_SWAP_EXACT_IN', recipient: '0x0000000000000000000000000000000000000002', amountIn: 500_000n, amountOutMin: 0n,
+      path: encodeUniswapV3PathV1([usdc.address, '0x4200000000000000000000000000000000000006'], [500]), payerIsUser: true },
+    { command: 'UNWRAP_WETH', recipient: '0x0000000000000000000000000000000000000001', amount: 100_000_000_000_000n },
+  ], BigInt(Math.floor(Date.parse(expiresAt) / 1000)));
 }
 
 test('disconnect during native send preflight cannot create an action afterwards', async () => {
@@ -148,7 +160,7 @@ test('T47 native swap prepares only the tenant wallet and never returns the othe
     assert.equal(walletAddress, TENANT_WALLET);
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     return {
-      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }],
+      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: usdcToEthRouterCall(expiresAt) }],
       requestId: 'tenant-swap',
       expiresAt,
       context: {
@@ -197,7 +209,7 @@ test('T48b: native swap tool trace has real skill_load, plugin_http_request, sec
   baseAppNativeRuntime.prepareUniswap5792 = async (_intent, walletAddress) => {
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     return {
-      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }],
+      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: usdcToEthRouterCall(expiresAt) }],
       requestId: 'trace-swap',
       expiresAt,
       context: {

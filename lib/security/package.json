@@ -12,6 +12,8 @@
     "./swapAsset": "./src/swapAsset.ts",
     "./uniswapGuard": "./src/uniswapGuard.ts",
     "./kyberGuard": "./src/kyberGuard.ts",
+    "./kyberRouterCalldata": "./src/kyberRouterCalldata.ts",
+    "./uniswapRouterCalldata": "./src/uniswapRouterCalldata.ts",
     "./aerodromeGuard": "./src/aerodromeGuard.ts",
     "./aerodromeClaimGuard": "./src/aerodromeClaimGuard.ts",
     "./uniswapCollectGuard": "./src/uniswapCollectGuard.ts",

@@ -1,8 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { canonicalUsdcForBaseChain } from './baseGuards.js';
-import { KYBERSWAP_BASE_ROUTER, validateKyberSwap } from './kyberGuard.js';
-import type { SwapGuardAssetV1 } from './swapAsset.js';
+import { KYBERSWAP_BASE_ROUTER, validateKyberSwap as validateKyberSwapGuard, type KyberSwapContext } from './kyberGuard.js';
+import { encodeKyberSwapV1, KYBERSWAP_NATIVE_TOKEN_V1 } from './kyberRouterCalldata.js';
+import { decimalAmountToRawV1, type SwapGuardAssetV1 } from './swapAsset.js';
+
+/**
+ * The swap a context asks for, as KyberSwap's route/build encodes it. Since
+ * 2026-11-14 the guard reads the router call (audit SW-1), so the placeholder
+ * bytes these tests were written with stand for this call.
+ */
+function kyberData(ctx: KyberSwapContext, minimum = 1n): string | null {
+  const side = (asset: SwapGuardAssetV1) => asset.kind === 'native' ? KYBERSWAP_NATIVE_TOKEN_V1 : asset.address;
+  const amount = decimalAmountToRawV1(ctx.amountDecimal, ctx.inputAsset.kind === 'native' ? 18 : ctx.inputAsset.decimals);
+  if (amount === null || ![side(ctx.inputAsset), side(ctx.outputAsset), ctx.swapper].every((address) => /^0x[0-9a-fA-F]{40}$/.test(address))) return null;
+  return encodeKyberSwapV1({ srcToken: side(ctx.inputAsset), dstToken: side(ctx.outputAsset), dstReceiver: ctx.swapper, amount, minReturnAmount: minimum });
+}
+/** The guard, with each placeholder router call replaced by the swap its context asks for. */
+function validateKyberSwap(input: Parameters<typeof validateKyberSwapGuard>[0]) {
+  const calls = input.calls.map((call) => {
+    if (!input.context || String(call.to).toLowerCase() !== KYBERSWAP_BASE_ROUTER || call.data !== '0x12345678') return call;
+    let data: string | null = null;
+    try { data = kyberData(input.context); } catch { /* an asset the guard refuses first: the placeholder stays */ }
+    return { ...call, data: data ?? call.data };
+  });
+  return validateKyberSwapGuard({ ...input, calls });
+}
 
 const WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';

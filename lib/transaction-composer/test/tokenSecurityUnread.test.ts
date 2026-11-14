@@ -5,7 +5,7 @@ import type { AssetRefV1, ExecutionCallV1 } from '@mioagent/route-domain';
 import { classifySwapCallV1 } from '../src/blueprint.js';
 import { narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
 import { runSafetyKernel } from '../src/safetyKernel.js';
-import { NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
+import { NOW, USDC_BASE, WALLET, makeIntent, routerCallDataV1 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
 // 2026-09-24: a buy of NVDAc was refused with "No usable GoPlus verdict for
@@ -39,7 +39,7 @@ function calls(): ExecutionCallV1[] {
     [
       { to: USDC_BASE.address!, value: '0', data: `0x095ea7b3${word(PERMIT2)}${word((1n << 256n) - 1n)}` },
       { to: PERMIT2, value: '0', data: `0x87517c45${word(USDC_BASE.address!)}${word(ROUTER)}${word(amount)}${word(BigInt(expirySec))}` },
-      { to: ROUTER, value: '0', data: '0x3593564c' },
+      { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: intent.amount.amountAtomic, from: USDC_BASE, to: NVDA_BASE, minimumAtomic: '44006', deadlineSec: expirySec }) },
     ],
     { inputToken: USDC_BASE.address!, amountAtomic: intent.amount.amountAtomic, expiresAtSec: expirySec },
   );
@@ -69,6 +69,7 @@ function kernel(nvdaVerdict: { status: 'ok' | 'failed' | 'unknown'; summary: str
     simulationDetail: 'ok',
     intentHash: intent.intentHash,
     selectedCandidateHash: `0x${'1'.repeat(64)}`,
+    swapMinimumOutputAtomic: '44006',
   }).result;
 }
 

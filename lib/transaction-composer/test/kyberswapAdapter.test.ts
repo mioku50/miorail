@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadSkillExecutor, type BaseMcpSkillExecutor, type PluginHttpResponse } from '@mioagent/runtime-skills';
 import { KyberSwapBuildAdapter } from '../src/adapters/kyberswap.js';
-import { NOW, WALLET, makeIntent } from './fixtures.js';
+import { NOW, WALLET, makeIntent, routerCallDataV1 } from './fixtures.js';
 
 const ROUTER = '0x6131b5fae19ea4f9d964eac0408e4408b66337b5';
 
@@ -24,13 +24,17 @@ function mockExecutor(
 }
 
 const SUMMARY_AMOUNT_OUT = '38100000000000000';
+/** What route/build returns for this swap, encoded as the router reads it (audit SW-1: the build reads it):
+ * the wallet paid, and KyberSwap's minimum for the intent's 50 bps. */
+const KYBER_MINIMUM = ((BigInt(SUMMARY_AMOUNT_OUT) * 9_950n) / 10_000n).toString();
+const KYBER_BUILT_CALL = routerCallDataV1({ router: ROUTER, amountAtomic: makeIntent().amount.amountAtomic, minimumAtomic: KYBER_MINIMUM });
 
 function defaultHandler(routeSummary: unknown = { note: 'route', amountOut: SUMMARY_AMOUNT_OUT }) {
   return async (input: Parameters<BaseMcpSkillExecutor['request']>[0]) => {
     if (input.method === 'GET') {
       return { status: 200, data: { data: { routerAddress: ROUTER, routeSummary } } };
     }
-    return { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } } };
+    return { status: 200, data: { data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '0' } } };
   };
 }
 
@@ -59,6 +63,24 @@ test('KyberSwap build adapter builds an approval plus swap call for USDC to ETH'
   }
 });
 
+test('the minimum the build states is the one the router call enforces, read from its bytes (audit SW-1)', async () => {
+  const built = (data: string) => new KyberSwapBuildAdapter({ executorFactory: () => mockExecutor(async (input) => input.method === 'GET'
+    ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: { amountOut: SUMMARY_AMOUNT_OUT } } } }
+    : { status: 200, data: { data: { routerAddress: ROUTER, data, transactionValue: '0' } } }) }).build(buildInput());
+  const amount = makeIntent().amount.amountAtomic;
+  // KyberSwap rounds from its build-time quote, a unit below ours: that is its minimum, and the review's.
+  const roundedDown = await built(routerCallDataV1({ router: ROUTER, amountAtomic: amount, minimumAtomic: (BigInt(KYBER_MINIMUM) - 1n).toString() }));
+  assert.equal(roundedDown.outcome, 'built');
+  if (roundedDown.outcome === 'built') assert.equal(roundedDown.minimumOutput.amountAtomic, (BigInt(KYBER_MINIMUM) - 1n).toString());
+  // A route that pays someone else, or guarantees less than the slippage the person allowed, is not offered.
+  const elsewhere = await built(routerCallDataV1({ router: ROUTER, amountAtomic: amount, minimumAtomic: KYBER_MINIMUM, wallet: '0x000000000000000000000000000000000000beef' }));
+  assert.deepEqual(elsewhere.outcome === 'built' ? null : (elsewhere as { errorCode: string }).errorCode, 'kyberswap_pays_another_address');
+  const tooLow = await built(routerCallDataV1({ router: ROUTER, amountAtomic: amount, minimumAtomic: ((BigInt(SUMMARY_AMOUNT_OUT) * 9_900n) / 10_000n).toString() }));
+  assert.deepEqual(tooLow.outcome === 'built' ? null : (tooLow as { errorCode: string }).errorCode, 'kyberswap_minimum_outside_slippage');
+  const undecodable = await built('0xabcdef01');
+  assert.deepEqual(undecodable.outcome === 'built' ? null : (undecodable as { errorCode: string }).errorCode, 'kyberswap_router_call_undecodable');
+});
+
 test('KyberSwap build adapter rejects a routeSummary without a usable amountOut', async () => {
   const adapter = new KyberSwapBuildAdapter({ executorFactory: () => mockExecutor(defaultHandler({ note: 'route' })) });
   const result = await adapter.build(buildInput());
@@ -71,7 +93,7 @@ test('KyberSwap build adapter rejects a router mismatch on the GET routes respon
       mockExecutor(async (input) =>
         input.method === 'GET'
           ? { status: 200, data: { data: { routerAddress: '0x2222222222222222222222222222222222222222', routeSummary: {} } } }
-          : { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } } },
+          : { status: 200, data: { data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '0' } } },
       ),
   });
   const result = await adapter.build(buildInput());
@@ -84,7 +106,7 @@ test('KyberSwap build adapter rejects a router mismatch on the route/build respo
       mockExecutor(async (input) =>
         input.method === 'GET'
           ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: { amountOut: SUMMARY_AMOUNT_OUT } } } }
-          : { status: 200, data: { data: { routerAddress: '0x3333333333333333333333333333333333333333', data: '0xabcdef01', transactionValue: '0' } } },
+          : { status: 200, data: { data: { routerAddress: '0x3333333333333333333333333333333333333333', data: KYBER_BUILT_CALL, transactionValue: '0' } } },
       ),
   });
   const result = await adapter.build(buildInput());
@@ -99,7 +121,7 @@ test('KyberSwap build adapter passes the routeSummary byte-preserved to route/bu
       mockExecutor(async (input) => {
         if (input.method === 'GET') return { status: 200, data: { data: { routerAddress: ROUTER, routeSummary } } };
         capturedBody = input.body;
-        return { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } } };
+        return { status: 200, data: { data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '0' } } };
       }),
   });
   await adapter.build(buildInput());
@@ -112,7 +134,7 @@ test('KyberSwap build adapter rejects a nonzero transactionValue', async () => {
       mockExecutor(async (input) =>
         input.method === 'GET'
           ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: { amountOut: SUMMARY_AMOUNT_OUT } } } }
-          : { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '1000' } } },
+          : { status: 200, data: { data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '1000' } } },
       ),
   });
   const result = await adapter.build(buildInput());
@@ -198,7 +220,7 @@ test('the real transport hands route/build the routeSummary KyberSwap sent, howe
   const fetchImpl = (async (_url: string, init: { method?: string; body?: string }) => {
     if (init.method === 'POST') {
       posted.push(JSON.parse(init.body ?? '{}'));
-      return jsonResponse({ code: 0, data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } });
+      return jsonResponse({ code: 0, data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '0' } });
     }
     return jsonResponse({ code: 0, data: { routerAddress: ROUTER, routeSummary: DEEP_ROUTE_SUMMARY } });
   }) as never;
@@ -233,7 +255,7 @@ test('a routeSummary our transport altered is never posted', async () => {
           };
         }
         posts += 1;
-        return { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } } };
+        return { status: 200, data: { data: { routerAddress: ROUTER, data: KYBER_BUILT_CALL, transactionValue: '0' } } };
       }),
   });
   const result = await adapter.build(buildInput());

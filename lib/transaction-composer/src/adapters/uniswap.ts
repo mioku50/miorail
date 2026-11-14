@@ -3,11 +3,11 @@ import {
   BASE_UNISWAP_UNIVERSAL_ROUTER_2_VERSION,
   PERMIT2_ADDRESS,
 } from '@mioagent/security/uniswapGuard';
+import { readUniswapExecuteV1 } from '@mioagent/security/uniswapRouterCalldata';
 import {
   atomicToHumanDecimal,
   canonicalRequestHash,
   canonicalResponseHash,
-  minimumOutputAtomic,
   parsePositiveAtomic,
   parseUnsignedAtomic,
   providerTokenAddress,
@@ -25,6 +25,7 @@ import type {
   SwapBuildInput,
   SwapBuildResultV1,
 } from '../types.js';
+import { routerMinimumFloorAtomicV1 } from './routerMinimum.js';
 
 const ROUTER = BASE_UNISWAP_UNIVERSAL_ROUTER_2 as `0x${string}`;
 
@@ -58,8 +59,9 @@ function wordAddressV1(word: string): string | null {
  * the input token and a spender the guard accepts (Permit2 or the pinned
  * router): the amount becomes exactly the input, the expiry no later than the
  * quote's. Anything else is left exactly as Uniswap wrote it, for the kernel
- * to refuse. The router's calldata is never touched, and the kernel and the
- * simulation both run on these calls, not on Uniswap's.
+ * to refuse. The router's calldata is never rewritten; since 2026-11-14 it is
+ * read (audit SW-1), and the kernel and the simulation both run on these
+ * calls, not on Uniswap's.
  */
 export function narrowUniswapApprovalsV1<T extends { to: string; data: string }>(
   calls: readonly T[],
@@ -211,25 +213,12 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
     if (providerMinimum !== null && BigInt(providerMinimum) > BigInt(expectedAtomic)) {
       return failure('invalid_response', 'uniswap_quote_output_invalid', false);
     }
-    const derivedMinimum = minimumOutputAtomic(expectedAtomic, intent.slippageConstraint.maxBps);
-    const minimumAtomic =
-      providerMinimum !== null && BigInt(providerMinimum) > BigInt(derivedMinimum)
-        ? providerMinimum
-        : derivedMinimum;
     const expectedDecimal = atomicToHumanDecimal(expectedAtomic, intent.toAsset!.decimals);
-    const minimumDecimal = atomicToHumanDecimal(minimumAtomic, intent.toAsset!.decimals);
-    if (expectedDecimal === null || minimumDecimal === null) {
-      return failure('invalid_response', 'uniswap_quote_output_invalid', false);
-    }
+    if (expectedDecimal === null) return failure('invalid_response', 'uniswap_quote_output_invalid', false);
     const expectedOutput: TokenAmountV1 = {
       asset: intent.toAsset!,
       amountAtomic: expectedAtomic,
       amountDecimal: expectedDecimal,
-    };
-    const minimumOutput: TokenAmountV1 = {
-      asset: intent.toAsset!,
-      amountAtomic: minimumAtomic,
-      amountDecimal: minimumDecimal,
     };
 
     const requestId = input.requestId;
@@ -253,6 +242,24 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
 
     const routerCalls = swapResult.calls!.filter((call) => call.to.toLowerCase() === ROUTER.toLowerCase());
     if (routerCalls.length !== 1) return failure('router_mismatch', 'uniswap_router_not_pinned', false);
+    // The minimum the review states is the one the bytes guarantee, read from the router call itself
+    // (audit SW-1, 2026-11-14): it was worked out from the quote's JSON, which says nothing about what the
+    // wallet signs. A call Still cannot read, or one whose minimum is below the slippage the person
+    // allowed, is not offered.
+    const reading = readUniswapExecuteV1(routerCalls[0]!.data, {
+      wallet: input.walletAddress,
+      input: intent.fromAsset!.kind === 'native' ? { kind: 'native' } : { kind: 'erc20', address: tokenIn },
+      output: intent.toAsset!.kind === 'native' ? { kind: 'native' } : { kind: 'erc20', address: tokenOut },
+      amountInAtomic: BigInt(intent.amount.amountAtomic),
+    });
+    if (!reading.ok) return failure('rejected', reading.code, false);
+    if (reading.guaranteedOutputAtomic > BigInt(expectedAtomic) ||
+        reading.guaranteedOutputAtomic < routerMinimumFloorAtomicV1(expectedAtomic, intent.slippageConstraint.maxBps, reading.minimumSources)) {
+      return failure('rejected', 'uniswap_minimum_outside_slippage', false);
+    }
+    const guaranteedDecimal = atomicToHumanDecimal(reading.guaranteedOutputAtomic.toString(), intent.toAsset!.decimals);
+    if (guaranteedDecimal === null) return failure('invalid_response', 'uniswap_quote_output_invalid', false);
+    const calldataMinimum: TokenAmountV1 = { asset: intent.toAsset!, amountAtomic: reading.guaranteedOutputAtomic.toString(), amountDecimal: guaranteedDecimal };
     const calls = narrowUniswapApprovalsV1(swapResult.calls!, {
       inputToken: intent.fromAsset!.kind === 'native' ? null : tokenIn,
       amountAtomic: intent.amount.amountAtomic,
@@ -273,7 +280,7 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       requestHash,
       responseHash,
       expectedOutput,
-      minimumOutput,
+      minimumOutput: calldataMinimum,
     };
   }
 }

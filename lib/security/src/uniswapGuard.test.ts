@@ -1,12 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { canonicalUsdcForBaseChain } from './baseGuards.js';
-import type { SwapGuardAssetV1 } from './swapAsset.js';
+import { decimalAmountToRawV1, type SwapGuardAssetV1 } from './swapAsset.js';
 import {
   BASE_UNISWAP_UNIVERSAL_ROUTER_2,
   PERMIT2_ADDRESS,
-  validateUniswapSwap,
+  validateUniswapSwap as validateUniswapSwapGuard,
+  type UniswapSwapContext,
 } from './uniswapGuard.js';
+import { encodeUniswapExecuteV1, encodeUniswapV3PathV1, type UniswapCommandV1 } from './uniswapRouterCalldata.js';
+
+const MSG_SENDER = '0x0000000000000000000000000000000000000001';
+const ROUTER_ITSELF = '0x0000000000000000000000000000000000000002';
+
+/**
+ * The swap a context asks for, as the Trading API builds it: a v3 exact-input
+ * leg, wrapped in WRAP_ETH or followed by UNWRAP_WETH for a native side. Since
+ * 2026-11-14 the guard reads the router call (audit SW-1), so the placeholder
+ * bytes these tests were written with stand for this call.
+ */
+function routerData(ctx: UniswapSwapContext, minimum = 1n): string | null {
+  const side = (asset: SwapGuardAssetV1) => asset.kind === 'native' ? '0x4200000000000000000000000000000000000006' : asset.address;
+  const amount = decimalAmountToRawV1(ctx.amountDecimal, ctx.inputAsset.kind === 'native' ? 18 : ctx.inputAsset.decimals);
+  if (amount === null || !/^0x[0-9a-fA-F]{40}$/.test(side(ctx.inputAsset)) || !/^0x[0-9a-fA-F]{40}$/.test(side(ctx.outputAsset))) return null;
+  const nativeIn = ctx.inputAsset.kind === 'native', nativeOut = ctx.outputAsset.kind === 'native';
+  const commands: UniswapCommandV1[] = [];
+  if (nativeIn) commands.push({ command: 'WRAP_ETH', recipient: ROUTER_ITSELF, amount });
+  commands.push({ command: 'V3_SWAP_EXACT_IN', recipient: nativeOut ? ROUTER_ITSELF : MSG_SENDER, amountIn: amount, amountOutMin: nativeOut ? 0n : minimum,
+    path: encodeUniswapV3PathV1([side(ctx.inputAsset), side(ctx.outputAsset)], [500]), payerIsUser: !nativeIn });
+  if (nativeOut) commands.push({ command: 'UNWRAP_WETH', recipient: MSG_SENDER, amount: minimum });
+  return encodeUniswapExecuteV1(commands, BigInt(Math.floor(Date.parse(ctx.expiresAt) / 1000)));
+}
+const PLACEHOLDERS = new Set(['0x3593564c', '0x12345678']);
+/** The guard, with each placeholder router call replaced by the swap its context asks for. */
+function validateUniswapSwap(input: Parameters<typeof validateUniswapSwapGuard>[0]) {
+  const calls = input.calls.map((call) => {
+    if (!input.context || String(call.to).toLowerCase() !== BASE_UNISWAP_UNIVERSAL_ROUTER_2 || !PLACEHOLDERS.has(String(call.data))) return call;
+    let data: string | null = null;
+    try { data = routerData(input.context); } catch { /* an asset the guard refuses first: the placeholder stays */ }
+    return { ...call, data: data ?? call.data };
+  });
+  return validateUniswapSwapGuard({ ...input, calls });
+}
 
 const WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';

@@ -4,17 +4,36 @@ import type { RouteIntentV1 } from '@mioagent/route-domain';
 import type { UniswapTradeTransport } from '@mioagent/swap-adapters';
 import { validateUniswapSwap } from '@mioagent/security/uniswapGuard';
 import { UniswapSwapBuildAdapter, narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
-import { NOW, WALLET, WETH_BASE, makeIntent } from './fixtures.js';
+import { NOW, WALLET, WETH_BASE, makeIntent, routerCallDataV1 } from './fixtures.js';
+import type { AssetRefV1 } from '@mioagent/route-domain';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43';
+
+/**
+ * The router call the Trading API writes for the quote it was asked for: the
+ * quoted output less the requested slippage, paid to the wallet, by the
+ * deadline asked (audit SW-1: the adapter now reads this call).
+ */
+function routerCallFor(quote: Record<string, unknown>, swap: Record<string, unknown>, output = '38000000000000000'): string {
+  const side = (address: unknown) => (address === '0x0000000000000000000000000000000000000000'
+    ? { kind: 'native' } : { kind: 'erc20', address: String(address) }) as AssetRefV1;
+  const bps = Math.round(Number(quote.slippageTolerance ?? 0.5) * 100);
+  return routerCallDataV1({ amountAtomic: String(quote.amount), from: side(quote.tokenIn), to: side(quote.tokenOut), wallet: String(quote.swapper) as `0x${string}`,
+    minimumAtomic: ((BigInt(output) * BigInt(10_000 - bps)) / 10_000n).toString(), deadlineSec: Number(swap.deadline) });
+}
+
+/** The default intent's swap (100 USDC to ETH) as the API writes it, for handlers that do not see the quote. */
+const DEFAULT_ROUTER_CALL = routerCallDataV1({ amountAtomic: '100000000', minimumAtomic: '37810000000000000' });
 
 function transportOf(handlers: {
   quote?: (body: unknown) => { status: number; payload: unknown };
   swap?: (body: unknown) => { status: number; payload: unknown };
 }): UniswapTradeTransport {
+  let quoteBody: Record<string, unknown> = {};
   return {
     async post(path, body) {
       if (path === '/v1/quote') {
+        quoteBody = body as Record<string, unknown>;
         return (
           handlers.quote?.(body) ?? {
             status: 200,
@@ -34,7 +53,7 @@ function transportOf(handlers: {
             requestId: 'swap-req-1',
             calls: [
               { to: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', value: '0', data: '0x095ea7b3' },
-              { to: ROUTER, value: '0', data: '0x12345678' },
+              { to: ROUTER, value: '0', data: routerCallFor(quoteBody, body as Record<string, unknown>) },
             ],
           },
         }
@@ -118,6 +137,28 @@ test('Uniswap build adapter sends slippageTolerance as a JSON number, not a deci
   // 50 bps is 0.5 percent — JSON.stringify must emit `0.5`, never `"0.50"`.
   assert.equal(capturedQuoteBody?.slippageTolerance, 0.5);
   assert.match(JSON.stringify(capturedQuoteBody), /"slippageTolerance":0\.5(?!")/);
+});
+
+test('the minimum the build states is the one the router call guarantees, read from its bytes (audit SW-1)', async () => {
+  const withRouterCall = (data: string) => new UniswapSwapBuildAdapter({ transport: transportOf({ swap: () => ({ status: 200,
+    payload: { from: WALLET, chainId: 8453, requestId: 'swap-req-sw1', calls: [{ to: ROUTER, value: '0', data }] } }) }) }).build(buildInput(makeIntent()));
+  // Uniswap divides by 1 + slippage, a little above our 1 − slippage: its minimum is what the review states.
+  const sdk = await withRouterCall(routerCallDataV1({ amountAtomic: '100000000', minimumAtomic: '37810945273631840' }));
+  assert.equal(sdk.outcome, 'built');
+  if (sdk.outcome === 'built') assert.equal(sdk.minimumOutput.amountAtomic, '37810945273631840');
+  const refusals: Array<[string, string]> = [
+    // The audit's probe: the output paid to someone else.
+    [routerCallDataV1({ amountAtomic: '100000000', minimumAtomic: '37810000000000000', wallet: '0x000000000000000000000000000000000000beef' }), 'uniswap_pays_another_address'],
+    // A floor below the slippage the person allowed.
+    [routerCallDataV1({ amountAtomic: '100000000', minimumAtomic: '37000000000000000' }), 'uniswap_minimum_outside_slippage'],
+    // More input than the review's.
+    [routerCallDataV1({ amountAtomic: '100000001', minimumAtomic: '37810000000000000' }), 'uniswap_input_amount_mismatch'],
+    ['0x3593564c', 'uniswap_router_call_undecodable'],
+  ];
+  for (const [data, code] of refusals) {
+    const result = await withRouterCall(data);
+    assert.deepEqual(result.outcome === 'built' ? null : (result as { errorCode: string }).errorCode, code);
+  }
 });
 
 test('a refused Uniswap request names which of the two calls was refused', async () => {
@@ -279,7 +320,7 @@ test('a batch carrying a Permit2 approval beside the swap is built, not refused'
           requestId: 'swap-req-permit',
           calls: [
             { to: PERMIT2, value: '0', data: '0x87517c45' },
-            { to: ROUTER, value: '0', data: '0x12345678' },
+            { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: '100000000', to: WETH_BASE, minimumAtomic: '37810000000000000' }) },
           ],
         },
       }),
@@ -312,7 +353,7 @@ test('the real transport asks the Trading API for the pinned router, on both req
               from: WALLET,
               chainId: 8453,
               requestId: 'swap-req-1',
-              calls: [{ to: ROUTER, value: '0', data: '0x3593564c' }],
+              calls: [{ to: ROUTER, value: '0', data: DEFAULT_ROUTER_CALL }],
             },
       ),
       { status: 200, headers: { 'content-type': 'application/json' } },
@@ -373,7 +414,7 @@ const QUOTE_EXPIRY = new Date(NOW.getTime() + 10 * 60_000).toISOString();
 const AS_UNISWAP_WROTE_IT = [
   approveCall(PERMIT2_V1, MAX_UINT256),
   permitCall(USDC_V1, ROUTER, 100_000_000n, NOW_SEC + 30n * 86_400n),
-  { to: ROUTER, value: '0', data: '0x3593564c' },
+  { to: ROUTER, value: '0', data: DEFAULT_ROUTER_CALL },
 ];
 const guardFor = (calls: { to: string; value: string; data: string }[]) =>
   validateUniswapSwap({
@@ -418,7 +459,7 @@ test('the adapter narrows both approvals to this swap, and the guard accepts the
     [
       approveCall(PERMIT2_V1, 100_000_000n).data,
       permitCall(USDC_V1, ROUTER, 100_000_000n, expirySec).data,
-      '0x3593564c',
+      DEFAULT_ROUTER_CALL,
     ],
   );
   assert.equal(guardFor(result.calls as never).success, true);

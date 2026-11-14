@@ -551,8 +551,11 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     // target the moment the other direction shipped.
     const inputAsset = guardAssetV1(input.intent.fromAsset);
     const outputAsset = guardAssetV1(input.intent.toAsset);
+    // The minimum the review states, stored with the calls: the router's own minimums in the bytes must
+    // add up to at least it (audit SW-1, 2026-11-14). Without it there is nothing to hold them to.
+    const minimum = input.swapMinimumOutputAtomic ?? null;
     const context: UniswapSwapContext | undefined =
-      inputAsset && outputAsset
+      inputAsset && outputAsset && minimum
         ? {
             amountDecimal: input.intent.amount.amountDecimal,
             inputAsset,
@@ -560,6 +563,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
             swapper: input.walletAddress,
             routerVersion: '2.0',
             expiresAt: input.quoteExpiry,
+            minimumOutputAtomic: minimum,
           }
         : undefined;
     // An absent context is a REFUSAL inside the guard, not a skipped check.
@@ -567,7 +571,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     checks.push(
       check(
         'provider_guard_uniswap',
-        'Uniswap-specific structural and router-pinning validation (validateUniswapSwap)',
+        'Uniswap router calldata decoded: only swap commands, exactly the reviewed input drawn, every payment to your wallet, and at least the reviewed minimum guaranteed by the router (validateUniswapSwap)',
         guard.success ? 'passed' : 'failed',
         guard.success ? null : `${guard.code}: ${guard.reason}`,
       ),
@@ -575,8 +579,9 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
   } else {
     const inputAsset = guardAssetV1(input.intent.fromAsset);
     const outputAsset = guardAssetV1(input.intent.toAsset);
+    const minimum = input.swapMinimumOutputAtomic ?? null;
     const context: KyberSwapContext | undefined =
-      inputAsset && outputAsset
+      inputAsset && outputAsset && minimum
         ? {
             amountDecimal: input.intent.amount.amountDecimal,
             inputAsset,
@@ -585,13 +590,14 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
             recipient: input.walletAddress,
             routerAddress: input.routerAddress,
             expiresAt: input.quoteExpiry,
+            minimumOutputAtomic: minimum,
           }
         : undefined;
     const guard = validateKyberSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
     checks.push(
       check(
         'provider_guard_kyberswap',
-        'KyberSwap-specific structural and router-pinning validation (validateKyberSwap)',
+        'KyberSwap router calldata decoded: exactly the reviewed input drawn, your wallet paid, no fee or permit, and at least the reviewed minimum guaranteed by the router (validateKyberSwap)',
         guard.success ? 'passed' : 'failed',
         guard.success ? null : `${guard.code}: ${guard.reason}`,
       ),

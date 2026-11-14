@@ -4,7 +4,7 @@ import { encodeFunctionData, erc20Abi } from 'viem';
 import { TransactionReviewProjectionV1Schema } from '@mioagent/route-card';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from '../src/blueprint.js';
 import { buildTransactionReviewProjectionV1 } from '../src/reviewProjection.js';
-import { NOW, USDC_BASE, ETH_BASE, WALLET } from './fixtures.js';
+import { NOW, USDC_BASE, ETH_BASE, WALLET, routerCallDataV1 } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
 
@@ -12,7 +12,7 @@ function blueprintFixture() {
   const approveData = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ROUTER, 100_000_000n] });
   const calls = [
     classifySwapCallV1({ index: 0, call: { to: USDC_BASE.address as `0x${string}`, value: '0', data: approveData }, routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET }),
-    classifySwapCallV1({ index: 1, call: { to: ROUTER, value: '0', data: '0x12345678' }, routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET }),
+    classifySwapCallV1({ index: 1, call: { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: '100000000' }) }, routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET }),
   ];
   return assembleExecutionBlueprintV1({
     id: blueprintIdV1({ tenantId: 'tenant-1', walletAddress: WALLET, routeRunId: 'run-1', routeCardHash: `0x${'1'.repeat(64)}`, selectedCandidateHash: `0x${'2'.repeat(64)}`, requestId: 'req-1' }),

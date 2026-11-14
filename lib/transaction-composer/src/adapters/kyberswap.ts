@@ -1,12 +1,12 @@
 import { encodeFunctionData, erc20Abi } from 'viem';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
+import { readKyberSwapV1 } from '@mioagent/security/kyberRouterCalldata';
 import { KYBERSWAP_CLIENT_ID_V1, loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
 import {
   KYBERSWAP_BASE_ROUTER,
   atomicToHumanDecimal,
   canonicalRequestHash,
   canonicalResponseHash,
-  minimumOutputAtomic,
   normalizeAddress,
   parsePositiveAtomic,
   providerTokenAddress,
@@ -21,6 +21,7 @@ import type {
   SwapBuildInput,
   SwapBuildResultV1,
 } from '../types.js';
+import { routerMinimumFloorAtomicV1 } from './routerMinimum.js';
 
 
 function failure(outcome: SwapBuildFailureOutcome, errorCode: string, retryable: boolean): SwapBuildFailure {
@@ -105,26 +106,16 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
 
     // Build-side outputs come from the exact routeSummary that is POSTed to
     // route/build below — the same object the calldata is generated from.
-    // Minimum = amountOut bounded by the stored intent's slippage constraint,
-    // matching how the quote adapter already derives candidate outputs.
+    // The minimum is read from the built calldata below (audit SW-1).
     const summaryRecord = routeSummary as Record<string, unknown>;
     const buildAmountOut = parsePositiveAtomic(summaryRecord.amountOut);
     if (!buildAmountOut) return failure('invalid_response', 'kyberswap_routes_invalid', false);
-    const buildMinimumAtomic = minimumOutputAtomic(buildAmountOut, intent.slippageConstraint.maxBps);
     const buildExpectedDecimal = atomicToHumanDecimal(buildAmountOut, intent.toAsset!.decimals);
-    const buildMinimumDecimal = atomicToHumanDecimal(buildMinimumAtomic, intent.toAsset!.decimals);
-    if (buildExpectedDecimal === null || buildMinimumDecimal === null) {
-      return failure('invalid_response', 'kyberswap_routes_invalid', false);
-    }
+    if (buildExpectedDecimal === null) return failure('invalid_response', 'kyberswap_routes_invalid', false);
     const expectedOutput: TokenAmountV1 = {
       asset: intent.toAsset!,
       amountAtomic: buildAmountOut,
       amountDecimal: buildExpectedDecimal,
-    };
-    const minimumOutput: TokenAmountV1 = {
-      asset: intent.toAsset!,
-      amountAtomic: buildMinimumAtomic,
-      amountDecimal: buildMinimumDecimal,
     };
 
     const deadline = Math.floor((input.now.getTime() + 10 * 60_000) / 1000);
@@ -172,6 +163,23 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
     if (transactionValue !== expectedValue) {
       return failure('rejected', 'kyberswap_native_value_mismatch', false);
     }
+    // The minimum the review states is the one the router enforces, read from the built call (audit SW-1,
+    // 2026-11-14): it was worked out from the routes quote, which says nothing about what the wallet signs.
+    // A call Still cannot read, or one whose minimum is below the slippage the person allowed, is not offered.
+    const reading = readKyberSwapV1(calldata, {
+      wallet: input.walletAddress,
+      inputToken: inputIsNative ? null : tokenIn,
+      outputToken: intent.toAsset!.kind === 'native' ? null : tokenOut,
+      amountInAtomic: BigInt(intent.amount.amountAtomic),
+    });
+    if (!reading.ok) return failure('rejected', reading.code, false);
+    if (reading.minReturnAtomic > BigInt(buildAmountOut) ||
+        reading.minReturnAtomic < routerMinimumFloorAtomicV1(buildAmountOut, intent.slippageConstraint.maxBps)) {
+      return failure('rejected', 'kyberswap_minimum_outside_slippage', false);
+    }
+    const minimumDecimal = atomicToHumanDecimal(reading.minReturnAtomic.toString(), intent.toAsset!.decimals);
+    if (minimumDecimal === null) return failure('invalid_response', 'kyberswap_build_invalid', false);
+    const minimumOutput: TokenAmountV1 = { asset: intent.toAsset!, amountAtomic: reading.minReturnAtomic.toString(), amountDecimal: minimumDecimal };
 
     // Native ETH has nothing to approve, so that batch is the router call
     // alone. An ERC-20 input approves its OWN token, exactly.

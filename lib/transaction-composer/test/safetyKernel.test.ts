@@ -5,7 +5,7 @@ import type { AssetRefV1, ExecutionCallV1 } from '@mioagent/route-domain';
 import { runSafetyKernel, swapTokenSecurityAddressesV1, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
 import { classifySwapCallV1 } from '../src/blueprint.js';
 import { narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
-import { ETH_BASE, NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
+import { ETH_BASE, NOW, USDC_BASE, WALLET, makeIntent, routerCallDataV1 } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
 
@@ -24,13 +24,14 @@ function approvalCall(amountAtomic: bigint, spender: `0x${string}` = ROUTER): Ex
   };
 }
 
-function swapCall(index = 1): ExecutionCallV1 {
+function swapCall(index = 1, intent = makeIntent()): ExecutionCallV1 {
   return {
     index,
     callType: 'swap',
     to: ROUTER,
     valueWei: '0',
-    data: '0x12345678',
+    // The router call itself is read since 2026-11-14 (audit SW-1): the swap this intent asks for.
+    data: routerCallDataV1({ amountAtomic: intent.amount.amountAtomic, from: intent.fromAsset!, to: intent.toAsset! }),
     asset: null,
     amountAtomic: null,
     recipient: WALLET,
@@ -57,6 +58,8 @@ function baseArgs(overrides: Partial<Parameters<typeof runSafetyKernel>[0]> = {}
     simulationDetail: 'ok',
     intentHash: intent.intentHash,
     selectedCandidateHash: `0x${'1'.repeat(64)}` as const,
+    // The minimum the review states: the router call's own minimums must reach it (audit SW-1).
+    swapMinimumOutputAtomic: '1',
     ...overrides,
   };
 }
@@ -125,6 +128,27 @@ test('enhanced verification depth blocks when simulation evidence is unavailable
     }),
   );
   assert.equal(result.verdict, 'blocked');
+});
+
+test('the audit probe through the whole kernel: a router call paying another address is blocked, and not shown as paying the wallet (audit SW-1)', () => {
+  const intent = makeIntent();
+  const ATTACKER = '0x000000000000000000000000000000000000beef' as const;
+  const raw = [
+    { to: USDC_BASE.address!, value: '0', data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ROUTER, BigInt(intent.amount.amountAtomic)] }) },
+    { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: intent.amount.amountAtomic, wallet: ATTACKER }) },
+  ];
+  const calls = raw.map((call, index) => classifySwapCallV1({ index, call: call as never, routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET }));
+  const { result } = runSafetyKernel(baseArgs({ intent, calls }));
+  assert.equal(result.verdict, 'blocked');
+  const byId = Object.fromEntries(result.checks.map((entry) => [entry.id, entry]));
+  // The recipient is read from the bytes now: the old classifier wrote the wallet here, and this check passed.
+  assert.equal(byId.recipient_is_wallet!.status, 'failed');
+  assert.equal(byId.provider_guard_uniswap!.status, 'failed');
+  assert.match(byId.provider_guard_uniswap!.detail ?? '', /uniswap_pays_another_address/);
+  // With nothing stored to hold its minimums to, a router call is not accepted at all.
+  const unbounded = runSafetyKernel(baseArgs({ intent, swapMinimumOutputAtomic: null })).result;
+  assert.equal(unbounded.verdict, 'blocked');
+  assert.match(unbounded.blockedReason ?? '', /provider_guard_uniswap: uniswap_context_invalid/);
 });
 
 test('blocks a KyberSwap batch when the router is not pinned', () => {
@@ -251,7 +275,7 @@ test('a Uniswap batch with a Permit2 approval passes the whole kernel once narro
       value: '0',
       data: `0x87517c45${word(USDC_BASE.address!)}${word(ROUTER)}${word(amount)}${word(BigInt(expirySec) + 30n * 86_400n)}`,
     },
-    { to: ROUTER, value: '0', data: '0x3593564c' },
+    { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: intent.amount.amountAtomic, deadlineSec: expirySec }) },
   ];
   const classify = (calls: typeof raw) =>
     calls.map((call, index) =>

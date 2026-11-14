@@ -12,7 +12,7 @@ import {
   validateGiftTransferV1,
 } from '../src/gift.js';
 import { runSafetyKernel } from '../src/safetyKernel.js';
-import { NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
+import { NOW, USDC_BASE, WALLET, makeIntent, routerCallDataV1 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
 // A gift: the ordinary swap to the wallet, then one transfer of exactly the
@@ -50,7 +50,7 @@ function swapPart(): ExecutionCallV1[] {
         value: '0',
         data: `0x87517c45${word(USDC_BASE.address!)}${word(ROUTER)}${word(amount)}${word(BigInt(expirySec))}`,
       },
-      { to: ROUTER, value: '0', data: '0x3593564c' },
+      { to: ROUTER, value: '0', data: routerCallDataV1({ amountAtomic: intent.amount.amountAtomic, from: USDC_BASE, to: NVDA_BASE, minimumAtomic: MINIMUM, deadlineSec: expirySec }) },
     ],
     { inputToken: USDC_BASE.address!, amountAtomic: intent.amount.amountAtomic, expiresAtSec: expirySec },
   );
