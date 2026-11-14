@@ -255,11 +255,12 @@ are not marked read-only; none signs or sends.
   token is collateral: the protocol's own maximum, with Still's stricter
   allowance beside it. It prepares nothing.
 - `miorail_review_borrow` measures one exact Morpho borrow and returns a review
-  for the person. For Still's registered markets (cbBTC, WETH and PAXG against
-  USDC) the calls are the wallet's own calls to Morpho Blue, written and
-  decoded by Miorail, and nothing is authorised to act for the wallet. For any
-  other market the venue writes the calldata, and one of its calls may
-  authorise an adapter to act for the wallet until it is revoked.
+  for the person. It reviews only Still's registered markets (cbBTC, WETH and
+  PAXG against USDC): the calls are the wallet's own calls to Morpho Blue,
+  written and decoded by Miorail, and nothing is authorised to act for the
+  wallet. Any other collateral or market is refused before anything is read
+  (`market_outside_still`); a loan against one of Still's stocks is prepared
+  by `miorail_prepare_still_loan`.
 - `miorail_check_exit_profile` runs the live entry-and-exit check of one B20
   token for the wallet, where the server offers B20 entry: it quotes the entry,
   simulates it, quotes the exit at the size the entry produced, and simulates
