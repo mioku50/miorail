@@ -65,7 +65,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
           {tab === 'holdings' ? (
             <div className="still-assets-layout">
               <div className="still-assets-primary">
-                {view.count === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.</p> : null}
+                {view.emptyNote ? <p className="still-section still-note">{view.emptyNote}</p> : null}
                 <ul className="still-rows" role="tabpanel" aria-label="Holdings">
                   {view.rows.map((row) => (
                     <li key={row.id} className="still-row">

@@ -1,6 +1,7 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents } from '@mioagent/still-engine/format';
+import { STOCKS } from '@mioagent/still-engine/registry';
 
 // The API server type-checks this file too (under node16), so relative imports
 // name their `.js`; the bundlers resolve it to the `.ts` beside it.
@@ -827,11 +828,18 @@ export function agentAnswerV1(input: {
   }
 
   const held = report.assets.filter((line) => [line.wallet, line.pledged].some(amount => amount !== null && BigInt(amount.raw) > BigInt(0)));
+  // A Coinbase stock outside the eight is a holding too: "no Coinbase stocks" is not said of a wallet holding one (audit UI-12).
+  const reviewedTokens = new Set([...STOCKS.map((stock) => stock.token), ...report.assets.map((line) => line.token)].map((token) => token.toLowerCase()));
+  const others = (input.dividends?.holdings ?? []).filter((holding) => !reviewedTokens.has(holding.tokenAddress.toLowerCase()) && /[1-9]/.test(holding.tokens))
+    .map((holding) => holding.tokenSymbol);
   return {
     topic,
     mode: 'fast',
     text: held.length === 0
-      ? ru ? 'В проверенном наборе Still не установлены активы этого кошелька: акции Coinbase, cbBTC, ETH или PAXG.' : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.'
+      ? others.length > 0
+        ? ru ? `Этот кошелёк не держит ничего, под что Still даёт заём (восемь проверенных акций, cbBTC, ETH или PAXG). Ещё в нём ${others.join(', ')}: акции Coinbase, под которые Still не кредитует.`
+          : `This wallet holds nothing Still lends against (the eight reviewed stocks, cbBTC, ETH or PAXG). It also holds ${others.join(', ')}: Coinbase stocks Still does not lend against.`
+        : ru ? 'В проверенном наборе Still не установлены активы этого кошелька: акции Coinbase, cbBTC, ETH или PAXG.' : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.'
       : `${ru ? 'Прочитанные активы' : 'Reviewed holdings'}: ${held.map((l) => `${l.name} ${l.valueCents === null ? ru ? '(стоимость не прочитана)' : '(value not read)' : formatCents(l.valueCents)}`).join(', ')}.`,
     sources: read
   };

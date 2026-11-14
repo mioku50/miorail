@@ -495,6 +495,26 @@ describe('what the wallet holds, on Assets', () => {
     assert.match(withOthers.totalNote, / · SONYc not priced here/);
   });
 
+  it('never says "no Coinbase stocks" above a Coinbase stock it draws: a wallet with HIMSc and nothing reviewed (audit UI-12)', () => {
+    const empty = JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: snapshot({}), calendar: calendar(), subject,
+      assembledAt: new Date('2026-10-21T15:00:01Z') }))) as MirrorReport;
+    const hims = { ...sony, symbol: 'HIMS', company: 'Hims & Hers Health', tokenAddress: `0x${'7'.repeat(40)}`, tokenSymbol: 'HIMSc', tokens: '0.0505' };
+    const view = assetsViewV1({ report: empty, usdc: { raw: '1000000', decimals: 6 }, dividends: { ...dividends, holdings: [hims] } });
+    assert.equal(view.count, 0);
+    assert.equal(view.emptyNote, 'Nothing here is collateral Still lends against: the eight reviewed stocks, cbBTC, ETH or PAXG.');
+    const html = renderToStaticMarkup(<StillAssets model={{ sky: skyStateV1({ now: WEDNESDAY }), view, loading: false, failed: null, onRetry: () => {}, signedIn: true, signInHref: '/signin' }} />);
+    assert.match(html, /Nothing here is collateral Still lends against/);
+    assert.doesNotMatch(html, /No holdings were established/);
+    assert.match(html, /<div class="name">Hims &amp; Hers Health<\/div><div class="mono amt">0\.0505 HIMSc<\/div>/);
+    // With nothing outside the eight either, the old sentence is true and stays.
+    assert.equal(assetsViewV1({ report: empty, dividends: { ...dividends, holdings: [] } }).emptyNote,
+      'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.');
+    assert.equal(assetsViewV1({ report: report() }).emptyNote, null);
+    // The Agent says the same of the same wallet.
+    const answer = agentAnswerV1({ question: 'what do I hold?', report: empty, sky: skyStateV1({ now: WEDNESDAY }), dividends: { ...dividends, holdings: [hims] } });
+    assert.match(answer.text, /^This wallet holds nothing Still lends against \(the eight reviewed stocks, cbBTC, ETH or PAXG\)\. It also holds HIMSc: Coinbase stocks Still does not lend against\.$/);
+  });
+
   it('sits on Assets; Home reads the modelled room before Spend, and the other two doors sit in the rail on a desktop', () => {
     const sky = skyStateV1({ now: WEDNESDAY });
     const r = report();

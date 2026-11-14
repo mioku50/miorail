@@ -62,6 +62,8 @@ export interface AssetsViewV1 {
   /** What the total is made of: "$0.00 reviewed for loans · $1.35 USDC". */
   totalNote: string;
   count: number;
+  /** What the page says above the rows when the wallet holds nothing Still lends against; null when it holds some. */
+  emptyNote: string | null;
   /** USDC when it was read beside the report, ETH, cbBTC and PAXG, the stocks by value, then the
    * Coinbase stocks Still does not lend against, by name. */
   rows: AssetRowV1[];
@@ -347,12 +349,18 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
         : `${usdcTotal} USDC`;
   const reviewedNote = reviewedTotal === null ? 'Reviewed holdings not priced this time' : `${reviewedTotal} reviewed for loans`;
   const othersNote = others.length === 0 ? null : `${others.map((holding) => holding.tokenSymbol).join(', ')} not priced here`;
+  // Nothing Still lends against, said so that it is true of the rows under it: "No holdings … Coinbase stocks" stood above a
+  // Coinbase stock row this page drew itself (audit UI-12, 2026-11-14: HIMSc and USDC, and nothing reviewed).
+  const emptyNote = count > 0 ? null : others.length > 0
+    ? 'Nothing here is collateral Still lends against: the eight reviewed stocks, cbBTC, ETH or PAXG.'
+    : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.';
   return {
     total: priced ? formatCents(total + usdcCents) : null,
     reviewedTotal,
     usdcTotal,
     totalNote: [reviewedNote, usdcNote, othersNote, owedNote].filter((part): part is string => part !== null).join(' · '),
     count,
+    emptyNote,
     rows,
     block: Number(report.reading.block).toLocaleString('en-US'),
     usdcBlock: typeof input.usdc === 'object' && input.usdc.block !== undefined && /^\d+$/.test(input.usdc.block) && input.usdc.block !== String(report.reading.block)
