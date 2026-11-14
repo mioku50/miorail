@@ -170,6 +170,16 @@ describe('the kernel', () => {
     }
   });
 
+  test('nor a router, a vault or a canonical token outside this route (audit SS-4)', () => {
+    // The KyberSwap router, the Balancer vault and WETH are not in this Uniswap route, and keep what they are sent.
+    for (const recipient of ['0x6131b5fae19ea4f9d964eac0408e4408b66337b5', '0xba12222222228d8ba445958a75a0704d566bf2c8',
+      '0x4200000000000000000000000000000000000006'] as `0x${string}`[]) {
+      const result = kernel(giftBatch({ recipient }), { gift: { recipient, amountAtomic: MINIMUM } });
+      assert.equal(result.verdict, 'blocked', recipient);
+      assert.match(result.blockedReason ?? '', /gift_recipient_invalid/);
+    }
+  });
+
   test('the transfer goes last, after the swap', () => {
     const [approve, permit, swap, transfer] = giftBatch();
     const reordered = [approve!, permit!, { ...transfer!, index: 2 }, { ...swap!, index: 3 }];

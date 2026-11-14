@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './blueprint.js';
 export * from './gift.js';
 export * from './giftSend.js';
+export * from './sendRecipient.js';
 export * from './safetyKernel.js';
 export * from './earnComposition.js';
 export * from './earnSafetyKernel.js';

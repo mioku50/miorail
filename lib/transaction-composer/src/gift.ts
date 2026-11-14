@@ -1,5 +1,6 @@
 import { decodeFunctionData, encodeFunctionData, erc20Abi } from 'viem';
 import type { AssetRefV1, ExecutionCallV1, RouteIntentV1 } from '@mioagent/route-domain';
+import { SEND_RECIPIENT_CONTRACTS_V1 } from './sendRecipient.js';
 
 // ---------------------------------------------------------------------------
 // A gift: buy a stock and hand it to someone else, in one batch.
@@ -121,7 +122,8 @@ export function validateGiftTransferV1(input: {
       input.intent.fromAsset?.address ?? '',
     ].map((address) => address.toLowerCase()),
   );
-  if (!ADDRESS_V1.test(recipient) || reserved.has(recipient)) {
+  // A router, a vault or a canonical token keeps what it is sent (audit SS-4).
+  if (!ADDRESS_V1.test(recipient) || reserved.has(recipient) || SEND_RECIPIENT_CONTRACTS_V1.has(recipient)) {
     return refuse('gift_recipient_invalid', 'The recipient must be another person’s address, not this wallet or a contract in the route');
   }
   if (call.recipient?.toLowerCase() !== recipient || call.amountAtomic !== input.gift.amountAtomic) {

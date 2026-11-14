@@ -1,5 +1,7 @@
 import type { AssetRefV1, RouteIntentV1 } from '@mioagent/route-domain';
-import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
+import { SEND_RECIPIENT_CONTRACTS_V1, sendRecipientChecksumBrokenV1 } from '@mioagent/transaction-composer';
 import type { BaseNameResolutionV1 } from './baseNameResolver.js';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,32 @@ export async function withSendApprovalLockV1<T>(tenantId: string, work: () => Pr
 const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
 const ZERO_ADDRESS_V1 = '0x0000000000000000000000000000000000000000';
 
+/**
+ * Every contract Still knows on Base, lower case: the routers and canonical tokens the send kernel refuses,
+ * and the stocks, the gold, the bitcoin, Morpho Blue, its bundler, the Aave V4 spoke, hub and oracle and the
+ * registries Still reads (audit SS-4, 2026-11-14: USDC to the NVDAc contract passed every check, and a token
+ * sent to a contract stays there). A token of the reviewed corpus outside these is read from the corpus.
+ */
+export const STILL_KNOWN_CONTRACTS_V1: ReadonlySet<string> = new Set([
+  ...SEND_RECIPIENT_CONTRACTS_V1,
+  ...Object.values(ADDRESSES),
+  ...STOCKS.map((stock) => stock.token),
+  ...CRYPTO.map((asset) => asset.token),
+  MORPHO_BLUE_BUNDLES_BASE_V1,
+].map((address) => address.toLowerCase()));
+
+/** The words for a recipient that is a token or protocol contract. */
+export const GIFT_RECIPIENT_CONTRACT_MESSAGE_V1 = 'That address is a token or protocol contract on Base, not a person’s wallet: anything sent there is lost. Enter the recipient’s own wallet address.';
+/** The words for a mixed-case address that does not match its own EIP-55 checksum. */
+export const GIFT_RECIPIENT_CHECKSUM_MESSAGE_V1 = 'That address does not match its own checksum, so a letter in it is mistyped. Copy it again from the wallet that will receive it.';
+
+/** Whether an address is a contract a send never pays: Still's own list, then the reviewed corpus. A corpus
+ * that cannot be read leaves the list's answer: the send review reads the corpus again before any call. */
+async function knownContractV1(address: string, isKnownToken?: (address: string) => Promise<boolean>): Promise<boolean> {
+  if (STILL_KNOWN_CONTRACTS_V1.has(address)) return true;
+  return isKnownToken ? await isKnownToken(address).catch(() => false) : false;
+}
+
 export interface StockGiftRequestV1 {
   recipient: string;
   /** The Basename the person typed, when they typed one. */
@@ -77,6 +105,8 @@ export async function checkStockGiftV1(input: {
   gift: StockGiftRequestV1;
   /** True only for a Coinbase-issued B20 stock in the reviewed corpus. */
   isGiftableStock: (tokenAddress: string) => Promise<boolean>;
+  /** True for any token of the reviewed corpus: never a recipient (audit SS-4). */
+  isKnownToken?: (address: string) => Promise<boolean>;
   resolveName: (name: string) => Promise<BaseNameResolutionV1>;
   /** Gifts this wallet already approved today (UTC). */
   giftsApprovedToday: () => Promise<number>;
@@ -106,6 +136,7 @@ export async function checkStockGiftV1(input: {
     resolveName: input.resolveName,
     giftsApprovedToday: input.giftsApprovedToday,
     selfMessage: 'A gift goes to someone else. To buy for yourself, use Buy.',
+    ...(input.isKnownToken ? { isKnownToken: input.isKnownToken } : {}),
   });
   return who.ok ? { ok: true, recipient: who.recipient } : who;
 }
@@ -119,6 +150,7 @@ async function checkGiftRecipientAndDayV1(input: {
   resolveName: (name: string) => Promise<BaseNameResolutionV1>;
   giftsApprovedToday: () => Promise<number>;
   selfMessage: string;
+  isKnownToken?: (address: string) => Promise<boolean>;
 }): Promise<
   | { ok: true; recipient: `0x${string}` }
   | { ok: false; code: 'gift_recipient_invalid' | 'gift_recipient_is_you' | 'gift_name_changed' | 'gift_daily_limit_reached'; message: string }
@@ -126,6 +158,9 @@ async function checkGiftRecipientAndDayV1(input: {
   const recipient = input.gift.recipient.trim().toLowerCase();
   if (!ADDRESS_V1.test(recipient) || recipient === ZERO_ADDRESS_V1 || recipient === input.token || recipient === CANONICAL_BASE_USDC_V1) {
     return { ok: false, code: 'gift_recipient_invalid', message: 'The recipient must be a Base wallet address.' };
+  }
+  if (await knownContractV1(recipient, input.isKnownToken)) {
+    return { ok: false, code: 'gift_recipient_invalid', message: GIFT_RECIPIENT_CONTRACT_MESSAGE_V1 };
   }
   if (recipient === input.walletAddress.toLowerCase()) {
     return { ok: false, code: 'gift_recipient_is_you', message: input.selfMessage };
@@ -255,6 +290,8 @@ export async function checkStockGiftSendV1(input: {
   walletAddress: string;
   gift: StockGiftRequestV1;
   isGiftableStock: (tokenAddress: string) => Promise<boolean>;
+  /** True for any token of the reviewed corpus: never a recipient (audit SS-4). */
+  isKnownToken?: (address: string) => Promise<boolean>;
   resolveName: (name: string) => Promise<BaseNameResolutionV1>;
   giftsApprovedToday: () => Promise<number>;
   readHolding: (tokenAddress: string, walletAddress: string) => Promise<StockHoldingReadV1>;
@@ -278,6 +315,7 @@ export async function checkStockGiftSendV1(input: {
     selfMessage: coin
       ? `A send goes to someone else; this ${coin.symbol} is already in your wallet.`
       : 'A gift goes to someone else; this stock is already in your wallet.',
+    ...(input.isKnownToken ? { isKnownToken: input.isKnownToken } : {}),
   });
   if (!who.ok) return who;
 
@@ -329,25 +367,35 @@ export async function checkStockGiftSendV1(input: {
   };
 }
 
-/** The recipient a person typed, made into an address — or why it is not one. */
+/** The recipient a person typed, made into an address — or why it is not one. `reason` says which kind of
+ * invalid it is, for words of the caller's own; the page shows `message`. */
 export type GiftRecipientResolutionV1 =
   | { outcome: 'resolved'; address: `0x${string}`; name: string | null }
-  | { outcome: 'refused'; code: 'recipient_invalid' | 'recipient_is_you' | 'name_unresolved' | 'resolver_unavailable'; message: string };
+  | { outcome: 'refused'; code: 'recipient_invalid' | 'recipient_is_you' | 'name_unresolved' | 'resolver_unavailable'; message: string;
+      reason?: 'zero' | 'contract' | 'checksum' };
 
 export async function resolveGiftRecipientV1(input: {
   value: string;
   walletAddress: string;
   resolveName: (name: string) => Promise<BaseNameResolutionV1>;
+  /** True for any token of the reviewed corpus: never a recipient (audit SS-4). */
+  isKnownToken?: (address: string) => Promise<boolean>;
 }): Promise<GiftRecipientResolutionV1> {
   const value = input.value.trim();
+  const contract = { outcome: 'refused' as const, code: 'recipient_invalid' as const, message: GIFT_RECIPIENT_CONTRACT_MESSAGE_V1, reason: 'contract' as const };
   if (/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    // Typed in mixed case, an address carries its own checksum: one mistyped letter is caught here (audit SS-4).
+    if (sendRecipientChecksumBrokenV1(value)) {
+      return { outcome: 'refused', code: 'recipient_invalid', message: GIFT_RECIPIENT_CHECKSUM_MESSAGE_V1, reason: 'checksum' };
+    }
     const address = value.toLowerCase() as `0x${string}`;
     if (address === ZERO_ADDRESS_V1) {
-      return { outcome: 'refused', code: 'recipient_invalid', message: 'That is the zero address; nothing sent there can be spent.' };
+      return { outcome: 'refused', code: 'recipient_invalid', message: 'That is the zero address; nothing sent there can be spent.', reason: 'zero' };
     }
     if (address === input.walletAddress.toLowerCase()) {
       return { outcome: 'refused', code: 'recipient_is_you', message: 'That is your own wallet. A gift goes to someone else.' };
     }
+    if (await knownContractV1(address, input.isKnownToken)) return contract;
     return { outcome: 'resolved', address, name: null };
   }
   if (!/^[^\s]{1,255}\.base\.eth$/i.test(value)) {
@@ -367,5 +415,7 @@ export async function resolveGiftRecipientV1(input: {
   if (address === input.walletAddress.toLowerCase()) {
     return { outcome: 'refused', code: 'recipient_is_you', message: `${resolved.name} is your own wallet. A gift goes to someone else.` };
   }
+  // A name can point at a contract too.
+  if (await knownContractV1(address, input.isKnownToken)) return contract;
   return { outcome: 'resolved', address, name: resolved.name };
 }

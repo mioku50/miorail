@@ -4,8 +4,10 @@ import test, { describe } from 'node:test';
 import type { RouteIntentV1 } from '@mioagent/route-domain';
 
 import type { BaseNameResolutionV1 } from './baseNameResolver.js';
+import { STOCKS } from '@mioagent/still-engine/registry';
 import {
   CANONICAL_BASE_USDC_V1,
+  GIFT_RECIPIENT_CONTRACT_MESSAGE_V1,
   STOCK_GIFT_DAILY_LIMIT_V1,
   SENDABLE_TOKENS_SENTENCE_V1,
   checkStockGiftSendV1,
@@ -141,6 +143,43 @@ describe('who the recipient is', () => {
       await codes('alice.base.eth', async (name) => ({ outcome: 'unavailable', name, errorCode: 'rpc_down' })),
       'resolver_unavailable',
     );
+  });
+
+  // Audit SS-4, 2026-11-14: USDC to the NVDAc contract, a stock to Morpho Blue or to a router passed every
+  // check, and a mixed-case address with a mistyped letter was taken lower case.
+  test('never a token or protocol contract, and never an address whose checksum fails', async () => {
+    const refused = async (value: string, over: Partial<Parameters<typeof resolveGiftRecipientV1>[0]> = {}) => {
+      const result = await resolveGiftRecipientV1({ value, walletAddress: WALLET, resolveName: async (name) => resolved(name, FRIEND), ...over });
+      return result.outcome === 'refused' ? [result.code, result.reason ?? null] : result.outcome;
+    };
+    // USDC as its checksum writes it, the NVDAc token, Morpho Blue, the Aave V4 spoke, the Universal Router.
+    for (const value of ['0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', STOCKS.find((stock) => stock.id === 'NVDAc')!.token,
+      '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb', '0x17905Db0e4A3514467539956c084180616AE7B8D', '0x6ff5693b99212da76ad316178a184ab56d299b43']) {
+      assert.deepEqual(await refused(value), ['recipient_invalid', 'contract'], value);
+    }
+    const usdc = await resolveGiftRecipientV1({ value: CANONICAL_BASE_USDC_V1, walletAddress: WALLET, resolveName: async (name) => resolved(name, FRIEND) });
+    assert.equal(usdc.outcome === 'refused' && usdc.message, GIFT_RECIPIENT_CONTRACT_MESSAGE_V1);
+    // A name that points at one, and a token of the reviewed corpus beyond Still's own list.
+    assert.deepEqual(await refused('usdc.base.eth', { resolveName: async (name) => resolved(name, CANONICAL_BASE_USDC_V1) }), ['recipient_invalid', 'contract']);
+    const corpus = '0xb2000000000000000000000000000000000000aa';
+    assert.deepEqual(await refused(corpus, { isKnownToken: async (address) => address === corpus }), ['recipient_invalid', 'contract']);
+    // The checksum: one letter's case changed fails it; the address as checksummed, or all lower case, passes.
+    const checksummed = '0x8e525BFCE1C0FFee00000000000000000000BEef';
+    assert.deepEqual(await refused('0x8e525bFCE1C0FFee00000000000000000000BEef'), ['recipient_invalid', 'checksum']);
+    assert.deepEqual(await resolve(checksummed), { outcome: 'resolved', address: FRIEND, name: null });
+    assert.deepEqual(await resolve(FRIEND), { outcome: 'resolved', address: FRIEND, name: null });
+    // The gift review refuses the same contracts, the corpus included.
+    for (const [recipient, over] of [[CANONICAL_BASE_USDC_V1, {}], ['0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', {}],
+      [corpus, { isKnownToken: async (address: string) => address === corpus }]] as const) {
+      const result = await check({ gift: { recipient, recipientName: null }, ...over });
+      assert.equal(result.ok || result.code, 'gift_recipient_invalid', recipient);
+    }
+    const sent = await checkStockGiftSendV1({ tokenAddress: NVDA, amountAtomic: '1', walletAddress: WALLET,
+      gift: { recipient: '0x17905db0e4a3514467539956c084180616ae7b8d', recipientName: null }, isGiftableStock: async () => true,
+      resolveName: async (name) => resolved(name, FRIEND), giftsApprovedToday: async () => 0,
+      readHolding: async () => assert.fail('no balance is read for a recipient that is a contract'),
+      valueInUsdc: async () => assert.fail('no price is read for a recipient that is a contract') });
+    assert.deepEqual(sent.ok || [sent.code, sent.message], ['gift_recipient_invalid', GIFT_RECIPIENT_CONTRACT_MESSAGE_V1]);
   });
 });
 

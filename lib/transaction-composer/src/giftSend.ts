@@ -34,6 +34,7 @@ import {
 } from './approval.js';
 import { TransactionComposerBindingError } from './coordinator.js';
 import { encodeGiftTransferV1, giftDeclarationFromCallsV1, giftTransferCallV1 } from './gift.js';
+import { SEND_RECIPIENT_CONTRACTS_V1 } from './sendRecipient.js';
 import { deriveBlueprintLifecycleV1 } from './lifecycle.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
 import {
@@ -266,6 +267,9 @@ export interface GiftSendKernelInputV1 {
   reviewedStock: boolean;
   /** The wallet's balance of the token, read now. Null: the read failed. */
   balanceAtomic: string | null;
+  /** Contracts the caller knows a send never pays, besides the routers and tokens here (audit SS-4): the
+   * server's registry. Lower case. */
+  reservedRecipients?: readonly string[];
   now: Date;
 }
 
@@ -332,14 +336,16 @@ export function runGiftSendKernelV1(input: GiftSendKernelInputV1): SafetyKernelR
     'Miorail sends a Coinbase-issued stock it has reviewed, USDC or PAXG (gold) from a wallet, and nothing else',
   );
 
+  // A router, a vault, a token or a protocol contract keeps what it is sent (audit SS-4).
   const reserved = new Set(
-    [ZERO_ADDRESS_V1, PERMIT2_ADDRESS_V1, CANONICAL_USDC_V1, wallet, token ?? ''].map((address) => address.toLowerCase()),
+    [ZERO_ADDRESS_V1, PERMIT2_ADDRESS_V1, CANONICAL_USDC_V1, wallet, token ?? '', ...SEND_RECIPIENT_CONTRACTS_V1, ...(input.reservedRecipients ?? [])]
+      .map((address) => address.toLowerCase()),
   );
   check(
     'send_recipient',
-    'The recipient is someone else — not this wallet, the token, USDC or the zero address',
+    'The recipient is someone else — not this wallet, the token, a token or protocol contract, or the zero address',
     ADDRESS_V1.test(recipient) && !reserved.has(recipient),
-    'The recipient must be another person’s address',
+    'The recipient must be another person’s address, not a token or protocol contract',
   );
 
   // The bytes, not the labels: decode what the wallet will actually sign.
@@ -455,6 +461,8 @@ export interface GiftSendPrepareInputV1 {
   /** Read by the gift policy before anything was built. */
   observations: GiftSendObservationsV1;
   reviewedStock: boolean;
+  /** Contracts a send never pays, from the server's registry (audit SS-4). */
+  reservedRecipients?: readonly string[];
   now: Date;
 }
 
@@ -517,6 +525,7 @@ export async function prepareGiftSendV1(
       recipient,
       reviewedStock: input.reviewedStock,
       balanceAtomic: input.observations.balance.balanceAtomic,
+      ...(input.reservedRecipients ? { reservedRecipients: input.reservedRecipients } : {}),
       now: input.now,
     });
     if (safety.verdict === 'blocked') return blockedResultV1(run.id, safety, stored.simulationState);
@@ -549,6 +558,7 @@ export async function prepareGiftSendV1(
     recipient,
     reviewedStock: input.reviewedStock,
     balanceAtomic: input.observations.balance.balanceAtomic,
+    ...(input.reservedRecipients ? { reservedRecipients: input.reservedRecipients } : {}),
     now: input.now,
   });
   // A refused send is not stored: there is nothing anyone may approve.
@@ -570,6 +580,8 @@ export interface GiftSendApprovalDependenciesV1 {
    * refuses (audit SS-1, 2026-11-14: counted only at prepare, six to ten reviews made before the first
    * approve were all approved and signed under "up to five a day"). */
   dailyLimit: () => Promise<string | null>;
+  /** Contracts a send never pays, from the server's registry, as prepare had them (audit SS-4). */
+  reservedRecipients?: readonly string[];
 }
 
 function pendingSendProofV1(blueprint: ExecutionBlueprintV1, now: Date): RouteProofV1 {
@@ -710,6 +722,7 @@ export async function approveGiftSendBlueprintV1(
       recipient: declaration?.recipient ?? '',
       reviewedStock: token ? await deps.reviewedStock(token).catch(() => false) : false,
       balanceAtomic,
+      ...(deps.reservedRecipients ? { reservedRecipients: deps.reservedRecipients } : {}),
       now: input.now,
     });
     if (safety.verdict === 'blocked') {

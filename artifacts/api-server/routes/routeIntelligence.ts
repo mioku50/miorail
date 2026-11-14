@@ -80,7 +80,7 @@ import { readChainConditionsV1 } from '../lib/chainConditions.js';
 import { readFeeCalibrationV1 } from '../lib/feeCalibration.js';
 import { readMarketSnapshotV1 } from '../lib/marketSnapshot.js';
 import { BASE_PUBLIC_RPC_URL_V1 } from '../lib/baseRpcSwapSimulation.js';
-import { STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1, STOCK_GIFT_DAILY_LIMIT_V1, checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1, withSendApprovalLockV1 } from '../lib/stockGift.js';
+import { STILL_KNOWN_CONTRACTS_V1, STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1, STOCK_GIFT_DAILY_LIMIT_V1, checkStockGiftSendV1, checkStockGiftV1, isSendableTokenV1, resolveGiftRecipientV1, withSendApprovalLockV1 } from '../lib/stockGift.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
@@ -1082,8 +1082,11 @@ routeIntelligenceRouter.post('/gift/recipient', async (req, res) => {
       value: parsed.data.value,
       walletAddress: user.address,
       resolveName: swapPrepareRouteRuntime.gift.resolveName,
+      isKnownToken: swapPrepareRouteRuntime.reviewedStock,
     });
-    res.json(GiftRecipientResponseV1Schema.parse(result));
+    // The page reads the code and the words; which kind of invalid it was stays on the server.
+    res.json(GiftRecipientResponseV1Schema.parse(result.outcome === 'refused'
+      ? { outcome: result.outcome, code: result.code, message: result.message } : result));
   } catch (cause) {
     logger.warn('Gift recipient lookup failed', safeFailureMetaV1(cause));
     res.json(
@@ -1252,6 +1255,7 @@ routeIntelligenceRouter.post('/gift/send/prepare', async (req, res) => {
       walletAddress: user.address,
       gift: { recipient: parsed.data.recipient, recipientName: parsed.data.recipientName },
       isGiftableStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+      isKnownToken: swapPrepareRouteRuntime.reviewedStock,
       resolveName: swapPrepareRouteRuntime.gift.resolveName,
       giftsApprovedToday: () => swapPrepareRouteRuntime.gift.giftsApprovedToday(user.id, now),
       readHolding: giftSendRouteRuntime.readHolding,
@@ -1272,6 +1276,7 @@ routeIntelligenceRouter.post('/gift/send/prepare', async (req, res) => {
       recipient: verdict.recipient,
       observations: { balance: verdict.balance, valuation: verdict.valuation },
       reviewedStock: true,
+      reservedRecipients: [...STILL_KNOWN_CONTRACTS_V1],
       now,
     });
     if (result.outcome !== 'prepared') logger.warn('Gift send prepare produced no calls', swapPrepareOutcomeMetaV1(result));
@@ -1324,6 +1329,7 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
           walletAddress: user.address,
           gift: parsed.data.gift,
           isGiftableStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+          isKnownToken: swapPrepareRouteRuntime.reviewedStock,
           resolveName: swapPrepareRouteRuntime.gift.resolveName,
           giftsApprovedToday: () => swapPrepareRouteRuntime.gift.giftsApprovedToday(user.id, now),
         });
@@ -1416,6 +1422,8 @@ export const swapBlueprintRouteRuntime = {
           // Up to five a day, counted again here, under the lock above (audit SS-1).
           dailyLimit: async () => (await swapPrepareRouteRuntime.gift.giftsApprovedToday(input.tenantId, input.now)) >= STOCK_GIFT_DAILY_LIMIT_V1
             ? STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 : null,
+          // The contracts prepare refused as recipients, refused again here (audit SS-4).
+          reservedRecipients: [...STILL_KNOWN_CONTRACTS_V1],
         },
       },
       input,

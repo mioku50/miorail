@@ -408,6 +408,29 @@ test('a request not to send, or to cancel one, prepares nothing and says why (au
   }
 });
 
+test('a recipient that is a contract, or whose checksum fails, is refused before anything is prepared (audit SS-4)', async () => {
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a transfer is not re-worded by a model');
+  stillMineRuntimeV1.resolveName = async (name): Promise<BaseNameResolutionV1> =>
+    ({ outcome: 'resolved', name, address: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb' });
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  for (const [question, said] of [
+    // The parser read this as a send of USDC's own contract address (2026-11-13 probe).
+    ['send 0.1 NVDAc to 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', /^0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 is a token or protocol contract on Base, not a person’s wallet/],
+    ['переведи 0.1 NVDAc на 0x17905Db0e4A3514467539956c084180616AE7B8D', /^0x17905Db0e4A3514467539956c084180616AE7B8D — это адрес контракта токена или протокола в Base/],
+    // A Basename that points at Morpho Blue.
+    ['send 0.1 NVDAc to morpho.base.eth', /^morpho\.base\.eth is a token or protocol contract on Base/],
+    // One letter's case changed in a checksummed address.
+    ['send 0.1 NVDAc to 0x8e525bFCE1C0FFee00000000000000000000BEef', /^0x8e525bFCE1C0FFee00000000000000000000BEef does not match its own checksum, so a letter in it is mistyped\./],
+  ] as const) {
+    const refused = (await ask(server, question)).body.answer;
+    assert.match(refused.text, said, question);
+    assert.equal(refused.sendAction ?? null, null, question);
+    assert.doesNotMatch(refused.text, /Prepared|Подготовил/, question);
+  }
+});
+
 test('a stock that is all pledged is said to be, with the way to take it back first', async () => {
   store = createMemoryStillReadingStoreV1();
   stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');

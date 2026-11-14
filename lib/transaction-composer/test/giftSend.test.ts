@@ -215,6 +215,30 @@ describe('prepare', () => {
     assert.equal(toSelf.safety.checks.find((check) => check.id === 'send_recipient')?.status, 'failed');
   });
 
+  test('never to a router, a vault, a canonical token or a contract the server names (audit SS-4)', async () => {
+    // Each of these is a contract that keeps what it is sent: USDC to the Universal Router, to Permit2,
+    // to WETH or USDC itself, and to Morpho Blue, which only the server's registry names.
+    const MORPHO_BLUE = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
+    for (const [recipient, reserved] of [
+      ['0x6ff5693b99212da76ad316178a184ab56d299b43', undefined],
+      ['0x000000000022d473030f116ddee9f6b43ac78ba3', undefined],
+      ['0x4200000000000000000000000000000000000006', undefined],
+      ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', undefined],
+      ['0x6131b5fae19ea4f9d964eac0408e4408b66337b5', undefined],
+      [MORPHO_BLUE, [MORPHO_BLUE]],
+    ] as const) {
+      const result = await prepareGiftSendV1(
+        { repository: new InMemoryRouteStorageRepository(), simulate: simulator().simulate },
+        input({ recipient: recipient as `0x${string}`, ...(reserved ? { reservedRecipients: reserved } : {}) }),
+      );
+      assert.equal(result.outcome, 'blocked', recipient);
+      if (result.outcome !== 'blocked') continue;
+      assert.equal(result.safety.checks.find((check) => check.id === 'send_recipient')?.status, 'failed', recipient);
+    }
+    // Another person's wallet still passes.
+    assert.equal((await prepareGiftSendV1({ repository: new InMemoryRouteStorageRepository(), simulate: simulator().simulate }, input())).outcome, 'prepared');
+  });
+
   test('the swap composer and the swap approve path refuse a send run', async () => {
     const { repo, result } = await prepared();
     await assert.rejects(

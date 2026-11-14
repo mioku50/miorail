@@ -218,7 +218,14 @@ export async function stillAgentSendAnswerV1(input: {
     const label = name ?? recipient.value;
     const text = {
       recipient_is_you: t(`${label} — это ваш же кошелёк, с которым вы вошли: перевод самому себе ничего не меняет.`, `${label} is the wallet you signed in with: a transfer to yourself changes nothing.`),
-      recipient_invalid: t('Это нулевой адрес: отправленное туда никто не сможет потратить.', 'That is the zero address: nothing sent there can be spent.'),
+      // Audit SS-4: a token or protocol contract keeps what it is sent, and a mistyped mixed-case address fails its checksum.
+      recipient_invalid: resolution.reason === 'contract'
+        ? t(`${label} — это адрес контракта токена или протокола в Base, а не чей-то кошелёк: отправленное туда не вернуть. Напишите адрес кошелька получателя.`,
+          `${label} is a token or protocol contract on Base, not a person’s wallet: anything sent there is lost. Write the recipient’s own wallet address.`)
+        : resolution.reason === 'checksum'
+          ? t(`Адрес ${label} не сходится со своей контрольной суммой: в нём опечатка. Скопируйте его заново из кошелька получателя.`,
+            `${label} does not match its own checksum, so a letter in it is mistyped. Copy it again from the wallet that will receive it.`)
+          : t('Это нулевой адрес: отправленное туда никто не сможет потратить.', 'That is the zero address: nothing sent there can be spent.'),
       name_unresolved: t(`${label} не указывает ни на какой адрес в Base. Проверьте имя или напишите адрес 0x….`, `${label} does not point to any address on Base. Check the name, or write the 0x address.`),
       resolver_unavailable: t('Имена .base.eth сейчас не читаются: это наш сбой. Напишите адрес 0x… или спросите ещё раз через минуту.', 'Basenames cannot be read right now: that is our failure. Write the 0x address, or ask again in a minute.'),
     }[resolution.code];
