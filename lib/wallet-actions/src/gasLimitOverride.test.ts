@@ -204,6 +204,9 @@ test('every batch to Base Account is measured, and calls carrying gas go only by
     'artifacts/interface/src/features/rwa/LendingReviewPage.tsx',
     'artifacts/miniapp/app/lending/[draft]/page.tsx',
     'artifacts/interface/src/features/rwa/StockActionReviewPage.tsx',
+    // The stock action an assistant drafted, in the mini app (audit WAL-6, 2026-11-14). The B20 entry sizes its
+    // calls in its own send, tested there (b20EntrySend.test.ts).
+    'artifacts/miniapp/app/action/[draft]/page.tsx',
   ]) {
     const source = readFileSync(path.join(root, file), 'utf8');
     assert.match(source, /gasLimitedCallsV1\(\{/, file);
