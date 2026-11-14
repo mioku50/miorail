@@ -63,6 +63,23 @@ export function stockActionExecutionContract(name: string, make: () => Promise<S
       row.release!.blueprintId = 'mutated';
       assert.equal((await repo.latest(OWNER))!.release!.blueprintId, 'bp-1');
     });
+    test('every release of a draft is listed, newest first, scoped to its owner and bounded (audit DIFF-2)', async () => {
+      const repo = await make();
+      assert.deepEqual(await repo.releases(OWNER, 10), []);
+      await repo.recordDraft({ ...OWNER, at: NOW });
+      await repo.recordRelease(release());
+      await repo.recordRelease({ ...release('bp-2'), at: new Date(NOW.getTime() + 10_000) });
+      await repo.recordRelease({ ...release('bp-3'), at: new Date(NOW.getTime() + 20_000) });
+      const listed = await repo.releases(OWNER, 10);
+      assert.deepEqual(listed.map((row) => row.blueprintId), ['bp-3', 'bp-2', 'bp-1']);
+      assert.deepEqual(Object.keys(listed[0]!).sort(), ['actionDraftId', 'blueprintId', 'clearanceId', 'createdAt', 'routeRunId', 'tenantId', 'walletAddress']);
+      assert.equal(listed[2]!.createdAt, NOW.toISOString());
+      assert.deepEqual((await repo.releases(OWNER, 2)).map((row) => row.blueprintId), ['bp-3', 'bp-2']);
+      assert.deepEqual(await repo.releases(FOREIGN, 10), []);
+      assert.deepEqual(await repo.releases({ ...OWNER, actionDraftId: 'missing' }, 10), []);
+      listed[0]!.blueprintId = 'mutated';
+      assert.equal((await repo.releases(OWNER, 1))[0]!.blueprintId, 'bp-3');
+    });
     test('concurrent retries keep one immutable release', async () => {
       const repo = await make();
       await Promise.all(Array.from({ length: 4 }, () => repo.recordRelease(release())));

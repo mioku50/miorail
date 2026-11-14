@@ -19,6 +19,7 @@ import {
 import {
   miorailGetStockBaseMcpActionV1,
   stockActionHandoffV1,
+  stockActionReleaseLiveCopyV1,
   miorailGetExecutionStatusV1,
   miorailPrepareStockActionV1,
   stockActionRuntime,
@@ -816,40 +817,71 @@ describe('a confirmed clearance is the only way to an executable request', () =>
   // Audit N13-2, 2026-11-13: a release recorded where it came from, and nothing more. A purchase whose wallet
   // answer was lost could be released again, re-planned into a new blueprint the attempt guard did not cover.
   test('a stock action held at a wallet, or already sent, is not released again, before anything is planned', async () => {
-    for (const [held, code] of [['open', 'stock_action_handoff_open'], ['sent', 'stock_action_already_sent']] as const) {
+    const UNTIL = new Date(NOW.getTime() + 7 * 60_000).toISOString();
+    for (const [held, code] of [['open', 'stock_action_handoff_open'], ['sent', 'stock_action_already_sent'], ['live', 'stock_action_release_live']] as const) {
       let planned = 0;
       executionStub();
       const plan = stockActionRuntime.planAndPrepare;
       stockActionRuntime.planAndPrepare = async (input) => { planned += 1; return plan(input); };
       const asked: unknown[] = [];
-      stockActionRuntime.handoffHeld = async (owner) => { asked.push(owner); return held; };
+      stockActionRuntime.handoffHeld = async (owner) => { asked.push(owner); return { held, until: held === 'live' ? UNTIL : null }; };
       await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'again' }), (error: unknown) => {
         assert.equal((error as { code?: string }).code, code);
-        assert.match((error as Error).message, held === 'open' ? /not handed out again: a second request could be a second purchase/ : /already reached Base from the user’s wallet once/);
+        assert.match((error as Error).message, held === 'sent' ? /already reached Base from the user’s wallet once/ : /not handed out again.*a second request could be a second purchase/);
         return true;
       });
       assert.equal(planned, 0, `${held}: nothing is planned`);
       assert.deepEqual(asked, [{ tenantId: IDENTITY.tenantId, walletAddress: IDENTITY.walletAddress, actionDraftId: 'draft-1' }]);
     }
+    assert.match(stockActionReleaseLiveCopyV1(UNTIL), /confirmed again from \d\d:\d\d UTC, when that price has expired\. Nothing was prepared now\.$/);
     executionStub();
     stockActionRuntime.handoffHeld = async () => { throw new Error('postgres down'); };
     await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'again' }), refusedWith('stock_action_tracking_unavailable'));
   });
 
-  test('what is held is read from the latest release: what reached Base first, then an open attempt', async () => {
+  // Audit DIFF-2, 2026-11-14: an assistant's release opens no attempt, so a retry after a lost answer was released
+  // again as a new blueprint; and only the latest release was read, so one surface's release hid another's.
+  test('every recent release holds until it is closed: what reached Base first, then a wallet, then a price that still holds', async () => {
     const records = new InMemoryStockActionExecutionRepositoryV1();
     const owner = { tenantId: IDENTITY.tenantId, walletAddress: WALLET, actionDraftId: 'draft-1' };
-    const sent = new Set<string>(), open = new Set<string>();
-    const deps = { records, proofTransactions: async (id: string) => (sent.has(id) ? 1 : 0), openAttempt: async (id: string) => open.has(id) };
+    const proofs = new Map<string, { transactions: number; finalStatus: string | null; batchRecorded: boolean }>();
+    const open = new Set<string>(), expiries = new Map<string, string | null>();
+    let now = NOW;
+    const deps = { records, proof: async (id: string) => proofs.get(id) ?? null, openAttempt: async (id: string) => open.has(id),
+      quoteExpiry: async (release: { blueprintId: string }) => expiries.has(release.blueprintId) ? expiries.get(release.blueprintId)! : null, now: () => now };
+    const pending = { transactions: 0, finalStatus: 'pending', batchRecorded: false };
+    const inMinutes = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000).toISOString();
     assert.equal(await stockActionHandoffV1(deps, owner), null, 'never released');
     await records.recordDraft({ ...owner, at: NOW });
     assert.equal(await stockActionHandoffV1(deps, owner), null, 'a draft with no release');
+    // An assistant's release: no attempt, no record. It holds while its calls can land.
     await records.recordRelease({ ...owner, clearanceId: 'c-1', blueprintId: 'bp-1', routeRunId: 'run-1', at: NOW });
-    assert.equal(await stockActionHandoffV1(deps, owner), null, 'released, and never handed to a wallet');
-    open.add('bp-1');
-    assert.equal(await stockActionHandoffV1(deps, owner), 'open');
-    sent.add('bp-1');
-    assert.equal(await stockActionHandoffV1(deps, owner), 'sent', 'a confirmed attempt is still listed as open; what reached Base is said');
+    proofs.set('bp-1', pending); expiries.set('bp-1', inMinutes(2));
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'live', until: inMinutes(7) });
+    // Its quote expired, and the margin passed: the routers' deadline has, so its calls are dead.
+    now = new Date(NOW.getTime() + 8 * 60_000);
+    assert.equal(await stockActionHandoffV1(deps, owner), null);
+    now = NOW;
+    // A quote that cannot be read is held: nobody can say the calls are dead.
+    expiries.set('bp-1', null);
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'open', until: null });
+    expiries.set('bp-1', inMinutes(2));
+    // The wallet said nothing went out, recorded: closed at once.
+    proofs.set('bp-1', { ...pending, finalStatus: 'cancelled' });
+    assert.equal(await stockActionHandoffV1(deps, owner), null);
+    // A later release from the page holds with its attempt, and an older one still live is not hidden by it.
+    await records.recordRelease({ ...owner, clearanceId: 'c-2', blueprintId: 'bp-2', routeRunId: 'run-2', at: new Date(NOW.getTime() + 1_000) });
+    proofs.set('bp-1', pending); proofs.set('bp-2', { ...pending, finalStatus: 'cancelled' });
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'live', until: inMinutes(7) }, 'the latest is closed; the older one is not');
+    open.add('bp-2'); proofs.set('bp-2', pending); expiries.set('bp-2', inMinutes(3));
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'open', until: null });
+    // A batch recorded for it, not yet read from Base, holds whatever its price.
+    open.delete('bp-2'); proofs.set('bp-2', { ...pending, batchRecorded: true });
+    now = new Date(NOW.getTime() + 60 * 60_000);
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'open', until: null });
+    // What reached Base is said first, whichever release it was.
+    proofs.set('bp-1', { transactions: 1, finalStatus: 'pending', batchRecorded: true });
+    assert.deepEqual(await stockActionHandoffV1(deps, owner), { held: 'sent', until: null });
     // Another wallet's draft of the same id is not this one.
     assert.equal(await stockActionHandoffV1(deps, { ...owner, tenantId: `eip155:8453:${OTHER_WALLET}`, walletAddress: OTHER_WALLET }), null);
   });

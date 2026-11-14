@@ -221,6 +221,20 @@ test('a server that refuses for a purchase already sent says so, and offers noth
   assert.equal(after.blocked, true);
 });
 
+// Audit DIFF-2, 2026-11-14: a release handed out a moment ago with no outcome recorded (an assistant's, or a
+// page that closed before it opened its attempt) is held while its price holds, and the page says until when.
+test('a release still live elsewhere is said in the server’s words, nothing is offered, and the button stays', async () => {
+  const api = server();
+  const said = 'This stock action was handed out a moment ago, here or to an assistant, and nothing has said what became of it, so it is not handed out again while its price holds: a second request could be a second purchase. Check the wallet’s activity first. If nothing went out, it can be confirmed again from 12:07 UTC, when that price has expired. Nothing was prepared now.';
+  api.release = async () => { api.releases += 1; throw new Error(`stock_action_release_live: ${said}`); };
+  const review = page(api, async () => 'batch-1');
+  const after = await review.press();
+  assert.equal(api.sends.length, 0);
+  assert.equal(after.error, said);
+  // Not handed over for good: once that price expired, a press is answered anew.
+  assert.equal(after.blocked, false);
+});
+
 test('a server without recovery still asks the wallet, as a swap does, and records with no attempt', async () => {
   const api = server();
   api.createAttempt = async () => { throw new Error('submission_recovery_disabled'); };

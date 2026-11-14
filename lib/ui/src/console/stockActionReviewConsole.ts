@@ -156,6 +156,10 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
   const walletCannot = walletCannotSendSentenceV1(error);
   if (walletCannot) return walletCannot;
   const message = error instanceof Error ? error.message : String(error ?? '');
+  // Handed out a moment ago with no outcome recorded (audit DIFF-2): the server's own sentence, which says
+  // from when it can be confirmed again. The button stays: after that time a press is answered anew.
+  const live = /^stock_action_release_live: (.+)$/s.exec(message);
+  if (live) return live[1]!;
   if (/reject|denied|user cancel/i.test(message)) {
     return 'You declined the batch in your wallet. Nothing was submitted, and nothing changed.';
   }

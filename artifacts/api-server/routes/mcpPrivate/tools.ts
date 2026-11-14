@@ -994,15 +994,25 @@ export const stockActionRuntime = {
    * its proof holds a transaction, 'open' while the submission attempt opened before the wallet is
    * unfinished, null when nothing of it reached a wallet that is known of.
    */
-  handoffHeld: async (owner: StockActionDraftOwnerV1): Promise<'open' | 'sent' | null> => {
+  handoffHeld: async (owner: StockActionDraftOwnerV1): Promise<StockActionHandoffV1> => {
     const { routeProofIdV1 } = await import('@mioagent/transaction-composer');
     const { submissionRecoveryRuntime } = await import('../submissionRecovery.js');
+    const routes = createDatabaseRouteStorageRepository(client);
     return stockActionHandoffV1({
       records: stockActionRuntime.records(),
-      proofTransactions: async (blueprintId) =>
-        (await createDatabaseRouteStorageRepository(client).getProofProjection(routeProofIdV1(blueprintId), owner.tenantId))?.transactionHashes.length ?? 0,
+      proof: async (blueprintId) => {
+        const proofId = routeProofIdV1(blueprintId);
+        const proof = await routes.getProofProjection(proofId, owner.tenantId);
+        if (!proof) return null;
+        const events = await routes.listProofEvents(proofId, owner.tenantId);
+        return { transactions: proof.transactionHashes.length, finalStatus: proof.finalStatus,
+          batchRecorded: events.some((event) => event.eventType === 'submitted') };
+      },
       openAttempt: async (blueprintId) => (await submissionRecoveryRuntime.migrationAvailable())
         && (await submissionRecoveryRuntime.repository().findOpenAttemptByBlueprint(owner.tenantId, blueprintId)) !== null,
+      quoteExpiry: async (release) =>
+        (await routes.listBlueprints(release.routeRunId, owner.tenantId)).find((entry) => entry.blueprint.id === release.blueprintId)?.blueprint.quoteExpiry ?? null,
+      now: () => stockActionRuntime.now(),
     }, owner);
   },
   recordStockSubmission: async (input: {
@@ -1252,20 +1262,58 @@ export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
     'The issuer’s policy registry refuses the exact contract this batch would authorize to move the token. The approval would have been granted — `approve()` is not policy gated — and the transfer would then have reverted, after the wallet had signed twice and paid for both. Nothing executable was produced. This is the issuer’s rule for that contract, read on chain; Miorail does not set it and cannot lift it.',
 };
 
-/**
- * Whether this stock action's latest release is still held at a wallet (audit N13-2, 2026-11-13): 'sent'
- * once its proof holds a transaction, 'open' while the attempt opened before the wallet is unfinished.
- * What reached Base is said first: a confirmed attempt is still listed as recoverable.
- */
+// ---------------------------------------------------------------------------
+// What of a stock action may still be at a wallet (audits N13-2, 2026-11-13,
+// and DIFF-2, 2026-11-14).
+//
+// N13-2 held a stock action while its LATEST release had an open submission
+// attempt, which the review page opens before it asks the wallet. An
+// assistant's release opens none: one whose answer was lost, retried, got a
+// new blueprint and a second request to sign, and a release from one surface
+// made itself "latest" over another's still at a wallet. So every recent
+// release is read, and one holds until it is closed: its record says nothing
+// went out (cancelled or failed), or its calls can no longer land, which is
+// when the quote they were built on has expired (the routers' own deadline)
+// and a few minutes more. What reached Base is said first and ends the action.
+// ---------------------------------------------------------------------------
+export const STOCK_ACTION_RELEASES_READ_V1 = 20;
+/** After a release's quote expired: a transaction sent just before it lands within seconds on Base. */
+export const STOCK_ACTION_RELEASE_LAND_MARGIN_MS_V1 = 5 * 60_000;
+
+/** 'sent': a release reached Base. 'open': one is at a wallet with an open attempt or a recorded batch.
+ * 'live': one was handed out with no outcome recorded, and could still land until `until`. */
+export type StockActionHandoffV1 = { held: 'sent' | 'open' | 'live'; until: string | null } | null;
+
 export async function stockActionHandoffV1(deps: {
   records: StockActionExecutionRepositoryV1;
-  proofTransactions: (blueprintId: string) => Promise<number>;
+  /** The release's Route Proof: how many transactions it holds, its status, and whether a batch was recorded. */
+  proof: (blueprintId: string) => Promise<{ transactions: number; finalStatus: string | null; batchRecorded: boolean } | null>;
   openAttempt: (blueprintId: string) => Promise<boolean>;
-}, owner: StockActionDraftOwnerV1): Promise<'open' | 'sent' | null> {
-  const latest = await deps.records.latest(owner);
-  if (!latest?.release) return null;
-  if ((await deps.proofTransactions(latest.release.blueprintId)) > 0) return 'sent';
-  return (await deps.openAttempt(latest.release.blueprintId)) ? 'open' : null;
+  quoteExpiry: (release: { blueprintId: string; routeRunId: string }) => Promise<string | null>;
+  now: () => Date;
+}, owner: StockActionDraftOwnerV1): Promise<StockActionHandoffV1> {
+  const releases = await deps.records.releases(owner, STOCK_ACTION_RELEASES_READ_V1);
+  let open = false, live = 0;
+  for (const release of releases) {
+    const proof = await deps.proof(release.blueprintId);
+    if (proof && proof.transactions > 0) return { held: 'sent', until: null };
+    // The wallet said nothing went out, and the record says so.
+    if (proof && (proof.finalStatus === 'cancelled' || proof.finalStatus === 'failed')) continue;
+    if (proof?.batchRecorded || await deps.openAttempt(release.blueprintId)) { open = true; continue; }
+    const expiry = Date.parse((await deps.quoteExpiry(release)) ?? '');
+    // A release whose quote cannot be read is held: nobody can say its calls are dead.
+    if (!Number.isFinite(expiry)) { open = true; continue; }
+    const until = expiry + STOCK_ACTION_RELEASE_LAND_MARGIN_MS_V1;
+    if (until > deps.now().getTime()) live = Math.max(live, until);
+  }
+  if (open) return { held: 'open', until: null };
+  return live > 0 ? { held: 'live', until: new Date(live).toISOString() } : null;
+}
+
+/** Why a stock action handed out a moment ago is not handed out again, and from when it can be. */
+export function stockActionReleaseLiveCopyV1(until: string): string {
+  const at = new Date(until), time = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')} UTC`;
+  return `This stock action was handed out a moment ago, here or to an assistant, and nothing has said what became of it, so it is not handed out again while its price holds: a second request could be a second purchase. Check the wallet’s activity first. If nothing went out, it can be confirmed again from ${time}, when that price has expired. Nothing was prepared now.`;
 }
 
 export interface StockActionExecutionArgsV1 {
@@ -1312,14 +1360,15 @@ export async function miorailGetStockBaseMcpActionV1(
   // One stock action reaches a wallet once at a time (audit N13-2, 2026-11-13). A release whose wallet
   // answer was never heard, or whose calls reached Base, is not followed by another: a re-plan is a new
   // blueprint, and the submission attempt opened before a wallet guards only its own.
-  let handoff: 'open' | 'sent' | null;
+  let handoff: StockActionHandoffV1;
   try {
     handoff = await runtime.handoffHeld({ tenantId: identity.tenantId, walletAddress: identity.walletAddress, actionDraftId: clearance.actionDraftId });
   } catch {
     throw stockActionRefusalV1('stock_action_tracking_unavailable');
   }
-  if (handoff === 'sent') throw stockActionExecutionRefusalV1('stock_action_already_sent');
-  if (handoff === 'open') throw stockActionExecutionRefusalV1('stock_action_handoff_open');
+  if (handoff?.held === 'sent') throw stockActionExecutionRefusalV1('stock_action_already_sent');
+  if (handoff?.held === 'open') throw stockActionExecutionRefusalV1('stock_action_handoff_open');
+  if (handoff?.held === 'live' && handoff.until) throw new McpPrivateError('stock_action_release_live', stockActionReleaseLiveCopyV1(handoff.until));
 
   const token = await runtime.readToken(clearance.tokenAddress);
   if (!token.ok) throw stockActionExecutionRefusalV1('stock_action_token_unreadable');

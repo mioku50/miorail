@@ -23,6 +23,9 @@ export interface StockActionExecutionRepositoryV1 {
   recordDraft(input: StockActionDraftOwnerV1 & { at: Date }): Promise<void>;
   recordRelease(input: StockActionReleaseV1 & { at: Date }): Promise<void>;
   latest(input: StockActionDraftOwnerV1): Promise<StockActionExecutionV1 | null>;
+  /** Every release of this draft, newest first, at most `limit`: what may still be at a wallet is
+   * not only the latest (audit DIFF-2, 2026-11-14). */
+  releases(input: StockActionDraftOwnerV1, limit: number): Promise<Array<StockActionReleaseV1 & { createdAt: string }>>;
 }
 
 const ID = /^[A-Za-z0-9:_.-]{1,200}$/;
@@ -88,6 +91,17 @@ export class InMemoryStockActionExecutionRepositoryV1 implements StockActionExec
     const { sequence: _sequence, ...row } = rows[0];
     return structuredClone(row);
   }
+
+  async releases(input: StockActionDraftOwnerV1, limit: number): Promise<Array<StockActionReleaseV1 & { createdAt: string }>> {
+    assertOwner(input);
+    return this.rows.filter(row => sameOwner(row, input) && row.release)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.sequence - a.sequence)
+      .slice(0, boundedLimitV1(limit)).map(row => structuredClone({ ...row.release!, createdAt: row.createdAt }));
+  }
+}
+
+function boundedLimitV1(limit: number): number {
+  return Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 50) : 1;
 }
 
 function rowV1(row: Record<string, unknown>): StockActionExecutionV1 {
@@ -135,6 +149,15 @@ export function createDatabaseStockActionExecutionRepositoryV1(sql: SqlTemplateE
           AND action_draft_id = ${input.actionDraftId}
         ORDER BY (blueprint_id IS NOT NULL) DESC, created_at DESC, id DESC LIMIT 1`;
       return rows[0] ? rowV1(rows[0]) : null;
+    },
+    async releases(input, limit) {
+      assertOwner(input);
+      // The same index as `latest` (stock_action_execution_latest, 0090).
+      const rows = await sql`SELECT * FROM stock_action_executions
+        WHERE tenant_id = ${input.tenantId} AND wallet_address = ${input.walletAddress}
+          AND action_draft_id = ${input.actionDraftId} AND blueprint_id IS NOT NULL
+        ORDER BY (blueprint_id IS NOT NULL) DESC, created_at DESC, id DESC LIMIT ${boundedLimitV1(limit)}`;
+      return rows.map((row) => { const found = rowV1(row); return { ...found.release!, createdAt: found.createdAt }; });
     },
   };
   return repository;
