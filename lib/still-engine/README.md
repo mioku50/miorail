@@ -5,7 +5,8 @@ here from Still's `packages/engine` on 2026-10-26, when Still became Miorail's f
 
 - `policy.ts`: Still's terms. It lends at half the protocol's collateral factor, and at 40% for
   stocks while Wall Street is closed (weekends and market holidays, by Miorail's reviewed market
-  calendar) and around an earnings report.
+  calendar), around an earnings report, while the earnings calendar cannot be read, and while a
+  stock's reference price has gone more than 25 hours of open market without an update.
 - `read.ts` and `mirror.ts`: one-block reads of the Aave V4 "Coinbase Stocks" spoke and the Morpho
   cbBTC, WETH and PAXG markets. They compute the Mirror report: limits, debt, safety and the headline.
 - `math.ts`: bigint arithmetic for money. Every division names its rounding direction. Morpho

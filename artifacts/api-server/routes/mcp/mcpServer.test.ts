@@ -408,6 +408,11 @@ describe('§8 — tool discovery', () => {
       /underlying key groups representations but never selects one/i,
     );
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /expired quote is history/i);
+    // Every rule that lowers a stock to 40%, the stale reference price included (audit DOC-2), and where Still is offered (BASE-2).
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /while its reference price has gone more than 25 open-market hours without an update/);
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /Still is offered only in eligible jurisdictions: not to US persons, and not in the United States, Cuba, Iran, North Korea, Syria/);
+    const terms = (await (await connectedClient()).listTools()).tools.find((tool) => tool.name === 'get_still_terms')!;
+    assert.match(terms.description ?? '', /reference price has gone more than 25 open-market hours without an update \(stalePrice\)/);
   });
 
   test('Aave is named by version: V3 does not list Coinbase stocks, V4’s stocks spoke takes them', async () => {

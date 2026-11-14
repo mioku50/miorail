@@ -45,9 +45,10 @@ A shared link previews as its own card: `/w/<wallet>` as that wallet's check, an
 
 1. It reads each asset's collateral factor from the protocol itself, at one Base block.
 2. It lends at **50%** of that factor. At Still's full limit, a new loan's collateral can lose about half its value before liquidation can start; interest narrows that over time.
-3. For a stock it lends at **40%** while Wall Street is closed (weekends and market holidays, by a reviewed calendar) and from the day before a company's earnings report to the evening after it, when a price can gap. An earnings calendar that cannot be read counts every stock at 40%.
-4. It leaves 0.0005 ETH in the wallet for network fees and never counts it.
-5. The server refuses a loan above that limit, whatever the screen sent.
+3. For a stock it lends at **40%** while Wall Street is closed (weekends and market holidays, by a reviewed calendar) and from the day before a company's earnings report to the evening after it, when a price can gap. An earnings calendar that cannot be read, or that leaves a stock out, counts that stock at 40%.
+4. A stock whose reference price has gone more than 25 hours of open market without an update also counts at 40%, until a new price arrives.
+5. It leaves 0.0005 ETH in the wallet for network fees and never counts it.
+6. The server refuses a loan above that limit, whatever the screen sent.
 
 The terms are versioned and live in [`lib/still-engine/src/policy.ts`](lib/still-engine/src/policy.ts). Still's limit is not a recommendation to borrow.
 
@@ -74,7 +75,7 @@ Still is not a lender. It never holds collateral or USDC, and it adds no fee to 
 
 So the real question is what the layer on top adds, because it has to earn the risk it brings. Today it adds four things.
 
-1. **A limit that knows it is lending against stocks.** A protocol's collateral factor is the same at every hour of the week; a stock's risk is not. While Wall Street is closed, on weekends and market holidays, the token keeps trading on Base but its reference price stands still, and the next session can open with a gap. Around a company's earnings report the price can jump either way. Still lends at 50% of the protocol's own factor, and at 40% for a stock while the market is closed and around that company's report. Borrowing the protocol's full maximum, the smallest fall in price can start liquidation. Borrowing Still's full limit, the collateral can fall 50% before it can, or 60% in those windows. That margin is protection the protocol itself does not give.
+1. **A limit that knows it is lending against stocks.** A protocol's collateral factor is the same at every hour of the week; a stock's risk is not. While Wall Street is closed, on weekends and market holidays, the token keeps trading on Base but its reference price stands still, and the next session can open with a gap. Around a company's earnings report the price can jump either way. Still lends at 50% of the protocol's own factor, and at 40% for a stock while the market is closed, around that company's report, or while its price feed has stopped refreshing. Borrowing the protocol's full maximum, the smallest fall in price can start liquidation. Borrowing Still's full limit, the collateral can fall 50% before it can, or 60% in those windows. That margin is protection the protocol itself does not give.
 2. **One answer to "how much can I borrow?"** Every stock and crypto asset in the wallet is counted together, in dollars and plain words, read at one Base block. A read that failed is said to be unread, never shown as zero.
 3. **A check before anything is signed.** Every loan is simulated on a fresh block before the wallet opens, every call is decoded, and the amounts are exact. The server enforces Still's share, and on Morpho the wallet calls Morpho Blue itself, so nothing is authorized to act for it.
 4. **Company after the loan.** The Agent answers what-ifs with the engine's arithmetic. Still also shows which dividends reach the token and keeps track of the stock market's hours, and a connected Telegram chat is told, once per step, when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.

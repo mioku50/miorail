@@ -63,7 +63,9 @@ every row says whether the issuer's own naming or a Miorail alias found it.
 `get_still_terms` reads the same earnings service and cache as
 `GET /api/public/still/terms`. Its answer is the terms themselves: 50% of the
 protocol's collateral factor, reduced to 40% for stocks in Still's reviewed
-closed-market or earnings window, or while their earnings calendar is unread.
+closed-market or earnings window, while their earnings calendar is unread, or
+while their reference price has gone more than 25 open-market hours without an
+update.
 Returned windows and `calendarRead` are part of the answer. These are terms,
 not a personal borrowing quote or advice to borrow. Still is offered only in
 eligible jurisdictions: not to US persons, and not in the United States, Cuba,

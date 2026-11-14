@@ -77,6 +77,8 @@ test('five tools under Still’s own name, every one a read, and instructions th
   for (const tool of tools) assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
   const instructions = client.getInstructions() ?? '';
   assert.match(instructions, /Still is not a lender/);
+  // Every rule that lowers a stock to 40%, the unread calendar and the stale reference price included (audit DOC-2).
+  assert.match(instructions, /at 40% for a stock while Wall Street is closed, around its earnings report, while its earnings date cannot be read, or while its reference price has gone more than 25 open-market hours without an update/);
   assert.match(instructions, /This server only reads: it prepares, signs and sends nothing/);
   assert.match(instructions, /null means unread, never zero/);
   // Eligible jurisdictions, with the places named (audit BASE-2).

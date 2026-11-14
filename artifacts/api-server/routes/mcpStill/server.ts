@@ -58,7 +58,7 @@ export const STILL_MCP_TOOLS_V1 = ['get_still_terms', 'still_check_wallet', 'sti
 
 export const STILL_MCP_INSTRUCTIONS_V1 = `Still: spend without selling. Still answers how much a Base wallet could borrow in USDC against its tokenized stocks (Coinbase AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc), cbBTC, ETH and PAXG (Paxos gold) without selling them, how safe its loans are, and what a price move, more borrowing, a repayment or a deposit would do. Every figure is read from Base at one block by the same engine as Still's own pages.
 
-Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH, PAXG), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed and around its earnings report. On Aave, a loan that SPCXc covers also pays Aave's risk premium: up to 10% of the rate, which each loan's borrowRateBps already includes. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on Still's site (${STILL_PUBLIC_HOST_V1}), in the owner's own wallet.
+Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH, PAXG), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed, around its earnings report, while its earnings date cannot be read, or while its reference price has gone more than 25 open-market hours without an update. On Aave, a loan that SPCXc covers also pays Aave's risk premium: up to 10% of the rate, which each loan's borrowRateBps already includes. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on Still's site (${STILL_PUBLIC_HOST_V1}), in the owner's own wallet.
 
 Five tools:
 1. get_still_terms: the shares and windows in force now. No wallet needed.
@@ -90,7 +90,7 @@ export function createStillMcpServerV1(): McpServer {
 
   server.registerTool('get_still_terms', {
     title: 'Still terms, in force now',
-    description: 'Still’s versioned terms, with no wallet: the share of each protocol’s limit Still lends at (50%), the closed-market and earnings windows in which a stock counts at 40%, which windows are open now, each stock’s next earnings date, the safety bands, and the two protocols the loans live in. An unread earnings calendar counts every stock at 40%: that is a valid, careful answer, not a failure.',
+    description: 'Still’s versioned terms, with no wallet: the share of each protocol’s limit Still lends at (50%), the closed-market and earnings windows in which a stock counts at 40%, and the stale-price rule (a stock whose reference price has gone more than 25 open-market hours without an update counts at 40% too), which windows are open now, each stock’s next earnings date, the safety bands, and the two protocols the loans live in. An unread earnings calendar counts every stock at 40%: that is a valid, careful answer, not a failure.',
     inputSchema: StillTermsInputV1Schema,
     outputSchema: StillTermsSchema,
     annotations: READ_ONLY,
