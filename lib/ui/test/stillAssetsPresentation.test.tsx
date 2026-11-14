@@ -129,9 +129,12 @@ describe('selling a holding on Swap, from Assets', () => {
   it('hands over the whole free balance, exactly, by its contract', () => {
     const view = assetsViewV1({ report: portfolio(), usdc: { raw: '1000000', decimals: 6 } });
     // 0.8 NVDAc free beside 3.4 pledged: only the free part can be sold.
-    assert.equal(goalOf(view, 'NVDAc'), `swap my 0.8 ${NVDA} to USDC`);
-    assert.equal(view.rows.find((row) => row.id === 'NVDAc')!.sell!.href, `/routes?goal=${encodeURIComponent(`swap my 0.8 ${NVDA} to USDC`)}`);
-    assert.equal(goalOf(view, 'cbBTC'), 'swap my 0.012 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf to USDC');
+    // As the one sentence Swap AI reads without a model, both sides by address (2026-11-14: the words went to the
+    // model, which took most of the Route Card's 22 s, and a sell of AAPLc came back card_expired).
+    const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    assert.equal(goalOf(view, 'NVDAc'), `Swap 0.8 ${NVDA} to ${USDC} on Base`);
+    assert.equal(view.rows.find((row) => row.id === 'NVDAc')!.sell!.href, `/routes?goal=${encodeURIComponent(`Swap 0.8 ${NVDA} to ${USDC} on Base`)}`);
+    assert.equal(goalOf(view, 'cbBTC'), `Swap 0.012 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf to ${USDC} on Base`);
     // USDC, exactly, buys ETH on Swap (operator, 2026-11-09).
     assert.equal(goalOf(view, 'USDC'), 'Swap 1 USDC to ETH');
     const html = renderAssets(view);

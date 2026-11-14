@@ -482,7 +482,7 @@ describe('what the wallet holds, on Assets', () => {
     // sell all of it and the page that prices it (operator, 2026-11-12: «купил hims … и ее нет отображения в
     // assets»); one it holds none of is not shown.
     const withOthers = assetsViewV1({ report: r, dividends: { ...dividends, holdings: [...dividends.holdings, sony, none] } });
-    const goal = `swap my 1.25 0x${'5'.repeat(40)} to USDC`;
+    const goal = `Swap 1.25 0x${'5'.repeat(40)} to 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 on Base`;
     assert.deepEqual(withOthers.rows.at(-1), {
       id: `0x${'5'.repeat(40)}`, kind: 'stock', name: 'Sony', amount: '1.25 SONYc', value: '—',
       lines: [{ text: 'Still does not lend against it' }],

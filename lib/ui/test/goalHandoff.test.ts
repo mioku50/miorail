@@ -17,6 +17,10 @@ import {
 // ---------------------------------------------------------------------------
 
 const MIO = '0xb200000000000000000000578f3ae29d9e6e0101';
+const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+// The sentence Swap AI reads without a model: CANONICAL_SWAP_SENTENCE_V2 in lib/intent-engine/src/extractor.ts,
+// whose own test reads a sell written this way.
+const CANONICAL_V2 = /^Swap (?:(\d+(?:\.\d+)?) )?(0x[0-9a-fA-F]{40}) to (0x[0-9a-fA-F]{40}) on Base$/;
 
 describe('a goal from a link is filled in; a goal from a click is run', () => {
   test('a click inside Miorail leaves a token, and that goal is compared', () => {
@@ -91,12 +95,23 @@ describe('the handoff has one spelling', () => {
   });
 
   test('the amount is the balance the card was showing', () => {
-    assert.equal(swapTokenGoalV1(MIO, '19210.9481'), `swap my 19210.9481 ${MIO} to USDC`);
+    assert.equal(swapTokenGoalV1(MIO, '19210.9481'), `Swap 19210.9481 ${MIO} to ${USDC} on Base`);
     // An unreadable balance leaves the amount out rather than inventing one.
     // The console then asks how much, which is its designed flow.
-    assert.equal(swapTokenGoalV1(MIO, null), `swap my ${MIO} to USDC`);
-    assert.equal(swapTokenGoalV1(MIO, 'not read'), `swap my ${MIO} to USDC`);
-    assert.equal(swapTokenGoalV1(MIO, '-5'), `swap my ${MIO} to USDC`);
+    assert.equal(swapTokenGoalV1(MIO, null), `Swap ${MIO} to ${USDC} on Base`);
+    assert.equal(swapTokenGoalV1(MIO, 'not read'), `Swap ${MIO} to ${USDC} on Base`);
+    assert.equal(swapTokenGoalV1(MIO, '-5'), `Swap ${MIO} to ${USDC} on Base`);
+    // ETH has no address: it keeps the words, and the model reads them.
+    assert.equal(swapTokenGoalV1('ETH'), 'swap my ETH to USDC');
+  });
+
+  // 2026-11-14: "swap my 0.12636741 <AAPLc> to USDC" went to the model on every sell, 5–11 s of a Route Card that
+  // lives 22 s, and the first sell came back card_expired. The sentence Swap AI reads without a model is this one.
+  test('a token sold by address is written as the one sentence Swap AI reads without a model', () => {
+    const AAPLC = '0xb200000000000000000000C2e324d24d7eEcd1fb';
+    assert.deepEqual(CANONICAL_V2.exec(swapTokenGoalV1(AAPLC, '0.12636741'))?.slice(1), ['0.12636741', AAPLC, USDC]);
+    assert.deepEqual(CANONICAL_V2.exec(swapTokenGoalV1(AAPLC, null))?.slice(1), [undefined, AAPLC, USDC]);
+    assert.equal(CANONICAL_V2.test(swapTokenGoalV1('ETH', '1')), false, 'ETH keeps its words');
   });
 
   test('an amount travels through the href and back unchanged', () => {
@@ -105,7 +120,7 @@ describe('the handoff has one spelling', () => {
       search: href.slice(href.indexOf('?')),
       handoffToken: swapTokenGoalV1(MIO, '19210.9481'),
     });
-    assert.equal(handoff.goal, `swap my 19210.9481 ${MIO} to USDC`);
+    assert.equal(handoff.goal, `Swap 19210.9481 ${MIO} to ${USDC} on Base`);
     assert.equal(handoff.autoCompare, true);
   });
 

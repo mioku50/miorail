@@ -117,6 +117,9 @@ export function goalHandoffV1(input: {
   };
 }
 
+/** Base's canonical USDC, named by address in a sell link's sentence. */
+const BASE_USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
 /**
  * The goal text for "swap this token", in one place rather than one per caller.
  *
@@ -125,11 +128,18 @@ export function goalHandoffV1(input: {
  * clicked — a number the user just read, not one invented from a balance
  * provider. Absent when the balance could not be read, and the console then
  * asks how much, which is its designed flow rather than a failure.
+ *
+ * A token named by address goes as the one sentence Swap AI reads without a
+ * model, both sides by address. 2026-11-14: "swap my 0.12636741 <AAPLc> to
+ * USDC" went to the model every time, which took 5–11 s of a Route Card that
+ * lives 22 s (the first sell was refused as `card_expired`) and can miscopy a
+ * B20 address with its twenty zeros. ETH has no address and keeps the words.
  */
 export function swapTokenGoalV1(tokenAddress: string, amountDecimal?: string | null): string {
   const amount = typeof amountDecimal === 'string' && /^\d+(?:\.\d+)?$/.test(amountDecimal)
     ? `${amountDecimal} `
     : '';
+  if (/^0x[0-9a-fA-F]{40}$/.test(tokenAddress)) return `Swap ${amount}${tokenAddress} to ${BASE_USDC_V1} on Base`;
   return `swap my ${amount}${tokenAddress} to USDC`;
 }
 
