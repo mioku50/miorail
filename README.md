@@ -175,7 +175,7 @@ The product name is Miorail; the `@mioagent/*` package namespace remains for com
 | `lib/wallet-actions` | Wallet approval and submission, and ERC-8021 attribution. |
 | `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared screens and runtime-validated contracts. |
 
-Which integrations are live, and how far each is proven: [docs/PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
+Which swap, earn and extension integrations are live, and how far each is proven: [docs/PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md). It predates Still: Still's lending and Spend are described above.
 
 ## Contributing and security
 
