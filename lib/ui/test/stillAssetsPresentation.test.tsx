@@ -216,8 +216,23 @@ describe('when the lender read the price a gold, bitcoin or ether row is counted
     assert.match(lenderPriceTimeLineV1(gold('2026-10-16T21:00:00.000Z'), SATURDAY)!, /of 2026-10-16 21:00 UTC, the latest/);
     assert.equal(lenderPriceTimeLineV1(gold(null), SATURDAY), null);
     assert.equal(lenderPriceTimeLineV1(gold('not a time'), SATURDAY), null);
-    // A stock's row has its own rule (the stale-price line), and never this one.
-    assert.equal(lenderPriceTimeLineV1({ kind: 'stock', asset: 'NVDAc', priceUpdatedAt: '2026-10-23T21:00:00.000Z' }, SATURDAY), null);
+    // A stock is counted at Aave's reference price, which stands all weekend while the token trades on Base (audit UI-13).
+    assert.equal(lenderPriceTimeLineV1({ kind: 'stock', asset: 'NVDAc', priceUpdatedAt: '2026-10-23T21:00:00.000Z' }, SATURDAY),
+      'Counted at the reference price Aave reads, last refreshed Fri 21:00 UTC; the token trades on Base meanwhile');
+    assert.equal(lenderPriceTimeLineV1({ kind: 'stock', asset: 'NVDAc', priceUpdatedAt: '2026-10-24T21:30:00.000Z' }, SATURDAY), null, 'half an hour old');
+  });
+
+  it('a stock row on a Saturday says the reference price is Friday’s while the token trades on Base (audit UI-13)', () => {
+    const at = BigInt(Date.parse(SATURDAY) / 1000);
+    const read = JSON.parse(JSON.stringify(computeMirror({
+      universe: universe(), snapshot: snapshot(EXAMPLE, at), calendar: calendar(),
+      subject: { address: '0x00000000000000000000000000000000000b0b0b', name: null, input: 'example' }, assembledAt: new Date(SATURDAY),
+    }))) as MirrorReport;
+    const nvda = read.assets.find((line) => line.asset === 'NVDAc')!;
+    nvda.priceUpdatedAt = '2026-10-23T20:00:00.000Z';
+    const row = assetsViewV1({ report: read }).rows.find((entry) => entry.id === 'NVDAc')!;
+    assert.deepEqual(row.lines.map((entry) => entry.text), [' · 0.8 free',
+      'Counted at the reference price Aave reads, last refreshed Fri 20:00 UTC; the token trades on Base meanwhile']);
   });
 
   it('the row of a gold holder shows the line, under what the row already says', () => {

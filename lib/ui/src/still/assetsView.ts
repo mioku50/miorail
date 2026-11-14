@@ -108,8 +108,13 @@ const PRICE_WEEKDAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', wee
 export const LENDER_PRICE_TIME_AFTER_MS_V1 = 3_600_000;
 
 /**
- * When Morpho's oracle last read the price a gold, bitcoin or ether row is counted at, once that
- * is an hour or more before the reading: "Fri 21:00 UTC".
+ * When the lender's oracle last read the price a row is counted at, once that is an hour or more
+ * before the reading: "Fri 21:00 UTC".
+ *
+ * A stock is counted at the reference price Aave reads, which is published overnight and stands
+ * from Friday evening to Sunday evening, while the token keeps trading on Base; the stock page shows
+ * the token's own price, with its age, so the two pages differed with no word on one of them
+ * (audit UI-13, 2026-11-14). The stale-price rule says only when a price is too old to lend on.
  *
  * Bitcoin's and ether's feeds answer every few minutes, so their rows say nothing. Gold's stood
  * for three hours on a Tuesday afternoon (2026-11-10) and seven on a Thursday morning (11-12),
@@ -121,13 +126,14 @@ export function lenderPriceTimeLineV1(
   line: { kind: 'stock' | 'crypto'; asset: string; priceUpdatedAt: string | null },
   readAt: string,
 ): string | null {
-  if (line.kind !== 'crypto' || !line.priceUpdatedAt) return null;
+  if (!line.priceUpdatedAt) return null;
   const at = Date.parse(line.priceUpdatedAt);
   const read = Date.parse(readAt);
   if (!Number.isFinite(at) || !Number.isFinite(read) || read - at < LENDER_PRICE_TIME_AFTER_MS_V1) return null;
   const iso = new Date(at).toISOString();
   const day = read - at < 6 * 86_400_000 ? PRICE_WEEKDAY_V1.format(new Date(at)) : iso.slice(0, 10);
   const when = `${day} ${iso.slice(11, 16)} UTC`;
+  if (line.kind === 'stock') return `Counted at the reference price Aave reads, last refreshed ${when}; the token trades on Base meanwhile`;
   return line.asset === 'PAXG'
     ? `Counted at the gold price of ${when}, the latest Morpho's oracle has: its gold feed can stand for hours, and stands all weekend`
     : `Counted at the price Morpho's oracle last read, ${when}`;
