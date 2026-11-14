@@ -776,6 +776,28 @@ describe('the Agent', () => {
     ] as const) {
       assert.equal(agentSendRequestV2(q)?.unclear, unclear, q);
     }
+    // Audit SS-3, 2026-11-14: with one recipient, a "not" that was not right before the verb, a cancel, or
+    // "never ever" prepared the send. A negation anywhere in a sentence that asks for one is asked back.
+    for (const q of [
+      `I do not want to send 5 USDC to ${address}`,
+      `Не надо 5 USDC переводить на ${address}`,
+      `cancel the send of 5 USDC to ${address}`,
+      `отмени перевод 5 USDC на ${address}`,
+      `never ever transfer 5 USDC to ${address}`,
+      `please don’t transfer my NVDAc to ${address}`,
+      `I won't send 1 NVDAc to alice.base.eth`,
+      `не хочу переводить 1 NVDAc на alice.base.eth`,
+      `Stop the transfer of 1 NVDAc to alice.base.eth!`,
+      `Hold on. Don't send 1 NVDAc to alice.base.eth`,
+    ]) {
+      assert.equal(agentSendRequestV2(q)?.unclear, 'negated', q);
+    }
+    // A plain request is still read: a decimal point or a name's dots do not end a sentence, and a word
+    // that only starts like a negation is none.
+    for (const q of [`send 0.5 NVDAc to ${address}`, 'send 1.5 NVDAc to alice.base.eth.', 'переведи немного, 0.1 NVDAc, на alice.base.eth',
+      'transfer 2 NVDAc to notary.base.eth', 'Hi. Send 1 NVDAc to alice.base.eth']) {
+      assert.equal(agentSendRequestV2(q)?.unclear, null, q);
+    }
     // A loan first, a what-if, a translation, a price and a request for words are not transfers.
     assert.equal(agentRouteV2('Займи $500 и отправь другу').route, 'action_prep');
     assert.equal(agentRouteV2('что будет, если я отправлю все NVDA на alice.base.eth?').route, 'unknown');

@@ -363,7 +363,7 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     ['отправь $5 NVDA на friend.base.eth', /^Назовите количество в NVDAc или «все»/],
     // Re-audit R6, 2026-11-04: this prepared a send to the address it was told not to use.
     [`Do not send to ${FRIEND}. Send 0.1 NVDAc to ${`0x${'3'.repeat(40)}`}`, /^Your question names more than one recipient, or says who not to send to\./],
-    [`не переводи NVDA на ${FRIEND}`, /^В вопросе больше одного получателя или сказано, кому не отправлять\./],
+    [`не переводи NVDA на ${FRIEND}`, /^В вопросе сказано не переводить, отменить перевод или кому не отправлять, поэтому я ничего не подготовил\./],
   ] as const) {
     const refused = (await ask(server, question)).body.answer;
     assert.match(refused.text, said, question);
@@ -383,6 +383,28 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     assert.match(asked.text, said, question);
     assert.equal(asked.sendAction ?? null, null, question);
     assert.doesNotMatch(asked.text, /Prepared|Подготовил/, question);
+  }
+});
+
+test('a request not to send, or to cancel one, prepares nothing and says why (audit SS-3)', async () => {
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a transfer is not re-worded by a model');
+  stillMineRuntimeV1.resolveName = async () => assert.fail('nothing is sent, so no recipient is looked up');
+  const FRIEND = `0x${'2'.repeat(40)}`;
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  // Each of these answered "Prepared" with the one recipient it named.
+  for (const [question, said] of [
+    [`I do not want to send 0.1 NVDAc to ${FRIEND}`, /^Your question says not to send, to cancel a transfer, or who not to send to, so I prepared nothing\. Still never sends anything by itself/],
+    [`Не надо 0.1 NVDAc переводить на ${FRIEND}`, /^В вопросе сказано не переводить, отменить перевод или кому не отправлять, поэтому я ничего не подготовил\./],
+    [`отмени перевод 0.1 NVDAc на ${FRIEND}`, /^В вопросе сказано не переводить, отменить перевод или кому не отправлять, поэтому я ничего не подготовил\./],
+    [`cancel the send of 0.1 NVDAc to ${FRIEND}`, /^Your question says not to send, to cancel a transfer, or who not to send to, so I prepared nothing\./],
+    [`never ever transfer 0.1 NVDAc to ${FRIEND}`, /^Your question says not to send/],
+  ] as const) {
+    const refused = (await ask(server, question)).body.answer;
+    assert.match(refused.text, said, question);
+    assert.equal(refused.sendAction ?? null, null, question);
+    assert.doesNotMatch(refused.text, /Prepared|Подготовил/, question);
   }
 });
 

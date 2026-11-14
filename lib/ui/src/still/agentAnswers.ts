@@ -534,6 +534,24 @@ const SEND_NAMES_V2 = new RegExp(SEND_NAME_V2.source, 'giu');
 const SEND_RECIPIENT_V2 = '(?:0x[0-9a-f]{40}|(?:[\\p{L}\\p{N}-]+\\.)+eth)';
 const SEND_NEGATED_V2 = new RegExp(`${EDGE}(?:(?:do\\s+not|don['’]?t|never)\\s+(?:send|transfer)|not\\s+to\\s+${SEND_RECIPIENT_V2}`
   + `|не\\s+(?:надо\\s+|нужно\\s+)?(?:перевод|перевед|перевест|перечисл|отправ|пошли|посыла|скид|скинь|шли)|не\\s+на\\s+${SEND_RECIPIENT_V2})`, 'iu');
+// ---------------------------------------------------------------------------
+// A "not" anywhere in a sentence that asks for a transfer (audit SS-3,
+// 2026-11-14). Only a "not" right before the verb was read, so with one
+// recipient "I do not want to send 5 USDC to …", «Не надо 5 USDC переводить
+// на …», "cancel the send of …", «отмени перевод …» and "never ever transfer
+// …" each answered "Prepared". Now a negation, a cancel or a stop in the same
+// sentence as the request is asked back: a person who meant to send asks
+// again in a moment, and one who meant the opposite is never handed a review.
+// A sentence ends at . ! ? ; … before a space, or at a line break: the point
+// of 0.5 or of alice.base.eth does not end one.
+// ---------------------------------------------------------------------------
+const SEND_NEGATION_V2 = new RegExp(`${EDGE}(?:not|never|cancel\\p{L}*|stop|abort|undo|\\p{L}+n['’]t`
+  + `|не|ни|нельзя|никогда|отмен\\p{L}*|стоп|останов\\p{L}*|передумал\\p{L}*)(?=$|[^\\p{L}\\p{N}])`, 'iu');
+const SEND_SENTENCE_END_V2 = /[.!?;…]+(?=\s|$)|\n+/u;
+function sendNegatedV2(question: string): boolean {
+  return SEND_NEGATED_V2.test(question) ||
+    question.split(SEND_SENTENCE_END_V2).some((sentence) => SEND_WORDS_V2.test(sentence) && SEND_NEGATION_V2.test(sentence));
+}
 const SEND_DOLLARS_V2 = /\$|доллар|бакс/iu;
 
 export interface AgentSendRequestV2 {
@@ -580,7 +598,7 @@ export function agentSendRequestV2(question: string): AgentSendRequestV2 | null 
   }
   const written = new Set([...Array.from(question.matchAll(SEND_ADDRESSES_V2), (match) => match[0].toLowerCase()),
     ...Array.from(question.matchAll(SEND_NAMES_V2), (match) => match[1]!.toLowerCase())]);
-  const unclear = written.size > 1 ? 'several' : SEND_NEGATED_V2.test(question) ? 'negated' : null;
+  const unclear = written.size > 1 ? 'several' : sendNegatedV2(question) ? 'negated' : null;
   return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, amountUnclear, recipient, unclear };
 }
 

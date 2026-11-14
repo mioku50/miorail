@@ -108,10 +108,18 @@ export async function stillAgentSendAnswerV1(input: {
   }
   const recipient = request.recipient;
   // The first one written is not necessarily the one meant, so nothing is prepared from it.
-  if (request.unclear) {
+  if (request.unclear === 'several') {
     return say(t(
       'В вопросе больше одного получателя или сказано, кому не отправлять. Спросите ещё раз и напишите только того, кому перевести: адрес 0x… или имя .base.eth. Сам я получателя не выбираю.',
       'Your question names more than one recipient, or says who not to send to. Ask again with only the one who should receive it: a 0x address or a .base.eth name. I never pick one for you.',
+    ));
+  }
+  // "Do not send", "cancel the transfer" (audit SS-3): nothing is prepared, and nothing was ever going out
+  // by itself, since a transfer leaves only when the person signs it in their own wallet.
+  if (request.unclear === 'negated') {
+    return say(t(
+      'В вопросе сказано не переводить, отменить перевод или кому не отправлять, поэтому я ничего не подготовил. Сам Still ничего не отправляет: перевод уходит, только когда вы подписываете его в своём кошельке. Если перевести всё же нужно, спросите ещё раз: сумма и один получатель, адрес 0x… или имя .base.eth.',
+      'Your question says not to send, to cancel a transfer, or who not to send to, so I prepared nothing. Still never sends anything by itself: a transfer leaves only when you sign it in your own wallet. If you do want to send, ask again with the amount and the one recipient, a 0x address or a .base.eth name.',
     ));
   }
   if (!recipient) {
