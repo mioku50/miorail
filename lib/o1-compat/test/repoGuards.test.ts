@@ -43,7 +43,7 @@ function repoRoot(): string {
 }
 
 const ROOT = repoRoot();
-const SKIP = new Set(['.git', 'node_modules', 'dist', '.next', 'coverage', 'screen', 'scratchpad']);
+const SKIP = new Set(['.git', 'node_modules', 'dist', '.next', 'coverage', 'screen', 'scratchpad', '.claude']);
 
 function sourceFiles(directory: string, out: string[] = []): string[] {
   for (const entry of readdirSync(directory)) {

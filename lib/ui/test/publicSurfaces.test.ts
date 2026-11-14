@@ -21,7 +21,8 @@ function source(relativePath: string): string {
 // requires each one to wire a dataSuffix.
 // ---------------------------------------------------------------------------
 
-const SKIP_DIRS_V1 = new Set(['.git', 'node_modules', 'dist', '.next', 'coverage', 'screen', 'contracts']);
+// `.claude` holds agents' git worktrees: other copies of this repository, not its call sites (2026-11-14).
+const SKIP_DIRS_V1 = new Set(['.git', 'node_modules', 'dist', '.next', 'coverage', 'screen', 'contracts', '.claude']);
 
 function sourceFilesV1(directory: string, out: string[] = []): string[] {
   for (const entry of readdirSync(directory)) {

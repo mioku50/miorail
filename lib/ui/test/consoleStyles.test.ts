@@ -27,7 +27,7 @@ const defined = new Set(css.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map((selector) =
 // arbitrary class or letting unrelated console panels borrow Still styles.
 const stillCss = readFileSync(path.join(here, '..', 'src', 'still', 'still.css'), 'utf8');
 const stillDefined = new Set(stillCss.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map(selector => selector.slice(1)) ?? []);
-const STILL_CONSUMERS = new Set(['LendingReviewScreen.tsx', 'RepayEntryScreen.tsx']);
+const STILL_CONSUMERS = new Set(['LendingReviewScreen.tsx', 'RepayEntryScreen.tsx', 'LendingHeldNotice.tsx']);
 
 /**
  * Classes that legitimately come from somewhere else.
