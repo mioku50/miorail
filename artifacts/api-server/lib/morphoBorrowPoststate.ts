@@ -1,4 +1,4 @@
-import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, keccak256, parseAbi, type Address, type Hex } from 'viem';
+import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, keccak256, type Address, type Hex } from 'viem';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { SimulationObservationRequestV1Schema, SimulationObservationsV1Schema, type SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import {
@@ -10,6 +10,8 @@ import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { nativeMorphoAuthorizationAbiV1, nativeMorphoFundingBudgetV1 } from './nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
+import { decodeMorphoCollateralTransfersV1, MORPHO_COLLATERAL_HOLD_ABI_V1, morphoCollateralHeldV1, morphoCollateralHoldableV1,
+  morphoCollateralHoldCallDataV1, morphoCollateralHoldOfV1, type MorphoCollateralHoldV1, type MorphoCollateralTransfersV1 } from './morphoCollateralHold.js';
 
 export interface MorphoBorrowPoststateIdentityV1 {
   marketId: string;
@@ -36,28 +38,15 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const WAD = 10n ** 18n;
 const address = (value: string): value is Address => /^0x[0-9a-f]{40}$/.test(value) && !/^0x0{40}$/.test(value);
 
-/** `paused()` asked through Multicall3 with `allowFailure`, so a token that does not answer it leaves the
- * pause unread instead of failing every getter of the phase. */
-export const morphoPauseProbeAbiV1 = parseAbi([
-  'function aggregate3((address target,bool allowFailure,bytes callData)[] calls) view returns ((bool success,bytes returnData)[] returnData)',
-  'function paused() view returns (bool)',
-]);
-/** cbBTC and PAXG can pause their transfers; WETH cannot, and is never asked (2026-11-13). */
-const pausableCollateralV1 = (id: string) => id !== 'ETH';
-
-/** The answer of the pause probe: true or false only from a complete one-word answer, otherwise unread. */
-function decodePausedProbeV1(data: Hex | undefined): boolean | null {
-  if (!data) return null;
-  try {
-    const rows = decodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', data });
-    if (rows.length !== 1 || !rows[0]!.success || !/^0x0{63}[01]$/.test(rows[0]!.returnData)) return null;
-    return rows[0]!.returnData.endsWith('1');
-  } catch { return null; }
-}
+/** `paused()` and the token's own blocks of Morpho Blue and of the wallet, asked through Multicall3 with
+ * `allowFailure`, so a token that does not answer one leaves that answer unread instead of failing every
+ * getter of the phase (lib/morphoCollateralHold.ts, audit LM-3). */
+export const morphoPauseProbeAbiV1 = MORPHO_COLLATERAL_HOLD_ABI_V1;
 
 /** Five fixed getters around the approved calls, and for cbBTC or PAXG a sixth that reads whether the
- * collateral's transfers are paused. These are observations in the same evolving simulated state, never
- * additional wallet transactions. */
+ * collateral can move: its pause, and whether its issuer blocked Morpho Blue or this wallet (audit LM-3,
+ * 2026-11-14). These are observations in the same evolving simulated state, never additional wallet
+ * transactions. */
 export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateIdentityV1):
   | { ok: true; observations: NonNullable<SimulationProviderRequestV1['observations']> }
   | RefusedV1 {
@@ -79,9 +68,8 @@ export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateI
     { id: 'oracle_price', to: oracle, data: encodeFunctionData({ abi: morphoOracleAbi, functionName: 'price' }) },
     { id: 'collateral_wallet_balance', to: collateral, data: encodeFunctionData({ abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }) },
   ];
-  if (!input.nativeFunding && pausableCollateralV1(asset.id)) probes.push({ id: 'collateral_transfers_paused', to: ADDRESSES.multicall3.toLowerCase(),
-    data: encodeFunctionData({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', args: [[{ target: collateral as Address, allowFailure: true,
-      callData: encodeFunctionData({ abi: morphoPauseProbeAbiV1, functionName: 'paused' }) }]] }) });
+  const held = !input.nativeFunding && morphoCollateralHoldableV1(asset) ? morphoCollateralHoldCallDataV1(asset, wallet) : null;
+  if (held) probes.push({ id: 'collateral_transfers_paused', to: ADDRESSES.multicall3.toLowerCase(), data: held.toLowerCase() as Hex });
   if (input.nativeFunding) probes.push(
     { id: 'native_wallet_balance', to: ADDRESSES.multicall3.toLowerCase(), data: encodeFunctionData({ abi: multicall3Abi, functionName: 'getEthBalance', args: [wallet] }) },
     { id: 'bundle_authorization', to: ADDRESSES.morpho.toLowerCase(), data: encodeFunctionData({ abi: nativeMorphoAuthorizationAbiV1, functionName: 'isAuthorized', args: [wallet, MORPHO_BLUE_BUNDLES_BASE_V1] }) },
@@ -97,13 +85,14 @@ interface MeasuredPositionV1 {
   liquidationPrice: bigint | null;
 }
 export type MorphoBorrowPoststateV1 =
-  /** `collateralTransfersPaused`: cbBTC's or PAXG's `paused()` after the calls; null when unread or not asked (WETH). */
-  | { ok: true; before: MeasuredPositionV1; after: MeasuredPositionV1; collateralTransfersPaused: boolean | null }
+  /** `collateralTransfersPaused`: whether cbBTC or PAXG is held after the calls (paused, or Morpho Blue or this
+   * wallet blocked by its issuer); null when unread or not asked (WETH). `collateralHold` says which. */
+  | { ok: true; before: MeasuredPositionV1; after: MeasuredPositionV1; collateralTransfersPaused: boolean | null; collateralHold: MorphoCollateralHoldV1 | null }
   | RefusedV1;
 
 type ParamsV1 = readonly [Address, Address, Address, Address, bigint];
 type PositionV1 = readonly [bigint, bigint, bigint];
-interface PhaseV1 { nativeBalance?: bigint; authorized?: boolean; bundleWethBalance?: bigint; params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint; collateralWalletBalance: bigint; transfersPaused: boolean | null }
+interface PhaseV1 { nativeBalance?: bigint; authorized?: boolean; bundleWethBalance?: bigint; params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint; collateralWalletBalance: bigint; transfers: MorphoCollateralTransfersV1 | null }
 const unsigned = (value: bigint, max: bigint): boolean => value >= 0n && value <= max;
 
 function decodePhase(rows: ReadonlyMap<string, Hex>, native: boolean): PhaseV1 | null {
@@ -132,7 +121,7 @@ function decodePhase(rows: ReadonlyMap<string, Hex>, native: boolean): PhaseV1 |
     } : {};
     if (native && (!/^0x0{63}[01]$/.test(exact('bundle_authorization', 1)) ||
         !unsigned(nativeValues.nativeBalance!, UINT256_MAX) || !unsigned(nativeValues.bundleWethBalance!, UINT256_MAX))) return null;
-    return { ...nativeValues, params, position, price, collateralWalletBalance, transfersPaused: decodePausedProbeV1(rows.get('collateral_transfers_paused')), totals: {
+    return { ...nativeValues, params, position, price, collateralWalletBalance, transfers: decodeMorphoCollateralTransfersV1(rows.get('collateral_transfers_paused')), totals: {
       totalSupplyAssets: values[0], totalSupplyShares: values[1], totalBorrowAssets: values[2],
       totalBorrowShares: values[3], lastUpdate: values[4], fee: values[5],
     } };
@@ -249,5 +238,6 @@ export function verifyMorphoBorrowPoststateV1(input: {
   const measured = (market: MorphoMarketStateV1, position: MorphoPositionV1): MeasuredPositionV1 => ({
     market, position, health: morphoHealthV1({ market, position }), liquidationPrice: morphoLiquidationPriceV1({ market, position }),
   });
-  return { ok: true, before: measured(beforeMarket, beforePosition), after: measured(afterMarket, afterPosition), collateralTransfersPaused: after.transfersPaused };
+  return { ok: true, before: measured(beforeMarket, beforePosition), after: measured(afterMarket, afterPosition),
+    collateralTransfersPaused: morphoCollateralHeldV1(after.transfers), collateralHold: morphoCollateralHoldOfV1(after.transfers) };
 }

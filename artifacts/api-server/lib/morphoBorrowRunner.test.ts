@@ -132,7 +132,9 @@ const CBBTC_PARAMS = { loanToken: USDC, collateralToken: CRYPTO[0]!.token.toLowe
 const NO_VENUE = { fetchImpl: (async () => { throw new Error('a Still loan must not ask the venue'); }) as typeof fetch };
 const BLUE_BUNDLES = '0x4d28d900e381ece4b351302f1abe588496793a2b';
 
-function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, supply = 0n, borrowedAssets = ASK.borrowAssets, paused: boolean | 'unanswered' = false): SimulationChainV1 {
+function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, supply = 0n, borrowedAssets = ASK.borrowAssets, held: boolean | 'unanswered' | 'market' | 'wallet' = false): SimulationChainV1 {
+  // Paused, or blocked by cbBTC's issuer at Morpho Blue or in this wallet (audit LM-3).
+  const paused = held === 'market' || held === 'wallet' ? false : held;
   const standing = cryptoStanding();
   const pre = standing.market.state;
   const interest = 12_000n;
@@ -150,7 +152,9 @@ function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, s
           : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: [0n, isAfter ? projected.position.borrowShares : standing.position.borrowShares, standing.position.collateral + (isAfter ? supply : 0n)] })
             : probe.id === 'collateral_wallet_balance' ? encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: 5_000_000_000n - (isAfter ? supply : 0n) })
             : probe.id === 'collateral_transfers_paused' ? encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', result: [paused === 'unanswered'
-              ? { success: false, returnData: '0x' as `0x${string}` } : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: paused }) }] })
+              ? { success: false, returnData: '0x' as `0x${string}` } : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: paused }) },
+              { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'isBlacklisted', result: held === 'market' }) },
+              { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'isBlacklisted', result: held === 'wallet' }) }] })
             : encodeFunctionResult({ abi: morphoAbi, functionName: 'market', result: isAfter
               ? [accrued.totalSupplyAssets, 1_000_000_000_000_000_000n, accrued.totalBorrowAssets + borrowedAssets, pre.totalBorrowShares + projected.position.borrowShares - standing.position.borrowShares, 1001n, 0n]
               : [pre.totalSupplyAssets, 1_000_000_000_000_000_000n, pre.totalBorrowAssets, pre.totalBorrowShares, 1000n, 0n] });
@@ -624,11 +628,11 @@ describe('which market, and whose choice that is', () => {
 });
 
 describe('a Still loan on Morpho says what a fall at once and a paused collateral would do', () => {
-  const borrow = (paused: boolean | 'unanswered' = false) => {
+  const borrow = (held: boolean | 'unanswered' | 'market' | 'wallet' = false) => {
     const asset = CRYPTO[0]!, supply = 1_000_000_000n, ask = 200_000_000n;
     return runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
       read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
-      venue: NO_VENUE, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask, paused),
+      venue: NO_VENUE, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask, held),
     }));
   };
   test('the stress is read from the simulated position, with the same margin as the risk note', async () => {
@@ -652,6 +656,21 @@ describe('a Still loan on Morpho says what a fall at once and a paused collatera
     assert.match(run.detail!, /^cbBTC transfers are paused onchain \(Base block [\d,]+\)\./);
     assert.match(run.detail!, /Repaying works\.$/);
     assert.equal('calls' in run, false);
+  });
+  test('cbBTC frozen at Morpho Blue or in this wallet takes no new loan either, said as the freeze it is (audit LM-3)', async () => {
+    const market = await borrow('market');
+    assert.equal(market.state === 'refused' && market.refusal, 'collateral_frozen');
+    if (market.state === 'refused') {
+      assert.match(market.detail!, /^cbBTC’s issuer has frozen the cbBTC held by Morpho Blue \(Base block [\d,]+\), so no cbBTC moves into or out of this market\./);
+      assert.match(market.detail!, /Repaying works\.$/);
+      assert.equal('calls' in market, false);
+    }
+    const wallet = await borrow('wallet');
+    assert.equal(wallet.state === 'refused' && wallet.refusal, 'collateral_frozen');
+    if (wallet.state === 'refused') {
+      assert.match(wallet.detail!, /^cbBTC’s issuer has frozen this wallet’s cbBTC \(Base block [\d,]+\), so it can neither pledge cbBTC nor take it back, while a liquidation could still take the collateral\./);
+      assert.match(wallet.detail!, /Repaying works\.$/);
+    }
   });
   test('a pause that was not answered stays unread, and the loan is still reviewed', async () => {
     const run = await borrow('unanswered');

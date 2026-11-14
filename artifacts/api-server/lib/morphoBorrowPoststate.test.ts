@@ -29,6 +29,8 @@ interface RawPhaseV1 {
   collateralWalletBalance: bigint;
   /** cbBTC's `paused()` through Multicall3: an answer, or a failed inner call. */
   paused?: boolean | 'unanswered';
+  /** Whom cbBTC's issuer has blocked (`isBlacklisted`), if anyone (audit LM-3). */
+  frozen?: 'market' | 'wallet';
 }
 
 function fixture(index = 0, fee = 0n, collateralSupplyAssets?: bigint) {
@@ -73,7 +75,9 @@ function fixture(index = 0, fee = 0n, collateralSupplyAssets?: bigint) {
               : probe.id === 'oracle_price' ? encodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', result: state.price })
                 : probe.id === 'collateral_transfers_paused' ? encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'aggregate3', result: [
                   state.paused === 'unanswered' ? { success: false, returnData: '0x' as Hex }
-                    : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: state.paused === true }) }] })
+                    : { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'paused', result: state.paused === true }) },
+                  { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'isBlacklisted', result: state.frozen === 'market' }) },
+                  { success: true, returnData: encodeFunctionResult({ abi: morphoPauseProbeAbiV1, functionName: 'isBlacklisted', result: state.frozen === 'wallet' }) }] })
                   : encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: state.collateralWalletBalance });
         return { ...probe, phase, status: 'success' as const, returnData };
       })),
@@ -103,10 +107,13 @@ describe('Morpho borrowing observes the exact evolving position', () => {
         assert.equal(pause.to, ADDRESSES.multicall3.toLowerCase());
         const call = decodeFunctionData({ abi: morphoPauseProbeAbiV1, data: pause.data as Hex });
         assert.equal(call.functionName, 'aggregate3');
-        const [inner] = call.args![0] as readonly { target: string; allowFailure: boolean; callData: Hex }[];
-        assert.equal(inner!.target.toLowerCase(), ADDRESSES.cbbtc.toLowerCase());
-        assert.equal(inner!.allowFailure, true);
-        assert.equal(decodeFunctionData({ abi: morphoPauseProbeAbiV1, data: inner!.callData }).functionName, 'paused');
+        const inner = call.args![0] as readonly { target: string; allowFailure: boolean; callData: Hex }[];
+        assert.equal(inner.length, 3);
+        assert(inner.every(row => row.target.toLowerCase() === ADDRESSES.cbbtc.toLowerCase() && row.allowFailure));
+        // Its pause, then whether its issuer blocked Morpho Blue, then this wallet (audit LM-3).
+        assert.deepEqual(inner.map(row => { const read = decodeFunctionData({ abi: morphoPauseProbeAbiV1, data: row.callData });
+          return [read.functionName, ...(read.args ?? []).map(arg => String(arg).toLowerCase())]; }),
+          [['paused'], ['isBlacklisted', ADDRESSES.morpho.toLowerCase()], ['isBlacklisted', WALLET]]);
       }
       assert.deepEqual(f.request.observations.before, f.request.observations.after);
       assert(f.request.observations.before.slice(0, 3).every((row) => row.to === ADDRESSES.morpho.toLowerCase()));
@@ -295,6 +302,16 @@ describe('Morpho borrowing reads whether the collateral can move', () => {
       const result = verifyMorphoBorrowPoststateV1({ request: f.request, expected: f.expected, response: f.response() });
       assert(result.ok, `paused ${String(paused)}`);
       assert.equal(result.collateralTransfersPaused, expected);
+    }
+  });
+  it('reports whom cbBTC’s issuer has blocked, Morpho Blue’s holding first, as a hold of its own (audit LM-3)', () => {
+    for (const [paused, frozen, held, hold] of [[false, undefined, false, null], [false, 'market', true, 'market_frozen'], [false, 'wallet', true, 'wallet_frozen'],
+      [true, 'wallet', true, 'paused'], ['unanswered', 'market', true, 'market_frozen'], ['unanswered', undefined, null, null]] as const) {
+      const f = fixture(0);
+      f.before.paused = paused; f.after.paused = paused; f.after.frozen = frozen;
+      const result = verifyMorphoBorrowPoststateV1({ request: f.request, expected: f.expected, response: f.response() });
+      assert(result.ok, `${String(paused)} ${String(frozen)}`);
+      assert.deepEqual([result.collateralTransfersPaused, result.collateralHold], [held, hold], `${String(paused)} ${String(frozen)}`);
     }
   });
   it('never asks WETH, which cannot pause', () => {

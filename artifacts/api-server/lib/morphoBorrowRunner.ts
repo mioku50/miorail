@@ -28,7 +28,8 @@ import { MORPHO_DIRECT_CALLS_WARNING_V1, morphoStepsWarningV1 } from './morphoDi
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingFactsV1 } from './lendingReview.js';
-import { collateralTransfersPausedWordsV1, morphoLendingStressV1 } from './lendingStress.js';
+import { morphoLendingStressV1 } from './lendingStress.js';
+import { morphoCollateralHoldWordsV1 } from './morphoCollateralHold.js';
 
 // ---------------------------------------------------------------------------
 // The whole borrow, from a measured market to a reviewed batch — or to the one
@@ -531,10 +532,12 @@ export async function runMorphoBorrowV1(
       limitAtomic: draw.capacity.limitAssets.toString(), debtBeforeAtomic: draw.capacity.debtAssets.toString(),
       availableAtomic: draw.capacity.availableAssets.toString(),
     };
-    // A new loan against cbBTC or PAXG that cannot move: it could not be taken back (2026-11-13).
-    if (measured.collateralTransfersPaused === true) {
-      return refusedV1('simulation', 'collateral_transfers_paused', collateralTransfersPausedWordsV1({
-        symbol: stillAsset!.symbol, venue: 'morpho', blockNumber: answer.response.blockNumber }), marketId, render(standing.position, null, 'collateral_transfers_paused'));
+    // A new loan against cbBTC or PAXG that cannot move: it could not be taken back (2026-11-13). Paused, or its
+    // issuer has frozen Morpho Blue's holding or this wallet's (audit LM-3, 2026-11-14).
+    if (measured.collateralHold !== null) {
+      return refusedV1('simulation', measured.collateralHold === 'paused' ? 'collateral_transfers_paused' : 'collateral_frozen', morphoCollateralHoldWordsV1({
+        symbol: stillAsset!.symbol, hold: measured.collateralHold, action: 'borrow', blockNumber: answer.response.blockNumber }), marketId,
+        render(standing.position, null, measured.collateralHold === 'paused' ? 'collateral_transfers_paused' : 'collateral_frozen'));
     }
     collateralTransfersPaused = measured.collateralTransfersPaused;
     standing = { ...standing, market: { ...market, state: measured.before.market },
