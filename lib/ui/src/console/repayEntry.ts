@@ -68,19 +68,23 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
   if (input.mode === 'assets' && input.debtAtomic !== undefined && repayExactCoversDebtV1(input.amount, input.debtAtomic)) {
     return { intent: null, error: repayExactWholeDebtTextV1({ debtAtomic: input.debtAtomic, blockNumber: input.blockNumber ?? 0, venue: input.venue ?? 'morpho' }) };
   }
-  // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for. On Aave V4 it
-  // must also leave room: Aave takes the smaller of the debt and the bound when the repayment lands, so a
-  // bound at the debt itself leaves the interest since the read owing (audit LEND-2, 2026-11-10).
+  // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for, with room for
+  // the interest until it lands. Aave takes the smaller of the debt and the bound, so a bound at the debt
+  // itself leaves the interest since the read owing (audit LEND-2, 2026-11-10); Morpho repays the debt's
+  // shares, so the same bound makes the repayment revert once the debt passes it (audit LM-4, 2026-11-14).
+  // Both servers refuse a bound the debt has nearly reached and advise this one.
   if (input.mode !== 'assets' && input.debtAtomic !== undefined && atomic(input.debtAtomic) && BigInt(input.debtAtomic) > BigInt(0)) {
     const short = repayShortTextV1({ debtAtomic: input.debtAtomic, walletUsdcAtomic: input.walletUsdcAtomic, venue: input.venue });
     if (short) return { intent: null, error: short };
+    const bound = repayAllBoundAtomicV1(input.debtAtomic);
     if (BigInt(exact.atomic) < BigInt(input.debtAtomic)) {
       return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now, more than this maximum of ${usdcTextV1(exact.atomic)}: interest adds to it every second. `
-        + `Set the maximum ${input.venue === 'aave-v4' ? `to at least ${usdcTextV1(repayAllBoundAtomicV1(input.debtAtomic))}` : 'a little above the debt'}; what is not needed stays in your wallet.` };
+        + `Set the maximum to at least ${usdcTextV1(bound)}; what is not needed stays in your wallet.` };
     }
-    if (input.venue === 'aave-v4' && BigInt(exact.atomic) < repayAllBoundAtomicV1(input.debtAtomic)) {
-      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now and this maximum is ${usdcTextV1(exact.atomic)}: interest adds to the debt every second, and with so little room a part of it would be left owing. `
-        + `Set the maximum to at least ${usdcTextV1(repayAllBoundAtomicV1(input.debtAtomic))}; what is not needed stays in your wallet.` };
+    if (BigInt(exact.atomic) < bound) {
+      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now and this maximum is ${usdcTextV1(exact.atomic)}: interest adds to the debt every second, and with so little room `
+        + `${input.venue === 'aave-v4' ? 'a part of it would be left owing' : 'the repayment would revert onchain if the debt passed this maximum before it landed'}. `
+        + `Set the maximum to at least ${usdcTextV1(bound)}; what is not needed stays in your wallet.` };
     }
   }
   if (BigInt(exact.atomic) > BigInt(input.walletUsdcAtomic)) return { intent: null, error: 'The chosen USDC funding exceeds the balance read for this wallet.' };
@@ -121,18 +125,15 @@ export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walle
 
 const usdcTextV1 = (atomicUsdc: string | bigint) => `${tokenDecimalV1(atomicUsdc.toString(), 6)} USDC`;
 
-/** What a wallet short of its debt adds before Repay all: the shortfall rounded up to the
- * cent, and one cent more for the interest that keeps accruing until it is signed. On Aave V4
- * the wallet has to hold the bound Repay all is asked with, which already has that room: there
- * it is what the wallet is short of the bound, rounded up to the cent. */
+/** What a wallet adds before Repay all: what it is short of the bound Repay all is asked with
+ * (the debt and its room for interest, repayAllBoundAtomicV1), rounded up to the cent. On Aave V4
+ * since audit LEND-2, and on Morpho since audit LM-4: a Morpho Repay all at the debt itself
+ * reverts once interest passes it. */
 export function repayTopUpAtomicV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'> & { venue?: RepayCapacityWireV1['venue'] }): bigint | null {
   const cent = BigInt(10_000), upToCent = (value: bigint) => ((value + cent - BigInt(1)) / cent) * cent;
-  if (read.venue === 'aave-v4' && BigInt(read.debtAtomic) > BigInt(0)) {
-    const below = repayAllBoundAtomicV1(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
-    return below > BigInt(0) ? upToCent(below) : null;
-  }
-  const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
-  return short > BigInt(0) ? upToCent(short) + cent : null;
+  if (BigInt(read.debtAtomic) <= BigInt(0)) return null;
+  const below = repayAllBoundAtomicV1(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+  return below > BigInt(0) ? upToCent(below) : null;
 }
 
 /** Why Repay all cannot be prepared from this wallet yet, in its own numbers (2026-11-03: a
@@ -143,10 +144,10 @@ export function repayShortTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 
   const add = repayTopUpAtomicV1(read);
   if (add === null) return null;
   const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
-  // The wallet covers the debt, and not the room an Aave Repay all is asked with above it.
+  // The wallet covers the debt, and not the room a Repay all is asked with above it.
   if (short <= BigInt(0)) {
     const least = repayAllBoundAtomicV1(read.debtAtomic);
-    return `This wallet holds ${usdcTextV1(read.walletUsdcAtomic)} and the debt is ${usdcTextV1(read.debtAtomic)} now. Repay all on Aave V4 is asked with room for the interest that adds to the debt `
+    return `This wallet holds ${usdcTextV1(read.walletUsdcAtomic)} and the debt is ${usdcTextV1(read.debtAtomic)} now. Repay all on ${read.venue === 'aave-v4' ? 'Aave V4' : 'Morpho'} is asked with room for the interest that adds to the debt `
       + `until it lands: at least ${usdcTextV1(least)}, ${usdcTextV1(least - BigInt(read.walletUsdcAtomic))} more than the wallet holds. Send this wallet a little more USDC, for example ${usdcTextV1(add)}, `
       + 'then read the position again. What is not needed stays in your wallet.';
   }

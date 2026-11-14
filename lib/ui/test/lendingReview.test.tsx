@@ -704,7 +704,10 @@ describe('repay all and take the stock back', () => {
     assert.match(html, /short\. Interest adds to the debt every second, so send this wallet a little more USDC than that, for example 0\.2 USDC/);
     assert.doesNotMatch(html + dust, /\badd a little more\b/);
     assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000000' }), BigInt(20_000));
-    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000003' }), null);
+    // Holding exactly the debt is not enough either: Repay all is asked with room for the interest until it lands
+    // (audits LEND-2, LM-4), so the wallet is told to send the rest of that room.
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000003' }), BigInt(20_000));
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2020000' }), null);
     // A maximum below the debt is refused before any review, with both numbers.
     assert.match(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '2', walletUsdcAtomic: '2500000', debtAtomic: '2000003' }).error!,
       /^The debt is 2\.000003 USDC now, more than this maximum of 2 USDC: interest adds to it every second\./);
@@ -735,8 +738,11 @@ describe('repay all and take the stock back', () => {
     assert.match(html, /No debt is open in this market/); assert.match(html, /Take back NVDAc/); assert.doesNotMatch(html, /Most USDC it may take|The most it may take/);
     assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '', walletUsdcAtomic: '0', debtAtomic: '0' }).intent,
       { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
-    assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '0.19', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent,
-      { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '190000', returnCollateral: true });
+    assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '0.2', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent,
+      { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '200000', returnCollateral: true });
+    // A bound with less room than the interest until it lands is refused on the page, as the server refuses it (audits LEND-2, LM-4).
+    assert.match(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '0.19', walletUsdcAtomic: '200000', debtAtomic: '180030' }).error ?? '',
+      /Set the maximum to at least 0\.2 USDC; what is not needed stays in your wallet\.$/);
     assert.equal(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent, null);
   });
   it('the review names the stock coming back, and with no debt says no USDC moves', () => {

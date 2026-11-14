@@ -169,7 +169,7 @@ describe('Max fills the amount from the server’s own read', () => {
   });
   // Audit LEND-2 (2026-11-10): Aave takes the smaller of the debt and the bound when a repayment lands, so a
   // bound at the debt itself leaves the interest since the read owing, and the whole spoke was then held.
-  it('Repay all on Aave V4 is asked with room above the debt, and on Morpho, which repays by shares, with the debt', () => {
+  it('Repay all is asked with room above the debt: on Aave V4 a part would be left owing, on Morpho the repayment would revert (audits LEND-2, LM-4)', () => {
     const ask = (venue: 'aave-v4' | 'morpho', maximum: string, wallet = '5000000') =>
       repayIntentAmountsV1({ mode: 'all', amount: '', maximum, walletUsdcAtomic: wallet, debtAtomic: '2000003', blockNumber: 53_000_000, venue });
     assert.equal(ask('aave-v4', '2.000003').intent, null);
@@ -177,13 +177,19 @@ describe('Max fills the amount from the server’s own read', () => {
       'The debt is 2.000003 USDC now and this maximum is 2.000003 USDC: interest adds to the debt every second, and with so little room a part of it would be left owing. Set the maximum to at least 2.02 USDC; what is not needed stays in your wallet.');
     assert.match(ask('aave-v4', '1.5').error ?? '', /more than this maximum of 1\.5 USDC: interest adds to it every second\. Set the maximum to at least 2\.02 USDC;/);
     assert.deepEqual(ask('aave-v4', '2.02').intent, { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '2020000' });
-    assert.deepEqual(ask('morpho', '2.000003').intent, { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '2000003' });
-    assert.match(ask('morpho', '1.5').error ?? '', /Set the maximum a little above the debt; what is not needed stays in your wallet\.$/);
-    for (const venue of ['aave-v4', 'morpho'] as const) assert.doesNotMatch(ask(venue, '1.5').error ?? '', /at least the debt/);
-    // A wallet that covers the debt and not that room is told how much more to send; on Morpho it is not short.
-    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'aave-v4' }), BigInt(20_000));
-    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2020000', venue: 'aave-v4' }), null);
-    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'morpho' }), null);
+    // Morpho repays the debt's shares: a bound at the debt itself reverts once interest passes it (audit LM-4).
+    assert.equal(ask('morpho', '2.000003').intent, null);
+    assert.equal(ask('morpho', '2.000003').error,
+      'The debt is 2.000003 USDC now and this maximum is 2.000003 USDC: interest adds to the debt every second, and with so little room the repayment would revert onchain if the debt passed this maximum before it landed. Set the maximum to at least 2.02 USDC; what is not needed stays in your wallet.');
+    assert.match(ask('morpho', '1.5').error ?? '', /more than this maximum of 1\.5 USDC: interest adds to it every second\. Set the maximum to at least 2\.02 USDC;/);
+    assert.deepEqual(ask('morpho', '2.02').intent, { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '2020000' });
+    for (const venue of ['aave-v4', 'morpho'] as const) assert.doesNotMatch(ask(venue, '1.5').error ?? '', /at least the debt|a little above the debt/);
+    // A wallet that covers the debt and not that room is told how much more to send, on either venue.
+    for (const venue of ['aave-v4', 'morpho'] as const) {
+      assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue }), BigInt(20_000), venue);
+      assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2020000', venue }), null, venue);
+    }
+    assert.match(repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'morpho' }) ?? '', /^This wallet holds 2\.00006 USDC and the debt is 2\.000003 USDC now\. Repay all on Morpho is asked with room/);
     assert.equal(repayShortTextV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000060', venue: 'aave-v4' }),
       'This wallet holds 2.00006 USDC and the debt is 2.000003 USDC now. Repay all on Aave V4 is asked with room for the interest that adds to the debt until it lands: at least 2.02 USDC, 0.01994 USDC more than the wallet holds. '
       + 'Send this wallet a little more USDC, for example 0.02 USDC, then read the position again. What is not needed stays in your wallet.');
