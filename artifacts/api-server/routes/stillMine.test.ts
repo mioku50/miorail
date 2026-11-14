@@ -233,6 +233,30 @@ test('a re-wording is shown only if every figure is the calculation’s, the res
   }
 });
 
+test('a re-wording that rules liquidation out, promises safety or advises in softer words is not shown (audit MCP-2)', async () => {
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('the rules read this question');
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  // Every figure is the calculation's and the decisive one stays: only the words are wrong.
+  for (const [question, content] of [
+    ['What if NVDA drops 30%?', 'If NVIDIA drops 30% (to $148.33), the health factor of the $240.17 loan falls from 2.09 to 1.46, so the loan is risk-free and liquidation is impossible.'],
+    ['What if NVDA drops 30%?', 'If NVIDIA drops 30%, the health factor goes from 2.09 to 1.46: there is no liquidation risk at all, and your $240.17 loan is guaranteed safe.'],
+    ['What if NVDA drops 30%?', 'If NVIDIA drops 30%, the health factor goes from 2.09 to 1.46. You may want to add collateral or repay part of the $240.17 loan to be safer.'],
+    ['What if NVDA drops 30%?', 'If NVIDIA drops 30%, the health factor falls from 2.09 to 1.46; it is a good idea to repay some of the $240.17 now.'],
+    ['What if NVDA drops 30%?', 'If NVIDIA drops 30%, the health factor falls from 2.09 to 1.46, and the $240.17 loan cannot be liquidated.'],
+    ['Что будет при падении NVDA на 30%?', 'Если NVIDIA подешевеет на 30%, health factor снизится с 2.09 до 1.46: ликвидация вам не грозит, займ $240.17 полностью защищён.'],
+    ['Что будет при падении NVDA на 30%?', 'Если NVIDIA подешевеет на 30%, health factor снизится с 2.09 до 1.46. Имеет смысл внести ещё залог или погасить часть долга $240.17.'],
+    ['Что будет при падении NVDA на 30%?', 'Если NVIDIA подешевеет на 30%, health factor снизится с 2.09 до 1.46, ликвидация исключена, а займ $240.17 гарантированно в безопасности.'],
+    ['Что будет при падении NVDA на 30%?', 'Если NVIDIA подешевеет на 30%, health factor снизится с 2.09 до 1.46; лучше погасить часть займа $240.17.'],
+  ] as const) {
+    stillAgentLlmRuntimeV1.narrator = () => model(content);
+    const res = await ask(server, question);
+    assert.equal(res.status, 200);
+    assert.notEqual(res.body.answer.text, content, content);
+    assert.ok(!res.body.answer.sources.some((source: string) => /^(?:AI|ИИ)/.test(source)), content);
+  }
+});
+
 test('a model reads what the rules do not, and every number it gives must be in the question', async () => {
   store = createMemoryStillReadingStoreV1();
   stillAgentLlmRuntimeV1.narrator = () => null;

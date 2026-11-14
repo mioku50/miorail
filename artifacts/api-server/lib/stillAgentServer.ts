@@ -68,9 +68,29 @@ export type StillAgentStageV1 =
   | { stage: 'wording' }
   | { stage: 'checked'; verified: boolean; figures: number };
 
-/** Advice is not ours to give, in either language the Agent answers in. */
-const ADVICE_V2 =
-  /\b(?:recommend\w*|you should|i suggest|safest|best (?:option|way|path)|consider)\b|рекоменд|совету|советую|следует|стоит (?:взять|занять|погасить|продать|купить)|лучше всего|самый безопасн|безопаснее всего/i;
+/** Advice is not ours to give, in either language the Agent answers in. Since audit MCP-2 (2026-11-14) it
+ * also covers the softer forms a model reaches for ("you may want to", "it is a good idea", «имеет смысл»,
+ * «стоит внести»), which passed the short list. `\b` is ASCII-only, so Russian words end in a class. */
+const ADVICE_V2 = new RegExp([
+  String.raw`\b(?:recommend\w*|you should|i suggest|safest|best (?:option|way|path)|consider|(?:may|might) want|good idea|wise to|would be wise|ought to|you need to|you must|make sure|better to)\b`,
+  'рекоменд', 'совету', 'советую', 'следует', String.raw`стоит\s+[а-яё]+`, 'лучше(?![а-яё])', 'самый безопасн', 'безопаснее всего',
+  'имеет смысл', 'нужно(?![а-яё])', 'надо(?![а-яё])', 'не помешает', 'разумно', 'желательно',
+].join('|'), 'i');
+
+/**
+ * What a re-wording may never claim, whatever was calculated (audit MCP-2, 2026-11-14). Liquidation is
+ * bounded, never excluded: a scenario's engine says "stays out of liquidation" for the drop it was asked,
+ * and a model turned that into "liquidation is impossible", "risk-free", «ликвидация вам не грозит» or
+ * «займ полностью защищён», which every check passed and the page showed as "every figure checked". A
+ * re-wording that says any of these is not shown; the calculation's own words are.
+ */
+const ABSOLUTE_V2 = new RegExp([
+  'impossib', String.raw`risk[- ]?free`, 'guarantee', String.raw`no (?:liquidation )?risk`, String.raw`without (?:any )?risk`, 'zero risk',
+  String.raw`can(?:not|['’]t) be liquidated`, 'never be liquidated', String.raw`won['’]t be liquidated`, String.raw`(?:fully|completely|totally|100%) (?:safe|protected|secure)`,
+  'nothing to worry', 'no need to worry',
+  'не грозит', 'исключен', 'невозможн', 'гарант', 'полностью защищ', 'полностью безопас', String.raw`без\s+(?:всякого\s+|какого-либо\s+)?риск`, 'безрисков',
+  String.raw`(?:нет|никакого)\s+риск`, String.raw`риска?\s+нет`, 'не о чем беспокоиться', 'можно не беспокоиться', String.raw`не\s+(?:будет|может быть)\s+ликвидир`, 'не ликвидируют',
+].join('|'), 'i');
 
 /** "Every number must be in the evidence" is only as strong as the evidence is small. */
 export const STILL_NARRATION_MAX_FIGURES_V2 = 40;
@@ -104,7 +124,7 @@ const ACTED_V2 =
 export function verifyStillAgentNarrationV2(narration: string, base: AgentAnswerV1): string | null {
   const cleaned = stripNarrationFormattingV1(narration.trim().replace(/^["«]|["»]$/g, '').trim());
   if (cleaned.length < 24 || cleaned.length > 950) return null;
-  if (ACTED_V2.test(cleaned) || ADVICE_V2.test(cleaned)) return null;
+  if (ACTED_V2.test(cleaned) || ADVICE_V2.test(cleaned) || ABSOLUTE_V2.test(cleaned)) return null;
   // Every figure must already be on the reader's screen, and the decisive ones stay.
   const figures = numbersInV1(cleaned);
   const evidence = evidenceFiguresV2(base);
