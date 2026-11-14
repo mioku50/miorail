@@ -1,4 +1,5 @@
 import { spendDeliveryWireV1, type SpendDeliveryWireV1 } from '../console/lendingReviewView';
+import type { StillIconNameV1 } from './icons';
 
 // Still Spend, stage 1: what a loan could pay for, in the page's words.
 //
@@ -22,13 +23,13 @@ export const SPEND_TYPES_V1: ReadonlyArray<{ type: SpendTypeV1; label: string; b
  * Mastercard only after steps Still's guest client is not offered. */
 export type SpendGiftCategoryV1 = 'games' | 'entertainment' | 'ai' | 'online-marketplaces' | 'food' | 'travel';
 
-export const SPEND_GIFT_CATEGORY_CHIPS_V1: ReadonlyArray<{ category: SpendGiftCategoryV1; label: string }> = [
-  { category: 'games', label: 'Games' },
-  { category: 'entertainment', label: 'Entertainment' },
-  { category: 'ai', label: 'AI' },
-  { category: 'online-marketplaces', label: 'Marketplaces' },
-  { category: 'food', label: 'Food & groceries' },
-  { category: 'travel', label: 'Travel' },
+export const SPEND_GIFT_CATEGORY_CHIPS_V1: ReadonlyArray<{ category: SpendGiftCategoryV1; label: string; icon: StillIconNameV1 }> = [
+  { category: 'games', label: 'Games', icon: 'games' },
+  { category: 'entertainment', label: 'Entertainment', icon: 'entertainment' },
+  { category: 'ai', label: 'AI', icon: 'ai' },
+  { category: 'online-marketplaces', label: 'Marketplaces', icon: 'marketplace' },
+  { category: 'food', label: 'Food & groceries', icon: 'food' },
+  { category: 'travel', label: 'Travel', icon: 'travel' },
 ];
 
 /** Where the product is used: every inhabited country, and Bitrefill says what

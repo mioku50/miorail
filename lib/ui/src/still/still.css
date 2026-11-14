@@ -756,9 +756,16 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-spend .still-spend-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .still-spend .still-borrow-step .still-spend-search-row .still-btn { width: auto; height: 54px; padding: 0 22px; }
 .still-spend .still-spend-results { margin-top: 16px; }
-/* Gift cards by Bitrefill's own categories: chips under the brand search, the chosen one filled. */
-.still-spend .still-spend-categories { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.still-spend .still-spend-categories .still-chip[aria-pressed='true'] { background: var(--sm-accent); color: var(--sm-accent-on); }
+/* Gift cards by Bitrefill's own categories: pills under the brand search, drawn as the kinds above them
+   are (an icon on a soft disc, the chosen one filled), in the page's one accent: a category claims nothing. */
+.still-spend .still-spend-categories { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.still-spend .still-spend-category { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 15px 5px 5px; border: 1px solid var(--sm-line); border-radius: 999px; background: var(--sm-ground); color: var(--sm-ink); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.still-spend .still-spend-category:hover { border-color: var(--sm-accent); }
+.still-spend .still-spend-category:focus-visible { outline: 2px solid var(--sm-focus); outline-offset: 2px; }
+.still-spend .still-spend-category-icon { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 999px; background: var(--sm-accent-soft); color: var(--sm-accent); }
+.still-spend .still-spend-category-icon svg { width: 16px; height: 16px; }
+.still-spend .still-spend-category[aria-pressed='true'] { background: var(--sm-accent); border-color: var(--sm-accent); color: var(--sm-accent-on); }
+.still-spend .still-spend-category[aria-pressed='true'] .still-spend-category-icon { background: #FFFFFF; color: #0052FF; }
 .still-spend .still-spend-empty { display: grid; gap: 10px; justify-items: start; }
 .still-spend .still-spend-results .still-borrow-choice { min-height: 56px; background: var(--sm-card); }
 .still-spend .still-spend-results .still-borrow-choice[aria-pressed='true'] { background: var(--sm-accent-soft); }

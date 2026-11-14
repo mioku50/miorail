@@ -244,10 +244,12 @@ describe('the Spend page', () => {
   it('gift cards offer Bitrefill’s categories beside the brand, the chosen one pressed, and no payment cards', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', category: 'games', onCategory: noop, products: [], selected: null, product: null })} />);
     assert.match(html, /<div class="still-spend-categories" role="group" aria-label="Gift cards by category">/);
-    for (const label of ['Entertainment', 'AI', 'Marketplaces', 'Food &amp; groceries', 'Travel']) {
-      assert.match(html, new RegExp(`<button type="button" class="still-chip" aria-pressed="false">${label}</button>`), label);
-    }
-    assert.match(html, /<button type="button" class="still-chip" aria-pressed="true">Games<\/button>/);
+    // Each is drawn with its own icon, which hides from a screen reader: the button is named by its words.
+    const chip = (pressed: boolean, label: string) =>
+      new RegExp(`<button type="button" class="still-spend-category" aria-pressed="${pressed}"><span class="still-spend-category-icon"><svg viewBox="0 0 24 24" aria-hidden="true"[^>]*>.+?</svg></span>${label}</button>`);
+    for (const label of ['Entertainment', 'AI', 'Marketplaces', 'Food &amp; groceries', 'Travel']) assert.match(html, chip(false, label), label);
+    assert.match(html, chip(true, 'Games'));
+    assert.equal(new Set(SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => entry.icon)).size, 6, 'one icon per category');
     assert.doesNotMatch(html, /payment card|prepaid|visa|mastercard/i);
     assert.match(html, /Nothing in stock here for Germany in Games\./);
     // The server sends these values to Bitrefill as they are and refuses any other (commerce-engine
@@ -260,7 +262,7 @@ describe('the Spend page', () => {
   it('a country with no top-up says so and offers its mobile data, rather than nothing in stock', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', country: 'RU', products: [], selected: null, product: null })} />);
     assert.match(html, /Bitrefill lists no top-up for a number in Russia\./);
-    assert.match(html, /<button type="button" class="still-chip">Mobile data for Russia<\/button>/);
+    assert.match(html, /<button type="button" class="still-spend-category"><span class="still-spend-category-icon"><svg[^>]*>.+?<\/svg><\/span>Mobile data for Russia<\/button>/);
     assert.doesNotMatch(html, /Nothing in stock/);
   });
 

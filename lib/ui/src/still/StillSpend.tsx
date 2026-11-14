@@ -146,8 +146,10 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
               {model.onCategory ? (
                 <div className="still-spend-categories" role="group" aria-label="Gift cards by category">
                   {SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => (
-                    <button key={entry.category} type="button" className="still-chip" aria-pressed={model.category === entry.category}
-                      onClick={() => model.onCategory!(model.category === entry.category ? null : entry.category)}>{entry.label}</button>
+                    <button key={entry.category} type="button" className="still-spend-category" aria-pressed={model.category === entry.category}
+                      onClick={() => model.onCategory!(model.category === entry.category ? null : entry.category)}>
+                      <span className="still-spend-category-icon"><StillIconV1 name={entry.icon} /></span>{entry.label}
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -161,7 +163,9 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                 : model.products && model.products.length === 0 && model.type === 'refill' ? (
                   <div className="still-spend-empty">
                     <p className="still-note">Bitrefill lists no top-up for a number in {spendCountryNameV1(model.country)}.</p>
-                    <button type="button" className="still-chip" onClick={() => model.onType('esim')}>Mobile data for {spendCountryNameV1(model.country)}</button>
+                    <button type="button" className="still-spend-category" onClick={() => model.onType('esim')}>
+                      <span className="still-spend-category-icon"><StillIconV1 name="esim" /></span>Mobile data for {spendCountryNameV1(model.country)}
+                    </button>
                   </div>
                 )
                 : model.products && model.products.length === 0 ? (
