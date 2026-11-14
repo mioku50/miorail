@@ -77,10 +77,13 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           that stock. The two never stack. At {stricter}, the collateral could lose about {percentV1(BPS_V1 - Math.min(closed, earnings))} before
           liquidation could start.
         </p>
+        {/* As the engine reads it (calendar.ts, mirror.ts): a stock the calendar lists with an empty list has no report
+            scheduled; a stock it leaves out, or a calendar that did not answer, was not read (audit DOC-1, 2026-11-14). */}
         <p className="still-note">
-          Still takes report dates from Aave’s own earnings calendar. While that calendar lists no date for a stock, or cannot be read, Still
-          cannot know that a report is not due, so it lends at most {percentV1(earnings)} against that stock until the date is there: for as
-          long as that takes, not for two days. The line under the sky names the stocks this holds for now.
+          Still takes report dates from Aave’s own earnings calendar. When that calendar cannot be read, or leaves a stock out, Still cannot
+          know that a report is not due, so it lends at most {percentV1(earnings)} against that stock until the stock is back in the calendar:
+          for as long as that takes, not for two days. A stock the calendar lists with no upcoming report counts at the usual rate. The line
+          under the sky names the stocks this holds for now.
         </p>
         <p className="still-note">
           While the market is open, a stock’s reference price is refreshed at least once a day. If one has gone more than{' '}

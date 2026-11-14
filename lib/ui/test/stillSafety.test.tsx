@@ -37,6 +37,10 @@ describe('How Still keeps a loan safe', () => {
     assert.ok(text.includes(`If one has gone more than ${TERMS.stockPriceStaleAfterHours} hours of open market without a new price`));
     assert.ok(text.includes(`it lends at most ${pct(TERMS.weekendStockShareOfProtocolBps)} against that stock until a new price arrives`));
     assert.match(text, /Hours while the market is closed do not count, since no price is due then\./);
+    // The calendar as the engine reads it: unread or left out lowers the stock; listed with no report does not (audit DOC-1).
+    assert.ok(text.includes(`When that calendar cannot be read, or leaves a stock out, Still cannot know that a report is not due, so it lends at most ${pct(TERMS.earningsStockShareOfProtocolBps)} against that stock until the stock is back in the calendar`));
+    assert.match(text, /A stock the calendar lists with no upcoming report counts at the usual rate\./);
+    assert.doesNotMatch(text, /While that calendar lists no date for a stock/);
     assert.match(text, /Collateral on Morpho \(cbBTC, WETH or ETH, and PAXG gold\) stays at 50% at all times\./);
     // The bands, as the margin and the health factor where each begins.
     assert.ok(text.includes(`a margin of ${pct(TERMS.watchBelowBps)} or more, a health factor of 1.6 or above`));
