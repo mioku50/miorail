@@ -24,7 +24,7 @@ import { useRecordFoundWalletSubmission } from '@mioagent/api-client-react';
 import type { BaseMcpActionReconcileResponseV1 } from '@mioagent/api-spec';
 
 import { callBuilderCodesV1 } from './attribution';
-import { isWalletRejectionError, transactionHashesFromReceipts } from './useSubmitApprovedBlueprint';
+import { transactionHashesFromReceipts, walletSendOutcomeV1 } from './useSubmitApprovedBlueprint';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 
 export interface FoundWalletClaimV1 {
@@ -42,7 +42,9 @@ export type FoundWalletClaimStatusV1 =
   | 'completed'
   | 'unsettled'
   | 'cancelled'
-  | 'failed';
+  | 'failed'
+  /** The wallet answered with an error that does not prove nothing was sent: not offered again. */
+  | 'unknown';
 
 export const FOUND_WALLET_CLAIM_COPY_V1 = {
   noWallet: 'Connect the wallet you signed in with, then confirm.',
@@ -54,6 +56,7 @@ export const FOUND_WALLET_CLAIM_COPY_V1 = {
   cancelled: 'Cancelled in your wallet. Nothing was sent.',
   switchChain: 'Your wallet did not switch to Base, so nothing was sent. Switch it to Base and confirm again.',
   noTransaction: 'Your wallet reported the claim as failed and named no transaction. Nothing was claimed; ask again to read what is left.',
+  unknown: 'Your wallet did not say whether it sent the claim, so it is not offered again here. Check your wallet’s activity: if nothing went out, ask again and a fresh claim is prepared.',
   recordFailed: 'Sent from your wallet, but Miorail could not note the transactions just now. Your wallet’s activity shows them; press Check status in a moment.',
 } as const;
 
@@ -105,6 +108,27 @@ export function foundWalletClaimOutcomeV1(receipt: BaseMcpActionReconcileRespons
   return { status: 'unsettled', error: null };
 }
 
+// ---------------------------------------------------------------------------
+// What the wallet's error says of a claim (audit WAL-4, 2026-11-14).
+//
+// The claim read the wallet's error by its words, as the swap did before N13-1:
+// "connection closed" was taken for the person's No ("Cancelled in your
+// wallet. Nothing was sent."), any other error for "Nothing was claimed", and
+// the same claim was offered again. A relay that times out or a connection
+// that closes may answer after the wallet already sent it, so only an answer
+// that proves nothing went out (walletSendOutcomeV1) says so. Anything else is
+// unknown: said as that, and the same claim is not offered again. An error
+// before the wallet was asked proves nothing was sent.
+// ---------------------------------------------------------------------------
+export function foundWalletClaimSendOutcomeV1(cause: unknown, asked: boolean): { status: 'cancelled' | 'failed' | 'unknown'; error: string } {
+  const outcome = asked ? walletSendOutcomeV1(cause) : 'failed';
+  if (outcome === 'cancelled') return { status: 'cancelled', error: FOUND_WALLET_CLAIM_COPY_V1.cancelled };
+  if (outcome === 'submitted_unknown') return { status: 'unknown', error: FOUND_WALLET_CLAIM_COPY_V1.unknown };
+  const message = (cause as { shortMessage?: string })?.shortMessage
+    ?? (cause instanceof Error ? cause.message : 'The wallet did not send the claim.');
+  return { status: 'failed', error: `${message} Nothing was claimed.` };
+}
+
 export interface UseFoundWalletClaimArgsV1 {
   claim: FoundWalletClaimV1 | null;
   /** The page's own reconcile, so one place holds the newest receipt. */
@@ -118,7 +142,8 @@ export interface UseFoundWalletClaimArgsV1 {
 export interface UseFoundWalletClaimResultV1 {
   confirm: () => Promise<void>;
   status: FoundWalletClaimStatusV1;
-  /** True from the press until the server has the transactions. */
+  /** True from the press until the server has the transactions, and while the wallet's answer is unknown:
+   * the same claim is not offered again then (audit WAL-4). */
   busy: boolean;
   /** What is happening now, in words; null at rest. */
   note: string | null;
@@ -164,7 +189,8 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
   }, []);
 
   const confirm = useCallback(async () => {
-    if (!claim || inFlight.current) return;
+    // A claim the wallet may already have sent is not asked of it again: a new question prepares a new one.
+    if (!claim || inFlight.current || status === 'unknown') return;
     const id = claim.receiptId;
     const check = foundWalletClaimPreflightV1({ claim, connectedAddress: address });
     if (!check.ok) {
@@ -174,6 +200,8 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
     inFlight.current = true;
     handled.current = false;
     settle(id, 'sending', null);
+    // Whether the wallet was asked: an error before that proves nothing was sent.
+    let asked = false;
     try {
       // A restored connection is brought back before the wallet is asked, even to switch chains (2026-11-09).
       // The claim was checked for this account: a wallet that answers as another is not asked (audit WAL-1).
@@ -187,6 +215,7 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
           return;
         }
       }
+      asked = true;
       const sent = await sendCalls.mutateAsync({
         account: address,
         calls: claim.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
@@ -197,16 +226,12 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
       setBatchId(sent.id);
       settle(id, 'sent', null);
     } catch (cause) {
-      if (isWalletRejectionError(cause)) settle(id, 'cancelled', FOUND_WALLET_CLAIM_COPY_V1.cancelled);
-      else {
-        const message = (cause as { shortMessage?: string })?.shortMessage
-          ?? (cause instanceof Error ? cause.message : 'The wallet did not send the claim.');
-        settle(id, 'failed', `${message} Nothing was claimed.`);
-      }
+      const outcome = foundWalletClaimSendOutcomeV1(cause, asked);
+      settle(id, outcome.status, outcome.error);
     } finally {
       inFlight.current = false;
     }
-  }, [address, chainId, claim, sendCalls, settle, switchChainAsync]);
+  }, [address, chainId, claim, sendCalls, settle, status, switchChainAsync]);
 
   const onBatchStatus = useCallback(
     (batch: { status?: string; receipts?: Array<{ transactionHash?: string }> }) => {
@@ -262,7 +287,7 @@ export function useFoundWalletClaim({ claim, reconcile, onSettled, wait }: UseFo
   return {
     confirm,
     status,
-    busy: status === 'sending' || status === 'sent' || status === 'checking',
+    busy: status === 'sending' || status === 'sent' || status === 'checking' || status === 'unknown',
     note,
     error,
     transactionHashes,

@@ -137,6 +137,7 @@ export {
   useFoundWalletClaim,
   foundWalletClaimPreflightV1,
   foundWalletClaimOutcomeV1,
+  foundWalletClaimSendOutcomeV1,
   FOUND_WALLET_CLAIM_COPY_V1,
 } from './src/useFoundWalletClaim';
 export type {
