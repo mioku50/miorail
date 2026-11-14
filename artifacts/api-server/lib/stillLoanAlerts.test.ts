@@ -4,7 +4,7 @@ import test, { describe } from 'node:test';
 import type { MirrorReadingV1, MirrorReport, VenueLine } from '@mioagent/still-engine';
 import { InMemoryStillLoanAlertRepositoryV1 } from '@mioagent/route-storage';
 
-import { refreshStillLoanAlertsV1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1 } from './stillLoanAlerts.js';
+import { refreshStillLoanAlertsV1, STILL_LOAN_PASS_MS_V1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1, stillLoanPassWalletsV1 } from './stillLoanAlerts.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const QUIET = '0x2222222222222222222222222222222222222222';
@@ -63,7 +63,7 @@ describe('the reading pass', () => {
       },
       now: NOW,
     });
-    assert.deepEqual(report, { due: 1, read: 1, failed: 0 });
+    assert.deepEqual(report, { due: 1, read: 1, failed: 0, notRead: 0 });
     assert.deepEqual(asked, [WALLET], 'a wallet nobody can tell is not read');
     const [loan] = await alerts.loansOf(WALLET);
     assert.deepEqual([loan!.state, loan!.marginBps, loan!.episode, loan!.readBlock], ['act', 1_400, 1, '38000000']);
@@ -81,13 +81,54 @@ describe('the reading pass', () => {
       alerts, reachable: new Set([WALLET]), now: NOW,
       read: async () => { throw new Error('rpc down'); },
     });
-    assert.deepEqual([failed, thrown], [{ due: 1, read: 0, failed: 1 }, { due: 1, read: 0, failed: 1 }]);
+    assert.deepEqual([failed, thrown], [{ due: 1, read: 0, failed: 1, notRead: 0 }, { due: 1, read: 0, failed: 1, notRead: 0 }]);
     const dry = await refreshStillLoanAlertsV1({
       alerts, reachable: new Set([WALLET]), now: NOW, dry: true,
       read: async () => reading([venue({ debtAtomic: '0' })], '200'),
     });
-    assert.deepEqual(dry, { due: 1, read: 1, failed: 0 });
+    assert.deepEqual(dry, { due: 1, read: 1, failed: 0, notRead: 0 });
     assert.equal((await alerts.loansOf(WALLET)).length, 1, 'the loan is still there');
+  });
+});
+
+describe('whom a pass reads (audit LL-3)', () => {
+  const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+  test('loans that need attention first, then a window of the rest that moves on each pass, so everyone is read in turn', () => {
+    const eligible = Array.from({ length: 23 }, (_, i) => wallet(i + 1));
+    const attention = new Set([wallet(20), wallet(3), wallet(999)]);
+    const seen = new Set<string>();
+    for (let pass = 0; pass < 3; pass++) {
+      const picked = stillLoanPassWalletsV1({ eligible, attention, limit: 10, pass });
+      assert.equal(picked.length, 10);
+      assert.deepEqual(picked.slice(0, 2), [wallet(3), wallet(20)], 'attention is read every pass');
+      assert.equal(new Set(picked).size, 10);
+      for (const w of picked) seen.add(w);
+    }
+    assert.equal(seen.size, 23, 'three passes read all 23');
+    // A pass full of loans in danger still leaves a fifth of its places to the rotation.
+    const allUrgent = stillLoanPassWalletsV1({ eligible, attention: new Set(eligible), limit: 10, pass: 0 });
+    assert.deepEqual(allUrgent.slice(0, 8), eligible.slice(0, 8));
+    assert.equal(allUrgent.length, 10);
+    assert.deepEqual(stillLoanPassWalletsV1({ eligible: [], attention, limit: 10, pass: 7 }), []);
+    assert.deepEqual(stillLoanPassWalletsV1({ eligible: [wallet(1)], attention: new Set(), limit: 25, pass: 12_345 }), [wallet(1)]);
+  });
+  test('a reachable borrower late in the alphabet is read, whatever state its borrow was left in, and the journal says who was not read', async () => {
+    const alerts = new InMemoryStillLoanAlertRepositoryV1();
+    // Thirty reachable borrowers late in the alphabet, and 200 unreachable ones before them, which take no place.
+    const all = Array.from({ length: 30 }, (_, i) => `0xf${(i + 1).toString(16).padStart(39, '0')}`);
+    for (const w of all) alerts.confirmedBorrowers.add(w);
+    for (let i = 0; i < 200; i++) alerts.confirmedBorrowers.add(wallet(i + 1));
+    const reachable = new Set(all.map((w) => w.toUpperCase().replace('0X', '0x')));
+    const asked = new Set<string>();
+    let notRead = -1;
+    for (let pass = 0; pass < 3; pass++) {
+      const report = await refreshStillLoanAlertsV1({ alerts, reachable, limit: 10, now: new Date(pass * STILL_LOAN_PASS_MS_V1), dry: true,
+        read: async (w) => { asked.add(w); return reading([venue({ debtAtomic: '0' })]); } });
+      assert.equal(report.due, 10);
+      notRead = report.notRead;
+    }
+    assert.equal(notRead, 20);
+    assert.equal(asked.size, 30);
   });
 });
 

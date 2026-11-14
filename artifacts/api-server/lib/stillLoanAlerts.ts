@@ -23,6 +23,10 @@ import type {
 
 /** One Mirror reading per wallet per pass; the pass runs every five minutes. */
 export const STILL_LOAN_READS_PER_PASS_V1 = 25;
+/** How often the pass runs, which turns the rotation by one window. */
+export const STILL_LOAN_PASS_MS_V1 = 5 * 60_000;
+/** The most borrowers one pass looks at to choose whom it reads. */
+export const STILL_LOAN_BORROWERS_SEEN_V1 = 5_000;
 /** A band read longer ago than this is not told: the next pass reads again. */
 export const STILL_LOAN_FRESH_FOR_MS_V1 = 30 * 60_000;
 
@@ -47,6 +51,33 @@ export function stillLoanLinesV1(report: MirrorReport): { lines: StillLoanReadin
   return { lines, unread };
 }
 
+// ---------------------------------------------------------------------------
+// Whom a pass reads (audit LL-3, 2026-11-14). Every pass read the same first 25
+// reachable wallets, out of the first 200 borrowers by address, and only those
+// with a confirmed borrow: past 25, a wallet late in the alphabet was never
+// read, and a loan that landed while its record stayed sent or unknown was not
+// read at all. Now reachability is filtered in the query, every borrow that
+// went to the wallet counts, the wallets whose last reading was not calm are
+// read first in every pass, and the rest take turns, one window further each
+// pass, so every reachable borrower is read within a few passes. How many were
+// not read this pass is said in the journal.
+// ---------------------------------------------------------------------------
+
+/** The wallets one pass reads: those that need attention first, then a window of the rest that moves on each pass. */
+export function stillLoanPassWalletsV1(input: { eligible: readonly string[]; attention: ReadonlySet<string>; limit: number; pass: number }): string[] {
+  const limit = Math.max(0, Math.floor(input.limit));
+  // A few places always go to the rotation, so a pass full of loans in danger still reaches everyone in turn.
+  const firstCap = limit - Math.ceil(limit / 5);
+  const urgent = input.eligible.filter((wallet) => input.attention.has(wallet));
+  const first = urgent.slice(0, firstCap);
+  const chosen = new Set(first);
+  const rest = input.eligible.filter((wallet) => !chosen.has(wallet));
+  const room = Math.min(limit - first.length, rest.length);
+  if (room <= 0) return first;
+  const start = ((Math.floor(input.pass) * room) % rest.length + rest.length) % rest.length;
+  return [...first, ...[...rest.slice(start), ...rest.slice(0, start)].slice(0, room)];
+}
+
 /** Reads each wallet and keeps what it found. A dry pass keeps nothing. */
 export async function refreshStillLoanAlertsV1(input: {
   alerts: StillLoanAlertRepositoryV1;
@@ -57,10 +88,13 @@ export async function refreshStillLoanAlertsV1(input: {
   now: Date;
   dry?: boolean;
   limit?: number;
-}): Promise<{ due: number; read: number; failed: number }> {
-  const borrowers = await input.alerts.borrowers(200);
-  const wallets = borrowers.filter((wallet) => input.reachable.has(wallet)).slice(0, input.limit ?? STILL_LOAN_READS_PER_PASS_V1);
-  const report = { due: wallets.length, read: 0, failed: 0 };
+}): Promise<{ due: number; read: number; failed: number; notRead: number }> {
+  const reachable = [...input.reachable].map((wallet) => wallet.toLowerCase()).filter((wallet) => /^0x[0-9a-f]{40}$/.test(wallet));
+  const eligible = await input.alerts.borrowers({ reachable, limit: STILL_LOAN_BORROWERS_SEEN_V1 });
+  const attention = new Set(await input.alerts.attention());
+  const wallets = stillLoanPassWalletsV1({ eligible, attention, limit: input.limit ?? STILL_LOAN_READS_PER_PASS_V1,
+    pass: Math.floor(input.now.getTime() / STILL_LOAN_PASS_MS_V1) });
+  const report = { due: wallets.length, read: 0, failed: 0, notRead: eligible.length - wallets.length };
   for (const walletAddress of wallets) {
     const outcome = await input.read(walletAddress).catch(() => null);
     if (!outcome || outcome.outcome !== 'report') {

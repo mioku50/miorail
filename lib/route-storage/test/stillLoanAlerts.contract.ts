@@ -62,6 +62,18 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       assert.deepEqual([loan!.state, loan!.episode], ['act', 3]);
     });
 
+    test('the wallets read first are those whose last reading was not calm (audit LL-3)', async () => {
+      const alerts = await make();
+      assert.deepEqual(await alerts.attention(), []);
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [aave('calm', 5_000)], unread: [] });
+      await alerts.recordReading({ walletAddress: OTHER, at: AT, block: '100', lines: [aave('calm', 5_000), morpho('act', 1_500)], unread: [] });
+      assert.deepEqual(await alerts.attention(), [OTHER]);
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [aave('liquidation', 0)], unread: [] });
+      assert.deepEqual(await alerts.attention(), [WALLET, OTHER]);
+      await alerts.recordReading({ walletAddress: OTHER, at: later(6), block: '210', lines: [], unread: [] });
+      assert.deepEqual(await alerts.attention(), [WALLET]);
+    });
+
     test('a repaid loan goes, an unread one stays, and an older block changes nothing', async () => {
       const alerts = await make();
       await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [aave('watch', 3_000), morpho('calm', 6_000)], unread: [] });

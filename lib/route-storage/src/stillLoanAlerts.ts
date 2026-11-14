@@ -47,8 +47,16 @@ export interface StillLoanReadingLineV1 {
 }
 
 export interface StillLoanAlertRepositoryV1 {
-  /** Wallets with a Still loan confirmed onchain, in address order. */
-  borrowers(limit: number): Promise<string[]>;
+  /**
+   * Wallets among `reachable` with a Still borrow that ever went to the wallet, in address order, up to
+   * `limit` (audit LL-3, 2026-11-14). Any state but `ready`: confirmed, sent, unknown, stopped part way or
+   * released as never sent; the Mirror reads the position from the chain, so one with no debt costs only
+   * a reading. Reachability is filtered before the limit, so a reachable wallet late in the alphabet is
+   * not cut off by unreachable ones.
+   */
+  borrowers(input: { reachable: readonly string[]; limit: number }): Promise<string[]>;
+  /** Wallets whose last reading put a loan in watch, act or liquidation, in address order: read every pass. */
+  attention(): Promise<string[]>;
   /**
    * Keeps one wallet's reading. Every line is a loan it found. A row whose
    * market is neither a line nor in `unread` is a loan that is gone, and goes.
@@ -114,11 +122,16 @@ function assertReadingV1(input: { walletAddress: string; block: string; lines: r
  * the way the SQL does. */
 export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertRepositoryV1 {
   private readonly loans = new Map<string, StillLoanAlertV1>();
-  /** Test seam: the wallets with a confirmed Still borrow. */
+  /** Test seam: the wallets with a Still borrow that went to the wallet (any state but `ready`). */
   readonly confirmedBorrowers = new Set<string>();
 
-  async borrowers(limit: number): Promise<string[]> {
-    return [...this.confirmedBorrowers].sort().slice(0, limit);
+  async borrowers(input: { reachable: readonly string[]; limit: number }): Promise<string[]> {
+    const reachable = new Set(input.reachable);
+    return [...this.confirmedBorrowers].filter((wallet) => reachable.has(wallet)).sort().slice(0, input.limit);
+  }
+
+  async attention(): Promise<string[]> {
+    return [...new Set([...this.loans.values()].filter((loan) => loan.state !== 'calm').map((loan) => loan.walletAddress))].sort();
   }
 
   async recordReading(input: { walletAddress: string; at: Date; block: string; lines: readonly StillLoanReadingLineV1[]; unread: readonly string[] }) {
@@ -195,12 +208,23 @@ function loanOfRowV1(row: Record<string, unknown>): StillLoanAlertV1 {
  * an episode neither meant. */
 export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecutor): StillLoanAlertRepositoryV1 {
   return {
-    async borrowers(limit) {
+    async borrowers(input) {
+      const reachable = input.reachable.filter((wallet) => WALLET_V1.test(wallet));
+      if (reachable.length === 0) return [];
       const rows = (await sql`
         SELECT DISTINCT wallet_address FROM lending_executions
-         WHERE operation = 'borrow' AND state = 'confirmed'
+         WHERE operation = 'borrow' AND state <> 'ready'
+           AND wallet_address = ANY(${reachable}::text[])
          ORDER BY wallet_address
-         LIMIT ${limit}`) as Record<string, unknown>[];
+         LIMIT ${input.limit}`) as Record<string, unknown>[];
+      return rows.map((row) => String(row.wallet_address));
+    },
+
+    async attention() {
+      const rows = (await sql`
+        SELECT DISTINCT wallet_address FROM still_loan_alerts
+         WHERE state <> 'calm'
+         ORDER BY wallet_address`) as Record<string, unknown>[];
       return rows.map((row) => String(row.wallet_address));
     },
 

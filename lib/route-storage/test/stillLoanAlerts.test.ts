@@ -19,12 +19,24 @@ const SPOKE = '0x17905db0e4a3514467539956c084180616ae7b8d';
 stillLoanAlertsContractV1('memory', async () => new InMemoryStillLoanAlertRepositoryV1());
 
 describe('who is read', () => {
-  test('the wallets with a confirmed Still borrow, in address order, up to the limit', async () => {
+  test('the reachable wallets with a Still borrow, in address order, up to the limit, the unreachable filtered first (audit LL-3)', async () => {
     const alerts = new InMemoryStillLoanAlertRepositoryV1();
     alerts.confirmedBorrowers.add('0x3333333333333333333333333333333333333333');
     alerts.confirmedBorrowers.add(WALLET);
-    assert.deepEqual(await alerts.borrowers(5), [WALLET, '0x3333333333333333333333333333333333333333']);
-    assert.deepEqual(await alerts.borrowers(1), [WALLET]);
+    alerts.confirmedBorrowers.add('0x0000000000000000000000000000000000000001');
+    const reachable = [WALLET, '0x3333333333333333333333333333333333333333', '0x4444444444444444444444444444444444444444'];
+    assert.deepEqual(await alerts.borrowers({ reachable, limit: 5 }), [WALLET, '0x3333333333333333333333333333333333333333']);
+    // An unreachable wallet earlier in the alphabet takes no place under the limit.
+    assert.deepEqual(await alerts.borrowers({ reachable, limit: 1 }), [WALLET]);
+    assert.deepEqual(await alerts.borrowers({ reachable: [], limit: 5 }), []);
+  });
+  test('the SQL takes every borrow that went to the wallet, and filters reachability before the limit', () => {
+    const root = process.cwd().endsWith('lib/route-storage') ? resolve(process.cwd(), '..', '..') : process.cwd();
+    const source = readFileSync(resolve(root, 'lib/route-storage/src/stillLoanAlerts.ts'), 'utf8');
+    const query = source.slice(source.indexOf('async borrowers(input)'), source.indexOf('async attention()', source.indexOf('async borrowers(input)')));
+    assert.match(query, /operation = 'borrow' AND state <> 'ready'/);
+    assert.match(query, /wallet_address = ANY\(\$\{reachable\}::text\[\]\)[\s\S]*LIMIT/);
+    assert.doesNotMatch(query, /state = 'confirmed'/);
   });
 });
 
@@ -51,8 +63,8 @@ describe('the table and the SQL say the same', () => {
   test('only a worse band moves the episode, and an older block is no update', () => {
     assert.match(source, /WHEN \$\{rank\}::int > array_position\(ARRAY\['calm', 'watch', 'act', 'liquidation'\], a\.state\) - 1/);
     assert.match(source, /WHERE a\.read_block <= EXCLUDED\.read_block/);
-    // Readers are the wallets whose Still loan was confirmed onchain.
-    assert.match(source, /FROM lending_executions\s+WHERE operation = 'borrow' AND state = 'confirmed'/);
+    // Readers are the wallets whose Still borrow went to the wallet, in any state but ready (audit LL-3).
+    assert.match(source, /FROM lending_executions\s+WHERE operation = 'borrow' AND state <> 'ready'/);
   });
 
   test('a channel writes only its own column, and only for the current episode', async () => {
