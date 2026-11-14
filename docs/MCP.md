@@ -7,7 +7,7 @@ prepares an action returns a link to a review the person's own wallet signs.
 | --- | --- | --- |
 | `https://miorail.xyz/mcp/still` | none | Still's terms, the public check of any Base wallet, what-ifs, and what a loan could buy |
 | `https://miorail.xyz/mcp` | none | tokenized-stock evidence, B20 measurements and Still's terms |
-| `https://miorail.xyz/mcp/private` | OAuth 2.1 with the wallet | everything above, plus tools bound to the wallet that signed in |
+| `https://miorail.xyz/mcp/private` | OAuth 2.1 with the wallet | every `/mcp` read and Still's Bitrefill reads, plus tools bound to the wallet that signed in; another wallet's check and a what-if stay on `/mcp/still` |
 
 Tool lists and versions move with releases; `tools/list` on each server is the
 current answer, and `ops/deploy.sh` checks the public names and versions on
@@ -243,6 +243,35 @@ evidence, which assistants must not repeat as more news.
 `miorail_measure_my_stock_cash_out` asks a fresh router quote into USDC for
 the owner's entire balance of one covered contract; nothing is sold or
 approved.
+
+### Also on the connected server
+
+Seven more tools are bound to the same wallet. Five of them change what the
+server holds (a clearance, a plan, a recorded submission, a review), so they
+are not marked read-only; none signs or sends.
+
+- `miorail_read_borrow_capacity` reads the lending markets where an exact Base
+  token is collateral: the protocol's own maximum, with Still's stricter
+  allowance beside it. It prepares nothing.
+- `miorail_review_borrow` measures one exact Morpho borrow and returns a review
+  for the person. For Still's registered markets (cbBTC, WETH and PAXG against
+  USDC) the calls are the wallet's own calls to Morpho Blue, written and
+  decoded by Miorail, and nothing is authorised to act for the wallet. For any
+  other market the venue writes the calldata, and one of its calls may
+  authorise an adapter to act for the wallet until it is revoked.
+- `miorail_check_exit_profile` runs the live entry-and-exit check of one B20
+  token for the wallet, where the server offers B20 entry: it quotes the entry,
+  simulates it, quotes the exit at the size the entry produced, and simulates
+  the calls together. Only this check can clear a token for entry.
+- `miorail_prepare_b20_entry` turns that clearance into a stored, simulated
+  entry plan.
+- `miorail_get_base_mcp_action` returns the plan's exact calls in the shape
+  Wallet MCP's `send_calls` takes, only after the person has seen the review
+  and said yes.
+- `miorail_record_base_mcp_submission` records what Wallet MCP reported, once
+  per action.
+- `miorail_get_stock_base_mcp_action` turns a stock action the person confirmed
+  on its review page into the same unsigned Wallet MCP request the site makes.
 
 ## Wallet MCP extensions
 

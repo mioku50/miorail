@@ -98,7 +98,7 @@ Someone at home in Aave or Morpho gains little from this. Still is for people wh
 | --- | --- | --- |
 | `https://miorail.xyz/mcp/still` | none | Still's terms, the public check of any Base wallet, what-ifs by Still's own engine, and what a loan could buy at Bitrefill. Read-only. |
 | `https://miorail.xyz/mcp` | none | Tokenized-stock evidence, B20 measurements and Still's terms. Read-only. |
-| `https://miorail.xyz/mcp/private` | OAuth 2.1 with your wallet | Everything above, plus tools bound to the wallet that signed in: its own Still report, and review links for a loan, a repayment, a purchase or a swap. |
+| `https://miorail.xyz/mcp/private` | OAuth 2.1 with your wallet | Every `/mcp` read and Still's Bitrefill reads, plus tools bound to the wallet that signed in: its own Still report, and review links for a loan, a repayment, a purchase, a stock buy or sale, or a swap. Another wallet's check and a what-if stay on `/mcp/still`. |
 
 No server signs or sends anything. A tool that prepares an action returns a five-minute link to the same review page Get money opens, bound to your wallet; you check it and sign it there. A loan, a repayment and a purchase it links are reviewed by the same server checks as Get money and Repay, Still's limit included. A chat that draws MCP Apps, as Claude does, shows that review as Still's card. Tool names, inputs and what each answer guarantees: [docs/MCP.md](docs/MCP.md).
 
