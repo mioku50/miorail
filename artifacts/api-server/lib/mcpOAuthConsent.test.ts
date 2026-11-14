@@ -7,6 +7,7 @@ import request from 'supertest';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
 import {
+  MCP_OAUTH_CLIENT_METADATA_MAX_BYTES_V1,
   MCP_OAUTH_SCOPES_V1,
   consentDestinationV1,
   consentFormActionPolicyV1,
@@ -52,6 +53,7 @@ function fakeSql(strings: TemplateStringsArray, ...values: unknown[]): Promise<R
     storedClient = String(values[1]);
     return Promise.resolve([]);
   }
+  if (text.startsWith('DELETE FROM mcp_oauth_clients')) return Promise.resolve([]);
   if (text.startsWith('INSERT INTO mcp_oauth_authorization_codes')) return Promise.resolve([]);
   throw new Error(`unexpected query in this test: ${text}`);
 }
@@ -283,5 +285,43 @@ describe('consentFormActionPolicyV1', () => {
     for (const uri of ['not a url', 'javascript:alert(1)', 'data:text/html,x', 'myapp://cb']) {
       assert.equal(consentFormActionPolicyV1(HELMET, uri), HELMET, uri);
     }
+  });
+});
+
+// Audit MCP-3, 2026-11-14: a registration stored up to 100 KB, for ever, and none was ever removed.
+describe('client registration is bounded, and unused registrations end', () => {
+  test('metadata larger than 8 KB is refused before anything is stored, through the SDK’s own endpoint', async () => {
+    const big = { client_name: 'x'.repeat(MCP_OAUTH_CLIENT_METADATA_MAX_BYTES_V1), redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' };
+    const refused = await request(appV1()).post('/register').send(big).expect(400);
+    assert.equal(refused.body.error, 'invalid_client_metadata');
+    assert.match(refused.body.error_description, /larger than this server stores \(8 KB\)/);
+    assert.equal(queries.some((query) => query.text.startsWith('INSERT INTO mcp_oauth_clients')), false);
+    // An ordinary registration still goes through.
+    const ok = await request(appV1()).post('/register').send({ client_name: 'Codex', redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' }).expect(201);
+    assert.equal(typeof ok.body.client_id, 'string');
+    assert.ok(storedClient);
+  });
+
+  test('each registration first removes week-old ones no grant came from and no live code waits on', async () => {
+    await registerClientV1();
+    const prune = queries.findIndex((query) => query.text.startsWith('DELETE FROM mcp_oauth_clients'));
+    const insert = queries.findIndex((query) => query.text.startsWith('INSERT INTO mcp_oauth_clients'));
+    assert.ok(prune >= 0 && prune < insert, 'the cleanup runs before the new row is written');
+    const text = queries[prune]!.text;
+    assert.match(text, /created_at < now\(\) - make_interval\(days => \?::int\)/);
+    assert.match(text, /NOT EXISTS \(SELECT 1 FROM mcp_oauth_grants AS g WHERE g\.client_id = c\.client_id\)/);
+    assert.match(text, /NOT EXISTS \(SELECT 1 FROM mcp_oauth_authorization_codes AS a WHERE a\.client_id = c\.client_id AND a\.expires_at > now\(\)\)/);
+    assert.match(text, /LIMIT 500/);
+    assert.deepEqual(queries[prune]!.values, [7]);
+  });
+
+  test('a cleanup that fails does not refuse the registration', async () => {
+    mcpOAuthRuntimeV1.sql = (strings, ...values) => {
+      const text = strings.join('?').replace(/\s+/g, ' ').trim();
+      if (text.startsWith('DELETE FROM mcp_oauth_clients')) return Promise.reject(new Error('synthetic cleanup failure'));
+      return fakeSql(strings, ...values);
+    };
+    assert.equal(await registerClientV1(), 'codex-test-client');
+    assert.ok(storedClient);
   });
 });

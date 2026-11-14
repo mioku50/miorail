@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { client as databaseClientV1 } from '@mioagent/db';
 import { MCP_OAUTH_GRANT_ID_PREFIX_V1 } from '@mioagent/route-storage';
+import { logger } from '@mioagent/utils';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
@@ -12,6 +13,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import {
   AccessDeniedError,
+  InvalidClientMetadataError,
   InvalidGrantError,
   InvalidScopeError,
   InvalidTargetError,
@@ -210,6 +212,45 @@ export function consentFormActionPolicyV1(currentPolicy: string | null, redirect
   return directives.join(';');
 }
 
+// ---------------------------------------------------------------------------
+// What a registration may store, and for how long (audit MCP-3, 2026-11-14).
+//
+// Anyone may register a client (RFC 7591), and the SDK checks only the
+// metadata's shape: no field has a length, `jwks` is anything, and the body may
+// be up to 100 KB. Every registration was stored, encrypted, for ever, and none
+// was ever removed, so the table grew by up to 64 MB a day from one address at
+// the SDK's 20 an hour, and by whatever a hundred rented addresses can send.
+// A client that never became a grant gives nobody anything.
+//
+// Now a registration larger than 8 KB is refused before it is stored (Claude,
+// ChatGPT and Codex send well under 1 KB), and each registration first removes
+// up to 500 that are a week old and never led to a grant: a client with a
+// grant, live or ended, stays with it, since its grants are what Connected Apps
+// shows, and one in the middle of an authorization keeps its live code.
+// ---------------------------------------------------------------------------
+
+/** The largest client metadata one registration may store, as the JSON the SDK hands over. */
+export const MCP_OAUTH_CLIENT_METADATA_MAX_BYTES_V1 = 8_192;
+/** How long a registration that never became a grant is kept. */
+export const MCP_OAUTH_UNUSED_CLIENT_DAYS_V1 = 7;
+
+/** Removes registrations a week old that no grant came from and no live code waits on. Never throws. */
+export async function pruneUnusedMcpOAuthClientsV1(): Promise<void> {
+  try {
+    await sql`
+      DELETE FROM mcp_oauth_clients
+      WHERE client_id IN (
+        SELECT c.client_id FROM mcp_oauth_clients AS c
+        WHERE c.created_at < now() - make_interval(days => ${MCP_OAUTH_UNUSED_CLIENT_DAYS_V1}::int)
+          AND NOT EXISTS (SELECT 1 FROM mcp_oauth_grants AS g WHERE g.client_id = c.client_id)
+          AND NOT EXISTS (SELECT 1 FROM mcp_oauth_authorization_codes AS a WHERE a.client_id = c.client_id AND a.expires_at > now())
+        LIMIT 500)`;
+  } catch (error) {
+    // A cleanup that did not run leaves rows for the next one; it never refuses a registration.
+    logger.warn('Unused MCP OAuth clients not removed', { errorName: error instanceof Error ? error.name : typeof error });
+  }
+}
+
 const clientsStoreV1: OAuthRegisteredClientsStore = {
   async getClient(clientId) {
     const rows = await sql`
@@ -230,6 +271,10 @@ const clientsStoreV1: OAuthRegisteredClientsStore = {
       client_id: supplied.client_id ?? crypto.randomUUID(),
       client_id_issued_at: supplied.client_id_issued_at ?? Math.floor(Date.now() / 1000),
     };
+    if (Buffer.byteLength(JSON.stringify(registered), 'utf8') > MCP_OAUTH_CLIENT_METADATA_MAX_BYTES_V1) {
+      throw new InvalidClientMetadataError(`Client metadata is larger than this server stores (${MCP_OAUTH_CLIENT_METADATA_MAX_BYTES_V1 / 1024} KB).`);
+    }
+    await pruneUnusedMcpOAuthClientsV1();
     await sql`
       INSERT INTO mcp_oauth_clients (client_id, encrypted_metadata, created_at, updated_at)
       VALUES (${registered.client_id}, ${encryptClientV1(registered)}, now(), now())`;

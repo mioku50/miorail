@@ -15,7 +15,9 @@ interface ProviderModuleV1 {
   mcpOAuthProviderV1: {
     exchangeRefreshToken(client: { client_id: string }, token: string): Promise<{ access_token: string; refresh_token?: string }>;
     verifyAccessToken(token: string): Promise<unknown>;
+    clientsStore: { registerClient?(client: Record<string, unknown>): Promise<{ client_id: string }> };
   };
+  pruneUnusedMcpOAuthClientsV1(): Promise<void>;
   mcpOAuthRuntimeV1: { sql: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]> };
   revokeMcpOAuthGrantForTenantV1(input: { tenantId: string; grantId: string }): Promise<boolean>;
   REFRESH_REUSE_GRACE_SECONDS_V1: number;
@@ -138,5 +140,64 @@ describe('a used refresh token presented again ends its grant (audit N13-7)', { 
     const at = (await sql`SELECT revoked_at FROM mcp_oauth_grants WHERE id = ${grantId}`)[0]!.revoked_at;
     await assert.rejects(exchange(refresh), refused);
     assert.deepEqual((await sql`SELECT revoked_at FROM mcp_oauth_grants WHERE id = ${grantId}`)[0]!.revoked_at, at);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit MCP-3, 2026-11-14: a registration that never became a grant is removed
+// after a week, by the next registration; one with a grant, live or ended, and
+// one with a live code stay. The provider's own DELETE runs here.
+// ---------------------------------------------------------------------------
+describe('registrations no grant came from end after a week (audit MCP-3)', { skip: !enabled }, () => {
+  const schema = `oauth_prune_${randomUUID().replaceAll('-', '')}`;
+  const WALLET = `0x${'cd'.repeat(20)}`, TENANT = `eip155:8453:${WALLET}`, RESOURCE = 'https://miorail.xyz/mcp/private';
+  let provider: ProviderModuleV1;
+  let original: ProviderModuleV1['mcpOAuthRuntimeV1']['sql'];
+  let admin: ReturnType<typeof postgres>;
+  let sql: ReturnType<typeof postgres>;
+
+  before(async () => {
+    provider = await providerModuleV1();
+    original = provider.mcpOAuthRuntimeV1.sql;
+    const safe = assertSafeTestDatabaseEnvironment(process.env);
+    admin = postgres(safe.url!, { max: 1, prepare: false, onnotice: () => {} });
+    await admin.unsafe(`CREATE SCHEMA ${schema}`);
+    sql = postgres(safe.url!, { max: 4, prepare: false, connection: { search_path: schema }, onnotice: () => {} });
+    await sql.unsafe('CREATE TABLE users (id text PRIMARY KEY)');
+    const migration = await readFile(migrationUrl, 'utf8');
+    for (const table of ['mcp_oauth_clients', 'mcp_oauth_grants', 'mcp_oauth_authorization_codes', 'mcp_oauth_tokens']) {
+      const block = new RegExp(`CREATE TABLE IF NOT EXISTS "${table}" \\([\\s\\S]*?\\n\\);`).exec(migration)?.[0];
+      assert.ok(block, `migration 0064 creates ${table}`);
+      await sql.unsafe(block.replaceAll('"public".', ''));
+    }
+    await sql`INSERT INTO users (id) VALUES (${TENANT})`;
+    provider.mcpOAuthRuntimeV1.sql = async (strings, ...values) => await sql(strings, ...(values as never[])) as unknown as Record<string, unknown>[];
+  });
+  after(async () => {
+    if (provider) provider.mcpOAuthRuntimeV1.sql = original;
+    if (sql) await sql.end({ timeout: 5 });
+    if (admin) { await admin.unsafe(`DROP SCHEMA ${schema} CASCADE`); await admin.end({ timeout: 5 }); }
+  });
+
+  const client = (id: string, daysAgo: number) =>
+    sql`INSERT INTO mcp_oauth_clients (client_id, encrypted_metadata, created_at, updated_at)
+      VALUES (${id}, 'synthetic', now() - make_interval(days => ${daysAgo}::int), now() - make_interval(days => ${daysAgo}::int))`;
+  const present = async (id: string) => (await sql`SELECT 1 FROM mcp_oauth_clients WHERE client_id = ${id}`).length === 1;
+
+  it('removes the week-old unused one and keeps one with a grant, one with a live code and a fresh one', async () => {
+    await client('old-unused', 8);
+    await client('old-granted', 30);
+    await client('old-authorizing', 8);
+    await client('fresh-unused', 2);
+    const created = new Date(Date.now() - 29 * 86_400_000), expires = new Date(Date.now() + 86_400_000), revoked = new Date(Date.now() - 86_400_000);
+    // An ended grant is history Connected Apps shows: its client stays too.
+    await sql`INSERT INTO mcp_oauth_grants (id, tenant_id, wallet_address, client_id, client_name, scopes, resource, created_at, expires_at, revoked_at)
+      VALUES (${`oauth-grant_${randomUUID()}`}, ${TENANT}, ${WALLET}, 'old-granted', 'Synthetic client', ${JSON.stringify(['miorail:connected'])}::text::jsonb, ${RESOURCE}, ${created}, ${expires}, ${revoked})`;
+    await sql`INSERT INTO mcp_oauth_authorization_codes (code_hash, client_id, tenant_id, wallet_address, redirect_uri, code_challenge, scopes, resource, expires_at, created_at)
+      VALUES (${'a'.repeat(64)}, 'old-authorizing', ${TENANT}, ${WALLET}, 'http://127.0.0.1/cb', ${'c'.repeat(43)}, ${JSON.stringify(['miorail:connected'])}::text::jsonb, ${RESOURCE},
+        now() + interval '5 minutes', now() - interval '1 minute')`;
+    const registered = await provider.mcpOAuthProviderV1.clientsStore.registerClient!({ client_id: 'new-client', client_name: 'Codex', redirect_uris: ['http://127.0.0.1/cb'] });
+    assert.equal(registered.client_id, 'new-client');
+    assert.deepEqual(await Promise.all(['old-unused', 'old-granted', 'old-authorizing', 'fresh-unused', 'new-client'].map(present)), [false, true, true, true, true]);
   });
 });
