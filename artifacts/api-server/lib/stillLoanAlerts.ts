@@ -88,6 +88,8 @@ export async function refreshStillLoanAlertsV1(input: {
   now: Date;
   dry?: boolean;
   limit?: number;
+  /** Filled with each loan's debt as read, by `wallet|market`, for the words told about it (audit LL-4). */
+  debts?: Map<string, string>;
 }): Promise<{ due: number; read: number; failed: number; notRead: number }> {
   const reachable = [...input.reachable].map((wallet) => wallet.toLowerCase()).filter((wallet) => /^0x[0-9a-f]{40}$/.test(wallet));
   const eligible = await input.alerts.borrowers({ reachable, limit: STILL_LOAN_BORROWERS_SEEN_V1 });
@@ -102,6 +104,9 @@ export async function refreshStillLoanAlertsV1(input: {
       continue;
     }
     report.read += 1;
+    for (const venue of outcome.report.venues) {
+      if (venue.debtAtomic != null && /^[0-9]{1,78}$/.test(venue.debtAtomic)) input.debts?.set(`${walletAddress}|${venue.market.toLowerCase()}`, venue.debtAtomic);
+    }
     if (input.dry) continue;
     const { lines, unread } = stillLoanLinesV1(outcome.report);
     await input.alerts.recordReading({ walletAddress, at: input.now, block: outcome.report.reading.block, lines, unread });
@@ -122,31 +127,72 @@ function percentV1(bps: number | bigint): string {
   return value % 100 === 0 ? `${value / 100}%` : `${Math.floor(value / 10) / 10}%`;
 }
 
-/** What a chat is told about a loan whose band got worse. */
-export function stillLoanNoticeV1(loan: Pick<StillLoanAlertV1, 'market' | 'state' | 'marginBps'>): {
+// ---------------------------------------------------------------------------
+// What a chat is told (audit LL-4, 2026-11-14). The words commanded ("act
+// now", "Repay at once to keep it"), and the heaviest of them had no number at
+// all, against the rule that Still states options with their measured
+// consequences and never says what anyone should do. "To keep it" promised
+// what no repayment can: a liquidator may come first. Now each notice says the
+// debt, the margin and what repaying would do, in USDC: the margin is the share
+// by which all the collateral may fall, 1 - 1/HF, and the health factor moves
+// with the debt alone, so repaying R of a debt D at margin m leaves a margin
+// of at least the Watch line t when R = D(t - m)/(1 - m). A loan that can be
+// liquidated has a margin read as zero, so its amount is a least one.
+// ---------------------------------------------------------------------------
+
+/** USDC that brings a loan's margin back to Still's Watch line, rounded up to the cent; null when it is there. */
+export function stillLoanRepayToWatchAtomicV1(debtAtomic: bigint, marginBps: number): bigint | null {
+  const target = TERMS.watchBelowBps, margin = BigInt(Math.floor(marginBps));
+  if (debtAtomic <= 0n || margin < 0n || margin >= target) return null;
+  const whole = 10_000n - margin;
+  const exact = (debtAtomic * (target - margin) + whole - 1n) / whole;
+  // Up to the cent, and never more than the whole debt.
+  const cents = ((exact + 9_999n) / 10_000n) * 10_000n;
+  return cents < debtAtomic ? cents : debtAtomic;
+}
+
+/** "1,234.57 USDC", cents rounded up: a debt or a repayment is never said smaller than it is. */
+function usdcCentsV1(atomic: bigint): string {
+  const cents = (atomic + 9_999n) / 10_000n;
+  return `${(cents / 100n).toLocaleString('en-US')}.${(cents % 100n).toString().padStart(2, '0')} USDC`;
+}
+
+/** What a chat is told about a loan whose band got worse: the debt, the margin and what repaying would do,
+ * when this pass read the debt; the margin alone otherwise. */
+export function stillLoanNoticeV1(loan: Pick<StillLoanAlertV1, 'market' | 'state' | 'marginBps'>, debtAtomic: string | null = null): {
   title: string;
   message: string;
   targetPath: string;
 } {
   const label = stillLoanLabelV1(loan.market);
   const margin = `${Math.floor(loan.marginBps / 100)}%`;
+  const watch = percentV1(TERMS.watchBelowBps), act = percentV1(TERMS.actBelowBps);
+  const debt = debtAtomic !== null && /^[1-9][0-9]{0,77}$/.test(debtAtomic) ? BigInt(debtAtomic) : null;
+  const repay = debt === null ? null : stillLoanRepayToWatchAtomicV1(debt, loan.marginBps);
+  const owes = debt === null ? '' : ` debt ${usdcCentsV1(debt)};`;
   if (loan.state === 'liquidation') {
     return {
       title: 'Still loan: liquidatable now',
-      message: `${label}: this loan can be liquidated now, and a liquidator may take collateral at a discount. Repay at once to keep it.`,
+      message: repay !== null
+        ? `${label}:${owes} liquidatable now: a liquidator may take collateral at a discount. Repaying at least ${usdcCentsV1(repay)} brings the margin back to ${watch}.`
+        : `${label}: this loan can be liquidated now, and a liquidator may take collateral at a discount. Repaying part of the loan raises the margin.`,
       targetPath: '/repay',
     };
   }
   if (loan.state === 'act') {
     return {
-      title: `Still loan: act now, ${margin} left`,
-      message: `${label}: your collateral can now fall only ${margin} before liquidation. Below ${percentV1(TERMS.actBelowBps)}, act now: repay part of the loan.`,
+      title: `Still loan: only ${margin} margin`,
+      message: repay !== null
+        ? `${label}:${owes} the collateral can fall only ${margin} before liquidation, below Still’s ${act} line. Repaying ${usdcCentsV1(repay)} brings that back to ${watch}.`
+        : `${label}: the collateral can fall only ${margin} before liquidation, below Still’s ${act} line. Repaying part of the loan raises the margin.`,
       targetPath: '/repay',
     };
   }
   return {
     title: `Still loan: margin ${margin}`,
-    message: `${label}: your collateral can now fall ${margin} before liquidation. Below ${percentV1(TERMS.watchBelowBps)} Still calls it Watch. Repaying part of the loan raises the margin.`,
+    message: repay !== null
+      ? `${label}:${owes} the collateral can fall ${margin} before liquidation. Repaying ${usdcCentsV1(repay)} brings that back to ${watch}, Still’s Watch line.`
+      : `${label}: the collateral can fall ${margin} before liquidation. Below ${watch} Still calls it Watch. Repaying part of the loan raises the margin.`,
     targetPath: '/repay',
   };
 }

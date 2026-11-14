@@ -4,7 +4,7 @@ import test, { describe } from 'node:test';
 import type { MirrorReadingV1, MirrorReport, VenueLine } from '@mioagent/still-engine';
 import { InMemoryStillLoanAlertRepositoryV1 } from '@mioagent/route-storage';
 
-import { refreshStillLoanAlertsV1, STILL_LOAN_PASS_MS_V1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1, stillLoanPassWalletsV1 } from './stillLoanAlerts.js';
+import { refreshStillLoanAlertsV1, STILL_LOAN_PASS_MS_V1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1, stillLoanPassWalletsV1, stillLoanRepayToWatchAtomicV1 } from './stillLoanAlerts.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const QUIET = '0x2222222222222222222222222222222222222222';
@@ -132,14 +132,14 @@ describe('whom a pass reads (audit LL-3)', () => {
   });
 });
 
-describe('what a chat is told', () => {
-  test('each band in the reader’s words, short enough for every channel, with the way to repay', () => {
+describe('what a chat is told (audit LL-4)', () => {
+  test('each band as facts, short enough for every channel, with the way to repay', () => {
     const watch = stillLoanNoticeV1({ market: SPOKE, state: 'watch', marginBps: 3_149 });
     assert.equal(watch.title, 'Still loan: margin 31%');
-    assert.equal(watch.message, 'Aave V4 · Coinbase Stocks: your collateral can now fall 31% before liquidation. Below 37.5% Still calls it Watch. Repaying part of the loan raises the margin.');
+    assert.equal(watch.message, 'Aave V4 · Coinbase Stocks: the collateral can fall 31% before liquidation. Below 37.5% Still calls it Watch. Repaying part of the loan raises the margin.');
     const act = stillLoanNoticeV1({ market: CBBTC_MARKET, state: 'act', marginBps: 1_499 });
-    assert.equal(act.title, 'Still loan: act now, 14% left');
-    assert.match(act.message, /^Morpho · cbBTC\/USDC: your collateral can now fall only 14% before liquidation\. Below 20%, act now/);
+    assert.equal(act.title, 'Still loan: only 14% margin');
+    assert.equal(act.message, 'Morpho · cbBTC/USDC: the collateral can fall only 14% before liquidation, below Still’s 20% line. Repaying part of the loan raises the margin.');
     const gone = stillLoanNoticeV1({ market: WETH_MARKET, state: 'liquidation', marginBps: 0 });
     assert.match(gone.message, /^Morpho · WETH\/USDC: this loan can be liquidated now/);
     for (const notice of [watch, act, gone]) {
@@ -148,5 +148,42 @@ describe('what a chat is told', () => {
       assert.equal(notice.targetPath, '/repay');
     }
     assert.equal(stillLoanLabelV1('0x9999999999999999999999999999999999999999'), 'Your Still loan');
+  });
+  test('with the debt this pass read: the debt, and the USDC that brings the margin back to the Watch line', () => {
+    // A margin of 14.99% on 500 USDC: repaying 500 × (37.5 − 14.99) / (100 − 14.99) = 132.40… brings it back.
+    const act = stillLoanNoticeV1({ market: CBBTC_MARKET, state: 'act', marginBps: 1_499 }, '500000000');
+    assert.equal(act.message, 'Morpho · cbBTC/USDC: debt 500.00 USDC; the collateral can fall only 14% before liquidation, below Still’s 20% line. Repaying 132.40 USDC brings that back to 37.5%.');
+    assert.equal(stillLoanRepayToWatchAtomicV1(500_000_000n, 1_499), 132_400_000n);
+    const watch = stillLoanNoticeV1({ market: SPOKE, state: 'watch', marginBps: 3_149 }, '1234567891');
+    assert.equal(watch.message, 'Aave V4 · Coinbase Stocks: debt 1,234.57 USDC; the collateral can fall 31% before liquidation. Repaying 108.31 USDC brings that back to 37.5%, Still’s Watch line.');
+    // Liquidatable: the margin is read as none, so the amount is a least one, and nothing is promised.
+    const gone = stillLoanNoticeV1({ market: WETH_MARKET, state: 'liquidation', marginBps: 0 }, '500000000');
+    assert.equal(gone.message, 'Morpho · WETH/USDC: debt 500.00 USDC; liquidatable now: a liquidator may take collateral at a discount. Repaying at least 187.50 USDC brings the margin back to 37.5%.');
+    // The repayment that leaves the margin at least on the line, checked against the health factor itself.
+    for (const [debt, marginBps] of [[500_000_000n, 1_499], [1_234_567_891n, 3_149], [7n, 1], [10n ** 15n, 3_749]] as const) {
+      const repay = stillLoanRepayToWatchAtomicV1(debt, marginBps)!;
+      const health = 10_000 / (10_000 - marginBps), after = Number(debt - repay) / Number(debt) ;
+      assert.ok(repay > 0n && repay <= debt, `${debt} ${marginBps}`);
+      assert.ok(1 - after / health >= 0.375 - 1e-9, `${debt} ${marginBps}: margin after ${1 - after / health}`);
+    }
+    assert.equal(stillLoanRepayToWatchAtomicV1(500_000_000n, 3_750), null);
+    assert.equal(stillLoanRepayToWatchAtomicV1(0n, 1_000), null);
+    // Even the longest label with a very large debt fits every channel; no notice commands.
+    for (const state of ['watch', 'act', 'liquidation'] as const) {
+      for (const debt of [null, '1', '999999999999999', '999999999990000']) {
+        const notice = stillLoanNoticeV1({ market: SPOKE, state, marginBps: state === 'liquidation' ? 0 : state === 'act' ? 1_000 : 3_000 }, debt);
+        assert.ok(notice.title.length <= BASE_APP_TITLE_MAX_V1, notice.title);
+        assert.ok(notice.message.length <= BASE_APP_MESSAGE_MAX_V1, `${notice.message.length}: ${notice.message}`);
+        assert.doesNotMatch(`${notice.title} ${notice.message}`, /act now|at once|to keep it|you should|must /i);
+      }
+    }
+  });
+  test('the pass keeps each loan’s debt as it read it, for the notice', async () => {
+    const alerts = new InMemoryStillLoanAlertRepositoryV1();
+    alerts.confirmedBorrowers.add(WALLET);
+    const debts = new Map<string, string>();
+    await refreshStillLoanAlertsV1({ alerts, reachable: new Set([WALLET]), now: NOW, debts,
+      read: async () => reading([venue({ debtAtomic: '500000000', safety: safety('act', 1_400) }), venue({ venue: 'morpho', market: CBBTC_MARKET, debtAtomic: null })]) });
+    assert.deepEqual([...debts], [[`${WALLET}|${SPOKE}`, '500000000']]);
   });
 });

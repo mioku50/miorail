@@ -128,6 +128,8 @@ async function main(): Promise<void> {
   // channels, with the Mirror engine. Only wallets that borrowed through Still
   // are read; a wallet nobody can tell is not read at all.
   const loanAlerts = createDatabaseStillLoanAlertRepositoryV1(client);
+  // Each loan's debt as this pass read it, for the numbers its notice says (audit LL-4).
+  const loanDebts = new Map<string, string>();
   try {
     const reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
     const mirror = createStillMirrorServiceV1();
@@ -137,6 +139,7 @@ async function main(): Promise<void> {
       read: (wallet) => mirror.reading(wallet as `0x${string}`),
       now: new Date(),
       dry,
+      debts: loanDebts,
     });
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
   } catch (cause) {
@@ -146,7 +149,8 @@ async function main(): Promise<void> {
   const stillLoansFor = (channel: NotificationChannelV1) => ({
     due: async () =>
       (await loanAlerts.due({ channel, freshSince: new Date(Date.now() - STILL_LOAN_FRESH_FOR_MS_V1) }))
-        .map((loan) => ({ walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode, ...stillLoanNoticeV1(loan) })),
+        .map((loan) => ({ walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode,
+          ...stillLoanNoticeV1(loan, loanDebts.get(`${loan.walletAddress}|${loan.market}`) ?? null) })),
     told: (input: { walletAddress: string; market: string; episode: number }) => loanAlerts.markTold({ ...input, channel }),
   });
 
