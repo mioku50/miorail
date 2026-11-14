@@ -187,8 +187,9 @@ export function StillAssetsPage() {
   // The report reads what can be collateral; USDC, what a loan pays out and a repayment takes, is read beside it.
   const usdc = useStillUsdcV1(still.wallet, { enabled: still.signedIn });
   const view = useMemo(
-    () => (still.report ? assetsViewV1({ report: still.report, dividends: still.dividends, usdc: usdc.data ?? (usdc.error ? 'unread' : 'loading') }) : null),
-    [still.report, still.dividends, usdc.data, usdc.error],
+    () => (still.report ? assetsViewV1({ report: still.report, dividends: still.dividends, dividendsReadState: still.dividendsReadState,
+      usdc: usdc.data ?? (usdc.error ? 'unread' : 'loading') }) : null),
+    [still.report, still.dividends, still.dividendsReadState, usdc.data, usdc.error],
   );
   return (
     <StillFrame tab="assets" sky={sky}>

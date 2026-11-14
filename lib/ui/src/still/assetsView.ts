@@ -4,6 +4,7 @@ import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
+import type { DividendReadStateV1 } from './agentAnswers';
 import { swapTokenGoalV1 } from '../console/goalHandoff';
 import { tokenDecimalV1 } from '../console/stockSellAmount';
 
@@ -214,7 +215,7 @@ function usdcRowV1(usdc: WalletUsdcV1): AssetRowV1 {
   };
 }
 
-export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null; usdc?: WalletUsdcV1 }): AssetsViewV1 {
+export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null; dividendsReadState?: DividendReadStateV1; usdc?: WalletUsdcV1 }): AssetsViewV1 {
   const { report } = input;
   const debtOn = new Map(report.venues.map((v) => [v.venue === 'aave-v4' ? 'aave-v4' : v.market.toLowerCase(), v]));
   const coins = new Map<string, AssetRowV1>();
@@ -354,7 +355,11 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       : usdcTotal === 'unread' ? 'USDC not read just now, so not in the total'
         : `${usdcTotal} USDC`;
   const reviewedNote = reviewedTotal === null ? 'Reviewed holdings not priced this time' : `${reviewedTotal} reviewed for loans`;
-  const othersNote = others.length === 0 ? null : `${others.map((holding) => holding.tokenSymbol).join(', ')} not priced here`;
+  // The Coinbase stocks outside the eight come only from the dividend read: while it is out, or did not answer, the list
+  // above is not all the wallet holds, and the note says so (audit UI-16: HIMSc vanished from Assets with no word).
+  const othersNote = input.dividendsReadState === 'unavailable' ? 'Coinbase stocks outside Still’s eight not read this time'
+    : input.dividendsReadState === 'loading' ? 'Coinbase stocks outside Still’s eight being read'
+      : others.length === 0 ? null : `${others.map((holding) => holding.tokenSymbol).join(', ')} not priced here`;
   // Nothing Still lends against, said so that it is true of the rows under it: "No holdings … Coinbase stocks" stood above a
   // Coinbase stock row this page drew itself (audit UI-12, 2026-11-14: HIMSc and USDC, and nothing reviewed).
   const emptyNote = count > 0 ? null : others.length > 0

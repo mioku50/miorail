@@ -493,6 +493,10 @@ describe('what the wallet holds, on Assets', () => {
     // It is not in the total, and the note under the total says so.
     assert.equal(withOthers.total, assetsViewV1({ report: r, dividends }).total);
     assert.match(withOthers.totalNote, / · SONYc not priced here/);
+    // The other Coinbase stocks come from the dividend read: while it is out or failed, the note says the list is not all (audit UI-16).
+    assert.match(assetsViewV1({ report: r, dividends: null, dividendsReadState: 'unavailable' }).totalNote, / · Coinbase stocks outside Still’s eight not read this time/);
+    assert.match(assetsViewV1({ report: r, dividends: null, dividendsReadState: 'loading' }).totalNote, / · Coinbase stocks outside Still’s eight being read/);
+    assert.doesNotMatch(assetsViewV1({ report: r, dividends, dividendsReadState: 'read' }).totalNote, /outside Still’s eight/);
   });
 
   it('never says "no Coinbase stocks" above a Coinbase stock it draws: a wallet with HIMSc and nothing reviewed (audit UI-12)', () => {
