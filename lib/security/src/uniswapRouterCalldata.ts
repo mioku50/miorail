@@ -1,5 +1,5 @@
 import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, type Hex } from 'viem';
-import { sameCanonicalCallV1 } from './routerCalldataTail.js';
+import { sameCanonicalCallV1, uniswapTagOrAttributionV1 } from './routerCalldataTail.js';
 
 // ---------------------------------------------------------------------------
 // What the bytes of a Universal Router 2.0 call do (audit SW-1, 2026-11-14).
@@ -231,7 +231,8 @@ export function readUniswapExecuteV1(data: string, expected: UniswapRouterExpect
     const decoded = decodeFunctionData({ abi: UNIVERSAL_ROUTER_EXECUTE_ABI_V1, data: data as Hex });
     [commandsHex, inputs, deadline] = decoded.args as unknown as [Hex, readonly Hex[], bigint];
     const again = encodeFunctionData({ abi: UNIVERSAL_ROUTER_EXECUTE_ABI_V1, functionName: 'execute', args: [commandsHex, inputs, deadline] });
-    if (!sameCanonicalCallV1(data, again)) {
+    // The Trading API's own 22-byte tag ends every call it builds; the router never reads it.
+    if (!sameCanonicalCallV1(data, again, uniswapTagOrAttributionV1)) {
       return refuse('uniswap_router_call_not_canonical', 'The router call carries bytes its own arguments do not explain');
     }
   } catch {

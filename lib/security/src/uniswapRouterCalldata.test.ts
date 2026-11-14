@@ -13,6 +13,7 @@ import {
   type UniswapCommandV1,
   type UniswapRouterExpectationV1,
 } from './uniswapRouterCalldata.js';
+import { UNISWAP_API_TAGS_V1, UNISWAP_EXECUTE_2026_09_23 as REAL } from './fixtures/uniswapExecute20260923.js';
 
 // ---------------------------------------------------------------------------
 // The Universal Router call is read, not trusted by its address (audit SW-1,
@@ -171,6 +172,35 @@ test('a call read one way here and another onchain is refused: dirty words, odd 
   assert.deepEqual(readUniswapExecuteV1('0x3593564c', usdcToNvda).ok ? null : 'refused', 'refused');
 });
 
+test('what the Trading API really builds is read: its own 22-byte tag after the arguments (audit SW-1, measured 2026-11-14)', () => {
+  // The operator's real 2026-09-23 buy, wallet replaced: refused as "not canonical" before this rule.
+  const expected = { wallet: REAL.wallet, input: { kind: 'erc20', address: REAL.input }, output: { kind: 'erc20', address: REAL.output }, amountInAtomic: REAL.amountInAtomic } as const;
+  const real = readUniswapExecuteV1(REAL.data, expected);
+  assert.equal(real.ok, true, real.ok ? '' : real.code);
+  if (real.ok) assert.deepEqual([real.commands, real.guaranteedOutputAtomic, real.minimumSources, real.deadline], [[0x00], REAL.minimumAtomic, 1, REAL.deadline]);
+  // The same bytes for another wallet, or for one unit more, are still refused.
+  assert.deepEqual(((r) => (r.ok ? null : r.code))(readUniswapExecuteV1(REAL.data, { ...expected, wallet: ATTACKER })), 'uniswap_pays_another_address');
+  assert.equal(readUniswapExecuteV1(REAL.data, { ...expected, amountInAtomic: REAL.amountInAtomic + 1n }).ok, false);
+  // Every tag seen on Base, after a clean call, alone or before one attribution suffix.
+  const clean = encodeUniswapExecuteV1([v3()], DEADLINE);
+  const code = Buffer.from('bc_still').toString('hex');
+  const attribution = `${code}${(code.length / 2).toString(16).padStart(2, '0')}00${'8021'.repeat(8)}`;
+  for (const tag of UNISWAP_API_TAGS_V1) {
+    assert.equal(readUniswapExecuteV1(`${clean}${tag}`, usdcToNvda).ok, true, tag);
+    assert.equal(readUniswapExecuteV1(`${clean}${tag}${attribution}`, usdcToNvda).ok, true, tag);
+  }
+  const notCanonical = (tail: string) => {
+    const reading = readUniswapExecuteV1(`${clean}${tail}`, usdcToNvda);
+    return reading.ok ? null : reading.code;
+  };
+  const tag = UNISWAP_API_TAGS_V1[0];
+  // Anything else behind the arguments is still refused: another word, a timestamp cut short, a tag grown past
+  // 24 bytes after its timestamp, bytes after the attribution, a suffix whose length does not match.
+  for (const tail of [`756e6979${tag.slice(8)}`, tag.slice(0, 20), `${tag}${'00'.repeat(15)}`, `${tag}${attribution}ab`, `${tag}${code}0900${'8021'.repeat(8)}`, `ab${tag}`]) {
+    assert.equal(notCanonical(tail), 'uniswap_router_call_not_canonical', tail);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The guard, end to end: the review's minimum and the quote's deadline.
 // ---------------------------------------------------------------------------
@@ -210,4 +240,17 @@ test('the guard holds the router call to the reviewed minimum and the quote’s 
   assert.deepEqual(past.success ? null : past.code, 'uniswap_deadline_invalid');
   const attacker = guard(encodeUniswapExecuteV1([v3({ recipient: ATTACKER })], deadline));
   assert.deepEqual(attacker.success ? null : attacker.code, 'uniswap_pays_another_address');
+});
+
+test('the guard passes the API’s real router call with its tag, at a fresh deadline', () => {
+  // Word 2 of the arguments is the deadline: the real bytes, tag and all, with only the deadline moved to now.
+  const fresh = BigInt(Math.floor(Date.parse(expiresAt) / 1000));
+  const data = `${REAL.data.slice(0, 10 + 128)}${fresh.toString(16).padStart(64, '0')}${REAL.data.slice(10 + 192)}`;
+  const context = { ...guardContext, amountDecimal: '0.1', outputAsset: { kind: 'erc20', address: REAL.output, decimals: 18 } as const, swapper: REAL.wallet, minimumOutputAtomic: REAL.minimumAtomic.toString() };
+  const result = validateUniswapSwap({ chain: 8453, context, calls: [
+    { to: USDC, value: '0', data: approveData(PERMIT2_ADDRESS, REAL.amountInAtomic) },
+    { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data },
+  ] });
+  assert.equal(result.success, true, result.success ? '' : result.code);
+  if (result.success) assert.deepEqual([result.semantics.guaranteedOutputRaw, result.semantics.recipients], [REAL.minimumAtomic.toString(), [REAL.wallet]]);
 });
