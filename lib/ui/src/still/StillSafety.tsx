@@ -162,6 +162,12 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           oracles, and Still cannot undo a fault in them. Prices on Base can differ from Wall Street’s.
         </p>
         <p className="still-note">
+          A stock’s issuer, and the issuers of cbBTC and PAXG, can pause their token’s transfers. During a pause a loan can still be repaid,
+          but its collateral cannot be taken back until transfers resume. On Aave a liquidation does not wait for that; on Morpho it waits
+          too, and can follow at once when transfers resume. A new loan against a paused collateral is refused, and its review shows
+          whether it is paused now. WETH cannot be paused.
+        </p>
+        <p className="still-note">
           Borrowing creates debt, and collateral can be liquidated. Still measures; it gives no advice. These are Still’s terms of {TERMS.version};
           they are versioned, and a review keeps the terms it was made under. Assistants read them with <span className="mono">get_still_terms</span>.
         </p>

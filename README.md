@@ -89,6 +89,7 @@ Someone at home in Aave or Morpho gains little from this. Still is for people wh
 - **Liquidation.** Still's limit keeps a new loan far from it, not out of reach. A fall in price, interest over time or more borrowing can bring a loan to liquidation; liquidators act through the protocol, and Still cannot stop them.
 - **The protocols.** A Still loan is an Aave V4 or Morpho Blue position. Their contracts, oracles and rates apply; a loan that SPCXc covers also pays Aave's risk premium, up to 10% of the rate.
 - **Prices that stand still.** Stock reference prices hold while Wall Street is closed, and PAXG is priced by Chainlink XAU/USD, which holds while the gold market is closed. The next open can gap.
+- **An issuer's pause.** A stock's issuer, and the issuers of cbBTC and PAXG, can pause their token's transfers onchain. During a pause a loan can still be repaid, but its collateral cannot be taken back until transfers resume. On Aave a liquidation does not wait for that; on Morpho it waits too, and can follow at once when transfers resume. A new loan against a paused collateral is refused, and the review shows whether it is paused now. WETH cannot be paused.
 - **Your own approval.** Still shows you what a transaction does. If you sign it, it happens.
 - **A compromised wallet or device.** Nothing here helps if someone else controls the signer.
 

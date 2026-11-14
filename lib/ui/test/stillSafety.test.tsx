@@ -56,6 +56,9 @@ describe('How Still keeps a loan safe', () => {
     assert.match(text, /The engine recalculates the position; a language model only explains the numbers it gives\./);
     assert.match(text, /A fall bigger than the margin can still liquidate a loan/);
     assert.match(text, /Still cannot stop a liquidation, and it never repays or sells for you\./);
+    // An issuer's pause, as the review says it per venue: Aave liquidates through it, Morpho waits (2026-11-13).
+    assert.match(text, /During a pause a loan can still be repaid, but its collateral cannot be taken back until transfers resume\. On Aave a liquidation does not wait for that; on Morpho it waits too/);
+    assert.match(text, /WETH cannot be paused\./);
     assert.match(text, /Borrowing creates debt, and collateral can be liquidated\. Still measures; it gives no advice\./);
     assert.doesNotMatch(text, /liquidation[^.]*(?:impossible|excluded|cannot happen|never happens)|no liquidation|risk-free|guaranteed|you should/i);
     assert.match(html, /href="\/assistants"[^>]*>Still’s MCP server</);
