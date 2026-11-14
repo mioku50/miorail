@@ -93,7 +93,7 @@ export async function readPublishedAtV1(entries: readonly string[], fetchImpl: t
   for (const [name, versions] of byName) {
     let time: Record<string, unknown> | null = null;
     try {
-      const response = await fetchImpl(`${registry}/${name.replace('/', '%2f')}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
+      const response = await fetchImpl(`${registry}/${name.replaceAll('/', '%2f')}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(60_000) });
       if (response.ok) {
         const document = await response.json() as { time?: unknown };
         if (document.time !== null && typeof document.time === 'object') time = document.time as Record<string, unknown>;
