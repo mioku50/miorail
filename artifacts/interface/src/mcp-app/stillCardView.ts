@@ -15,6 +15,9 @@ export interface StillCardPreparedV1 {
   expiresAt: string | null;
   title: string;
   detail: string;
+  /** A purchase whose invoice was opened with Still's affiliate code: the card says Bitrefill may pay Still a
+   * commission, in the review's own sentence, before the review is opened (2026-11-15). Absent otherwise. */
+  commission?: true;
 }
 
 export type StillCardPhaseV1 = 'waiting' | 'expired' | 'open' | 'wallet' | 'sent' | 'unknown' | 'confirmed' | 'failed';
@@ -53,8 +56,14 @@ function purchaseTitleV1(p: Record<string, unknown>): string {
   return `${String(p.productName)}${text(p.packageValue, 80) ? ` · ${p.packageValue}${face}` : ''}`;
 }
 
-/** The prepared review from a prepare tool's structured result; null for anything else. */
-export function stillCardPreparedV1(structured: unknown): StillCardPreparedV1 | null {
+/** The `_meta` key a purchase's result carries when its invoice was opened with Still's affiliate code: the
+ * server's STILL_COMMISSION_META_KEY_V1 (routes/mcpPrivate/stillLoanTool.ts). Outside the answer, which a client
+ * may check against a tool list it cached; only the server's own `true` says it. */
+export const STILL_CARD_COMMISSION_META_V1 = 'xyz.miorail/commission';
+const commissionV1 = (meta: unknown): { commission?: true } => (object(meta) && meta[STILL_CARD_COMMISSION_META_V1] === true ? { commission: true } : {});
+
+/** The prepared review from a prepare tool's structured result (and the result's `_meta`); null for anything else. */
+export function stillCardPreparedV1(structured: unknown, meta?: unknown): StillCardPreparedV1 | null {
   if (!object(structured) || !text(structured.reviewId, 36) || !UUID.test(structured.reviewId)) return null;
   const expiresAt = text(structured.expiresAt, 40) && Number.isFinite(Date.parse(structured.expiresAt)) ? structured.expiresAt : null;
   const priced = object(structured.purchase) && text(structured.purchase.productName, 120) && text(structured.purchase.priceUsdc, 24) ? structured.purchase : null;
@@ -62,7 +71,7 @@ export function stillCardPreparedV1(structured: unknown): StillCardPreparedV1 | 
   if (structured.paidFrom === 'wallet') {
     if (!priced || !text(structured.reviewUrl, 200) || !PAY_URL.test(structured.reviewUrl)) return null;
     return { kind: 'purchase', paidFrom: 'wallet', reviewId: structured.reviewId, reviewUrl: structured.reviewUrl, expiresAt, title: purchaseTitleV1(priced),
-      detail: `${String(priced.priceUsdc)} USDC from your wallet, paid to Bitrefill. No loan is taken.` };
+      detail: `${String(priced.priceUsdc)} USDC from your wallet, paid to Bitrefill. No loan is taken.`, ...commissionV1(meta) };
   }
   const reviewUrl = text(structured.reviewUrl, 6000) && REVIEW_URL.test(structured.reviewUrl) ? structured.reviewUrl : null;
   const collateral = text(structured.collateral, 12) ? structured.collateral : null;
@@ -70,7 +79,8 @@ export function stillCardPreparedV1(structured: unknown): StillCardPreparedV1 | 
   const base = { reviewId: structured.reviewId, reviewUrl, expiresAt };
   if (priced) {
     return { ...base, kind: 'purchase', title: purchaseTitleV1(priced),
-      detail: `${String(priced.priceUsdc)} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}${pledge(structured.addCollateral, collateral)}, and paid to Bitrefill in the same review.` };
+      detail: `${String(priced.priceUsdc)} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}${pledge(structured.addCollateral, collateral)}, and paid to Bitrefill in the same review.`,
+      ...commissionV1(meta) };
   }
   if (text(structured.borrowUsdc, 24)) {
     return { ...base, kind: 'loan', title: `Borrow ${structured.borrowUsdc} USDC against ${collateral}`,

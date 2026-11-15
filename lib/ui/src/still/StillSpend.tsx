@@ -440,7 +440,8 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
           ) : null}
           {paying.warnings.map((line) => <p key={line} className="still-note">{line}</p>)}
           {model.walletError ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
-          {model.lock ? <p className="still-note" role="status">{model.lock}</p> : null}
+          {/* Once Base shows the payment, the page says so itself: the lock's "check its activity" is no longer the next thing to do (2026-11-15). */}
+          {model.lock && paying.state !== 'confirmed' ? <p className="still-note" role="status">{model.lock}</p> : null}
           {paying.state === 'ready' && !paying.deliverTo ? <p className="still-warn" role="alert">{SPEND_DELIVERY_UNSHOWN_V1}</p> : null}
           {paying.state === 'ready' && paying.deliverTo ? (
             <div className="still-spend-checkout-actions">

@@ -12,7 +12,8 @@ import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { stillMineRuntimeV1 } from '../stillMine.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { STILL_LOAN_COLLATERAL_V1, STILL_TOKEN_COLLATERAL_V1, StillLoanRefusalV1, stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1, stillPrepareWalletPurchaseV1 } from './stillLoanTool.js';
+import { STILL_COMMISSION_META_KEY_V1, STILL_LOAN_COLLATERAL_V1, STILL_TOKEN_COLLATERAL_V1, StillLoanRefusalV1, StillPreparePurchaseOutputV1Schema, StillPrepareWalletPurchaseOutputV1Schema,
+  stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1, stillPrepareWalletPurchaseV1 } from './stillLoanTool.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const IDENTITY = { tenantId: `eip155:8453:${WALLET}` as const, walletAddress: WALLET };
@@ -99,7 +100,7 @@ const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM
 const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
   packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
 
-function spend(t: test.TestContext, input: { enabled?: boolean } = {}) {
+function spend(t: test.TestContext, input: { enabled?: boolean; affiliated?: boolean } = {}) {
   const original = { ...stillSpendRuntimeV1 };
   // The store's own clock, moved on by `later`: three fresh quotes a minute for one wallet (audit N13-6).
   let shift = 0;
@@ -109,6 +110,7 @@ function spend(t: test.TestContext, input: { enabled?: boolean } = {}) {
     orders, enabled: () => input.enabled ?? true, now: () => NOW,
     catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async (id: string) => ({ ok: true, value: id === TOP_UP.id ? TOP_UP : ESIM }) }),
     checkout: (): BitrefillGuestCheckoutV1 => ({
+      ...(input.affiliated ? { affiliated: true } : {}),
       async createInvoice(request) {
         opened.push(request);
         return { ok: true, value: { invoiceId: INVOICE, accessToken: 'access-token-0123456789', payTo: PAY_TO, amountAtomic: request.quotedAtomic,
@@ -273,6 +275,8 @@ test('a purchase from the wallet’s own USDC opens the same invoice and links S
   assert.deepEqual([prepared.reviewId, prepared.paidFrom, prepared.walletUsdc], [INVOICE, 'wallet', { usdc: '12.5', block: '53000123' }]);
   assert.deepEqual(prepared.purchase, { productId: ESIM.id, productName: ESIM.name, packageValue: '5GB, 30 Days', faceCurrency: 'USD',
     priceUsdc: '9.8', invoiceExpiresAt: '2026-11-02T15:15:00.000Z' });
+  assert.equal(prepared.commission, false);
+  assert.doesNotMatch(prepared.next, /commission/);
   // The page prepares a payment while Bitrefill holds the price three more minutes.
   assert.equal(prepared.expiresAt, '2026-11-02T15:12:00.000Z');
   assert.equal(orders.get(IDENTITY, INVOICE)?.priceAtomic, '9800000');
@@ -284,6 +288,62 @@ test('a purchase from the wallet’s own USDC opens the same invoice and links S
   assert.match(prepared.next, /^The page this link opens shows the user where Bitrefill will send the purchase: tell them to check there, before they sign, that the email \(and for a top-up the number\) is their own/);
   assert.match(prepared.next, /No loan is taken\./);
   assert.match(prepared.next, /Nothing has been paid\./);
+});
+
+// The first purchase with Still's code (2026-11-15): the card in the chat said nothing of a commission, because
+// only the sentence for the assistant carried it. Both answers carry it as a field too, which the card reads.
+test('an invoice opened with Still’s affiliate code says so in both purchase answers: a field for the card, a sentence for the assistant', async (t) => {
+  spend(t, { affiliated: true });
+  const loan = await stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW });
+  const wallet = await stillPrepareWalletPurchaseV1(IDENTITY, { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL }, { now: NOW, readUsdc: held('12500000') });
+  for (const prepared of [loan, wallet]) {
+    assert.equal(prepared.commission, true);
+    assert.match(prepared.next, /Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase, which does not change its price, and the review says so\. /);
+  }
+  // Beside the answer, not in it: the answer is exactly what the tools declared before, so a client that cached
+  // that declaration still takes it.
+  const { commission: _loanSaid, ...loanAnswer } = loan;
+  const { commission: _walletSaid, ...walletAnswer } = wallet;
+  void _loanSaid; void _walletSaid;
+  assert.equal(StillPreparePurchaseOutputV1Schema.safeParse(loanAnswer).success, true);
+  assert.equal(StillPrepareWalletPurchaseOutputV1Schema.safeParse(walletAnswer).success, true);
+  assert.equal(StillPrepareWalletPurchaseOutputV1Schema.safeParse(wallet).success, false, 'the flag is not a field of the declared answer');
+});
+
+test('through the connected server the flag reaches the card as the result’s _meta, and the answer is the declared one', async (t) => {
+  assert.equal(STILL_COMMISSION_META_KEY_V1, 'xyz.miorail/commission');
+  const results: Record<string, unknown> = {};
+  for (const affiliated of [true, false]) {
+    await t.test(affiliated ? 'opened with the code' : 'opened without it', async (st) => {
+      spend(st, { affiliated });
+      const original = { ...rwaLendingRuntimeV1 };
+      rwaLendingRuntimeV1.secret = () => SECRET;
+      rwaLendingRuntimeV1.now = () => NOW;
+      const usdc = stillMineRuntimeV1.readUsdc;
+      stillMineRuntimeV1.readUsdc = held('20000000');
+      st.after(() => { Object.assign(rwaLendingRuntimeV1, original); stillMineRuntimeV1.readUsdc = usdc; });
+      const client = new Client({ name: 'still-commission-test', version: '1' });
+      const server = createMiorailPrivateMcpServerV1({ ...IDENTITY, chainId: 8453, tokenId: 'test-grant', source: 'oauth' });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await Promise.all([client.connect(a), server.connect(b)]);
+      st.after(() => client.close());
+      // Listed first, so this client checks each answer against the declared schema, as a cached client would.
+      await client.listTools();
+      for (const [name, args] of [
+        ['miorail_prepare_still_wallet_purchase', { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL }],
+        ['miorail_prepare_still_purchase', { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'TSLAc', addCollateral: '0' }],
+      ] as const) {
+        const result = await client.callTool({ name, arguments: { ...args } }) as { isError?: boolean; structuredContent?: Record<string, unknown>; _meta?: Record<string, unknown> };
+        assert.equal(result.isError, undefined, `${name}: ${JSON.stringify(result).slice(0, 300)}`);
+        assert.equal('commission' in (result.structuredContent ?? {}), false, name);
+        assert.equal('commission' in ((result.structuredContent?.purchase ?? {}) as object), false, name);
+        assert.deepEqual(result._meta, affiliated ? { [STILL_COMMISSION_META_KEY_V1]: true } : undefined, name);
+        results[`${name}:${affiliated}`] = true;
+      }
+    });
+  }
+  assert.equal(Object.keys(results).length, 4);
 });
 
 test('a wallet that cannot pay the price, or whose USDC Base did not give, opens no invoice', async (t) => {

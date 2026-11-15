@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { stillCardFromStatusV1, stillCardPreparedV1, stillCardReviewHostV1, stillCardStatusV1 } from './stillCardView';
+import { STILL_CARD_COMMISSION_META_V1, stillCardFromStatusV1, stillCardPreparedV1, stillCardReviewHostV1, stillCardStatusV1 } from './stillCardView';
 
 // Every review, hash and link here is synthetic.
 const REVIEW_ID = '0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11';
@@ -100,4 +100,21 @@ test('the card names the host its review opens on, and shares a card link from e
   const share = 'https://miorail.xyz/spend/p/ss1.eyJ2IjoxfQ.c2lnbmF0dXJlLXNpZ25hdHVyZS1zaWduYXR1cmUtc2lnbmE';
   const status = stillCardStatusV1({ reviewId: REVIEW_ID, state: 'confirmed', purchase: { invoiceStatus: 'complete', invoiceStatusError: null, shareUrl: share } }, prepared, NOW);
   assert.equal(status?.shareUrl, share);
+});
+
+// The first purchase with Still's code (2026-11-15): the card said nothing of a commission before the review was opened.
+test('a purchase whose result says, in _meta, that Still’s affiliate code opened it says Bitrefill may pay Still a commission', () => {
+  assert.equal(STILL_CARD_COMMISSION_META_V1, 'xyz.miorail/commission');
+  const meta = (said: unknown) => ({ [STILL_CARD_COMMISSION_META_V1]: said });
+  assert.equal(stillCardPreparedV1(FROM_WALLET, meta(true))?.commission, true);
+  assert.equal(stillCardPreparedV1(PURCHASE, meta(true))?.commission, true);
+  for (const said of [false, 'true', 1, null, undefined]) {
+    assert.equal(stillCardPreparedV1(FROM_WALLET, meta(said))?.commission, undefined, JSON.stringify(said));
+    assert.equal(stillCardPreparedV1(PURCHASE, meta(said))?.commission, undefined, JSON.stringify(said));
+  }
+  // Only the result's _meta says it: a field inside the answer, or no _meta at all, does not.
+  assert.equal(stillCardPreparedV1({ ...FROM_WALLET, commission: true, purchase: { ...FROM_WALLET.purchase, commission: true } })?.commission, undefined);
+  assert.equal(stillCardPreparedV1(FROM_WALLET)?.commission, undefined);
+  // A loan or a repayment buys nothing, so it has no commission.
+  assert.equal(stillCardPreparedV1({ reviewUrl: URL, reviewId: REVIEW_ID, expiresAt: PURCHASE.expiresAt, venue: 'morpho', collateral: 'cbBTC', addCollateral: '0', borrowUsdc: '40' }, meta(true))?.commission, undefined);
 });

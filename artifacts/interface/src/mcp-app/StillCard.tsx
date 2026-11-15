@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { STILL_SPEND_COMMISSION_NOTE_V1 } from '@mioagent/ui/still';
 import { stillCardReviewHostV1, type StillCardPhaseV1 } from './stillCardView';
 import type { StillCardHostV1, StillCardStoreV1 } from './stillCardStore';
 import { StillCardSign } from './StillCardSign';
@@ -35,6 +36,7 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
           <>
             <h1 className="still-mcp-title">{prepared.title}</h1>
             <p className="still-sub">{prepared.detail}</p>
+            {prepared.commission ? <p className="still-note">{STILL_SPEND_COMMISSION_NOTE_V1}</p> : null}
             <ol className="still-mcp-steps" aria-label="Where it stands">
               {STEPS_V1.map((step) => (
                 <li key={step.label} data-done={step.phases.includes(phase) && !(phase === 'failed' && step.label === 'Confirmed onchain') ? 'yes' : 'no'}>{step.label}</li>

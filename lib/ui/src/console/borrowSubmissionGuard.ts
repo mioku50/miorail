@@ -39,10 +39,13 @@ export function borrowUserRejectedV1(error: unknown): boolean {
   return false;
 }
 
+/** Every surface that holds a press with this guard is Still's: the loan review, the mini app, the card in an
+ * assistant's chat and Spend's payment from the wallet. So the guard speaks as Still (2026-11-15: a Spend
+ * payment said "Miorail will not send it again"). */
 export function borrowSubmissionLockCopyV1(marker: BorrowSubmissionMarkerV1): string {
   return marker === 'submitted'
-    ? 'This review was already submitted from your wallet. Check its activity for the result. Miorail will not send it again.'
-    : 'A wallet submission was attempted for this review. Its outcome is not confirmed here. Check your wallet activity; Miorail will not send it again.';
+    ? 'This review was already submitted from your wallet. Check its activity for the result. Still will not send it again.'
+    : 'A wallet submission was attempted for this review. Its outcome is not confirmed here. Check your wallet activity; Still will not send it again.';
 }
 
 export class BorrowSubmissionLockedErrorV1 extends Error {
@@ -53,7 +56,7 @@ export class BorrowSubmissionLockedErrorV1 extends Error {
   }
 }
 export class BorrowSubmissionStorageErrorV1 extends Error {
-  constructor() { super('Miorail could not preserve this review’s submission state in this browser session. Your wallet was not asked. Restore browser storage before trying again.'); }
+  constructor() { super('Still could not preserve this review’s submission state in this browser session. Your wallet was not asked. Restore browser storage before trying again.'); }
 }
 
 /** The marker is acquired BEFORE entering the wallet boundary. No id, no

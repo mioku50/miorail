@@ -159,6 +159,21 @@ export const StillPreparePurchaseOutputV1Schema = z.object({
  * number, so the person checks them where the assistant cannot change them, on the review itself. The
  * answer never repeats either back. */
 const DELIVERY_NEXT_V1 = 'The page this link opens shows the user where Bitrefill will send the purchase: tell them to check there, before they sign, that the email (and for a top-up the number) is their own, because the invoice is already open with it and Still cannot change it. ';
+/** Whether the invoice was opened with Still's affiliate code at Bitrefill, beside a purchase's answer and not in it.
+ * The tool's handler takes it out and hands it to the card in the chat as the result's `_meta`
+ * (stillPurchaseReplyMetaV1), where hosts give it to the card and not to the model. Not a field of the answer:
+ * a client may check an answer against the tool list it cached, with every object closed to new keys, and
+ * ChatGPT kept one for weeks; a new field would refuse every purchase there (2026-11-15). */
+export interface StillPurchaseCommissionV1 { commission: boolean }
+
+/** The `_meta` key (reverse-DNS prefix, as MCP names custom keys); the card reads the same literal (stillCardView.ts). */
+export const STILL_COMMISSION_META_KEY_V1 = 'xyz.miorail/commission';
+
+/** A purchase's result for the card: `_meta` only when Bitrefill may pay Still a commission on it. */
+export function stillPurchaseReplyMetaV1(commission: boolean): { _meta?: Record<string, unknown> } {
+  return commission ? { _meta: { [STILL_COMMISSION_META_KEY_V1]: true } } : {};
+}
+
 /** Said when the invoice was opened with Still's affiliate code at Bitrefill, as its review says too. */
 const COMMISSION_NEXT_V1 = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase, which does not change its price, and the review says so. ';
 
@@ -195,7 +210,7 @@ export async function stillPreparePurchaseV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPreparePurchaseInputV1Schema>,
   deps: { secret: string; now: Date; origin?: string },
-): Promise<z.infer<typeof StillPreparePurchaseOutputV1Schema>> {
+): Promise<z.infer<typeof StillPreparePurchaseOutputV1Schema> & StillPurchaseCommissionV1> {
   // Everything that can be refused here is, before an invoice exists at Bitrefill.
   const { token, decimals, venue } = tokenOfV1(args.collateral);
   const supply = unitsV1(args.addCollateral, decimals);
@@ -233,6 +248,7 @@ export async function stillPreparePurchaseV1(
       productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
+    commission: order.commission === true,
     next: DELIVERY_NEXT_V1 + (order.commission ? COMMISSION_NEXT_V1 : '') + 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
   };
 }
@@ -266,7 +282,7 @@ export async function stillPrepareWalletPurchaseV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPrepareWalletPurchaseInputV1Schema>,
   deps: { now: Date; origin?: string; readUsdc: (wallet: string) => Promise<{ raw: string; decimals: number; block: string } | null> },
-): Promise<z.infer<typeof StillPrepareWalletPurchaseOutputV1Schema>> {
+): Promise<z.infer<typeof StillPrepareWalletPurchaseOutputV1Schema> & StillPurchaseCommissionV1> {
   if (!stillSpendRuntimeV1.enabled()) {
     throw new StillLoanRefusalV1('spend_pay_off', 'Still does not pay Bitrefill on this server right now. Nothing was opened.');
   }
@@ -303,6 +319,7 @@ export async function stillPrepareWalletPurchaseV1(
       productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
+    commission: order.commission === true,
     next: `${DELIVERY_NEXT_V1}${order.commission ? COMMISSION_NEXT_V1 : ''}Give the user this link. It opens Spend’s payment page for this wallet only, signed in with it: the page reads Bitrefill’s invoice and the wallet’s USDC again, simulates the one transfer of exactly ${price} USDC to the invoice address, and the user’s own wallet signs it. No loan is taken. The page can prepare the payment until expiresAt; Bitrefill holds the price until purchase.invoiceExpiresAt. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been paid. After the user pays, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.`,
   };
 }

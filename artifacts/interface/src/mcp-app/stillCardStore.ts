@@ -9,7 +9,7 @@ import { stillCardFromStatusV1, stillCardPreparedV1, stillCardStatusV1, type Sti
 
 /** The part of the MCP Apps `App` the card uses; a test supplies its own. */
 export interface StillCardHostV1 {
-  ontoolresult: ((params: { structuredContent?: unknown; isError?: boolean; content?: unknown }) => void) | undefined;
+  ontoolresult: ((params: { structuredContent?: unknown; isError?: boolean; content?: unknown; _meta?: unknown }) => void) | undefined;
   onhostcontextchanged: ((params: { theme?: string }) => void) | undefined;
   connect(): Promise<void>;
   getHostContext(): { theme?: string } | undefined;
@@ -132,7 +132,7 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
 
   host.ontoolresult = (params) => {
     if (params.isError) { set({ refusal: refusalOfV1(params.content) }); return; }
-    const prepared = stillCardPreparedV1(params.structuredContent);
+    const prepared = stillCardPreparedV1(params.structuredContent, params._meta);
     if (prepared) { set({ prepared, refusal: null }); void read(); return; }
     // A status read drawn as the card: a snapshot with no link. The card of the
     // prepared review is the one that follows; this one reads again when pressed.

@@ -518,6 +518,18 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ view: spendWalletViewV1({ ...ready, commission: false }) })} order={null} orderReading={false} />), /commission/);
   });
 
+  // 2026-11-15: after paying, the page said "Check its activity for the result" under "Paid: Base shows your transfer".
+  it('says the press is held while the result is to come, and not once Base shows the payment', () => {
+    const lock = 'This review was already submitted from your wallet. Check its activity for the result. Still will not send it again.';
+    const hash = `0x${'ab'.repeat(32)}`;
+    const at = (state: string) => renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
+      model={walletModel({ lock, view: spendWalletViewV1({ ...ready, state, calls: undefined, transactionHash: hash }) })} />);
+    for (const state of ['submitted', 'unknown', 'failed']) assert.match(at(state), /Still will not send it again\./, state);
+    const paid = at('confirmed');
+    assert.match(paid, /Paid: Base shows your transfer to Bitrefill’s invoice\./);
+    assert.doesNotMatch(paid, /will not send it again/);
+  });
+
   it('the payment page says a refusal in the server’s words, and how a sent payment stands', () => {
     const refused = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
       model={walletModel({ view: spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_wallet_usdc_short', detail: 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.' }) })} />);

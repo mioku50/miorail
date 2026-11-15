@@ -49,6 +49,7 @@ import {
   stillPreparePurchaseV1,
   stillPrepareRepayReviewV1,
   stillPrepareWalletPurchaseV1,
+  stillPurchaseReplyMetaV1,
   usdcTextV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
@@ -275,7 +276,9 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     ...card,
   }, async (args) => {
     try {
-      return reply(await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
+      // The answer as the tool declares it; whether Bitrefill may pay Still a commission goes to the card as _meta.
+      const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() });
+      return { ...reply(answer), ...stillPurchaseReplyMetaV1(commission) };
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
       return refuse(error);
@@ -291,7 +294,8 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     ...card,
   }, async (args) => {
     try {
-      return reply(await stillPrepareWalletPurchaseV1(identity, args, { now: stillSpendRuntimeV1.now(), readUsdc: stillMineRuntimeV1.readUsdc }));
+      const { commission, ...answer } = await stillPrepareWalletPurchaseV1(identity, args, { now: stillSpendRuntimeV1.now(), readUsdc: stillMineRuntimeV1.readUsdc });
+      return { ...reply(answer), ...stillPurchaseReplyMetaV1(commission) };
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
       return refuse(error);

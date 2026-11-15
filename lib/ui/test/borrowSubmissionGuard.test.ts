@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  BORROW_SUBMISSION_PREFIX_V1, borrowSubmissionKeyV1, borrowSubmissionMarkerV1,
+  BORROW_SUBMISSION_PREFIX_V1, borrowSubmissionKeyV1, borrowSubmissionLockCopyV1, borrowSubmissionMarkerV1,
   BorrowSubmissionLockedErrorV1, BorrowSubmissionStorageErrorV1, submitBorrowOnceV1,
   type BorrowSubmissionStorageV1,
 } from '../src/console/borrowSubmissionGuard.js';
@@ -132,5 +132,18 @@ describe('one borrow draft crosses the wallet boundary at most once', () => {
     const data = storage();
     data.setItem(BORROW_SUBMISSION_PREFIX_V1 + 'fixture', 'corrupted');
     assert.equal(borrowSubmissionMarkerV1(data, BORROW_SUBMISSION_PREFIX_V1 + 'fixture'), 'unknown');
+  });
+});
+
+// 2026-11-15: a Spend payment from the wallet said "Miorail will not send it again". Every surface that holds a press
+// with this guard is Still's (the loan review, the mini app, the card in a chat, Spend's payment page).
+describe('the guard speaks as Still', () => {
+  it('names Still in the lock and in the storage refusal, never Miorail', () => {
+    for (const marker of ['submitted', 'pending', 'unknown'] as const) {
+      assert.match(borrowSubmissionLockCopyV1(marker), /Still will not send it again\.$/);
+      assert.doesNotMatch(borrowSubmissionLockCopyV1(marker), /Miorail/);
+    }
+    assert.match(new BorrowSubmissionLockedErrorV1('submitted').message, /Still will not send it again\.$/);
+    assert.match(new BorrowSubmissionStorageErrorV1().message, /^Still could not preserve/);
   });
 });

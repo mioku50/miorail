@@ -91,3 +91,20 @@ test('a refused link is said, the tool’s own refusal is shown in its words, an
   await tick();
   assert.equal(store.get().statusUnread, true);
 });
+
+// 2026-11-15: a purchase's result says in _meta that Still's affiliate code opened its invoice; the card shows it.
+test('the card takes the commission from the result’s _meta, as the host hands it over', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { fake } = host(['not_opened', 'not_opened']);
+  const store = createStillCardStoreV1(fake, { now: () => new Date('2026-11-02T15:00:00.000Z') });
+  const invoice = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
+  const fromWallet = { reviewUrl: `https://miorail.xyz/spend/pay/${invoice}`, reviewId: invoice, expiresAt: '2026-11-02T15:12:00.000Z', paidFrom: 'wallet',
+    walletUsdc: { usdc: '12.5', block: '53000123' }, purchase: { productId: 'pubg-mobile', productName: 'PUBG Mobile', packageValue: '10 UC', faceCurrency: null,
+      priceUsdc: '0.18', invoiceExpiresAt: '2026-11-02T15:15:00.000Z' }, next: 'Give the user this link.' };
+  fake.ontoolresult!({ structuredContent: fromWallet, _meta: { 'xyz.miorail/commission': true } });
+  await tick();
+  assert.equal(store.get().prepared?.commission, true);
+  fake.ontoolresult!({ structuredContent: fromWallet });
+  await tick();
+  assert.equal(store.get().prepared?.commission, undefined);
+});
