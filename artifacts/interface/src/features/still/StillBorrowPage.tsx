@@ -26,7 +26,7 @@ export function StillBorrowPage() {
   // A loan or repayment of this wallet that has not settled holds its market: said here, with its review (audit UI-19).
   const held = useLendingHeldV1({ signedIn, walletIdentity: wallet ?? null });
   const walletNote = signedIn ? stillBorrowWalletNoteV1({ cannotBatch: batches.blocker !== null, walletName: batches.walletName, asset: entry.model.asset, paying: spend !== null }) : null;
-  return <StillFrame tab="assets" sky={sky}>
+  return <StillFrame tab="assets" sky={sky} entry>
     {booting ? <p className="still-section still-note" role="status">Checking your sign-in…</p> : <><LendingHeldNoticeV1 held={held} /><StillBorrow model={{ ...entry.model, walletNote }} /></>}
   </StillFrame>;
 }

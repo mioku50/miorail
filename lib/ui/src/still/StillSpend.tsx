@@ -4,6 +4,7 @@ import { formatCents } from '@mioagent/still-engine/format';
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
 import type { SkyStateV1 } from './skyState';
+import { StillEligibilityConfirmSlotV1 } from './StillEligibility';
 import { StillHeader, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import {
@@ -411,7 +412,11 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
       {model.error && !model.loading ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       {view?.state === 'refused' ? (
         <div className="still-section">
-          <p className="still-warn" role="alert">{view.detail} <StillLink href="/spend">Back to Spend</StillLink></p>
+          {view.refusal === 'eligibility_required'
+            // Asked here, and the payment is read again once it is given (2026-11-15).
+            ? <StillEligibilityConfirmSlotV1 onConfirmed={() => model.onRetry?.()}
+              fallback={<p className="still-warn" role="alert">{view.detail} <StillLink href="/spend">Back to Spend</StillLink></p>} />
+            : <p className="still-warn" role="alert">{view.detail} <StillLink href="/spend">Back to Spend</StillLink></p>}
           {model.walletError ? <p className="still-warn" role="status">{model.walletError}</p> : null}
           {model.onRetry ? <button type="button" className="still-btn sec" disabled={model.checking} onClick={() => model.onRetry?.()}>{model.checking ? 'Reading…' : 'Check again'}</button> : null}
         </div>

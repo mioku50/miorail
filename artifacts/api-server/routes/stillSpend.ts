@@ -191,7 +191,7 @@ stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
     return;
   }
   // Where the request comes from, before an invoice is opened; its payment's review asks the rest.
-  const region = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: false });
+  const region = await stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: false });
   if (!region.ok) {
     res.status(403).json({ error: region.refusal, detail: region.detail });
     return;
@@ -287,7 +287,7 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
   }
   const refuse = (refusal: string, detail: string) => { res.json({ orderId, state: 'refused', refusal, detail }); };
   // A payment already sent, or tried, is read above wherever the person is; a new one is asked here.
-  const gate = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
+  const gate = await stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
   if (!gate.ok) {
     refuse(gate.refusal, gate.detail);
     return;
@@ -341,7 +341,7 @@ stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Respon
     res.status(409).json({ error: 'spend_order_unread' });
     return;
   }
-  const gate = stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
+  const gate = await stillSpendRuntimeV1.entryGate(req, { kind: 'purchase', confirmation: true });
   if (!gate.ok) {
     res.status(403).json({ error: gate.refusal, detail: gate.detail });
     return;

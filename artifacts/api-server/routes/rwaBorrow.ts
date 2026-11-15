@@ -182,8 +182,8 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
 });
 
 /** The region check before a borrow (lib/stillRegion.ts): true when the request was answered with a refusal. */
-function refusedByRegionV1(req: Request, res: Response, confirmation: boolean): boolean {
-  const gate = rwaBorrowRuntimeV1.entryGate(req, { kind: 'loan', confirmation });
+async function refusedByRegionV1(req: Request, res: Response, confirmation: boolean): Promise<boolean> {
+  const gate = await rwaBorrowRuntimeV1.entryGate(req, { kind: 'loan', confirmation });
   if (gate.ok) return false;
   res.status(403).json({ error: gate.refusal, code: gate.refusal, detail: gate.detail });
   return true;
@@ -191,11 +191,11 @@ function refusedByRegionV1(req: Request, res: Response, confirmation: boolean): 
 
 /** A person selects the question, not calldata or a cached market answer.
  * This mints a wallet-bound link only. Opening it runs the existing fresh gate. */
-rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
+rwaBorrowRouter.post('/rwa/borrow/intent', async (req, res) => {
   const user = sessionUserV1(req);
   if (!user) return unauthenticated(res);
   // Only where the request comes from: the link hands out nothing, and the review it opens asks the rest.
-  if (refusedByRegionV1(req, res, false)) return;
+  if (await refusedByRegionV1(req, res, false)) return;
 
   const body: unknown = req.body;
   const chosenToken = objectV1(body) && typeof body.collateralTokenAddress === 'string' ? body.collateralTokenAddress.toLowerCase() : null;

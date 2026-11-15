@@ -9,15 +9,15 @@ import { stillEligibilityReadV1, stillEntryGateV1, stillRegionRuntimeV1 } from '
 // records that confirmation. See lib/stillRegion.ts.
 
 export const publicStillEligibilityRouter = Router();
-publicStillEligibilityRouter.get('/eligibility', (req: Request, res: Response) => {
+publicStillEligibilityRouter.get('/eligibility', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'private, no-store');
-  res.json(stillEligibilityReadV1(req));
+  res.json(await stillEligibilityReadV1(req));
 });
 
 const ConfirmV1Schema = z.object({ version: z.literal(STILL_ELIGIBILITY_VERSION_V1) }).strict();
 
 export const stillEligibilityRouter = Router();
-stillEligibilityRouter.post('/eligibility', (req: Request, res: Response) => {
+stillEligibilityRouter.post('/eligibility', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'private, no-store');
   const user = req.session?.user;
   if (!user || user.chainId !== 8453 || !/^0x[0-9a-f]{40}$/.test(user.address) || user.id !== `eip155:8453:${user.address}`) {
@@ -25,7 +25,7 @@ stillEligibilityRouter.post('/eligibility', (req: Request, res: Response) => {
   }
   if (!ConfirmV1Schema.safeParse(req.body).success) { res.status(400).json({ error: 'eligibility_request_invalid' }); return; }
   // From where Still is not offered, the sentence cannot be true; nothing is recorded.
-  const gate = stillEntryGateV1(req, { kind: 'loan', confirmation: false });
+  const gate = await stillEntryGateV1(req, { kind: 'loan', confirmation: false });
   if (!gate.ok && gate.refusal === 'region_restricted') { res.status(403).json({ error: gate.refusal, detail: gate.detail }); return; }
   const confirmedAt = new Date(stillRegionRuntimeV1.now()).toISOString();
   req.session.stillEligibility = { version: STILL_ELIGIBILITY_VERSION_V1, wallet: user.address.toLowerCase(), confirmedAt };

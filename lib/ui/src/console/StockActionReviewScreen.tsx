@@ -1,4 +1,5 @@
 import React, { type ReactNode } from 'react';
+import { StillEligibilityConfirmSlotV1 } from '../still/StillEligibility';
 
 void React;
 
@@ -82,6 +83,8 @@ export interface StockActionReviewModelV1 {
     pending: boolean;
     /** Why the confirmation failed, already in reader copy. */
     error: string | null;
+    /** The server asked for this sign-in's confirmation that the person is not a US person. */
+    eligibility?: boolean;
     clearance: string | null;
     expiresAt: string | null;
     tokenAmount?: string | null;
@@ -306,6 +309,7 @@ export function StockActionReviewScreen({
               {model.confirm.error ? (
                 <p className="cr-verdict bad">{model.confirm.error}</p>
               ) : null}
+              {model.confirm.eligibility ? <StillEligibilityConfirmSlotV1 /> : null}
               <p className="lnote">
                 Confirming records that a person, in their own session, agreed to terms this server
                 established just now. It signs nothing, submits nothing and opens no wallet.

@@ -168,7 +168,9 @@ export function useStillClientPaletteV1(sky: SkyStateV1): 'day' | 'night' {
   return hydrated && sky.phase === 'night' ? 'night' : 'day';
 }
 
-export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean }) {
+/** `entry`: this page starts a new loan or purchase (Get money, Spend), so it says, at the top, when Still is not
+ * offered from this connection. Other pages say nothing of it: a review that would hand out calls says it in place. */
+export function StillFrame({ tab, sky, children, wide, entry = false }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean; entry?: boolean }) {
   const walletControls = useContext(StillWalletControlsContext);
   const railDoors = useContext(StillRailDoorsContext);
   const eligibility = useContext(StillEligibilityContext);
@@ -212,7 +214,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
         </StillLink>
         {walletControls}
       </header>
-      <main className={`still-main${wide ? ' wide' : ''}`}>{eligibility}{children}</main>
+      <main className={`still-main${wide ? ' wide' : ''}`}>{entry ? eligibility : null}{children}</main>
     </div>
   );
 }

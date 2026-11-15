@@ -1,9 +1,11 @@
 [Unit]
 # DB-IP's free country database (IP to Country Lite, CC BY 4.0), as the table Still's API reads to refuse new loans, purchases and stock buys from the United States (artifacts/api-server/lib/stillRegion.ts).
+# Beside it, weekly, which registry holds each address block, from the five regional internet registries' delegated files (artifacts/api-server/lib/stillRegistryTable.ts).
 #
-# Oneshot, driven by miorail-region-table.timer. It writes one file under
+# Oneshot, driven by miorail-region-table.timer. It writes two files under
 # /var/lib/miorail-region and nothing else: no database, no key, no wallet. A
-# table already of the month is left as it is, without a download. A download
+# table already of the month (or, for the registries, of the week) is left as
+# it is, without a download. A download
 # it does not trust leaves the table in place and fails the unit, which the
 # ops alerts report like any other failed unit.
 Description=Miorail region table update

@@ -1,4 +1,5 @@
 import React from 'react';
+import { StillEligibilityConfirmSlotV1 } from '../still/StillEligibility';
 import {
   CONSOLE_COPY_V1,
   candidateSummaryV1,
@@ -706,7 +707,8 @@ export interface ReviewScreenModelV1 {
    * whose only explanation was about simulation. The server's reason belongs on
    * screen, where the user is looking.
    */
-  notice?: { title: string; detail: string; canCompareAgain?: boolean } | null;
+  /** `eligibility`: the server asked for this sign-in's confirmation, drawn in the notice (2026-11-15). */
+  notice?: { title: string; detail: string; canCompareAgain?: boolean; eligibility?: boolean } | null;
   /** Runs a NEW comparison. Offered only when the notice says one would help —
    * see `canCompareAgain` — because a Route Card expires with the shortest
    * quote it shows, and going "back" to an expired card only fails again. */
@@ -755,6 +757,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
         <div className="note warn" role="alert" style={{ marginBottom: 14 }}>
           <b>{model.notice.title}</b>
           <p style={{ margin: '6px 0 10px' }}>{model.notice.detail}</p>
+          {model.notice.eligibility ? <div style={{ margin: '0 0 12px' }}><StillEligibilityConfirmSlotV1 /></div> : null}
           <div className="ctarow">
             {model.notice.canCompareAgain && model.onCompareAgain && (
               <button

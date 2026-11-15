@@ -121,7 +121,7 @@ export function stockConfirmFailureCopyV1(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
   // A stock is not bought from the United States or by a US person: the server's own sentence (2026-11-10).
   const region = /^(?:region_restricted|region_unchecked|eligibility_required): (.+)$/s.exec(message);
-  if (region) return /^eligibility_required/.test(message) ? `${region[1]} Confirm at the top of this page, then confirm the buy again.` : region[1]!;
+  if (region) return /^eligibility_required/.test(message) ? `${region[1]} Confirm below, then confirm the buy again.` : region[1]!;
   if (message.includes('issuer_transfer_policy_denied')) {
     return 'The token’s own policy registry refuses this wallet for this action, so no clearance was issued. That is the issuer’s rule, read on chain — Miorail does not set it and cannot lift it.';
   }
@@ -452,6 +452,8 @@ export function useStockActionReviewConsoleV1(input: {
       confirm: {
         pending: confirm.isPending,
         error: confirm.error ? stockConfirmFailureCopyV1(confirm.error) : null,
+        // The server asked for this sign-in's confirmation: the review draws it under the refusal (2026-11-15).
+        eligibility: confirm.error instanceof Error && /^eligibility_required: /.test(confirm.error.message),
         clearance: confirmed?.clearance ?? null,
         expiresAt: confirmed?.expiresAt ?? null,
         tokenAmount: isSell && confirmed && confirm.variables?.tokenAmountAtomic && Number.isInteger(body?.holding?.decimals)

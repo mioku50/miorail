@@ -861,9 +861,12 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-eligibility strong { display: block; margin-bottom: 4px; font-size: 15px; }
 .still-eligibility p { margin: 0; }
 .still-eligibility p + p { margin-top: 6px; }
-.still-eligibility.is-restricted { border-color: var(--sm-alarm); }
-.still-eligibility.is-restricted strong { color: var(--sm-alarm); }
+/* Not offered from here is a fact about this connection, not an error: said calmly, in the page's own ink
+   (2026-11-15; it was red until the operator found it alarming). */
+.still-eligibility.is-restricted, .still-eligibility.is-unchecked { background: var(--sm-ground); box-shadow: none; }
 .still-eligibility.is-confirm { border-color: var(--sm-accent); background: var(--sm-accent-soft); }
+/* Inside the review that asks for it, not at the top of the page. */
+.still-eligibility.is-inline { margin: 12px 0 0; box-shadow: none; }
 .still-eligibility-check { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; font-weight: 600; cursor: pointer; }
 .still-eligibility-check input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--sm-accent); }
 .still-eligibility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }

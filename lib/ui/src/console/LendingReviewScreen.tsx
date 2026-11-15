@@ -5,6 +5,7 @@ import {
   lendingStressFigureLabelV1, lendingStressFigureV1, lendingStressGapTextV1, lendingStressPauseTextV1, lendingStressPriceTextV1,
   type LendingFactsWireV1, type LendingStressWireV1,
 } from './lendingReviewView';
+import { StillEligibilityConfirmSlotV1 } from '../still/StillEligibility';
 import { StillIconV1 } from '../still/icons';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
 import { SPEND_DELIVERY_UNSHOWN_V1, STILL_SPEND_COMMISSION_NOTE_V1, spendConfirmByNoteV1 } from '../still/spendView';
@@ -94,7 +95,13 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       <div className="still-eyebrow">{facts ? facts.venue === 'aave-v4' ? 'Aave V4 · Base' : 'Morpho · Base' : 'Base lending'}</div>
       <h1>{title}</h1>
       <p className="still-sub">Read the measured terms before anything is signed.</p>
-      {body.state === 'refused' ? <><p className="still-warn" role="alert">{body.detail}</p>{backLink}</> : null}
+      {body.state === 'refused' ? <>
+        {/* A review waiting for this sign-in's confirmation asks for it right here (2026-11-15). */}
+        {body.refusal === 'eligibility_required'
+          ? <StillEligibilityConfirmSlotV1 fallback={<p className="still-warn" role="alert">{body.detail}</p>} />
+          : <p className="still-warn" role="alert">{body.detail}</p>}
+        {backLink}
+      </> : null}
       {facts ? <>
         <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>{facts.marketId}</p>
         {facts.nativeFunding ? <div className="still-card">

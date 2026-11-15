@@ -325,6 +325,14 @@ if [ ! -s /var/lib/miorail-region/region-v1.bin ]; then
   systemctl start miorail-region-table.service \
     || { echo 'FAILED: the region table could not be built (journalctl -u miorail-region-table)'; exit 1; }
 fi
+# The registries' table (2026-11-15) only ever lets through an address DB-IP
+# places in the United States whose own registry records the network
+# elsewhere; without it the check refuses as before. Built here when missing,
+# and a failure is said but stops nothing.
+if [ ! -s /var/lib/miorail-region/registry-v1.bin ]; then
+  systemctl start miorail-region-table.service \
+    || echo 'WARNING: the registry table could not be built (journalctl -u miorail-region-table); the region check refuses as before'
+fi
 systemctl enable miorail-miniapp >/dev/null
 if [ "$B20_FEED_FROZEN" = true ]; then
   # Disabled as well as stopped: an enabled-but-stopped unit comes back on the
@@ -605,7 +613,7 @@ printf '  stocks         %-28s %s\n' "$oauth_origin$stock_path" 'public board + 
 region_read=$(curl -fsS --max-time 20 "$oauth_origin/api/public/still/eligibility" 2>/dev/null) || region_read=''
 [ "$(printf '%s' "$region_read" | jq -r '.gate + " " + (.table.loaded | tostring)' 2>/dev/null)" = 'on true' ] \
   || { echo 'FAILED: Still’s region check is not on with its table loaded (/api/public/still/eligibility)'; exit 1; }
-printf '  region check   %-28s %s\n' "$oauth_origin/api/public/still/eligibility" "on, table of $(printf '%s' "$region_read" | jq -r '.table.month')"
+printf '  region check   %-28s %s\n' "$oauth_origin/api/public/still/eligibility" "on, table of $(printf '%s' "$region_read" | jq -r '.table.month'), registries $(printf '%s' "$region_read" | jq -r 'if .registryTable.loaded then "of " + .registryTable.month else "not built" end')"
 
 # Gift pages (growth plan step 4) are headed by the API the same way, so a gift
 # shared on X or Farcaster previews as the gift. An id nobody was given must

@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBILITY_VERSION_V1 } from '@mioagent/still-engine/eligibility';
-import { StillEligibilityBarV1, StillEligibilityContext, StillFrame, skyStateV1, spendOrderErrorV1, stillEligibilityViewV1, stillRegionRefusalDetailV1 } from '../src/still';
+import { StillEligibilityBarV1, StillEligibilityConfirmContext, StillEligibilityContext, StillFrame, StillSpendWalletPay, skyStateV1, spendOrderErrorV1, stillEligibilityViewV1, stillRegionRefusalDetailV1 } from '../src/still';
+import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
+import { ReviewScreen, type ReviewScreenModelV1 } from '../src/console/ConsoleScreens';
 import { stillPlaceInSentenceV1 } from '../src/still/stillEligibility';
 import { swapPrepareNoticeV1 } from '../src/console/consoleFlow';
 import { stockConfirmFailureCopyV1 } from '../src/console/stockActionReviewConsole';
@@ -69,13 +71,19 @@ describe('where Still is offered, as a page says it', () => {
     assert.equal(renderToStaticMarkup(<StillEligibilityBarV1 view={null} onConfirm={() => {}} />), '');
   });
 
-  it('sits at the top of every Still page, before the page itself', () => {
-    const html = renderToStaticMarkup(
+  it('sits at the top of a page that starts a new loan or purchase, and of no other page (2026-11-15)', () => {
+    const frame = (entry: boolean) => renderToStaticMarkup(
       <StillEligibilityContext.Provider value={<p className="line">where</p>}>
-        <StillFrame tab="assets" sky={skyStateV1({ now: new Date('2026-11-10T12:00:00Z') })}><p className="page">page</p></StillFrame>
+        <StillFrame tab="assets" sky={skyStateV1({ now: new Date('2026-11-10T12:00:00Z') })} entry={entry}><p className="page">page</p></StillFrame>
       </StillEligibilityContext.Provider>,
     );
-    assert.match(html, /<main class="still-main"><p class="line">where<\/p><p class="page">page<\/p><\/main>/);
+    assert.match(frame(true), /<main class="still-main"><p class="line">where<\/p><p class="page">page<\/p><\/main>/);
+    assert.match(frame(false), /<main class="still-main"><p class="page">page<\/p><\/main>/);
+  });
+
+  it('draws the confirmation inside a review as its own box, apart from the line at the top', () => {
+    const inline = renderToStaticMarkup(<StillEligibilityBarV1 view={stillEligibilityViewV1(read())} inline onConfirm={() => {}} />);
+    assert.match(inline, /<section class="still-eligibility is-confirm is-inline" aria-label="Before a new loan, purchase or stock buy">/);
   });
 
   it('carries the server’s sentence into Swap AI, a stock buy, Spend and the confirmation itself', () => {
@@ -85,10 +93,45 @@ describe('where Still is offered, as a page says it', () => {
     assert.deepEqual(swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'region_restricted', detail } as never), { title: 'Still does not prepare a stock buy from here', detail });
     const confirmFirst = swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'eligibility_required', detail: 'Confirm first.' } as never);
     assert.equal(confirmFirst?.canCompareAgain, true);
-    assert.match(confirmFirst?.detail ?? '', /Confirm at the top of this page, then compare again\./);
+    assert.match(confirmFirst?.detail ?? '', /Confirm below, then compare again\./);
+    assert.equal(confirmFirst?.eligibility, true);
     assert.equal(stockConfirmFailureCopyV1(new Error(`region_restricted: ${detail}`)), detail);
-    assert.match(stockConfirmFailureCopyV1(new Error('eligibility_required: Confirm first.')), /then confirm the buy again/);
+    assert.match(stockConfirmFailureCopyV1(new Error('eligibility_required: Confirm first.')), /Confirm below, then confirm the buy again/);
     assert.equal(spendOrderErrorV1(`region_restricted: ${detail}`), detail);
     assert.match(spendOrderErrorV1('region_unchecked'), /Nothing was opened/);
+  });
+});
+
+// 2026-11-15: the confirmation moved from the top of every page into the reviews that ask for it.
+describe('a review that needs this sign-in’s confirmation asks for it in place', () => {
+  const Confirm = ({ onConfirmed, fallback }: { onConfirmed?: () => void; fallback?: React.ReactNode }) =>
+    <div className="confirm-here" data-reads-again={onConfirmed ? 'yes' : 'no'}>{fallback}</div>;
+  const withConfirm = (node: React.ReactNode) => renderToStaticMarkup(<StillEligibilityConfirmContext.Provider value={Confirm}>{node}</StillEligibilityConfirmContext.Provider>);
+
+  it('a loan’s review draws it where the refusal was, with the server’s sentence for when there is nothing to confirm', () => {
+    const model = { loading: false, error: null, back: null, body: { state: 'refused', refusal: 'eligibility_required', detail: 'Confirm first, please.', executionState: null } } as never;
+    const html = withConfirm(<LendingReviewScreen model={model} />);
+    assert.match(html, /<div class="confirm-here" data-reads-again="no"><p class="still-warn" role="alert">Confirm first, please\.<\/p><\/div>/);
+    // Any other refusal, or a host that provides no confirmation, says the server's sentence alone.
+    const other = withConfirm(<LendingReviewScreen model={{ loading: false, error: null, back: null, body: { state: 'refused', refusal: 'region_restricted', detail: 'Not from here.', executionState: null } } as never} />);
+    assert.doesNotMatch(other, /confirm-here/);
+    assert.match(renderToStaticMarkup(<LendingReviewScreen model={model} />), /<p class="still-warn" role="alert">Confirm first, please\.<\/p>/);
+  });
+
+  it('a Spend payment from the wallet draws it and reads the payment again once it is given', () => {
+    const model = { view: { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', state: 'refused', refusal: 'eligibility_required', detail: 'Confirm first, please.' },
+      loading: false, error: null, busy: false, checking: false, walletError: null, onRetry: () => {} } as never;
+    const html = withConfirm(<StillSpendWalletPay sky={skyStateV1({ now: new Date('2026-11-15T12:00:00Z') })} model={model} order={null} orderReading={false} />);
+    assert.match(html, /<div class="confirm-here" data-reads-again="yes"><p class="still-warn" role="alert">Confirm first, please\./);
+  });
+
+  it('Swap AI draws it in its notice, between the words and the buttons', () => {
+    const notice = swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'eligibility_required', detail: 'Confirm first.' } as never);
+    const base = { steps: [], calls: [], simulation: { available: false, passed: false, headline: '', detail: '', subLabel: '', canSign: false, disabledReason: null },
+      balanceChanges: [], balanceUnavailableReason: null, checks: [], limits: [], onLimitChange: () => {}, onApprove: () => {}, onBack: () => {}, approvePending: false };
+    const html = withConfirm(<ReviewScreen {...({ ...base, notice } as unknown as ReviewScreenModelV1)} />);
+    assert.match(html, /Confirm below, then compare again\.<\/p><div style="margin:0 0 12px"><div class="confirm-here" data-reads-again="no"><\/div><\/div><div class="ctarow">/);
+    const refusedHere = withConfirm(<ReviewScreen {...({ ...base, notice: swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'region_restricted', detail: 'Not from here.' } as never) } as unknown as ReviewScreenModelV1)} />);
+    assert.doesNotMatch(refusedHere, /confirm-here/);
   });
 });

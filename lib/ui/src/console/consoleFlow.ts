@@ -872,6 +872,8 @@ export interface ConsoleTerminalFailureV1 {
    * button that promises something it cannot do.
    */
   canCompareAgain?: boolean;
+  /** The server asked for this sign-in's confirmation that the person is not a US person: the review draws it (2026-11-15). */
+  eligibility?: boolean;
 }
 
 /** The swap prepare response as it crosses the wire, structurally. */
@@ -923,7 +925,7 @@ export function swapPrepareNoticeV1(
       return { title: 'Still does not prepare a stock buy from here', detail: data.detail };
     }
     if (data.reason === 'eligibility_required') {
-      return { title: 'Confirm you are not a US person first', detail: `${data.detail} Confirm at the top of this page, then compare again.`, canCompareAgain: true };
+      return { title: 'Confirm you are not a US person first', detail: `${data.detail} Confirm below, then compare again.`, canCompareAgain: true, eligibility: true };
     }
     // A refused gift is a refused GIFT: the route itself may be fine, and the
     // detail names the rule (range, recipient, daily limit) the person can act on.

@@ -48,7 +48,7 @@ export function LendingReviewPage() {
   const [sponsorDeclined, setSponsorDeclined] = useState(false);
   const [gasLimitsDeclined, setGasLimitsDeclined] = useState(false);
   // A new loan's review waits for this sign-in's confirmation that it is not a US person, given in the
-  // line at the top of the page; once it lands, the refused review is read again, once (2026-11-10).
+  // review itself (2026-11-15; at the top of the page before); once it lands, the refused review is read again, once.
   const eligibility = useStillEligibilityV1(session.signedIn ? session.wallet : null, { enabled: session.signedIn });
   const eligibilityClear = eligibility.data !== undefined && stillEligibilityViewV1(eligibility.data)?.kind === 'clear';
   const [reread, setReread] = useState(0);

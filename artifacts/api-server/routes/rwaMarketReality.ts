@@ -2270,7 +2270,7 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
   // Buying a tokenized stock is not offered in the United States or to US persons: Coinbase's stocks are
   // offered only outside it (lib/stillRegion.ts). Selling one is never gated, so a holder can always get out.
   if (claims.direction === 'buy') {
-    const gate = rwaMarketRealityRuntime.entryGate(req, { kind: 'stock_buy', confirmation: true });
+    const gate = await rwaMarketRealityRuntime.entryGate(req, { kind: 'stock_buy', confirmation: true });
     if (!gate.ok) {
       res.status(403).json({ error: gate.refusal, code: gate.refusal, detail: gate.detail, confirmed: false });
       return;

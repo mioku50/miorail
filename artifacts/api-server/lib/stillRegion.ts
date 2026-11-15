@@ -3,7 +3,9 @@ import type { Request } from 'express';
 import { logger } from '@mioagent/utils';
 import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBILITY_VERSION_V1, STILL_NOT_OFFERED_IN_V1, STILL_REGION_ATTRIBUTION_V1, STILL_REGION_OPEN_V1,
   STILL_SANCTIONED_COUNTRIES_V1 } from '@mioagent/still-engine/eligibility';
+import { stillRegistryNetworkCountryV1 } from './stillRegionRdap.js';
 import { parseStillRegionTableV1, stillRegionCountryV1, type StillRegionTableV1 } from './stillRegionTable.js';
+import { stillRegistryOfAddressV1 } from './stillRegistryTable.js';
 
 // ---------------------------------------------------------------------------
 // Still is offered only in eligible jurisdictions outside the United States,
@@ -19,6 +21,15 @@ import { parseStillRegionTableV1, stillRegionCountryV1, type StillRegionTableV1 
 //      refused too: an assistant's server, Still's own card in a chat, a
 //      private or reserved address, or no database at all. This is the one
 //      check here a person cannot answer for themselves, so it fails closed.
+//      One second opinion (2026-11-15): DB-IP placed the operator's VPN exit,
+//      a Frankfurt network the RIPE database records as in Germany, in the
+//      United States. When DB-IP says the United States or a territory and a
+//      registry other than ARIN holds the block, that registry's record of
+//      the network is asked (stillRegistryTable.ts, stillRegionRdap.ts); a
+//      network it records elsewhere is not refused here, and the person is
+//      asked to confirm, as from anywhere else. No table, no answer or an
+//      answer in a refused place refuses as before. A sanctioned country is
+//      never reopened this way.
 //      Crimea and the so-called Donetsk and Luhansk People's Republics are
 //      sanctioned regions of Ukraine that a table of countries cannot tell
 //      apart from the rest of it: the sentence in 2 names them, the table
@@ -41,6 +52,8 @@ declare module 'express-session' {
 }
 
 export const STILL_REGION_TABLE_PATH_DEFAULT_V1 = '/var/lib/miorail-region/region-v1.bin';
+/** Which registry holds each block (stillRegistryTable.ts), beside the DB-IP table. */
+export const STILL_REGISTRY_TABLE_PATH_DEFAULT_V1 = '/var/lib/miorail-region/registry-v1.bin';
 /** The United States and its territories: its inhabited ones, and the minor outlying islands. */
 const STILL_US_AND_TERRITORIES_V1 = ['US', 'PR', 'GU', 'VI', 'AS', 'MP', 'UM'] as const;
 /** Closed whatever STILL_RESTRICTED_COUNTRIES_V1 says: the United States, and the countries under comprehensive US sanctions. */
@@ -52,31 +65,34 @@ const MISSING_RETRY_MS_V1 = 60_000;
 const RECHECK_MS_V1 = 60 * 60 * 1000;
 
 export type StillRegionV1 =
-  | { state: 'allowed'; country: string }
+  /** `placedBy: 'registry'`: DB-IP said `geolocated`, and the network's own registry record says `country`. */
+  | { state: 'allowed'; country: string; placedBy?: 'registry'; geolocated?: string }
   | { state: 'restricted'; country: string }
   | { state: 'unchecked'; reason: 'no_table' | 'no_address' | 'unknown_address' };
 
-interface LoadedTableV1 { table: StillRegionTableV1 | null; path: string | null; mtimeMs: number | null; checkedAt: number; failed: boolean }
-let loadedV1: LoadedTableV1 = { table: null, path: null, mtimeMs: null, checkedAt: 0, failed: false };
+interface LoadedTableV1 { table: StillRegionTableV1 | null; mtimeMs: number | null; checkedAt: number; failed: boolean }
+/** One slot per file: the DB-IP table and the registry table load side by side. */
+const loadedV1 = new Map<string, LoadedTableV1>();
 
 /** The table at `path`, read again when the file changes (checked once an hour) and, while it is
  * missing or unreadable, asked for again once a minute. A table that loaded stays in use until a
  * newer one loads: a broken update never takes the check away. */
 export function loadStillRegionTableV1(path: string, now = Date.now()): StillRegionTableV1 | null {
-  if (loadedV1.path !== path) loadedV1 = { table: null, path, mtimeMs: null, checkedAt: 0, failed: false };
-  if (now - loadedV1.checkedAt < (loadedV1.table ? RECHECK_MS_V1 : MISSING_RETRY_MS_V1)) return loadedV1.table;
-  loadedV1.checkedAt = now;
+  const loaded = loadedV1.get(path) ?? { table: null, mtimeMs: null, checkedAt: 0, failed: false };
+  loadedV1.set(path, loaded);
+  if (now - loaded.checkedAt < (loaded.table ? RECHECK_MS_V1 : MISSING_RETRY_MS_V1)) return loaded.table;
+  loaded.checkedAt = now;
   try {
     const mtimeMs = statSync(path).mtimeMs;
-    if (loadedV1.table && mtimeMs === loadedV1.mtimeMs) return loadedV1.table;
+    if (loaded.table && mtimeMs === loaded.mtimeMs) return loaded.table;
     const table = parseStillRegionTableV1(readFileSync(path));
-    loadedV1 = { table, path, mtimeMs, checkedAt: now, failed: false };
-    logger.info('Still region table loaded', { month: table.month, ipv4Ranges: table.starts4.length, ipv6Ranges: table.starts6High.length });
+    Object.assign(loaded, { table, mtimeMs, failed: false });
+    logger.info('Still region table loaded', { path, month: table.month, ipv4Ranges: table.starts4.length, ipv6Ranges: table.starts6High.length });
   } catch (cause) {
-    if (!loadedV1.failed) logger.warn('Still region table unreadable', { errorName: cause instanceof Error ? cause.name : typeof cause, kept: loadedV1.table !== null });
-    loadedV1.failed = true;
+    if (!loaded.failed) logger.warn('Still region table unreadable', { path, errorName: cause instanceof Error ? cause.name : typeof cause, kept: loaded.table !== null });
+    loaded.failed = true;
   }
-  return loadedV1.table;
+  return loaded.table;
 }
 
 export const stillRegionRuntimeV1 = {
@@ -91,18 +107,38 @@ export const stillRegionRuntimeV1 = {
     return new Set([...(listed.length ? listed : STILL_RESTRICTED_COUNTRIES_DEFAULT_V1), ...STILL_ALWAYS_RESTRICTED_COUNTRIES_V1]);
   },
   table: (): StillRegionTableV1 | null => loadStillRegionTableV1(process.env.STILL_REGION_TABLE_PATH_V1?.trim() || STILL_REGION_TABLE_PATH_DEFAULT_V1),
+  registryTable: (): StillRegionTableV1 | null => loadStillRegionTableV1(process.env.STILL_REGISTRY_TABLE_PATH_V1?.trim() || STILL_REGISTRY_TABLE_PATH_DEFAULT_V1),
+  /** The country the holding registry records for the address's network; null when it says none or cannot be asked. */
+  networkCountry: stillRegistryNetworkCountryV1,
   now: (): number => Date.now(),
 };
 
 /** Where a request comes from: the address Express read through the one proxy it trusts (nginx). */
-export function stillRegionOfRequestV1(req: Pick<Request, 'ip'>): StillRegionV1 {
+export async function stillRegionOfRequestV1(req: Pick<Request, 'ip'>): Promise<StillRegionV1> {
   const address = typeof req.ip === 'string' ? req.ip.trim() : '';
   if (!address) return { state: 'unchecked', reason: 'no_address' };
   const table = stillRegionRuntimeV1.table();
   if (!table) return { state: 'unchecked', reason: 'no_table' };
   const country = stillRegionCountryV1(table, address);
   if (!country) return { state: 'unchecked', reason: 'unknown_address' };
-  return stillRegionRuntimeV1.restricted().has(country) ? { state: 'restricted', country } : { state: 'allowed', country };
+  const restricted = stillRegionRuntimeV1.restricted();
+  if (!restricted.has(country)) return { state: 'allowed', country };
+  // Only the United States and its territories get a second opinion: a sanctioned country never does.
+  if ((STILL_US_AND_TERRITORIES_V1 as readonly string[]).includes(country)) {
+    const registered = await stillRegisteredElsewhereV1(address, restricted);
+    if (registered) return { state: 'allowed', country: registered, placedBy: 'registry', geolocated: country };
+  }
+  return { state: 'restricted', country };
+}
+
+/** The country the holding registry records for the address's network, when that is not a refused place
+ * and the registry is not ARIN; null otherwise, and whenever the table or the registry cannot say. */
+async function stillRegisteredElsewhereV1(address: string, restricted: ReadonlySet<string>): Promise<string | null> {
+  const table = stillRegionRuntimeV1.registryTable();
+  const registry = table ? stillRegistryOfAddressV1(table, address) : null;
+  if (!registry || registry === 'arin') return null;
+  const country = await stillRegionRuntimeV1.networkCountry(registry, address).catch(() => null);
+  return country && !restricted.has(country) ? country : null;
 }
 
 type SessionRequestV1 = Pick<Request, 'ip'> & { session?: { user?: { address?: string }; stillEligibility?: { version: string; wallet: string; confirmedAt: string } } };
@@ -138,14 +174,20 @@ const CONFIRM_DETAIL_V1 = 'Before Still prepares a new loan, purchase or stock b
 
 /** Whether this request may be handed the calls of a new position. `confirmation: false` asks only
  * where it comes from: for a step that hands out nothing yet, where the review it leads to asks the rest. */
-export function stillEntryGateV1(req: SessionRequestV1, input: { kind: StillEntryKindV1; confirmation: boolean }): StillEntryGateResultV1 {
+export async function stillEntryGateV1(req: SessionRequestV1, input: { kind: StillEntryKindV1; confirmation: boolean }): Promise<StillEntryGateResultV1> {
   if (!stillRegionRuntimeV1.enabled()) return { ok: true };
-  const region = stillRegionOfRequestV1(req);
+  const region = await stillRegionOfRequestV1(req);
   let refused: { refusal: StillEntryRefusalV1; detail: string } | null = null;
   if (region.state === 'restricted') refused = { refusal: 'region_restricted', detail: restrictedDetailV1(region.country) };
   else if (region.state === 'unchecked') refused = { refusal: 'region_unchecked', detail: region.reason === 'no_address' ? NO_ADDRESS_DETAIL_V1 : UNCHECKED_DETAIL_V1 };
   else if (input.confirmation && !stillEligibilityConfirmedV1(req)) refused = { refusal: 'eligibility_required', detail: CONFIRM_DETAIL_V1 };
-  if (!refused) return { ok: true };
+  if (!refused) {
+    // How often the second opinion opens an entry, in countries only.
+    if (region.state === 'allowed' && region.placedBy === 'registry') {
+      logger.info('Still entry placed by the address registry', { kind: input.kind, geolocated: region.geolocated ?? null, registered: region.country });
+    }
+    return { ok: true };
+  }
   // The country and the kind only: never the address, never the wallet.
   if (refused.refusal !== 'eligibility_required') {
     logger.info('Still entry refused by region', { kind: input.kind, refusal: refused.refusal,
@@ -155,14 +197,17 @@ export function stillEntryGateV1(req: SessionRequestV1, input: { kind: StillEntr
 }
 
 /** What a page reads before it offers a new position: the region the server sees, and this sign-in's confirmation. */
-export function stillEligibilityReadV1(req: SessionRequestV1) {
-  const enabled = stillRegionRuntimeV1.enabled(), region = stillRegionOfRequestV1(req), table = stillRegionRuntimeV1.table();
+export async function stillEligibilityReadV1(req: SessionRequestV1) {
+  const enabled = stillRegionRuntimeV1.enabled(), region = await stillRegionOfRequestV1(req), table = stillRegionRuntimeV1.table();
+  const registry = stillRegionRuntimeV1.registryTable();
   const confirmed = stillEligibilityConfirmedV1(req);
   return {
     schemaVersion: 'still-eligibility/v1' as const,
     gate: enabled ? 'on' as const : 'off' as const,
-    region: region.state === 'unchecked' ? { state: 'unchecked' as const, country: null, reason: region.reason } : { state: region.state, country: region.country, reason: null },
+    region: region.state === 'unchecked' ? { state: 'unchecked' as const, country: null, reason: region.reason }
+      : { state: region.state, country: region.country, reason: null, ...(region.state === 'allowed' && region.placedBy ? { placedBy: region.placedBy } : {}) },
     table: { loaded: table !== null, month: table?.month ?? null },
+    registryTable: { loaded: registry !== null, month: registry?.month ?? null },
     signedIn: Boolean(req.session?.user?.address),
     confirmed: confirmed !== null, confirmedAt: confirmed?.confirmedAt ?? null,
     statement: STILL_ELIGIBILITY_STATEMENT_V1, version: STILL_ELIGIBILITY_VERSION_V1,

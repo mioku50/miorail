@@ -1,13 +1,27 @@
-import React, { createContext, useState, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, type ComponentType, type ReactNode } from 'react';
 import { STILL_REGION_ATTRIBUTION_V1, STILL_US_PERSON_DEFINITION_V1 } from '@mioagent/still-engine/eligibility';
 
 import { stillPlaceInSentenceV1, type StillEligibilityViewV1 } from './stillEligibility';
 
 void React;
 
-/** The app's line about where Still is offered, shown at the top of every Still page (StillFrame).
+/** The app's line about where Still is offered: only where Still is not offered or could not tell, and only
+ * at the top of a page that starts a new loan or purchase (StillFrame `entry`). It was at the top of every page
+ * until 2026-11-15, red, with the confirmation in it; the operator found it alarming on pages that start nothing.
  * It needs the app's session and API, so it is provided, not built here. */
 export const StillEligibilityContext = createContext<ReactNode>(null);
+
+/** The one sentence a signed-in person confirms, drawn by the review that asks for it (a loan's, a Spend
+ * payment's, a stock buy's, Swap AI's), not at the top of a page. `onConfirmed` reads the review again;
+ * `fallback` is said when there is nothing to confirm here (the server's own sentence). Provided by the app. */
+export const StillEligibilityConfirmContext = createContext<ComponentType<{ onConfirmed?: () => void; fallback?: ReactNode }> | null>(null);
+
+/** Where a review asks for the confirmation: the app's, or `fallback` in a host that provides none. A
+ * component of its own, so a screen drawn as a plain function (as tests draw them) holds no hook. */
+export function StillEligibilityConfirmSlotV1({ onConfirmed, fallback = null }: { onConfirmed?: () => void; fallback?: ReactNode }) {
+  const Confirm = useContext(StillEligibilityConfirmContext);
+  return Confirm ? <Confirm onConfirmed={onConfirmed} fallback={fallback} /> : <>{fallback}</>;
+}
 
 const Attribution = () => (
   <a href={STILL_REGION_ATTRIBUTION_V1.url} target="_blank" rel="noopener noreferrer">{STILL_REGION_ATTRIBUTION_V1.text}</a>
@@ -16,10 +30,12 @@ const Attribution = () => (
 /** Where Still is offered, as the server sees this connection: a refusal from the United States, a
  * check that could not be made, or the one sentence a signed-in person confirms before a new loan,
  * purchase or stock buy. Nothing here opens anything: the server asks the same questions again. */
-export function StillEligibilityBarV1({ view, busy = false, error = null, onConfirm }: {
+export function StillEligibilityBarV1({ view, busy = false, error = null, inline = false, onConfirm }: {
   view: StillEligibilityViewV1 | null;
   busy?: boolean;
   error?: string | null;
+  /** Inside a review rather than at the top of a page. */
+  inline?: boolean;
   onConfirm: () => void;
 }) {
   const [checked, setChecked] = useState(false);
@@ -46,7 +62,7 @@ export function StillEligibilityBarV1({ view, busy = false, error = null, onConf
     );
   }
   return (
-    <section className="still-eligibility is-confirm" aria-label="Before a new loan, purchase or stock buy">
+    <section className={`still-eligibility is-confirm${inline ? ' is-inline' : ''}`} aria-label="Before a new loan, purchase or stock buy">
       <p>Still is offered only in eligible jurisdictions, and never to U.S. persons. Before it prepares a new loan, purchase or stock buy, confirm once for this sign-in:</p>
       <label className="still-eligibility-check">
         <input type="checkbox" checked={checked} disabled={busy} onChange={(event) => setChecked(event.target.checked)} />

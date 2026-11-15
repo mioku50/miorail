@@ -165,7 +165,7 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   // confirmed it is not a US person (lib/stillRegion.ts). An attempt already made is read above, and a
   // repayment, with or without taking the collateral back, is never gated.
   if (q.operation === 'borrow') {
-    const gate = rwaLendingRuntimeV1.entryGate(req, { kind: q.payment ? 'purchase' : 'loan', confirmation: true });
+    const gate = await rwaLendingRuntimeV1.entryGate(req, { kind: q.payment ? 'purchase' : 'loan', confirmation: true });
     if (!gate.ok) { res.json({ state: 'refused', refusal: gate.refusal, detail: gate.detail }); return; }
   }
   // Still Spend: before any loan is measured, the invoice must still be this
@@ -287,7 +287,7 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const execution = await store.get({ owner, executionId }), paying = execution?.run.facts.payment;
   // The same question as the review's, asked again where the wallet is about to be asked.
   if (execution?.run.facts.operation === 'borrow') {
-    const gate = rwaLendingRuntimeV1.entryGate(req, { kind: paying ? 'purchase' : 'loan', confirmation: true });
+    const gate = await rwaLendingRuntimeV1.entryGate(req, { kind: paying ? 'purchase' : 'loan', confirmation: true });
     if (!gate.ok) { res.status(403).json({ error: gate.refusal, detail: gate.detail }); return; }
   }
   const arm = async () => {

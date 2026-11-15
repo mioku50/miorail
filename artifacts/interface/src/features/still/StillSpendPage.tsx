@@ -66,7 +66,7 @@ export function StillSpendPage() {
   };
 
   return (
-    <StillFrame tab="more" sky={sky}>
+    <StillFrame tab="more" sky={sky} entry>
       <StillSpend model={{
         sky, signedIn: session.signedIn, signInHref: `/signin?next=${encodeURIComponent(location)}`,
         type, onType: (next) => { setType(next); setSelected(null); pick(null); },
