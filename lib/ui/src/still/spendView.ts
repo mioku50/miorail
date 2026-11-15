@@ -446,6 +446,9 @@ export interface SpendWalletViewV1 {
   ready: null | { calls: Array<{ to: string; value: string; data: string }>; callsHash: string; signingTermsHash: string };
   /** Where Bitrefill sends what is bought, as the open invoice holds it; null once Still no longer holds the order. */
   deliverTo: SpendDeliveryWireV1 | null;
+  /** The server opened the invoice with Still's affiliate code: the review says so before the Pay button
+   * (STILL_SPEND_COMMISSION_NOTE_V1), not only once the order is read after paying (2026-11-15). */
+  commission: boolean;
 }
 
 const STATES_V1: readonly SpendWalletStateV1[] = ['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed', 'refused'];
@@ -459,7 +462,7 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
     return { orderId: payload.orderId, state, refusal: typeof payload.refusal === 'string' ? payload.refusal : null,
       detail: text(payload.detail, 400) ? payload.detail : 'Still could not prepare this payment. Nothing was sent.',
       price: null, productName: null, packageLabel: null, payTo: null, before: null, after: null, block: null, warnings: [], expiresAt: null, transactionHash: null,
-      attemptId: null, batchId: null, errorCode: null, ready: null, deliverTo: null };
+      attemptId: null, batchId: null, errorCode: null, ready: null, deliverTo: null, commission: false };
   }
   const facts = object(payload.facts) ? payload.facts : null, payment = facts && object(facts.payment) ? facts.payment : null;
   if (!facts || !payment || payment.orderId !== payload.orderId || typeof payment.payTo !== 'string' || !/^0x[0-9a-f]{40}$/.test(payment.payTo) ||
@@ -487,5 +490,6 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
     errorCode: typeof payload.errorCode === 'string' && /^[a-z0-9_]{1,80}$/.test(payload.errorCode) ? payload.errorCode : null,
     ready,
     deliverTo: spendDeliveryWireV1(payload.deliverTo),
+    commission: payload.commission === true,
   };
 }

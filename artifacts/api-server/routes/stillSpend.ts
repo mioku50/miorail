@@ -278,11 +278,13 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
   const store = await stillSpendRuntimeV1.walletPayments();
   // Sent, or tried: from then on a payment is read, never prepared again.
   const prior = await store.get({ owner, orderId });
-  // Where the purchase goes, shown beside the payment while the order is held (audit MCP-3).
+  // Where the purchase goes, shown beside the payment while the order is held (audit MCP-3), and whether
+  // Bitrefill may pay Still a commission on it: said here, before the person pays, not only once the
+  // order is read after the payment (the first purchase with Still's code, 2026-11-15).
   const held = stillSpendRuntimeV1.orders.get(owner, orderId);
-  const deliverTo = held ? { deliverTo: spendDeliveryV1(held) } : {};
+  const shown = held ? { deliverTo: spendDeliveryV1(held), commission: held.commission === true } : {};
   if (prior && prior.state !== 'ready') {
-    res.json({ ...spendWalletWireV1(prior), ...deliverTo });
+    res.json({ ...spendWalletWireV1(prior), ...shown });
     return;
   }
   const refuse = (refusal: string, detail: string) => { res.json({ orderId, state: 'refused', refusal, detail }); };
@@ -321,7 +323,7 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
     res.json({ orderId, ...run });
     return;
   }
-  res.json({ ...spendWalletWireV1(await store.putReady({ owner, run, now: stillSpendRuntimeV1.now() })), ...deliverTo });
+  res.json({ ...spendWalletWireV1(await store.putReady({ owner, run, now: stillSpendRuntimeV1.now() })), ...shown });
 });
 
 stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Response) => {

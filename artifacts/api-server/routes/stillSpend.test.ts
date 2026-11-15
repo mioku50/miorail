@@ -741,6 +741,13 @@ describe('a commission from Bitrefill, said where it is true', () => {
     assert.deepEqual([review.body.state, review.body.commission], ['ready', true]);
     // Not a fact the review is bound by: the hashed calls and terms are what they are without it.
     assert.equal('commission' in review.body.facts, false);
+    // Paid from the wallet, the payment itself says so, before anything is paid: the page reads the order
+    // only once Base shows the payment, so on the first purchase with the code the line came after (2026-11-15).
+    const paying = await request(app()).post(`/api/still/spend/orders/${INVOICE}/wallet`);
+    assert.deepEqual([paying.body.state, paying.body.commission], ['ready', true]);
+    assert.equal('commission' in paying.body.facts, false);
+    // Another wallet is told nothing of this invoice.
+    assert.equal((await request(app(OTHER)).post(`/api/still/spend/orders/${INVOICE}/wallet`)).body.commission, undefined);
   });
 
   it('one opened without a code, and a loan with no purchase, say nothing of a commission', async () => {
@@ -750,6 +757,8 @@ describe('a commission from Bitrefill, said where it is true', () => {
       .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '13250000', collateralSupplyAtomic: '0', spendOrderId: INVOICE });
     const review = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(intent.body.reviewUrl).slice('/lending/'.length)}`);
     assert.deepEqual([review.body.state, review.body.commission], ['ready', undefined]);
+    const paying = await request(app()).post(`/api/still/spend/orders/${INVOICE}/wallet`);
+    assert.deepEqual([paying.body.state, paying.body.commission], ['ready', false]);
     const plain = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '1000000', collateralSupplyAtomic: '0' });
     const loan = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(plain.body.reviewUrl).slice('/lending/'.length)}`);
     assert.deepEqual([loan.body.state, loan.body.commission], ['ready', undefined]);

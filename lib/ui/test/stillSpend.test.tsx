@@ -507,6 +507,17 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
     assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={wire(false)} orderReading={false} />), /commission/);
   });
 
+  // The first purchase with Still's code (2026-11-15): the page reads the order only once Base shows the
+  // payment, so a line drawn from the order came after the Pay button was pressed. The payment's own answer carries it.
+  it('says it before the Pay button from the payment’s own answer, with no order read yet', () => {
+    assert.equal(spendWalletViewV1({ ...ready, commission: true })!.commission, true);
+    for (const said of [undefined, false, 'true', 1]) assert.equal(spendWalletViewV1({ ...ready, commission: said })!.commission, false, JSON.stringify(said));
+    const html = renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ view: spendWalletViewV1({ ...ready, commission: true }) })} order={null} orderReading={false} />);
+    assert.match(html, /<p class="still-note">Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase\. It does not change your price\.<\/p>/);
+    assert.ok(html.indexOf('Bitrefill affiliate') < html.indexOf('>Pay 2.00 USDC<'));
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ view: spendWalletViewV1({ ...ready, commission: false }) })} order={null} orderReading={false} />), /commission/);
+  });
+
   it('the payment page says a refusal in the server’s words, and how a sent payment stands', () => {
     const refused = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
       model={walletModel({ view: spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_wallet_usdc_short', detail: 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.' }) })} />);
