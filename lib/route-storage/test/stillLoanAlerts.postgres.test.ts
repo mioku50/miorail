@@ -6,6 +6,8 @@ import postgres from 'postgres';
 
 import type { SqlTemplateExecutor } from '../src/types.js';
 
+import assert from 'node:assert/strict';
+
 import { createDatabaseStillLoanAlertRepositoryV1 } from '../src/stillLoanAlerts.js';
 import { stillLoanAlertsContractV1 } from './stillLoanAlerts.contract.js';
 
@@ -32,9 +34,15 @@ function drizzleDir(): string {
 before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
-  await sql.unsafe('DROP TABLE IF EXISTS still_loan_alerts CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0093_still_loan_alerts.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  await sql.unsafe('DROP TABLE IF EXISTS still_loan_alerts, still_loan_notices, lending_executions CASCADE');
+  // The alerts table as 0093 made it, then 0099 on top, twice: it must re-run.
+  for (const file of ['0093_still_loan_alerts.sql', '0099_still_loan_notices.sql', '0099_still_loan_notices.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
+  // The borrows a loan opened is told from: 0091 needs only the users it points at.
+  await sql.unsafe('CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY)');
+  await sql.unsafe((await readFile(resolve(drizzleDir(), '0091_lending_executions.sql'), 'utf8')).replaceAll('--> statement-breakpoint', ''));
 });
 
 after(async () => {
@@ -47,12 +55,49 @@ if (!throwaway) {
   });
 } else {
   stillLoanAlertsContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE still_loan_alerts');
+    await sql!.unsafe('TRUNCATE still_loan_alerts, still_loan_notices');
     const executor: SqlTemplateExecutor = (strings, ...values) =>
       (sql as unknown as (
         strings: TemplateStringsArray,
         ...values: unknown[]
       ) => Promise<Record<string, unknown>[]>)(strings, ...values);
     return createDatabaseStillLoanAlertRepositoryV1(executor);
+  });
+
+  describe('postgres: the borrows a channel has not told', () => {
+    const WALLET = '0x1111111111111111111111111111111111111111';
+    const MARKET = `0x${'ab'.repeat(32)}`;
+    const executor = (): SqlTemplateExecutor => (strings, ...values) =>
+      (sql as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>)(strings, ...values);
+    const insert = async (id: string, state: 'confirmed' | 'submitted', updatedAt: string) => {
+      const hash = `0x${'cd'.repeat(32)}`;
+      await sql!.unsafe(`
+        INSERT INTO lending_executions (execution_id, tenant_id, wallet_address, draft_id, venue, operation, market_id, calls_hash, run_json,
+          state, attempt_id, transaction_hash, verification_json, created_at, updated_at, expires_at)
+        VALUES ('${id}', 'eip155:8453:${WALLET}', '${WALLET}', 'draft-${id.slice(-4)}', 'morpho', 'borrow', '${MARKET}', '${hash}',
+          jsonb_build_object('state', 'ready', 'callsHash', '${hash}', 'facts', jsonb_build_object('venue', 'morpho', 'operation', 'borrow',
+            'marketId', '${MARKET}', 'requestedAssets', '46800000', 'collateralSymbol', 'PAXG')),
+          '${state}', '00000000-0000-4000-8000-0000000000aa', ${state === 'confirmed' ? `'0x${'ef'.repeat(32)}'` : 'NULL'},
+          ${state === 'confirmed' ? `'{"effect":{"appliedAssets":"46800000","remainingDebtAssets":"46800001"}}'::jsonb` : 'NULL'},
+          '${updatedAt}', '${updatedAt}', '${updatedAt}'::timestamptz + interval '1 day')`);
+    };
+
+    test('confirmed, recent, of a given wallet, untold on this channel; with its facts and verified effect', async () => {
+      await sql!.unsafe('TRUNCATE lending_executions, still_loan_notices');
+      await sql!.unsafe(`INSERT INTO users (id) VALUES ('eip155:8453:${WALLET}') ON CONFLICT DO NOTHING`);
+      await insert('00000000-0000-4000-8000-000000000001', 'confirmed', '2026-11-17T10:00:00.000Z');
+      await insert('00000000-0000-4000-8000-000000000002', 'confirmed', '2026-11-17T01:00:00.000Z');
+      await insert('00000000-0000-4000-8000-000000000003', 'submitted', '2026-11-17T10:00:00.000Z');
+      const alerts = createDatabaseStillLoanAlertRepositoryV1(executor());
+      const since = new Date('2026-11-17T04:00:00.000Z');
+      const [due, ...rest] = await alerts.openedDue({ channel: 'telegram', wallets: [WALLET], since });
+      assert.equal(rest.length, 0);
+      assert.deepEqual([due!.executionId, due!.venue, due!.marketId, due!.confirmedAt, due!.facts.requestedAssets, due!.proof?.appliedAssets],
+        ['00000000-0000-4000-8000-000000000001', 'morpho', MARKET, '2026-11-17T10:00:00.000Z', '46800000', '46800000']);
+      assert.deepEqual(await alerts.openedDue({ channel: 'telegram', wallets: ['0x2222222222222222222222222222222222222222'], since }), []);
+      await alerts.recordNotice({ channel: 'telegram', kind: 'opened', key: due!.executionId, walletAddress: WALLET, market: MARKET, at: since });
+      assert.deepEqual(await alerts.openedDue({ channel: 'telegram', wallets: [WALLET], since }), []);
+      assert.equal((await alerts.openedDue({ channel: 'base_app', wallets: [WALLET], since })).length, 1);
+    });
   });
 }

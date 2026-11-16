@@ -6,6 +6,8 @@ import test, { describe } from 'node:test';
 import {
   InMemoryStillLoanAlertRepositoryV1,
   createDatabaseStillLoanAlertRepositoryV1,
+  stillLoanHoldsAfterV1,
+  stillLoanInterestStepV1,
 } from '../src/stillLoanAlerts.js';
 import { stillLoanAlertsContractV1 } from './stillLoanAlerts.contract.js';
 
@@ -78,5 +80,80 @@ describe('the table and the SQL say the same', () => {
     await alerts.markTold({ walletAddress: WALLET, market: SPOKE, channel: 'base_app', episode: 2 });
     assert.match(calls[0]!, /SET told_telegram = \$\s+WHERE wallet_address = \$ AND market = \$ AND episode = \$/);
     assert.match(calls[1]!, /SET told_base_app = \$\s+WHERE wallet_address = \$ AND market = \$ AND episode = \$/);
+  });
+});
+
+describe('the interest one reading adds', () => {
+  const AT = new Date('2026-11-02T15:00:00.000Z');
+  const before = (debtAtomic: string | null, rateBps: number | null = 500) => ({ debtAtomic, rateBps, readAt: AT.toISOString() });
+  const at = (minutes: number) => new Date(AT.getTime() + minutes * 60_000);
+
+  test('growth within half again the rate charge is measured interest; a borrow or a repayment between is the charge, estimated', () => {
+    // 1,000 USDC at 5% a year for five minutes charges 475 base units.
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '1000000475', at: at(5) }), { interest: 475n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '1000000714', at: at(5) }), { interest: 714n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '1000000715', at: at(5) }), { interest: 475n, estimated: 475n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '900000000', at: at(5) }), { interest: 475n, estimated: 475n });
+    // One unit down is rounding, not a repayment.
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '999999999', at: at(5) }), { interest: 0n, estimated: 0n });
+    // A small loan grows by whole units now and then: those count, nothing is invented between.
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('180000', 366), debtAtomic: '180001', at: at(5) }), { interest: 1n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('180000', 366), debtAtomic: '180000', at: at(5) }), { interest: 0n, estimated: 0n });
+  });
+
+  test('nothing is counted without two debts, without time between them, from no debt, or estimated without a rate', () => {
+    assert.deepEqual(stillLoanInterestStepV1({ before: null, debtAtomic: '1000000475', at: at(5) }), { interest: 0n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before(null), debtAtomic: '1000000475', at: at(5) }), { interest: 0n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: null, at: at(5) }), { interest: 0n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000'), debtAtomic: '1000000475', at: AT }), { interest: 0n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('0'), debtAtomic: '50000000', at: at(5) }), { interest: 0n, estimated: 0n });
+    // With no rate read, growth up to 100% a year still reads as interest; a jump past it adds nothing.
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000', null), debtAtomic: '1000009000', at: at(5) }), { interest: 9_000n, estimated: 0n });
+    assert.deepEqual(stillLoanInterestStepV1({ before: before('1000000000', null), debtAtomic: '1050000000', at: at(5) }), { interest: 0n, estimated: 0n });
+  });
+});
+
+describe('the holds after a reading', () => {
+  test('held ones join, cleared ones go, unread ones stay; only a hold the row did not have is news', () => {
+    assert.deepEqual(stillLoanHoldsAfterV1(['PAXG:transfers_paused'], undefined), { holds: ['PAXG:transfers_paused'], appeared: false });
+    assert.deepEqual(stillLoanHoldsAfterV1([], { held: ['NVDAc:transfers_paused'], cleared: [] }), { holds: ['NVDAc:transfers_paused'], appeared: true });
+    assert.deepEqual(stillLoanHoldsAfterV1(['NVDAc:transfers_paused'], { held: ['NVDAc:transfers_paused'], cleared: ['AAPLc:transfers_paused'] }),
+      { holds: ['NVDAc:transfers_paused'], appeared: false });
+    assert.deepEqual(stillLoanHoldsAfterV1(['NVDAc:transfers_paused', 'NVDAc:feed_paused'], { held: [], cleared: ['NVDAc:transfers_paused'] }),
+      { holds: ['NVDAc:feed_paused'], appeared: false });
+  });
+});
+
+describe('the borrows a channel has not told', () => {
+  test('a reachable wallet, confirmed since the line, not told on this channel, oldest first', async () => {
+    const alerts = new InMemoryStillLoanAlertRepositoryV1();
+    const borrow = (executionId: string, confirmedAt: string, walletAddress = WALLET) => ({
+      executionId, walletAddress, venue: 'morpho' as const, marketId: `0x${'ab'.repeat(32)}`, confirmedAt, facts: { requestedAssets: '1000000' }, proof: null,
+    });
+    alerts.confirmedLoans.push(
+      borrow('b', '2026-11-17T10:05:00.000Z'),
+      borrow('a', '2026-11-17T10:00:00.000Z'),
+      borrow('old', '2026-11-17T01:00:00.000Z'),
+      borrow('stranger', '2026-11-17T10:00:00.000Z', '0x9999999999999999999999999999999999999999'),
+    );
+    const since = new Date('2026-11-17T04:00:00.000Z');
+    assert.deepEqual((await alerts.openedDue({ channel: 'telegram', wallets: [WALLET], since })).map((row) => row.executionId), ['a', 'b']);
+    await alerts.recordNotice({ channel: 'telegram', kind: 'opened', key: 'a', walletAddress: WALLET, market: `0x${'ab'.repeat(32)}`, at: since });
+    assert.deepEqual((await alerts.openedDue({ channel: 'telegram', wallets: [WALLET], since })).map((row) => row.executionId), ['b']);
+    assert.deepEqual((await alerts.openedDue({ channel: 'base_app', wallets: [WALLET], since })).map((row) => row.executionId), ['a', 'b']);
+  });
+
+  test('the SQL reads only confirmed borrows of the given wallets that this channel has not told', () => {
+    const root = process.cwd().endsWith('lib/route-storage') ? resolve(process.cwd(), '..', '..') : process.cwd();
+    const source = readFileSync(resolve(root, 'lib/route-storage/src/stillLoanAlerts.ts'), 'utf8');
+    const query = source.slice(source.indexOf('async openedDue(input) {'), source.indexOf('async recordNotice(input) {'));
+    assert.match(query, /e\.operation = 'borrow' AND e\.state = 'confirmed'/);
+    assert.match(query, /e\.wallet_address = ANY\(\$\{wallets\}::text\[\]\)/);
+    assert.match(query, /n\.kind = 'opened' AND n\.notice_key = e\.execution_id::text/);
+    const migration = readFileSync(resolve(root, 'lib/db/drizzle/0099_still_loan_notices.sql'), 'utf8');
+    assert.match(migration, /PRIMARY KEY \(channel, kind, notice_key\)/);
+    assert.match(migration, /kind IN \('opened', 'week', 'hold'\)/);
+    assert.match(migration, /ALTER TABLE still_loan_notices OWNER TO miorail_user/);
+    assert.match(readFileSync(resolve(root, 'lib/db/drizzle/meta/_journal.json'), 'utf8'), /"tag": "0099_still_loan_notices"/);
   });
 });

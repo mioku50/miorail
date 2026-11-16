@@ -113,6 +113,108 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       await assert.rejects(() => alerts.recordReading({ ...ok, unread: ['0x1234'] }), /Aave spoke or a Morpho market id/);
       await assert.rejects(() => alerts.due({ channel: 'email' as never, freshSince: AT }), /unknown notification channel/);
       await assert.rejects(() => alerts.markTold({ walletAddress: WALLET, market: SPOKE, channel: 'sms' as never, episode: 0 }), /unknown notification channel/);
+      await assert.rejects(() => alerts.recordReading({ ...ok, lines: [{ ...aave('calm', 5_000), debtAtomic: '1.5' }] }), /whole USDC base units/);
+      await assert.rejects(() => alerts.recordReading({ ...ok, lines: [{ ...aave('calm', 5_000), rateBps: -1 }] }), /from 0 to 1000000/);
+      await assert.rejects(() => alerts.recordReading({ ...ok, lines: [{ ...aave('calm', 5_000), holds: { held: ['NVDAc:asleep'], cleared: [] } }] }), /'SYMBOL:kind'/);
+      const notice = { channel: 'telegram' as const, kind: 'hold' as const, key: `${WALLET}|${SPOKE}|1`, walletAddress: WALLET, market: SPOKE, at: AT };
+      await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'gift' as never }), /unknown loan notice/);
+      await assert.rejects(() => alerts.recordNotice({ ...notice, interestAtomic: '1', estimatedAtomic: '0' }), /only a week's note counts interest/);
+      await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'week' }), /only a week's note counts interest/);
+      await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'week', interestAtomic: '1', estimatedAtomic: '2' }), /only a week's note counts interest/);
+      await assert.rejects(() => alerts.recordNotice({ ...notice, key: 'a key with spaces' }), /short plain text/);
+    });
+  });
+
+  describe(`${label}: the interest a loan gathers while Still reads it`, () => {
+    // 1,000 USDC at 5% a year gathers about 95.13 base units a minute.
+    const owed = (debtAtomic: string, rateBps: number | null = 500) => ({ ...aave('calm', 5_000), debtAtomic, rateBps });
+
+    test('growth that is interest alone counts as measured; a borrow between counts the rate as estimated', async () => {
+      const alerts = await make();
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [owed('1000000000')], unread: [] });
+      let [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.debtAtomic, loan!.rateBps, loan!.interestAtomic, loan!.estimatedAtomic], ['1000000000', 500, '0', '0']);
+      // Five minutes: 475 units of growth, inside the rate's charge, so it is the interest.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [owed('1000000475')], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.debtAtomic, loan!.interestAtomic, loan!.estimatedAtomic], ['1000000475', '475', '0']);
+      // Another 50 USDC borrowed in the next five minutes: the stretch counts the rate's charge, 475, as estimated.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [owed('1050000951')], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.interestAtomic, loan!.estimatedAtomic], ['950', '475']);
+      // A reading that says no debt or rate keeps the last ones.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(15), block: '400', lines: [aave('calm', 5_000)], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.debtAtomic, loan!.rateBps, loan!.interestAtomic], ['1050000951', 500, '950']);
+      // A repaid loan goes; borrowing again starts from nothing.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(20), block: '500', lines: [], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(25), block: '600', lines: [owed('5000000')], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.debtAtomic, loan!.interestAtomic, loan!.estimatedAtomic], ['5000000', '0', '0']);
+    });
+  });
+
+  describe(`${label}: a hold on the collateral is told once per episode`, () => {
+    const held = (held: string[], cleared: string[] = []) => ({ ...morpho('calm', 6_000), holds: { held, cleared } });
+
+    test('a hold appearing starts an episode; the same hold does not; one unread stays as it was', async () => {
+      const alerts = await make();
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [held([], ['PAXG:transfers_paused'])], unread: [] });
+      let [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.holds, loan!.holdEpisode], [[], 0]);
+      assert.deepEqual(await alerts.holdsDue({ channel: 'telegram', freshSince: AT }), []);
+
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [held(['PAXG:transfers_paused'])], unread: [] });
+      [loan] = await alerts.holdsDue({ channel: 'telegram', freshSince: AT });
+      assert.deepEqual([loan!.holds, loan!.holdEpisode], [['PAXG:transfers_paused'], 1]);
+      await alerts.recordNotice({ channel: 'telegram', kind: 'hold', key: `${WALLET}|${MORPHO_MARKET}|1`, walletAddress: WALLET, market: MORPHO_MARKET, at: later(5) });
+      await alerts.recordNotice({ channel: 'telegram', kind: 'hold', key: `${WALLET}|${MORPHO_MARKET}|1`, walletAddress: WALLET, market: MORPHO_MARKET, at: later(6) });
+      assert.deepEqual(await alerts.holdsDue({ channel: 'telegram', freshSince: AT }), []);
+      assert.equal((await alerts.holdsDue({ channel: 'base_app', freshSince: AT })).length, 1, 'the other channel has not told it');
+
+      // Still paused, then a reading that could not tell: nothing new either way.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [held(['PAXG:transfers_paused'])], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(15), block: '400', lines: [morpho('calm', 6_000)], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.holds, loan!.holdEpisode], [['PAXG:transfers_paused'], 1]);
+      assert.deepEqual(await alerts.holdsDue({ channel: 'telegram', freshSince: AT }), []);
+
+      // Lifted, then paused again: told again.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(20), block: '500', lines: [held([], ['PAXG:transfers_paused'])], unread: [] });
+      assert.deepEqual(await alerts.holdsDue({ channel: 'telegram', freshSince: AT }), [], 'no hold, nothing to tell');
+      await alerts.recordReading({ walletAddress: WALLET, at: later(25), block: '600', lines: [held(['PAXG:transfers_paused', 'PAXG:wallet_frozen'])], unread: [] });
+      [loan] = await alerts.holdsDue({ channel: 'telegram', freshSince: AT });
+      assert.deepEqual([loan!.holds, loan!.holdEpisode], [['PAXG:transfers_paused', 'PAXG:wallet_frozen'], 2]);
+    });
+  });
+
+  describe(`${label}: a loan's week is told once, with the interest since the last note`, () => {
+    const owed = (debtAtomic: string) => ({ ...aave('calm', 5_000), debtAtomic, rateBps: 500 });
+    const CLOSE = '2026-11-06T21:00:00.000Z';
+    const NEXT = '2026-11-13T21:00:00.000Z';
+
+    test('due for a loan with a debt, read fresh and read first long enough ago; the next week counts from the note', async () => {
+      const alerts = await make();
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [owed('1000000000')], unread: [] });
+      await alerts.recordReading({ walletAddress: OTHER, at: AT, block: '100', lines: [aave('calm', 5_000)], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [owed('1000000475')], unread: [] });
+      const ask = { channel: 'telegram' as const, weekCloseAt: CLOSE, freshSince: AT, firstReadBy: AT };
+      // Too new: first read after the line.
+      assert.deepEqual(await alerts.weekDue({ ...ask, firstReadBy: new Date(AT.getTime() - 1) }), []);
+      // Read too long ago.
+      assert.deepEqual(await alerts.weekDue({ ...ask, freshSince: later(6) }), []);
+      let [week] = await alerts.weekDue(ask);
+      assert.deepEqual([week!.loan.walletAddress, week!.loan.interestAtomic, week!.since, week!.interestBeforeAtomic, week!.estimatedBeforeAtomic],
+        [WALLET, '475', AT.toISOString(), '0', '0'], 'the loan with no debt read is not due');
+
+      await alerts.recordNotice({ channel: 'telegram', kind: 'week', key: `${WALLET}|${SPOKE}|${CLOSE}`, walletAddress: WALLET, market: SPOKE,
+        at: later(6), interestAtomic: '475', estimatedAtomic: '0' });
+      assert.deepEqual(await alerts.weekDue(ask), [], 'told this week');
+      assert.equal((await alerts.weekDue({ ...ask, channel: 'base_app' })).length, 1);
+
+      await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [owed('1000000950')], unread: [] });
+      [week] = await alerts.weekDue({ ...ask, weekCloseAt: NEXT, freshSince: later(10) });
+      assert.deepEqual([week!.loan.interestAtomic, week!.since, week!.interestBeforeAtomic], ['950', later(6).toISOString(), '475']);
     });
   });
 }

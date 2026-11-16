@@ -1327,30 +1327,45 @@ export function planAerodromeRewardNoticesV1(input: {
 // Still loans
 // ---------------------------------------------------------------------------
 
-/** A Still loan whose band got worse, ready to be told. */
+/** What a Still loan notice tells: a worse band, a hold on the collateral, a loan just opened, or the week's note. */
+export type StillLoanNoticeKindV1 = 'band' | 'hold' | 'opened' | 'week';
+const STILL_LOAN_NOTICE_ORDER_V1: readonly StillLoanNoticeKindV1[] = ['band', 'hold', 'opened', 'week'];
+
+/** A Still loan notice, ready to be told. */
 export interface StillLoanDueV1 {
   walletAddress: string;
-  /** The loan: the Aave spoke's address or a Morpho market id. */
+  /** The loan: the Aave spoke's address or a Morpho market id; for a loan opened, the market its borrow names. */
   market: string;
-  /** What "once" counts in: the episode this notice tells. */
+  /** What "once" counts in for a band: the episode this notice tells. */
   episode: number;
   title: string;
   message: string;
   targetPath: string;
+  /** A worse band when absent. */
+  kind?: StillLoanNoticeKindV1;
+  /** What "once" counts in for the other kinds. */
+  key?: string;
+  /** A week's note: the interest count it tells up to. */
+  interestAtomic?: string;
+  estimatedAtomic?: string;
 }
 
 /**
- * One push per loan, to the wallet that holds it. The daily cap does not
- * apply: a margin running out is not one more update, and it is told at most
- * once per worse band, so it cannot flood a chat.
+ * One push per notice, to the wallet that holds the loan. The daily cap does
+ * not apply: a margin running out or a collateral held is not one more update,
+ * and none of these can flood a chat (each band, hold and borrow is told once,
+ * a loan's note once a week). A band goes first, then a hold, then a loan
+ * opened, then the week's notes.
  */
 export function planStillLoanNoticesV1(input: {
   due: readonly StillLoanDueV1[];
   enabled: ReadonlySet<string>;
-}): { groups: (BaseAppPushGroupV1 & { market: string; episode: number })[]; notEnabled: number } {
-  const groups: (BaseAppPushGroupV1 & { market: string; episode: number })[] = [];
+}): { groups: (BaseAppPushGroupV1 & { market: string; episode: number; due: StillLoanDueV1 })[]; notEnabled: number } {
+  const groups: (BaseAppPushGroupV1 & { market: string; episode: number; due: StillLoanDueV1 })[] = [];
   let notEnabled = 0;
-  const order = [...input.due].sort((a, b) => a.walletAddress.localeCompare(b.walletAddress) || a.market.localeCompare(b.market));
+  const rank = (due: StillLoanDueV1) => STILL_LOAN_NOTICE_ORDER_V1.indexOf(due.kind ?? 'band');
+  const order = [...input.due].sort((a, b) => rank(a) - rank(b) || a.walletAddress.localeCompare(b.walletAddress)
+    || a.market.localeCompare(b.market) || (a.key ?? '').localeCompare(b.key ?? ''));
   for (const due of order) {
     if (!input.enabled.has(due.walletAddress)) {
       notEnabled += 1;
@@ -1363,6 +1378,7 @@ export function planStillLoanNoticesV1(input: {
       wallets: [due.walletAddress],
       market: due.market,
       episode: due.episode,
+      due,
     });
   }
   return { groups, notEnabled };
@@ -1418,7 +1434,7 @@ export interface BaseAppNotifyReportV1 {
   reopen: { roundId: string; kind: ReopenNoticeKindV1; due: number; sent: number; capped: number } | null;
   /** Found's Aerodrome reward alerts: null when none had reached its amount. */
   aerodromeRewards: { due: number; sent: number; capped: number; notEnabled: number } | null;
-  /** Still loans whose band got worse: null when none was due. */
+  /** Still loan notices (a worse band, a hold, a loan opened, the week's note): null when none was due. */
   stillLoans: { due: number; sent: number; notEnabled: number } | null;
 }
 
@@ -1458,11 +1474,11 @@ export async function runBaseAppNotifyV1(deps: {
     due: () => Promise<readonly AerodromeRewardDueV1[]>;
     told: (input: { walletAddress: string; episode: number }) => Promise<void>;
   };
-  /** Still: this channel's untold loan bands, and how one is marked told. A
-   * failure to read them skips them for this pass. */
+  /** Still: this channel's untold loan notices, and how one is marked told
+   * (it gets the notice back). A failure to read them skips them for this pass. */
   stillLoans?: {
     due: () => Promise<readonly StillLoanDueV1[]>;
-    told: (input: { walletAddress: string; market: string; episode: number }) => Promise<void>;
+    told: (input: StillLoanDueV1) => Promise<void>;
   };
 }): Promise<BaseAppNotifyReportV1> {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...deps.limits };
@@ -1509,14 +1525,14 @@ export async function runBaseAppNotifyV1(deps: {
       report.stillLoans = { due: plan.groups.length, sent: 0, notEnabled: plan.notEnabled };
       if (!deps.dry) {
         const day = utcDayV1(now);
-        for (const { market, episode, ...group } of plan.groups) {
+        for (const { market: _market, episode: _episode, due: notice, ...group } of plan.groups) {
           try {
             const result = await deps.client.send(group);
             report.failed += result.failed.notSaved + result.failed.disabled + result.failed.other;
             if (result.sent.length > 0) {
               report.stillLoans.sent += result.sent.length;
               await deps.repository.recordSent({ day, wallets: result.sent });
-              for (const walletAddress of result.sent) await deps.stillLoans.told({ walletAddress, market, episode });
+              for (const walletAddress of result.sent) await deps.stillLoans.told({ ...notice, walletAddress });
             }
           } catch (cause) {
             const error = cause instanceof BaseAppNotifyErrorV1 ? cause : null;

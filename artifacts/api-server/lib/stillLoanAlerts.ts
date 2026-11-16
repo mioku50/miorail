@@ -4,8 +4,11 @@ import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import type {
   StillLoanAlertRepositoryV1,
   StillLoanAlertV1,
+  StillLoanHoldReadingV1,
   StillLoanReadingLineV1,
 } from '@mioagent/route-storage';
+
+import { stillLoanMirrorHoldsV1 } from './stillLoanHolds.js';
 
 // ---------------------------------------------------------------------------
 // Still: a loan's margin, told before it is too late.
@@ -31,7 +34,11 @@ export const STILL_LOAN_BORROWERS_SEEN_V1 = 5_000;
 export const STILL_LOAN_FRESH_FOR_MS_V1 = 30 * 60_000;
 
 /** The loans a report found, and the markets whose loan it could not read. */
-export function stillLoanLinesV1(report: MirrorReport): { lines: StillLoanReadingLineV1[]; unread: string[] } {
+export function stillLoanLinesV1(
+  report: MirrorReport,
+  /** What the collateral tokens said, by loan market (./stillLoanHolds.ts); absent when they were not asked. */
+  tokenHolds?: ReadonlyMap<string, StillLoanHoldReadingV1>,
+): { lines: StillLoanReadingLineV1[]; unread: string[] } {
   const lines: StillLoanReadingLineV1[] = [];
   const unread: string[] = [];
   for (const venue of report.venues) {
@@ -46,7 +53,17 @@ export function stillLoanLinesV1(report: MirrorReport): { lines: StillLoanReadin
       unread.push(market);
       continue;
     }
-    lines.push({ market, venue: venue.venue, state: venue.safety.state, marginBps: venue.safety.marginBps });
+    const tokens = tokenHolds?.get(market);
+    const mirror = venue.venue === 'aave-v4' ? stillLoanMirrorHoldsV1(report) : null;
+    const holds = mirror || tokens
+      ? { held: [...(mirror?.held ?? []), ...(tokens?.held ?? [])], cleared: [...(mirror?.cleared ?? []), ...(tokens?.cleared ?? [])] }
+      : undefined;
+    lines.push({
+      market, venue: venue.venue, state: venue.safety.state, marginBps: venue.safety.marginBps,
+      debtAtomic: debt,
+      rateBps: Number.isInteger(venue.borrowRateBps) && venue.borrowRateBps! >= 0 && venue.borrowRateBps! <= 1_000_000 ? venue.borrowRateBps : null,
+      ...(holds ? { holds } : {}),
+    });
   }
   return { lines, unread };
 }
@@ -90,6 +107,8 @@ export async function refreshStillLoanAlertsV1(input: {
   limit?: number;
   /** Filled with each loan's debt as read, by `wallet|market`, for the words told about it (audit LL-4). */
   debts?: Map<string, string>;
+  /** What the collateral tokens of this reading's loans say (./stillLoanHolds.ts). A failure reads as nothing read. */
+  readHolds?: (walletAddress: string, report: MirrorReport) => Promise<ReadonlyMap<string, StillLoanHoldReadingV1>>;
 }): Promise<{ due: number; read: number; failed: number; notRead: number }> {
   const reachable = [...input.reachable].map((wallet) => wallet.toLowerCase()).filter((wallet) => /^0x[0-9a-f]{40}$/.test(wallet));
   const eligible = await input.alerts.borrowers({ reachable, limit: STILL_LOAN_BORROWERS_SEEN_V1 });
@@ -108,7 +127,8 @@ export async function refreshStillLoanAlertsV1(input: {
       if (venue.debtAtomic != null && /^[0-9]{1,78}$/.test(venue.debtAtomic)) input.debts?.set(`${walletAddress}|${venue.market.toLowerCase()}`, venue.debtAtomic);
     }
     if (input.dry) continue;
-    const { lines, unread } = stillLoanLinesV1(outcome.report);
+    const holds = input.readHolds ? await input.readHolds(walletAddress, outcome.report).catch(() => undefined) : undefined;
+    const { lines, unread } = stillLoanLinesV1(outcome.report, holds);
     await input.alerts.recordReading({ walletAddress, at: input.now, block: outcome.report.reading.block, lines, unread });
   }
   return report;

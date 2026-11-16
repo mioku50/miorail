@@ -964,14 +964,15 @@ describe('after a loan, the offer to hear about it', () => {
     onDisconnect: () => {},
   });
 
-  it('names the bands it tells and offers the link; a connected chat is told it already hears', () => {
+  it('names what it tells and the bands, and offers the link; a connected chat is told what it gets', () => {
     const off = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(false)} />);
     assert.match(off, /Hear about this loan in Telegram/);
+    assert.match(off, /Still messages you when a loan opens, its debt and interest every Friday evening, a pause or freeze on its collateral, and when your collateral/);
     assert.match(off, /when your collateral can fall less than 37\.5% before liquidation, again below 20%, and if the loan can be liquidated\. The bot never asks you to sign\./);
     assert.match(off, />Connect<\/button>/);
     const on = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(true)} />);
     assert.match(on, /Telegram will tell you about this loan/);
-    assert.match(on, /Your Telegram chat hears about this loan when your collateral can fall less than 37\.5%/);
+    assert.match(on, /Your Telegram chat gets a note that this loan opened, its debt and interest every Friday evening, word of a pause or freeze on its collateral, and a message when your collateral can fall less than 37\.5%/);
     // Disconnecting is not this page's business.
     assert.doesNotMatch(on, /<button/);
     const open = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(false, { url: `https://t.me/miorailbot?start=${'a'.repeat(32)}`, expiresAt: '2026-10-21T15:10:00.000Z' })} />);

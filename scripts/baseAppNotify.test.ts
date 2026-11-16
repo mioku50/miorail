@@ -1449,4 +1449,36 @@ describe('Still loans: told once per worse band, ahead of everything else', () =
     assert.equal(broken.stillLoans, null);
     assert.notEqual(broken.outcome, 'stopped');
   });
+
+  test('a band first, then a hold, a loan opened and the week\'s note; each is marked told with what it was', async () => {
+    const plan = planStillLoanNoticesV1({
+      due: [
+        { ...due(A), kind: 'week', key: `${A}|${SPOKE}|w`, interestAtomic: '10', estimatedAtomic: '0', title: 'Still loan: your week' },
+        { ...due(B), kind: 'opened', key: 'exec-1', title: 'Still loan opened' },
+        { ...due(B, 4), title: 'Still loan: margin 19%' },
+        { ...due(A), kind: 'hold', key: `${A}|${SPOKE}|1`, title: 'Still loan: NVDAc paused' },
+      ],
+      enabled: new Set([A, B]),
+    });
+    assert.deepEqual(plan.groups.map((group) => group.title), ['Still loan: margin 19%', 'Still loan: NVDAc paused', 'Still loan opened', 'Still loan: your week']);
+
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client } = fakeClient({ enabledWallets: async () => new Set([A, B]) });
+    const told: StillLoanDueV1[] = [];
+    let pending: StillLoanDueV1[] = plan.groups.map((group) => group.due);
+    const report = await runBaseAppNotifyV1({
+      repository, client, names: async () => names, now: () => at('2026-11-02T15:00:00.000Z'),
+      stillLoans: {
+        due: async () => pending,
+        told: async (notice) => {
+          told.push(notice);
+          pending = pending.filter((row) => row !== notice && (row.key ?? row.episode) !== (notice.key ?? notice.episode));
+        },
+      },
+    });
+    assert.deepEqual(report.stillLoans, { due: 4, sent: 4, notEnabled: 0 });
+    assert.deepEqual(told.map((notice) => [notice.kind ?? 'band', notice.key ?? null, notice.walletAddress]),
+      [['band', null, B], ['hold', `${A}|${SPOKE}|1`, A], ['opened', 'exec-1', B], ['week', `${A}|${SPOKE}|w`, A]]);
+    assert.deepEqual([told[3]!.interestAtomic, told[3]!.estimatedAtomic], ['10', '0'], "a week's note is marked with the interest it told");
+  });
 });

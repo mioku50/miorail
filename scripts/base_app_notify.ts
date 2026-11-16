@@ -27,6 +27,8 @@ import {
   createDatabaseStillLoanAlertRepositoryV1,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
+  stillLoanHoldKeyV1,
+  stillLoanWeekKeyV1,
   type NotificationChannelV1,
 } from '@mioagent/route-storage';
 import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
@@ -40,7 +42,9 @@ import {
   multiplierChangePpmV1,
   notifyPassFailsUnitV1,
   runBaseAppNotifyV1,
+  weeklySummaryDueV1,
   type HoldingsV1,
+  type StillLoanDueV1,
   type StockNamesV1,
 } from './baseAppNotify.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -54,6 +58,15 @@ import {
   refreshStillLoanAlertsV1,
   stillLoanNoticeV1,
 } from '../artifacts/api-server/lib/stillLoanAlerts.js';
+import { readStillLoanTokenHoldsV1, stillLoanHoldClientsV1 } from '../artifacts/api-server/lib/stillLoanHolds.js';
+import {
+  STILL_AAVE_SPOKE_V1,
+  STILL_LOAN_OPENED_FOR_MS_V1,
+  STILL_LOAN_WEEK_AFTER_MS_V1,
+  stillLoanHoldNoticeV1,
+  stillLoanOpenedNoticeV1,
+  stillLoanWeekNoticeV1,
+} from '../artifacts/api-server/lib/stillLoanNotices.js';
 import { createStillMirrorServiceV1 } from '../artifacts/api-server/lib/stillMirror.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
@@ -130,9 +143,12 @@ async function main(): Promise<void> {
   const loanAlerts = createDatabaseStillLoanAlertRepositoryV1(client);
   // Each loan's debt as this pass read it, for the numbers its notice says (audit LL-4).
   const loanDebts = new Map<string, string>();
+  let reachable = new Set<string>();
   try {
-    const reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
+    reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
     const mirror = createStillMirrorServiceV1();
+    // The collateral tokens are asked at the block the Mirror read, on the same endpoints.
+    const holdClients = stillLoanHoldClientsV1();
     const refreshed = await refreshStillLoanAlertsV1({
       alerts: loanAlerts,
       reachable,
@@ -140,18 +156,57 @@ async function main(): Promise<void> {
       now: new Date(),
       dry,
       debts: loanDebts,
+      readHolds: (walletAddress, report) => readStillLoanTokenHoldsV1({ clients: holdClients, report, walletAddress }),
     });
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
   } catch (cause) {
     console.log(JSON.stringify({ event: 'still_loans_read', outcome: 'failed',
       error: describeErrorV1(cause).slice(0, 120) }));
   }
+  // Each kind is read on its own: one that fails to read leaves the others to be told.
+  const quietly = async <T>(read: () => Promise<T[]>): Promise<T[]> => read().catch(() => []);
   const stillLoansFor = (channel: NotificationChannelV1) => ({
-    due: async () =>
-      (await loanAlerts.due({ channel, freshSince: new Date(Date.now() - STILL_LOAN_FRESH_FOR_MS_V1) }))
+    due: async (): Promise<StillLoanDueV1[]> => {
+      const now = new Date();
+      const freshSince = new Date(now.getTime() - STILL_LOAN_FRESH_FOR_MS_V1);
+      const bands: StillLoanDueV1[] = (await loanAlerts.due({ channel, freshSince }))
         .map((loan) => ({ walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode,
-          ...stillLoanNoticeV1(loan, loanDebts.get(`${loan.walletAddress}|${loan.market}`) ?? null) })),
-    told: (input: { walletAddress: string; market: string; episode: number }) => loanAlerts.markTold({ ...input, channel }),
+          ...stillLoanNoticeV1(loan, loanDebts.get(`${loan.walletAddress}|${loan.market}`) ?? null) }));
+      const holds = await quietly(async () => (await loanAlerts.holdsDue({ channel, freshSince })).flatMap((loan) => {
+        const notice = stillLoanHoldNoticeV1(loan);
+        return notice ? [{ walletAddress: loan.walletAddress, market: loan.market, episode: loan.holdEpisode, ...notice,
+          kind: 'hold' as const, key: stillLoanHoldKeyV1(loan) }] : [];
+      }));
+      // A borrow is told while it is fresh: a wallet that connects a chat right after its loan still hears of it.
+      const opened = await quietly(async () => {
+        const borrows = await loanAlerts.openedDue({ channel, wallets: [...reachable], since: new Date(now.getTime() - STILL_LOAN_OPENED_FOR_MS_V1) });
+        const out: StillLoanDueV1[] = [];
+        for (const borrow of borrows) {
+          const market = borrow.venue === 'aave-v4' ? STILL_AAVE_SPOKE_V1 : borrow.marketId.toLowerCase();
+          const loan = (await loanAlerts.loansOf(borrow.walletAddress)).find((row) => row.market === market) ?? null;
+          const notice = stillLoanOpenedNoticeV1({ opened: borrow, loan, freshSince });
+          if (notice) out.push({ walletAddress: borrow.walletAddress, market: borrow.marketId, episode: 0, ...notice, kind: 'opened', key: borrow.executionId });
+        }
+        return out;
+      });
+      // The week's note, in the weekly summary's window: once a week per open loan Still has read for a day.
+      const window = weeklySummaryDueV1(now);
+      const weeks = window ? await quietly(async () => (await loanAlerts.weekDue({ channel, weekCloseAt: window.weekCloseAt, freshSince,
+        firstReadBy: new Date(now.getTime() - STILL_LOAN_WEEK_AFTER_MS_V1) })).flatMap((week) => {
+        const notice = stillLoanWeekNoticeV1(week);
+        return notice ? [{ walletAddress: week.loan.walletAddress, market: week.loan.market, episode: 0, ...notice, kind: 'week' as const,
+          key: stillLoanWeekKeyV1(week.loan, window.weekCloseAt), interestAtomic: week.loan.interestAtomic, estimatedAtomic: week.loan.estimatedAtomic }] : [];
+      })) : [];
+      return [...bands, ...holds, ...opened, ...weeks];
+    },
+    told: async (notice: StillLoanDueV1) => {
+      if (!notice.kind || notice.kind === 'band') {
+        await loanAlerts.markTold({ walletAddress: notice.walletAddress, market: notice.market, episode: notice.episode, channel });
+        return;
+      }
+      await loanAlerts.recordNotice({ channel, kind: notice.kind, key: notice.key!, walletAddress: notice.walletAddress, market: notice.market,
+        at: new Date(), ...(notice.kind === 'week' ? { interestAtomic: notice.interestAtomic!, estimatedAtomic: notice.estimatedAtomic! } : {}) });
+    },
   });
 
   const shared: Omit<Parameters<typeof runBaseAppNotifyV1>[0], 'repository' | 'client'> = {

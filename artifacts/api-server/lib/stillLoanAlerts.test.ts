@@ -40,7 +40,7 @@ describe('what a reading found', () => {
       venue({ venue: 'morpho', market: WETH_MARKET, debtAtomic: null }),
     ]) as Extract<MirrorReadingV1, { outcome: 'report' }>;
     assert.deepEqual(stillLoanLinesV1(report), {
-      lines: [{ market: SPOKE, venue: 'aave-v4', state: 'watch', marginBps: 3_100 }],
+      lines: [{ market: SPOKE, venue: 'aave-v4', state: 'watch', marginBps: 3_100, debtAtomic: '500000000', rateBps: null, holds: { held: [], cleared: [] } }],
       unread: [WETH_MARKET],
     });
     const owesButUnsafe = reading([venue({ debtAtomic: '1', safety: null })]) as Extract<MirrorReadingV1, { outcome: 'report' }>;
@@ -185,5 +185,62 @@ describe('what a chat is told (audit LL-4)', () => {
     await refreshStillLoanAlertsV1({ alerts, reachable: new Set([WALLET]), now: NOW, debts,
       read: async () => reading([venue({ debtAtomic: '500000000', safety: safety('act', 1_400) }), venue({ venue: 'morpho', market: CBBTC_MARKET, debtAtomic: null })]) });
     assert.deepEqual([...debts], [[`${WALLET}|${SPOKE}`, '500000000']]);
+  });
+});
+
+describe('the debt, rate and holds a reading carries', () => {
+  const NVDA_TOKEN = '0x00000000000000000000000000000000000000a1';
+  const stock = (over: Record<string, unknown>) => ({
+    asset: 'NVDA', kind: 'stock', name: 'NVIDIA', symbol: 'NVDAc', token: NVDA_TOKEN, isin: null, venue: 'aave-v4',
+    wallet: { raw: '0', decimals: 18 }, pledged: { raw: '10000000000000000000', decimals: 18 }, shares: null, priceCents: '18000', priceUpdatedAt: null,
+    valueCents: '180000', protocolFactorBps: 7_000, stillFactorBps: 3_500, capacityCents: '0', earnings: null, limits: [], failed: [], ...over,
+  });
+  const withAssets = (venues: VenueLine[], assets: Record<string, unknown>[]) => {
+    const read = reading(venues) as Extract<MirrorReadingV1, { outcome: 'report' }>;
+    return { ...read, report: { ...read.report, assets } as unknown as MirrorReport };
+  };
+
+  test('Aave V4: the Mirror flags read for a pledged stock join what its token said; Morpho: only what its token said', () => {
+    const { report } = withAssets([
+      venue({ debtAtomic: '500000000', borrowRateBps: 366, safety: safety('calm', 5_000) }),
+      venue({ venue: 'morpho', market: CBBTC_MARKET, debtAtomic: '20000000', borrowRateBps: 512, safety: safety('calm', 6_000) }),
+    ], [
+      stock({ limits: ['reserve_frozen', 'issuer_paused'] }),
+      // Not pledged: nothing of it is a hold on the loan.
+      stock({ symbol: 'AAPLc', asset: 'AAPL', pledged: { raw: '0', decimals: 18 }, limits: ['reserve_paused'] }),
+    ]);
+    const tokens = new Map([[SPOKE, { held: [], cleared: ['NVDAc:transfers_paused'] }], [CBBTC_MARKET, { held: ['cbBTC:transfers_paused'], cleared: ['cbBTC:market_frozen'] }]]);
+    const { lines } = stillLoanLinesV1(report, tokens);
+    assert.deepEqual(lines.map((line) => [line.market, line.debtAtomic, line.rateBps, line.holds]), [
+      [SPOKE, '500000000', 366, { held: ['NVDAc:reserve_frozen', 'NVDAc:feed_paused'], cleared: ['NVDAc:reserve_paused', 'NVDAc:spoke_halted', 'NVDAc:transfers_paused'] }],
+      [CBBTC_MARKET, '20000000', 512, { held: ['cbBTC:transfers_paused'], cleared: ['cbBTC:market_frozen'] }],
+    ]);
+    // A Morpho loan whose token was not asked carries no holds at all; it does not read as "none".
+    const unasked = stillLoanLinesV1(report).lines.find((line) => line.market === CBBTC_MARKET);
+    assert.equal(unasked!.holds, undefined);
+  });
+
+  test('a flag whose read failed is not read as cleared', () => {
+    const { report } = withAssets([venue({ debtAtomic: '500000000', safety: safety('calm', 5_000) })],
+      [stock({ failed: ['NVDA reserve status'] })]);
+    const [line] = stillLoanLinesV1(report).lines;
+    assert.deepEqual(line!.holds, { held: [], cleared: ['NVDAc:spoke_halted'] });
+  });
+
+  test('the pass keeps the holds the tokens said, and a failed token read changes none', async () => {
+    const alerts = new InMemoryStillLoanAlertRepositoryV1();
+    alerts.confirmedBorrowers.add(WALLET);
+    const loan = (block: string): MirrorReadingV1 =>
+      reading([venue({ venue: 'morpho', market: CBBTC_MARKET, debtAtomic: '20000000', borrowRateBps: 512, safety: safety('calm', 6_000) })], block);
+    let answer: () => Promise<ReadonlyMap<string, { held: string[]; cleared: string[] }>> = async () => new Map([[CBBTC_MARKET, { held: ['cbBTC:transfers_paused'], cleared: [] }]]);
+    const pass = (block: string, at: Date) => refreshStillLoanAlertsV1({ alerts, reachable: new Set([WALLET]), now: at,
+      read: async () => loan(block), readHolds: () => answer() });
+    await pass('100', NOW);
+    let [row] = await alerts.loansOf(WALLET);
+    assert.deepEqual([row!.holds, row!.holdEpisode, row!.debtAtomic, row!.rateBps], [['cbBTC:transfers_paused'], 1, '20000000', 512]);
+    answer = async () => { throw new Error('rpc down'); };
+    await pass('200', new Date(NOW.getTime() + 300_000));
+    [row] = await alerts.loansOf(WALLET);
+    assert.deepEqual([row!.holds, row!.holdEpisode, row!.readBlock], [['cbBTC:transfers_paused'], 1, '200']);
   });
 });
