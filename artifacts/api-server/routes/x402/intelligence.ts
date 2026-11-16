@@ -310,9 +310,24 @@ async function markSellerDeliveryV1(dataHash: string, enabled: boolean): Promise
 
 const STILL_LOAN_QUOTE_PATH_V1 = '/still/loan-quote';
 
-/** One sentence: the line the Bazaar indexes and an agent's model reads to choose this resource. */
+/** What the catalog and the OpenAPI document say the quote is. */
 const STILL_LOAN_QUOTE_DESCRIPTION_V1 =
   'What Still would lend in USDC against an exact amount of a Coinbase tokenized stock, cbBTC, ETH or PAXG on Base, read live: Still’s limit beside the protocol’s own, the venue’s rate and liquidity, the liquidation price and a 10/20/30% fall table. No wallet needed.';
+
+/**
+ * The same, short enough for the 402: the line the Bazaar indexes and an agent's model reads.
+ *
+ * The whole challenge travels in the PAYMENT-REQUIRED header, and on
+ * 2026-11-16 the first version of this route answered every client 502:
+ * nginx's 4 KB header buffer refused 4.9 KB of headers, 3.9 KB of them the
+ * challenge, half of that the Bazaar example and the schema built from it.
+ * A test keeps the header under X402_CHALLENGE_HEADER_BUDGET_V1.
+ */
+const STILL_LOAN_QUOTE_CHALLENGE_DESCRIPTION_V1 =
+  'What Still would lend in USDC against a tokenized stock, cbBTC, ETH or PAXG on Base: limits, rate, liquidation price. No wallet needed.';
+/** With the ~1.1 KB of other headers this still fits nginx's default 4 KB buffer, were the raise in
+ * ops/nginx/miorail-app.conf ever lost. The builder-code extension alone takes 444 bytes of JSON. */
+export const X402_CHALLENGE_HEADER_BUDGET_V1 = 3_000;
 
 /**
  * Retired 2026-11-16, each with where its answer is free (see
@@ -437,34 +452,16 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
       input: { asset: 'NVDAc', amount: '10' },
       inputSchema: {
         properties: {
-          asset: {
-            type: 'string',
-            description: 'AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc, cbBTC, ETH or PAXG, or its exact Base token address',
-          },
-          amount: { type: 'string', description: 'Tokens to pledge, as a decimal: 10 or 0.25' },
-          borrowUsdc: { type: 'string', description: 'Optional: a loan to compute at that size, in USDC: 500' },
+          asset: { type: 'string', description: 'Still id (NVDAc, cbBTC, ETH, PAXG…) or token address' },
+          amount: { type: 'string', description: 'Tokens to pledge, e.g. 10' },
+          borrowUsdc: { type: 'string', description: 'Optional loan in USDC, e.g. 500' },
         },
         required: ['asset', 'amount'],
       },
       output: {
         example: {
-          service: 'still_loan_quote',
-          question: { asset: 'NVDAc', amount: '10', borrowUsdc: null },
-          reading: { block: '58159930', blockTime: '2026-11-16T09:46:01.000Z' },
-          collateral: { symbol: 'NVDAc', priceCents: '21190', protocolFactorBps: 7000, stillFactorBps: 3500, limits: [] },
-          venue: { label: 'Aave V4 · Coinbase Stocks', liquidityCents: '109645815', borrowRateBps: 366 },
-          limit: { stillLimitCents: '74167', protocolLimitCents: '148334', availableNowCents: '74167', newLoans: 'open' },
-          atStillLimit: {
-            outcome: 'computed',
-            figures: {
-              healthFactorText: '2.00',
-              marginBps: 5000,
-              state: 'calm',
-              liquidationPriceCents: '10596',
-              stress: [{ fallBps: 3000, liquidationCanStart: false }],
-            },
-          },
-          missingEvidence: [],
+          limit: { stillLimitCents: '74167', protocolLimitCents: '148334' },
+          atStillLimit: { figures: { liquidationPriceCents: '10596', borrowRateBps: 366 } },
         },
       },
     },
@@ -638,7 +635,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   router.get(
     STILL_LOAN_QUOTE_PATH_V1,
     featureGate,
-    ...paidMiddleware('still_loan_quote', STILL_LOAN_QUOTE_PATH_V1, STILL_LOAN_QUOTE_DESCRIPTION_V1, preloadQuote),
+    ...paidMiddleware('still_loan_quote', STILL_LOAN_QUOTE_PATH_V1, STILL_LOAN_QUOTE_CHALLENGE_DESCRIPTION_V1, preloadQuote),
     sendQuote,
   );
   // Scanners send POST, PUT and PATCH to a GET resource; those fell through to

@@ -21,6 +21,7 @@ import { EvidencePackageV1Schema } from '../mcp/evidencePackage.js';
 import {
   X402_INTELLIGENCE_MOUNT_V1,
   createX402IntelligenceRouterV1,
+  X402_CHALLENGE_HEADER_BUDGET_V1,
   sellerReceiptDetailsV1,
   userAgentOfV1,
 } from './intelligence.js';
@@ -170,7 +171,11 @@ test('the official x402 challenge prices the quote in Base USDC and says what it
       assert.equal(challenge.accepts[0]?.network, 'eip155:8453');
       assert.equal(challenge.accepts[0]?.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
       assert.equal(challenge.resource?.url, `https://miorail.xyz${QUOTE}`);
-      assert.match(challenge.resource?.description ?? '', /^What Still would lend in USDC against an exact amount/);
+      assert.match(challenge.resource?.description ?? '', /^What Still would lend in USDC against a tokenized stock/);
+      // The whole challenge rides in one header. 3.9 KB of it, with the rest of
+      // the headers, overflowed nginx's 4 KB buffer and every client got 502.
+      const size = String(response.headers['payment-required']).length;
+      assert.ok(size <= X402_CHALLENGE_HEADER_BUDGET_V1, `PAYMENT-REQUIRED is ${size} bytes, over ${X402_CHALLENGE_HEADER_BUDGET_V1}`);
     }
     // The price costs no reading of Base, asked or not.
     assert.equal(reads, 0);
@@ -209,6 +214,7 @@ test('a paid quote is the engine’s, bound by its hash, with an evidence packag
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.options.amountAtomicOverride, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
   assert.match(seen[0]!.options.description ?? '', /No wallet needed\.$/);
+  assert.ok((seen[0]!.options.description ?? '').length <= 180, 'the 402 description is the short one');
 });
 
 test('a question that is not one is refused before the price, and nothing is read', async () => {
