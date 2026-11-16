@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import {
   PAID_RESOURCES_V1,
+  payButtonV1,
   basescanTxUrlV1,
   examplesOfV1,
   paidRequestUrlV1,
@@ -93,6 +94,18 @@ describe('the paid API page', () => {
     assert.match(payerRefusalV1(PAY_TO.toLowerCase(), terms) ?? '', /paying itself/);
     assert.equal(payerRefusalV1('0x1111111111111111111111111111111111111111', terms), null);
     assert.equal(payerRefusalV1(PAY_TO, null), null);
+  });
+
+  test('a Pay button that cannot pay is disabled, with its reason beside it', () => {
+    const ready = { busy: false, connected: true, payBlocked: null, walletReady: true };
+    assert.deepEqual(payButtonV1(ready), { disabled: false, note: null });
+    assert.deepEqual(payButtonV1({ ...ready, busy: true }), { disabled: true, note: null });
+    assert.match(payButtonV1({ ...ready, connected: false }).note ?? '', /^Connect a wallet/);
+    // The operator's case on 2026-11-16: the wallet payments go to, which would pay itself.
+    const self = payButtonV1({ ...ready, payBlocked: 'paying itself' });
+    assert.equal(self.disabled, true);
+    assert.match(self.note ?? '', /Use another wallet/);
+    assert.deepEqual(payButtonV1({ ...ready, walletReady: false }), { disabled: true, note: 'Waiting for the wallet to answer…' });
   });
 
   test('a settlement links to Base, and a long answer says it was cut', () => {

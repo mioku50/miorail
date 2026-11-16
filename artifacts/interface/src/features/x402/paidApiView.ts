@@ -153,8 +153,30 @@ export function usdcLabelV1(amountAtomic: string): string {
 export function payerRefusalV1(payer: string | null | undefined, terms: PaymentTermsV1 | null): string | null {
   if (!payer || !terms) return null;
   return payer.toLowerCase() === terms.payTo.toLowerCase()
-    ? 'This wallet is the one Miorail’s payments go to, so it would be paying itself. Connect another wallet to pay.'
+    ? 'This wallet is the one Miorail’s payments go to, so it would be paying itself. Press “Use another wallet” and connect a different one to pay.'
     : null;
+}
+
+/**
+ * What the Pay button can do now, and why not when it cannot.
+ *
+ * On 2026-11-16 the operator pressed Pay with the very wallet payments go to.
+ * The button looked live, the press only wrote a line further down, and a
+ * stale "Connect a wallet on Base first." from an earlier press sat beside
+ * it: the page read as a button that does nothing. A press that cannot pay is
+ * now a disabled button with its reason next to it.
+ */
+export function payButtonV1(input: {
+  busy: boolean;
+  connected: boolean;
+  payBlocked: string | null;
+  walletReady: boolean;
+}): { disabled: boolean; note: string | null } {
+  if (input.busy) return { disabled: true, note: null };
+  if (!input.connected) return { disabled: true, note: 'Connect a wallet that holds USDC on Base above to pay. Reading this page needs none.' };
+  if (input.payBlocked) return { disabled: true, note: 'This wallet would be paying itself. Press “Use another wallet” above and connect a different one.' };
+  if (!input.walletReady) return { disabled: true, note: 'Waiting for the wallet to answer…' };
+  return { disabled: false, note: null };
 }
 
 export function basescanTxUrlV1(hash: string | null | undefined): string | null {

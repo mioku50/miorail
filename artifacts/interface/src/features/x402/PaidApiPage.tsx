@@ -9,6 +9,7 @@ import {
   examplesOfV1,
   paidRequestUrlV1,
   paidStateLineV1,
+  payButtonV1,
   payerRefusalV1,
   paymentTermsFromHeaderV1,
   renderedAnswerV1,
@@ -67,18 +68,25 @@ function ResourceCard({
   price: string;
   payBlocked: string | null;
 }) {
-  const { isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const { switchChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const [values, setValues] = useState<Record<string, string>>(() => examplesOfV1(resource));
   const [state, setState] = useState<PaidActionState | 'idle'>('idle');
   const [refusal, setRefusal] = useState<string | null>(null);
   const [answer, setAnswer] = useState<AnswerV1 | null>(null);
 
   const busy = ['preparing_payment', 'awaiting_wallet_confirmation', 'awaiting_wallet', 'submitted', 'settling_payment', 'settling', 'running_action'].includes(state);
+  const button = payButtonV1({ busy, connected: isConnected, payBlocked, walletReady: Boolean(walletClient) });
+
+  // A line written for another wallet, or before this one connected, is not about this one.
+  useEffect(() => {
+    setState('idle');
+    setRefusal(null);
+  }, [address]);
 
   const pay = useCallback(async () => {
-    if (busy) return;
+    if (button.disabled || !walletClient) return;
     setRefusal(null);
     setAnswer(null);
     const built = paidRequestUrlV1(resource, values);
@@ -86,16 +94,13 @@ function ResourceCard({
       setRefusal(built.refusal);
       return;
     }
-    if (payBlocked) {
-      setRefusal(payBlocked);
-      return;
-    }
-    if (!isConnected || !walletClient) {
-      setState('unsupported_wallet');
-      return;
-    }
     if (chainId !== BASE_CHAIN_ID) {
-      switchChain?.({ chainId: BASE_CHAIN_ID });
+      try {
+        await switchChainAsync({ chainId: BASE_CHAIN_ID });
+        setRefusal('The wallet is on Base now. Press Pay again.');
+      } catch {
+        setRefusal('Switch the wallet to Base to pay.');
+      }
       return;
     }
     try {
@@ -123,7 +128,7 @@ function ResourceCard({
         );
       }
     }
-  }, [busy, chainId, isConnected, payBlocked, resource, switchChain, values, walletClient]);
+  }, [button.disabled, chainId, resource, switchChainAsync, values, walletClient]);
 
   const line = paidStateLineV1(state, price);
   const txUrl = basescanTxUrlV1(answer?.txHash);
@@ -152,10 +157,11 @@ function ResourceCard({
             onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))}
           />
         ))}
-        <button className="btn" type="submit" disabled={busy}>
+        <button className="btn" type="submit" disabled={button.disabled}>
           {busy ? 'Paying…' : `Pay ${price}`}
         </button>
       </form>
+      {button.note && <p className="empty">{button.note}</p>}
       <p className="lnote mono">
         GET {resource.path}
       </p>
