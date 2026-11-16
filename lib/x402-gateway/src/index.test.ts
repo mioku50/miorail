@@ -560,6 +560,30 @@ describe('x402-gateway', () => {
     assert.equal(generic.description, 'Miorail x402 paid resource');
   });
 
+  it('names, tags and pictures the resource for Bazaar search, and leaves out what a facilitator would drop', () => {
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+    });
+    const route = (createX402RoutesConfig(config, '/paid-resource', 'Still loan quote', {
+      tags: ['lending', 'lending', ' borrow ', 'tokenized-stocks', 'x'.repeat(33), 'naïve', 'loan-quote', 'base', 'sixth'],
+      iconUrl: 'https://miorail.xyz/still-favicon-192.png',
+    }) as Record<string, any>)['GET /paid-resource'];
+    assert.equal(route.serviceName, 'Still loan quote');
+    // Duplicates, an over-long tag and a non-ASCII one are left out; five are kept.
+    assert.deepEqual(route.tags, ['lending', 'borrow', 'tokenized-stocks', 'loan-quote', 'base']);
+    assert.equal(route.iconUrl, 'https://miorail.xyz/still-favicon-192.png');
+
+    for (const iconUrl of ['http://127.0.0.1/icon.png', 'https://localhost/icon.png', 'ftp://miorail.xyz/icon.png', 'not a url', 'https://[::1]/i.png']) {
+      const dropped = (createX402RoutesConfig(config, '/paid-resource', 'Miorail', { iconUrl }) as Record<string, any>)['GET /paid-resource'];
+      assert.equal('iconUrl' in dropped, false, iconUrl);
+    }
+    const plain = (createX402RoutesConfig(config, '/paid-resource', 'A name far longer than thirty-two characters') as Record<string, any>)['GET /paid-resource'];
+    assert.equal(plain.serviceName, 'Miorail');
+    assert.deepEqual(plain.tags, ['miorail', 'x402']);
+  });
+
   it('leaves route price at global config.amountAtomic when no override is given', () => {
     const config = x402ConfigFromEnv({
       X402_FACILITATOR_URL: 'https://facilitator.example.test',

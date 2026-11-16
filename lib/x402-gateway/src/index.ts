@@ -265,6 +265,15 @@ export interface CreateX402MiddlewareOptions {
    * nothing in it. Omitted, that generic line stays.
    */
   description?: string;
+  /**
+   * Bazaar search metadata on the challenge's resource object: up to five
+   * topical tags and an icon. Facilitators soft-drop a field that fails their
+   * rules (tags: printable ASCII, 1–32 characters, at most five; icon: an
+   * absolute http(s) URL with no IP literal or loopback host), so the same
+   * rules are applied here and a failing value is left out rather than sent.
+   */
+  tags?: readonly string[];
+  iconUrl?: string;
 }
 
 export interface X402MiddlewareDiagnostics {
@@ -767,13 +776,45 @@ function absoluteResourceV1(routePath: string, origin?: string): string {
   return `${trimmed}${routePath.startsWith('/') ? routePath : `/${routePath}`}`;
 }
 
+const PRINTABLE_ASCII_V1 = /^[\x20-\x7e]+$/;
+
+/** A Bazaar name: printable ASCII, 1–32 characters, as the facilitator's ResourceInfo schema has it. */
+export function bazaarServiceNameV1(name: string | undefined, fallback = 'Miorail'): string {
+  const trimmed = (name ?? '').trim();
+  return trimmed.length >= 1 && trimmed.length <= 32 && PRINTABLE_ASCII_V1.test(trimmed) ? trimmed : fallback;
+}
+
+/** Up to five tags of printable ASCII, 1–32 characters each; the rest are left out. */
+export function bazaarTagsV1(tags: readonly string[] | undefined): string[] | undefined {
+  if (!tags) return undefined;
+  const kept = [...new Set(tags.map((tag) => tag.trim()))]
+    .filter((tag) => tag.length >= 1 && tag.length <= 32 && PRINTABLE_ASCII_V1.test(tag))
+    .slice(0, 5);
+  return kept.length > 0 ? kept : undefined;
+}
+
+/** An absolute http(s) icon address on a named host: no IP literal, no loopback. */
+export function bazaarIconUrlV1(iconUrl: string | undefined): string | undefined {
+  if (!iconUrl || iconUrl.length > 2048) return undefined;
+  let url: URL;
+  try {
+    url = new URL(iconUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) return undefined;
+  return url.toString();
+}
+
 export function createX402RoutesConfig(
   config: X402RuntimeConfig,
   routePath = '/paid-resource',
   serviceName = 'Miorail',
   options: Pick<
     CreateX402MiddlewareOptions,
-    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery' | 'resourceOrigin' | 'description'
+    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery' | 'resourceOrigin' | 'description' | 'tags' | 'iconUrl'
   > = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
@@ -804,8 +845,9 @@ export function createX402RoutesConfig(
     resource: absoluteResourceV1(routePath, options.resourceOrigin),
     description: options.description?.trim() || 'Miorail x402 paid resource',
     mimeType: 'application/json',
-    serviceName,
-    tags: ['miorail', 'x402'],
+    serviceName: bazaarServiceNameV1(serviceName),
+    tags: bazaarTagsV1(options.tags) ?? ['miorail', 'x402'],
+    ...(bazaarIconUrlV1(options.iconUrl) ? { iconUrl: bazaarIconUrlV1(options.iconUrl) } : {}),
     unpaidResponseBody: () => {
       const paymentRequired = paymentRequiredFromRuntimeConfig(effectiveConfig);
       return {

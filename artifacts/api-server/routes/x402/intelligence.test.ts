@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express, { type RequestHandler } from 'express';
@@ -174,6 +174,12 @@ test('the official x402 challenge prices the quote in Base USDC and says what it
       assert.match(challenge.resource?.description ?? '', /^What Still would lend in USDC against a tokenized stock/);
       // The whole challenge rides in one header. 3.9 KB of it, with the rest of
       // the headers, overflowed nginx's 4 KB buffer and every client got 502.
+      // Named, tagged and pictured for Bazaar search, within the facilitator's rules.
+      assert.equal(challenge.resource?.serviceName, 'Still loan quote');
+      assert.deepEqual(challenge.resource?.tags, ['lending', 'borrow', 'tokenized-stocks', 'loan-quote', 'base']);
+      assert.equal(challenge.resource?.iconUrl, 'https://miorail.xyz/still-favicon-192.png');
+      // The icon is a file the app publishes; renaming it would leave the Bazaar a broken image.
+      assert.ok(existsSync(packageFileV1('../interface/public/still-favicon-192.png')), 'the Bazaar icon must be a published file');
       const size = String(response.headers['payment-required']).length;
       assert.ok(size <= X402_CHALLENGE_HEADER_BUDGET_V1, `PAYMENT-REQUIRED is ${size} bytes, over ${X402_CHALLENGE_HEADER_BUDGET_V1}`);
     }
@@ -306,6 +312,8 @@ test('the 402 names an address, not a path, and it is the path this router is mo
     middlewareFactory: (_p: string, options: CreateX402MiddlewareOptions) => { half.push(options); return PASS_THROUGH_V1; },
   })).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200);
   assert.equal(half[0]?.resourceOrigin, undefined);
+  // And no icon is named on a host that is not one.
+  assert.equal(half[0]?.iconUrl, undefined);
 });
 
 test('the paid route declares itself for the discovery list with an example its own preload answers', async () => {

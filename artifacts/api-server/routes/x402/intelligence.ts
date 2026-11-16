@@ -330,6 +330,18 @@ const STILL_LOAN_QUOTE_CHALLENGE_DESCRIPTION_V1 =
 export const X402_CHALLENGE_HEADER_BUDGET_V1 = 3_000;
 
 /**
+ * How the Bazaar names, tags and pictures each resource in its search results
+ * (the 402's resource object: serviceName, tags, iconUrl). The ecosystem page
+ * on x402.org was deprecated in October 2026, so the Bazaar and x402scan are
+ * where an agent meets this.
+ */
+const BAZAAR_META_V1: Record<X402ActiveIntelligenceServiceV1, { serviceName: string; tags: readonly string[] }> = {
+  still_loan_quote: { serviceName: 'Still loan quote', tags: ['lending', 'borrow', 'tokenized-stocks', 'loan-quote', 'base'] },
+};
+/** Still's mark, served by the app itself (192 × 192). */
+const BAZAAR_ICON_PATH_V1 = '/still-favicon-192.png';
+
+/**
  * Retired 2026-11-16, each with where its answer is free (see
  * X402_INTELLIGENCE_RETIRED_SERVICES_V1 for why). They answer 410 to every
  * method and charge nothing.
@@ -498,9 +510,12 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     description: string,
     preload: RequestHandler,
   ): RequestHandler[] {
+    const origin = publicOriginV1(env);
     const middlewareOptions: CreateX402MiddlewareOptions = {
       routePath,
-      serviceName: `Miorail ${service}`,
+      serviceName: BAZAAR_META_V1[service].serviceName,
+      tags: BAZAAR_META_V1[service].tags,
+      ...(origin ? { iconUrl: `${origin}${BAZAAR_ICON_PATH_V1}` } : {}),
       amountAtomicOverride: MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
       description,
       // Settling payments does not put a resource in the discovery list —
