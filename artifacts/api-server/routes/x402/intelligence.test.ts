@@ -8,16 +8,21 @@ import express, { type RequestHandler } from 'express';
 import request from 'supertest';
 import { decodePaymentRequiredHeader } from '@x402/core/http';
 
-import { b20OpportunityCardV1 } from '@mioagent/opportunity-rail';
 import {
   MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
   MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1,
+  X402StillLoanQuoteV1Schema,
+  hashX402IntelligenceDataV1,
 } from '@mioagent/route-domain';
+import type { MirrorInput } from '@mioagent/still-engine';
 import type { CreateX402MiddlewareOptions } from '@mioagent/x402-gateway';
+import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
+import { EvidencePackageV1Schema } from '../mcp/evidencePackage.js';
 import {
   X402_INTELLIGENCE_MOUNT_V1,
   createX402IntelligenceRouterV1,
   sellerReceiptDetailsV1,
+  userAgentOfV1,
 } from './intelligence.js';
 
 /** This package declares no `"type"`, so `module: NodeNext` typechecks it as
@@ -37,75 +42,69 @@ const ENV = {
   X402_NETWORK: 'eip155:8453',
 } as NodeJS.ProcessEnv;
 
-function unmeasuredCard() {
-  return b20OpportunityCardV1({
-    launch: {
-      tokenAddress: '0xb200000000000000000000000000000000000001',
-      name: 'MIO',
-      symbol: 'MIO',
-      variant: 'asset',
-      decimals: 18,
-      blockNumber: '50000000',
-      transactionHash: `0x${'11'.repeat(32)}`,
-      logIndex: 0,
-      detectedAt: '2026-08-14T10:00:00.000Z',
-      blockTimestamp: null,
-      canonical: true,
-    },
-    observation: null,
-    launchBuyers: null,
-    launchBuyerWindow: { status: 'collecting', closesAtBlock: '50010000' },
-    now: new Date('2026-08-14T12:00:00.000Z'),
-  });
+const QUOTE = `${X402_INTELLIGENCE_MOUNT_V1}/still/loan-quote`;
+const PASS_THROUGH_V1: RequestHandler = (_req, _res, next) => next();
+const RETIRED_PATHS_V1 = [
+  '/b20/exit-analysis',
+  '/b20/liquidity-evidence',
+  '/route-proofs/enhanced',
+  '/stocks/representations',
+  '/address/identity',
+];
+
+/** A reading of the example wallet, so a quote that ignores whose wallet was read is tested against a full one. */
+function readingV1(): MirrorInput {
+  return {
+    universe: universe(),
+    snapshot: snapshot(EXAMPLE),
+    calendar: calendar(),
+    subject: { address: '0x00000000000000000000000000000000000b0b0b', name: null, input: 'example' },
+    assembledAt: new Date('2026-10-21T15:00:01Z'),
+  };
 }
 
-test('catalog publishes every fixed-price service without payment', async () => {
+function appV1(options: Record<string, unknown> = {}) {
   const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env: ENV, dbEnabled: false }));
-  const response = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
-  // One price for every resource: the thing being sold is the same in each —
-  // a measurement Miorail already took, with what it does not establish named
-  // beside it. Read from the constant so the catalogue and the challenge
-  // cannot disagree about what a call costs.
+  app.use(X402_INTELLIGENCE_MOUNT_V1, createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    now: () => new Date('2026-10-21T15:00:02.000Z'),
+    middlewareFactory: () => PASS_THROUGH_V1,
+    readStillMarket: async () => readingV1(),
+    ...options,
+  }));
+  return app;
+}
+
+test('the catalog sells one thing, at the one price, and says where each retired answer is free', async () => {
+  const response = await request(appV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' } }))
+    .get(`${X402_INTELLIGENCE_MOUNT_V1}/catalog`).expect(200);
   assert.equal(response.body.payment.amountAtomic, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
   assert.equal(response.body.payment.amountUsdc, MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1);
-  assert.deepEqual(response.body.services.map((service: { id: string }) => service.id), [
-    'b20_exit_analysis',
-    'b20_liquidity_evidence',
-    'enhanced_route_proof',
-    'stock_representation_choice',
-    'address_identity_check',
-  ]);
-  // Every advertised path is a real mount, not a description of one.
-  for (const service of response.body.services as { path: string }[]) {
-    assert.match(service.path, /^\/api\/x402\/intelligence\/v1\//);
+  assert.deepEqual(response.body.services.map((service: { id: string }) => service.id), ['still_loan_quote']);
+  assert.equal(response.body.services[0].path, QUOTE);
+  assert.deepEqual(
+    response.body.retired.map((entry: { path: string }) => entry.path),
+    RETIRED_PATHS_V1.map((p) => `${X402_INTELLIGENCE_MOUNT_V1}${p}`),
+  );
+  for (const entry of response.body.retired as { instead: string; retiredAt: string }[]) {
+    assert.equal(entry.retiredAt, '2026-11-16');
+    assert.match(entry.instead, /^Free: /);
   }
   // The prose is a price claim too. It shipped once saying 0.001 while the
   // challenge charged 0.002 — a schema literal guards the field and nothing
   // guarded the sentence, so a buyer read one number and paid another.
-  const priced = (response.body.constraints as string[]).filter((line) => /USDC/.test(line));
-  assert.ok(priced.length > 0, 'the catalogue must state its price in words');
-  for (const line of priced) {
+  for (const line of response.body.constraints as string[]) {
     const quoted = line.match(/(\d+\.\d+) USDC/);
-    if (!quoted) continue;
-    assert.equal(quoted[1], MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1);
+    if (quoted) assert.equal(quoted[1], MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1);
   }
+  assert.ok((response.body.constraints as string[]).some((line) => /not offered to US persons/.test(line)));
 });
 
-test('the discovery document lists every catalogued resource at its absolute address', async () => {
-  // x402scan registers a seller from /.well-known/x402 (nginx maps it here).
-  const app = express();
-  app.use(
-    '/api/x402/intelligence/v1',
-    createX402IntelligenceRouterV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz/' }, dbEnabled: false }),
-  );
-  const catalog = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
-  const discovery = await request(app).get('/api/x402/intelligence/v1/well-known').expect(200);
-  assert.equal(discovery.body.version, 1);
-  assert.deepEqual(
-    discovery.body.resources,
-    (catalog.body.services as { path: string }[]).map((service) => `https://miorail.xyz${service.path}`),
-  );
+test('the discovery document lists only what can be bought, at its absolute address', async () => {
+  const app = appV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz/' } });
+  const discovery = await request(app).get(`${X402_INTELLIGENCE_MOUNT_V1}/well-known`).expect(200);
+  assert.deepEqual(discovery.body, { version: 1, resources: [`https://miorail.xyz${QUOTE}`] });
 
   // Nothing is listed that cannot be bought: the seller switched off, or no
   // public https origin to name the resources by.
@@ -114,58 +113,37 @@ test('the discovery document lists every catalogued resource at its absolute add
     { ...ENV, PUBLIC_API_BASE_URL: 'http://miorail.xyz' },
     { ...ENV },
   ] as NodeJS.ProcessEnv[]) {
-    const off = express();
-    off.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env, dbEnabled: false }));
-    await request(off).get('/api/x402/intelligence/v1/well-known').expect(404);
+    await request(appV1({ env })).get(`${X402_INTELLIGENCE_MOUNT_V1}/well-known`).expect(404);
   }
 });
 
-test('the OpenAPI document is what x402scan parses: a price, the protocol and the inputs on every paid route', async () => {
-  // @agentcash/discovery 1.7.5 (x402scan's "Add Server") no longer parses
-  // /.well-known/x402; it reads /openapi.json and nothing else.
-  const app = express();
-  app.use(
-    '/api/x402/intelligence/v1',
-    createX402IntelligenceRouterV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' }, dbEnabled: false }),
-  );
-  const catalog = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
-  const response = await request(app).get('/api/x402/intelligence/v1/openapi.json').expect(200);
-  const doc = response.body as {
+test('the OpenAPI document is what x402scan parses: a price, the protocol and the inputs on the paid route', async () => {
+  // @agentcash/discovery 1.7.5 (x402scan's "Add Server") reads /openapi.json and nothing else.
+  const app = appV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' } });
+  const doc = (await request(app).get(`${X402_INTELLIGENCE_MOUNT_V1}/openapi.json`).expect(200)).body as {
     openapi: string;
     info: { title: string; version: string; 'x-guidance'?: string };
     servers: { url: string }[];
     paths: Record<string, Record<string, Record<string, unknown>>>;
   };
-  // The fields their schema requires, and the base path their parser derives
-  // from servers[0]: empty, so each key is the full path.
   assert.match(doc.openapi, /^3\./);
-  assert.ok(doc.info.title && doc.info.version);
   assert.deepEqual(doc.servers, [{ url: 'https://miorail.xyz' }]);
   assert.ok((doc.info['x-guidance'] ?? '').length > 0 && (doc.info['x-guidance'] ?? '').length < 4000);
-
-  for (const service of catalog.body.services as { id: string; path: string }[]) {
-    const operation = doc.paths[service.path]?.get;
-    assert.ok(operation, `${service.path} is in the document`);
-    // A 402 response, and structured payment info: a fixed price in USD equal
-    // to the catalogue's, and the x402 protocol.
-    assert.ok((operation.responses as Record<string, unknown>)['402']);
-    const info = operation['x-payment-info'] as { price: Record<string, string>; protocols: Record<string, unknown>[] };
-    assert.deepEqual(info.price, { mode: 'fixed', currency: 'USD', amount: MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1 });
-    assert.ok(info.protocols.some((protocol) => 'x402' in protocol));
-    // An input schema, or the audit flags the paid route as uncallable.
-    const parameters = operation.parameters as { in: string; name: string; required: boolean }[];
-    assert.ok(parameters.length > 0 && parameters.every((parameter) => parameter.in === 'query'));
-    assert.ok(parameters.some((parameter) => parameter.required), `${service.path} names its required input`);
-  }
-  // The free price list says it is free rather than leaving its auth unknown.
-  assert.deepEqual(doc.paths['/api/x402/intelligence/v1/catalog']?.get?.security, []);
-
-  const off = express();
-  off.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env: ENV, dbEnabled: false }));
-  await request(off).get('/api/x402/intelligence/v1/openapi.json').expect(404);
+  const operation = doc.paths[QUOTE]?.get;
+  assert.ok(operation, 'the quote is in the document');
+  const responses = operation.responses as Record<string, unknown>;
+  assert.ok(responses['402'] && responses['503'] && responses['400']);
+  const info = operation['x-payment-info'] as { price: Record<string, string>; protocols: Record<string, unknown>[] };
+  assert.deepEqual(info.price, { mode: 'fixed', currency: 'USD', amount: MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1 });
+  const parameters = operation.parameters as { in: string; name: string; required: boolean }[];
+  assert.deepEqual(parameters.map((p) => [p.name, p.required]), [['asset', true], ['amount', true], ['borrowUsdc', false]]);
+  // The retired routes are gone from the document an index registers from.
+  for (const retired of RETIRED_PATHS_V1) assert.equal(doc.paths[`${X402_INTELLIGENCE_MOUNT_V1}${retired}`], undefined);
+  assert.deepEqual(doc.paths[`${X402_INTELLIGENCE_MOUNT_V1}/catalog`]?.get?.security, []);
+  await request(appV1()).get(`${X402_INTELLIGENCE_MOUNT_V1}/openapi.json`).expect(404);
 });
 
-test('the official x402 challenge prices a seller resource at the catalogue price in Base USDC', async () => {
+test('the official x402 challenge prices the quote in Base USDC and says what it answers', async () => {
   const facilitator = createServer((req, res) => {
     if (req.url?.endsWith('/supported')) {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -176,659 +154,204 @@ test('the official x402 challenge prices a seller resource at the catalogue pric
   });
   await new Promise<void>((resolve) => facilitator.listen(0, '127.0.0.1', resolve));
   const { port } = facilitator.address() as AddressInfo;
+  let reads = 0;
   const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: { ...ENV, X402_FACILITATOR_URL: `http://127.0.0.1:${port}`, BASE_BUILDER_CODE: 'miorail' },
+  app.use(X402_INTELLIGENCE_MOUNT_V1, createX402IntelligenceRouterV1({
+    env: { ...ENV, X402_FACILITATOR_URL: `http://127.0.0.1:${port}`, BASE_BUILDER_CODE: 'miorail', PUBLIC_API_BASE_URL: 'https://miorail.xyz' },
     dbEnabled: false,
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+    readStillMarket: async () => { reads += 1; return readingV1(); },
   }));
-
   try {
-    const response = await request(app)
-      .get('/api/x402/intelligence/v1/b20/exit-analysis')
-      .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
-      .expect(402);
-    const header = response.headers['payment-required'];
-    assert.equal(typeof header, 'string');
-    const challenge = decodePaymentRequiredHeader(header as string);
-    assert.equal(challenge.x402Version, 2);
-    assert.equal(challenge.accepts[0]?.amount, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
-    assert.equal(challenge.accepts[0]?.network, 'eip155:8453');
-    assert.equal(challenge.accepts[0]?.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
+    for (const query of [{}, { asset: 'NVDAc', amount: '10' }]) {
+      const response = await request(app).get(QUOTE).query(query).expect(402);
+      const challenge = decodePaymentRequiredHeader(response.headers['payment-required'] as string);
+      assert.equal(challenge.x402Version, 2);
+      assert.equal(challenge.accepts[0]?.amount, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
+      assert.equal(challenge.accepts[0]?.network, 'eip155:8453');
+      assert.equal(challenge.accepts[0]?.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
+      assert.equal(challenge.resource?.url, `https://miorail.xyz${QUOTE}`);
+      assert.match(challenge.resource?.description ?? '', /^What Still would lend in USDC against an exact amount/);
+    }
+    // The price costs no reading of Base, asked or not.
+    assert.equal(reads, 0);
   } finally {
     await new Promise<void>((resolve) => facilitator.close(() => resolve()));
   }
 });
 
-test('paid B20 response is deterministic evidence and every route overrides price to the one constant', async () => {
-  const middlewareOptions: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
-  const pass: RequestHandler = (_req, _res, next) => next();
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    now: () => new Date('2026-08-14T12:00:00.000Z'),
-    middlewareFactory: (path, options) => {
-      middlewareOptions.push({ path, options });
-      return pass;
-    },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
-    .expect(200);
-  assert.equal(response.body.schemaVersion, 'x402-b20-intelligence/v1');
-  assert.equal(response.body.analysis.verdict.status, 'not_measured');
-  assert.equal(response.body.payment.status, 'settled_by_middleware');
-  assert.match(response.body.dataHash, /^0x[0-9a-f]{64}$/);
-  assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
-  assert.equal(middlewareOptions.length, 5);
-  assert.ok(
-    middlewareOptions.every(
-      (entry) => entry.options.amountAtomicOverride === MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
-    ),
-  );
+test('a paid quote is the engine’s, bound by its hash, with an evidence package on its claims', async () => {
+  const seen: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
+  const app = appV1({ middlewareFactory: (p: string, options: CreateX402MiddlewareOptions) => { seen.push({ path: p, options }); return PASS_THROUGH_V1; } });
+  const response = await request(app).get(QUOTE).query({ asset: 'nvdac', amount: '10', borrowUsdc: '500' }).expect(200);
+  const body = X402StillLoanQuoteV1Schema.parse(response.body);
+  assert.equal(body.dataHash, hashX402IntelligenceDataV1(body));
+  assert.equal(response.headers['x-miorail-data-hash'], body.dataHash);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.deepEqual(body.question, {
+    asset: 'NVDAc', token: '0xb20000000000000000000078ee7ce2fe4908108c', decimals: 8, amount: '10', amountRaw: '1000000000', borrowUsdc: '500',
+  });
+  // The example wallet owes $240.17 and holds NVDAc; none of it is in the quote.
+  assert.equal(body.limit.stillLimitCents, '74167');
+  assert.equal(body.limit.protocolLimitCents, '148334');
+  assert.equal(body.atStillLimit?.outcome, 'computed');
+  if (body.atStillLimit?.outcome === 'computed') {
+    assert.equal(body.atStillLimit.figures.healthFactorText, '2.00');
+    assert.deepEqual(body.atStillLimit.figures.stress.map((row) => [row.fallBps, row.liquidationCanStart]), [[1000, false], [2000, false], [3000, false]]);
+  }
+  assert.equal(body.requested?.withinStillLimit, true);
+  assert.equal(body.requested?.loan.outcome, 'computed');
+  assert.match(body.caveats.join(' '), /not an offer/);
+  assert.match(body.caveats.join(' '), /not offered to US persons/);
+  assert.ok(!/guarantee|risk-free|no liquidation|cannot be liquidated/i.test(body.caveats.join(' ')));
+  const evidence = EvidencePackageV1Schema.parse(body.evidencePackage);
+  assert.ok(evidence.claims.some((claim) => claim.paths.includes('/collateral/priceCents') && claim.block === body.reading.block));
+  // One route, priced at the one constant, described as what it answers.
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]!.options.amountAtomicOverride, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
+  assert.match(seen[0]!.options.description ?? '', /No wallet needed\.$/);
 });
 
-test('invalid input and disabled feature never reach the payment middleware', async () => {
-  let paymentCalls = 0;
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: { ...ENV, MIORAIL_X402_SELLER_INTELLIGENCE_V1: 'false' },
-    dbEnabled: false,
-    middlewareFactory: () => (_req, _res, next) => {
-      paymentCalls += 1;
-      next();
-    },
-  }));
-  await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: 'not-an-address' })
-    .expect(404);
-  assert.equal(paymentCalls, 0);
+test('a question that is not one is refused before the price, and nothing is read', async () => {
+  let charges = 0;
+  let reads = 0;
+  const app = appV1({
+    middlewareFactory: () => ((_req, _res, next) => { charges += 1; next(); }) as RequestHandler,
+    readStillMarket: async () => { reads += 1; return readingV1(); },
+  });
+  for (const [query, code] of [
+    [{ asset: 'NVDA', amount: '10' }, 'unsupported_collateral'], // a ticker names three issuers' contracts
+    [{ asset: '0x2222222222222222222222222222222222222222', amount: '10' }, 'unsupported_collateral'],
+    [{ asset: 'NVDAc', amount: '0' }, 'invalid_amount'],
+    [{ asset: 'NVDAc', amount: '1.000000001' }, 'invalid_amount'], // NVDAc has 8 decimals
+    [{ asset: 'NVDAc', amount: '-1' }, 'invalid_amount'],
+    [{ asset: 'NVDAc', amount: '10', borrowUsdc: '0' }, 'invalid_borrow'],
+    [{ asset: 'NVDAc', amount: '10', borrowUsdc: '1.0000001' }, 'invalid_borrow'],
+  ] as const) {
+    const response = await request(app).get(QUOTE).query(query).expect(400);
+    assert.equal(response.body.code, code);
+    assert.match(response.body.message, /Nothing was charged\.$/);
+  }
+  assert.equal(charges, 0);
+  assert.equal(reads, 0);
 });
 
-test('a missing or private Route Proof is rejected before any payment is requested', async () => {
-  let paymentCalls = 0;
-  let proofLookups = 0;
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    middlewareFactory: () => (_req, _res, next) => {
-      paymentCalls += 1;
-      next();
-    },
-    loadBundle: async () => {
-      proofLookups += 1;
-      return null;
-    },
-  }));
-
-  await request(app)
-    .get('/api/x402/intelligence/v1/route-proofs/enhanced')
-    .query({ publicId: 'a'.repeat(48) })
-    .expect(404);
-
-  assert.equal(proofLookups, 1);
-  assert.equal(paymentCalls, 0, 'the buyer must not pay for a proof Miorail cannot deliver');
+test('when Base cannot be read the answer is 503, so the payment is never settled', async () => {
+  const app = appV1({ readStillMarket: async () => { throw new Error('every provider refused'); } });
+  const response = await request(app).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(503);
+  assert.equal(response.body.code, 'still_reading_unavailable');
+  assert.equal(response.headers['retry-after'], '15');
 });
 
-// ---------------------------------------------------------------------------
-// Settlement and delivery are written in an order nobody chose.
-//
-// The resource server raises settlement on `onAfterSettle` — AFTER the handler
-// has produced the response — so on every real sale the handler reaches
-// delivery first, when no receipt row exists yet. The first version returned
-// early in exactly that case, so the first genuine production sale
-// (0.001 USDC, tx 0xeddde5aa…, delivered with HTTP 200) was stored as
-// `deliveryStatus: pending` with no dataHash, and `x402IntelligenceSold` —
-// which counts a sale only when settlement AND delivery both exist — reported
-// 0 through it.
-//
-// The receipt body is now built from the delivery it is given, so whichever
-// of the two runs second writes both.
-// ---------------------------------------------------------------------------
+test('a request that asks for nothing is answered with the price, and reads nothing', async () => {
+  const priced: string[] = [];
+  let reads = 0;
+  const app = appV1({
+    middlewareFactory: (p: string) => ((_req, res) => { priced.push(p); res.status(402).json({ x402Version: 2 }); }) as RequestHandler,
+    readStillMarket: async () => { reads += 1; return readingV1(); },
+  });
+  await request(app).get(QUOTE).expect(402);
+  assert.deepEqual(priced, ['/still/loan-quote']);
+  assert.equal(reads, 0);
+});
 
-test('a receipt written after delivery carries the delivered hash, not "pending"', () => {
-  const details = sellerReceiptDetailsV1({
+test('every retired resource answers 410 to every method, names where its answer is free, and charges nothing', async () => {
+  let charges = 0;
+  const app = appV1({
+    env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' },
+    middlewareFactory: () => ((_req, _res, next) => { charges += 1; next(); }) as RequestHandler,
+  });
+  for (const retired of RETIRED_PATHS_V1) {
+    for (const method of ['get', 'post', 'head'] as const) {
+      const response = await request(app)[method](`${X402_INTELLIGENCE_MOUNT_V1}${retired}`).query({ tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c' }).expect(410);
+      if (method !== 'head') {
+        assert.equal(response.body.code, 'x402_resource_retired');
+        assert.match(response.body.instead, /^Free: /);
+      }
+    }
+  }
+  const identity = await request(app).get(`${X402_INTELLIGENCE_MOUNT_V1}/address/identity`).expect(410);
+  assert.match(identity.body.instead, /check_address_identity at https:\/\/miorail\.xyz\/mcp/);
+  assert.equal(charges, 0);
+});
+
+test('another method on the quote is 405, not a 401 that implies a key would help', async () => {
+  const app = appV1();
+  for (const method of ['post', 'put', 'patch', 'delete'] as const) {
+    const response = await request(app)[method](QUOTE).expect(405);
+    assert.equal(response.headers.allow, 'GET, HEAD');
+  }
+});
+
+test('the 402 names an address, not a path, and it is the path this router is mounted at', async () => {
+  const seen: CreateX402MiddlewareOptions[] = [];
+  const app = appV1({
+    env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' },
+    middlewareFactory: (_p: string, options: CreateX402MiddlewareOptions) => { seen.push(options); return PASS_THROUGH_V1; },
+  });
+  await request(app).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200);
+  assert.equal(seen[0]?.resourceOrigin, `https://miorail.xyz${X402_INTELLIGENCE_MOUNT_V1}`);
+  const mounted = readFileSync(packageFileV1('routes/index.ts'), 'utf8');
+  assert.ok(mounted.includes(`'${X402_INTELLIGENCE_MOUNT_V1.replace('/api', '')}'`), `routes/index.ts does not mount the router at ${X402_INTELLIGENCE_MOUNT_V1}`);
+
+  // A base that is not https is ignored rather than concatenated.
+  const half: CreateX402MiddlewareOptions[] = [];
+  await request(appV1({
+    env: { ...ENV, PUBLIC_API_BASE_URL: 'miorail.xyz' },
+    middlewareFactory: (_p: string, options: CreateX402MiddlewareOptions) => { half.push(options); return PASS_THROUGH_V1; },
+  })).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200);
+  assert.equal(half[0]?.resourceOrigin, undefined);
+});
+
+test('the paid route declares itself for the discovery list with an example its own preload answers', async () => {
+  const seen: CreateX402MiddlewareOptions[] = [];
+  let reads = 0;
+  const app = appV1({
+    middlewareFactory: (_p: string, options: CreateX402MiddlewareOptions) => { seen.push(options); return PASS_THROUGH_V1; },
+    readStillMarket: async () => { reads += 1; return readingV1(); },
+  });
+  const discovery = seen[0]?.discovery as { input?: Record<string, string>; inputSchema?: { required?: string[] }; output?: { example?: unknown } } | undefined;
+  assert.ok(discovery?.output?.example, 'it must show the shape it returns');
+  assert.deepEqual(discovery?.inputSchema?.required, ['asset', 'amount']);
+  // The proof resource declared an example its own validator refused, and every
+  // rater that tried it graded the resource broken. This one is sent through.
+  const before = reads;
+  const response = await request(app).get(QUOTE).query(discovery!.input!).expect(200);
+  assert.equal(response.body.question.asset, 'NVDAc');
+  assert.equal(reads, before + 1);
+});
+
+test('a receipt carries the delivered hash and the buyer’s own client name', () => {
+  const delivered = sellerReceiptDetailsV1({
     base: { txHash: '0xabc' },
-    service: 'b20_exit_analysis',
+    service: 'still_loan_quote',
     requestHash: '0xrequest',
     paymentStatus: 'settled',
-    delivery: { dataHash: '0xdata', deliveredAt: '2026-08-14T23:05:00.000Z' },
+    delivery: { dataHash: '0xdata', deliveredAt: '2026-11-16T10:00:00.000Z' },
+    userAgent: 'lumiere-paycheck-prober/1.0',
   });
-  assert.equal(details.deliveryStatus, 'delivered');
-  assert.equal(details.dataHash, '0xdata');
-  assert.equal(details.deliveredAt, '2026-08-14T23:05:00.000Z');
-  assert.equal(details.txHash, '0xabc', 'the facilitator record must survive');
-  assert.equal(details.paymentStatus, 'settled');
-});
+  assert.equal(delivered.deliveryStatus, 'delivered');
+  assert.equal(delivered.dataHash, '0xdata');
+  assert.equal(delivered.txHash, '0xabc', 'the facilitator record must survive');
+  assert.deepEqual(delivered.client, { userAgent: 'lumiere-paycheck-prober/1.0' });
 
-test('a receipt written before delivery stays pending and claims no data hash', () => {
-  const details = sellerReceiptDetailsV1({
-    base: {},
-    service: 'b20_liquidity_evidence',
-    requestHash: '0xrequest',
-    paymentStatus: 'settled',
-    delivery: null,
-  });
-  assert.equal(details.deliveryStatus, 'pending');
-  assert.equal('dataHash' in details, false, 'an undelivered sale must not carry a hash key');
-  assert.equal('deliveredAt' in details, false);
+  const pending = sellerReceiptDetailsV1({ base: {}, service: 'still_loan_quote', requestHash: '0xrequest', paymentStatus: 'settled', delivery: null });
+  assert.equal(pending.deliveryStatus, 'pending');
+  assert.equal('dataHash' in pending, false, 'an undelivered sale must not carry a hash key');
+  assert.deepEqual(pending.client, { userAgent: null });
+
+  assert.equal(userAgentOfV1('a\u0000b\nc'), 'a b c');
+  assert.equal(userAgentOfV1('x'.repeat(500))?.length, 200);
+  assert.equal(userAgentOfV1(undefined), null);
 });
 
 test('delivery is recorded on the request context before the receipt is looked up', () => {
-  // The ordering above is only safe if the handler stamps the context
-  // unconditionally. Guarding the source because the failing path writes
-  // nothing at all, so no in-process assertion can observe it.
+  // Settlement lands after the response, so the handler reaches delivery first,
+  // when no receipt row exists yet. Guarding the source because the failing path
+  // writes nothing at all, so no in-process assertion can observe it.
   const source = readFileSync(packageFileV1('routes/x402/intelligence.ts'), 'utf8');
   const body = /async function markSellerDeliveryV1[\s\S]*?\n}/.exec(source)?.[0] ?? '';
-  assert.ok(body.length > 0, 'markSellerDeliveryV1 must still exist');
   const stamped = body.indexOf('context.delivery =');
   const earlyReturn = body.indexOf('if (!context.receiptId) return;');
-  assert.ok(stamped > 0, 'delivery must be recorded on the context');
-  assert.ok(earlyReturn > 0, 'the no-receipt-yet path must still return early');
-  assert.ok(
-    stamped < earlyReturn,
-    'recording delivery after the early return is the defect: it never runs on a real sale',
-  );
-});
-
-// ---------------------------------------------------------------------------
-// The two questions an agent gets wrong silently, sold.
-//
-// Both read stored evidence and measure nothing — a paid read must never be a
-// way to make Miorail spend router calls for somebody else — and both carry
-// what was NOT established beside what was.
-// ---------------------------------------------------------------------------
-
-const PASS_THROUGH_V1: RequestHandler = (_req, _res, next) => next();
-
-function boardFixtureV1(overrides: Record<string, unknown> = {}) {
-  return {
-    question: { underlyingKey: 'security:isin:US67066G1040' },
-    underlying: { isin: 'US67066G1040', assetClass: 'equity' },
-    representations: [
-      {
-        tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
-        issuerId: 'coinbase',
-        issuerInstrumentKey: 'coinbase:NVDAc',
-        representationKind: 'b20_asset',
-        supply: { state: 'positive_supply', decimals: 8 },
-        routePolicyKey: `0x${'ab'.repeat(32)}`,
-        sources: [{ source: 'kyberswap', status: 'quoted' }],
-        exactTestedTokenAtomic: '55500',
-        returnedCashAtomic: '99500',
-        effectivePriceAtomic: '17927927927',
-        premiumDiscountBps: '-12',
-        observedAt: '2026-09-06T18:00:00.000Z',
-        expiresAt: '2026-09-06T18:00:20.000Z',
-        liveness: 'live',
-      },
-      {
-        // The one an agent picking by ticker would have chosen by coincidence.
-        tokenAddress: '0xcccccccccccccccccccccccccccccccccccccccc',
-        issuerId: 'backed',
-        issuerInstrumentKey: 'backed:bNVDA',
-        representationKind: 'rebasing_erc20',
-        supply: { state: 'positive_supply', decimals: 18 },
-        routePolicyKey: null,
-        sources: [],
-        exactTestedTokenAtomic: null,
-        returnedCashAtomic: null,
-        effectivePriceAtomic: null,
-        premiumDiscountBps: null,
-        observedAt: null,
-        expiresAt: null,
-        liveness: 'never_measured',
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function dossierFixtureV1(overrides: Record<string, unknown> = {}) {
-  return {
-    tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
-    dossierHash: `0x${'cd'.repeat(32)}`,
-    identity: {
-      standing: 'official',
-      official: {
-        ticker: 'NVDAc',
-        displayName: 'NVIDIA Corporation',
-        issuer: 'coinbase',
-        listedIn: ['base_product_list'],
-        sourceDiscrepancy: false,
-      },
-      lookalike: null,
-      origin: { status: 'relayed', deployerAddress: null, relation: 'bundler', readAt: '2026-09-01T00:00:00.000Z' },
-    },
-    established: [{ code: 'official_identity_bound' }],
-    unknown: [{ code: 'holder_concentration_not_read' }],
-    ...overrides,
-  };
-}
-
-function paidAppV1(options: Record<string, unknown>) {
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    now: () => new Date('2026-09-06T18:05:00.000Z'),
-    middlewareFactory: () => PASS_THROUGH_V1,
-    ...options,
-  }));
-  return app;
-}
-
-test('the representation answer names every contract and which of them the market took', async () => {
-  const asked: unknown[] = [];
-  const app = paidAppV1({
-    loadRepresentations: async (input: unknown) => {
-      asked.push(input);
-      return boardFixtureV1();
-    },
-  });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/stocks/representations')
-    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '100' })
-    .expect(200);
-
-  assert.equal(response.body.schemaVersion, 'x402-stock-representation-choice/v1');
-  assert.deepEqual(asked, [
-    { underlyingKey: 'security:isin:US67066G1040', direction: 'buy', requestedCashAtomic: '100000000' },
-  ]);
-  assert.equal(response.body.representations.length, 2);
-  const [coinbase, backed] = response.body.representations;
-  assert.equal(coinbase.issuerId, 'coinbase');
-  assert.equal(coinbase.routePolicyEstablished, true);
-  assert.deepEqual(coinbase.sources, [{ source: 'kyberswap', status: 'quoted' }]);
-  // The second one is the whole point: same security, no policy, nobody has
-  // measured it. An agent picking by ticker had a 50% chance of this.
-  assert.equal(backed.issuerId, 'backed');
-  assert.equal(backed.routePolicyEstablished, false);
-  assert.deepEqual(backed.sources, []);
-  assert.match(response.body.missingEvidence.join(' '), /no measurement at this exact size/);
-  assert.match(response.body.caveats.join(' '), /ticker cannot select/i);
-  assert.equal(response.body.payment.amountAtomic, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
-  assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
-});
-
-test('a paid premium says which reference it is against, because three are possible', async () => {
-  // These feeds publish through the overnight session, so a bare bps figure
-  // can be against the open session, against a close, or against a 03:00
-  // print. A buyer comparing two of those is subtracting two denominators.
-  const app = paidAppV1({
-    loadRepresentations: async () => {
-      const board = boardFixtureV1() as { representations: Record<string, unknown>[] };
-      board.representations[0]!.basis = {
-        status: 'comparable',
-        kind: 'off_session_reference',
-        premiumDiscountBps: '-12',
-        reason: 'Comparable with the feed’s own off-session publication.',
-      };
-      return board;
-    },
-  });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/stocks/representations')
-    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '100' })
-    .expect(200);
-  const [coinbase, backed] = response.body.representations;
-  assert.equal(coinbase.premiumDiscountBps, '-12');
-  assert.equal(coinbase.premiumDiscountAgainst, 'off_session_reference');
-  // No basis recorded at all is null, and null is not a fourth kind.
-  assert.equal(backed.premiumDiscountBps, null);
-  assert.equal(backed.premiumDiscountAgainst, null);
-  assert.match(response.body.caveats.join(' '), /only comparable against the same/i);
-});
-
-test('a size nobody measured is refused rather than measured to satisfy a paid read', async () => {
-  let called = false;
-  const app = paidAppV1({
-    loadRepresentations: async () => {
-      called = true;
-      return boardFixtureV1();
-    },
-  });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/stocks/representations')
-    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '250' })
-    .expect(400);
-  assert.equal(response.body.code, 'unmeasured_size_requested');
-  assert.equal(called, false, 'a refused size must not reach the evidence read');
-});
-
-test('an underlying this corpus does not review is absent, never invented', async () => {
-  const app = paidAppV1({ loadRepresentations: async () => null });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/stocks/representations')
-    .query({ underlyingKey: 'security:isin:XX0000000000' })
-    .expect(404);
-  assert.equal(response.body.code, 'underlying_not_reviewed');
-});
-
-test('the identity answer carries the resemblance, the origin and what was not read', async () => {
-  const app = paidAppV1({
-    loadIdentity: async () =>
-      dossierFixtureV1({
-        identity: {
-          ...dossierFixtureV1().identity,
-          standing: 'indexed_launch',
-          official: null,
-          lookalike: {
-            officialAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
-            officialTicker: 'NVDAc',
-            matchKind: 'symbol_exact',
-            matchedAlias: 'published_ticker',
-            matchedValue: 'NVDAc',
-            firstFlaggedAt: '2026-09-01T00:00:00.000Z',
-          },
-        },
-      }),
-  });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/address/identity')
-    .query({ tokenAddress: '0xcccccccccccccccccccccccccccccccccccccccc' })
-    .expect(200);
-
-  assert.equal(response.body.schemaVersion, 'x402-address-identity-check/v1');
-  assert.equal(response.body.standing, 'indexed_launch');
-  assert.equal(response.body.official, null);
-  // A resemblance names the contract it resembles, so the buyer compares
-  // ADDRESSES rather than trusting that two symbols matching means anything.
-  assert.equal(response.body.lookalike.officialAddress, '0xb20000000000000000000078ee7ce2fe4908108c');
-  assert.match(response.body.caveats.join(' '), /RESEMBLANCE/);
-  // A bundler that relayed a UserOperation is not a deployer.
-  assert.equal(response.body.origin.relation, 'bundler');
-  assert.equal(response.body.origin.deployerAddress, null);
-  assert.deepEqual(response.body.unknown, ['holder_concentration_not_read']);
-  assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
-});
-
-test('an address is refused before any evidence read when it is not an address', async () => {
-  let called = false;
-  const app = paidAppV1({
-    loadIdentity: async () => {
-      called = true;
-      return dossierFixtureV1();
-    },
-  });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/address/identity')
-    .query({ tokenAddress: 'NVDA' })
-    .expect(400);
-  assert.equal(response.body.code, 'invalid_token_address');
-  assert.equal(called, false);
-});
-
-// ---------------------------------------------------------------------------
-// A wallet is not a token.
-//
-// The corpus can only ever call a wallet `unknown_to_miorail`, and on
-// 2026-10-10 an assistant paid 0.002 USDC to learn that about its own wallet.
-// An address nothing here knows is now asked ERC-20's own question before the
-// paywall, and one that does not answer it is refused for free.
-// ---------------------------------------------------------------------------
-const WALLET_V1 = '0x2222222222222222222222222222222222222222';
-
-function unknownDossierV1(lookalike: unknown = null) {
-  return dossierFixtureV1({
-    tokenAddress: WALLET_V1,
-    identity: { ...dossierFixtureV1().identity, standing: 'unknown_to_miorail', official: null, lookalike },
-  });
-}
-
-function countingAppV1(options: Record<string, unknown>) {
-  const seen = { charges: 0, asked: [] as string[] };
-  const app = paidAppV1({
-    middlewareFactory: () => ((_req, _res, next) => {
-      seen.charges += 1;
-      next();
-    }) as RequestHandler,
-    ...options,
-    readTokenSupply: async (tokenAddress: string) => {
-      seen.asked.push(tokenAddress);
-      return (options.answer as string | undefined) ?? 'token';
-    },
-  });
-  return { app, seen };
-}
-
-test('an address that is not a token is refused before the paywall, and nothing is charged', async () => {
-  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'not_token' });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/address/identity')
-    .query({ tokenAddress: WALLET_V1 })
-    .expect(422);
-  assert.equal(response.body.code, 'not_a_token');
-  assert.match(response.body.message, /totalSupply\(\).*Nothing was charged/);
-  assert.deepEqual(seen.asked, [WALLET_V1]);
-  assert.equal(seen.charges, 0);
-});
-
-test('when Base cannot be asked, the answer is a retry, never a charge', async () => {
-  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'unreadable' });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/address/identity')
-    .query({ tokenAddress: WALLET_V1 })
-    .expect(503);
-  assert.equal(response.body.code, 'token_check_unavailable');
-  assert.equal(response.headers['retry-after'], '30');
-  assert.equal(seen.charges, 0);
-});
-
-test('an unknown address that answers as a token is still sold its unknown standing', async () => {
-  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'token' });
-  const response = await request(app)
-    .get('/api/x402/intelligence/v1/address/identity')
-    .query({ tokenAddress: WALLET_V1 })
-    .expect(200);
-  assert.equal(response.body.standing, 'unknown_to_miorail');
-  assert.equal(seen.charges, 1);
-});
-
-test('an address the corpus knows is never asked about on the chain', async () => {
-  for (const dossier of [
-    dossierFixtureV1(),
-    unknownDossierV1({
-      officialAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
-      officialTicker: 'NVDAc',
-      matchKind: 'symbol_exact',
-      matchedAlias: 'published_ticker',
-      matchedValue: 'NVDAc',
-      firstFlaggedAt: '2026-09-01T00:00:00.000Z',
-    }),
-  ]) {
-    const { app, seen } = countingAppV1({ loadIdentity: async () => dossier, answer: 'not_token' });
-    await request(app)
-      .get('/api/x402/intelligence/v1/address/identity')
-      .query({ tokenAddress: dossier.tokenAddress })
-      .expect(200);
-    assert.deepEqual(seen.asked, []);
-    assert.equal(seen.charges, 1);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// "What does this cost?" is not a malformed request for the answer.
-//
-// Every route validated its arguments before the paywall, so a request with no
-// query string — exactly what an index, a crawler or an agent meeting the
-// resource for the first time sends — got 400 and never saw a price. Measured
-// on production 2026-09-19: all five answered 400 bare, CDP's validator
-// reported `returns_402: false` with every later check skipped, and a full scan
-// of the discovery list held 15,383 resources from 1,331 sellers and none of
-// ours. The declaration underneath was correct the whole time; nothing ever
-// reached it.
-// ---------------------------------------------------------------------------
-test('the 402 names an address, not a path, and it is the path this router is mounted at', async () => {
-  // CDP's discovery refused every submission: `resource must start with
-  // "https://" when protocol type is http`. The challenge carried
-  // `resource: "/b20/exit-analysis"` — the route as Express knows it, with no
-  // host — and an index cannot come back to that. Every preflight check passed
-  // and the extension was read; the submission died one step later.
-  const seen: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' },
-    dbEnabled: false,
-    middlewareFactory: (path, options) => { seen.push({ path, options }); return PASS_THROUGH_V1; },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-  await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
-    .expect(200);
-
-  assert.equal(seen.length, 5);
-  for (const entry of seen) {
-    assert.equal(
-      entry.options.resourceOrigin,
-      `https://miorail.xyz${X402_INTELLIGENCE_MOUNT_V1}`,
-      `${entry.path} must publish an absolute https resource`,
-    );
-  }
-
-  // And the mount constant is the mount. Move the router and this fails rather
-  // than the listing going quietly stale.
-  const mounted = readFileSync(packageFileV1('routes/index.ts'), 'utf8');
-  assert.ok(
-    mounted.includes(`'${X402_INTELLIGENCE_MOUNT_V1.replace('/api', '')}'`),
-    `routes/index.ts does not mount the router at ${X402_INTELLIGENCE_MOUNT_V1}`,
-  );
-});
-
-test('half an address is not published at all', async () => {
-  // A base that is not https is ignored rather than concatenated: a relative
-  // path is honest, and a malformed absolute one looks like it works.
-  const seen: CreateX402MiddlewareOptions[] = [];
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: { ...ENV, PUBLIC_API_BASE_URL: 'miorail.xyz' },
-    dbEnabled: false,
-    middlewareFactory: (_path, options) => { seen.push(options); return PASS_THROUGH_V1; },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-  await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
-    .expect(200);
-  assert.equal(seen[0]?.resourceOrigin, undefined);
-});
-
-test('a request that asks for nothing is answered with the price, not a 400', async () => {
-  const priced: string[] = [];
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    middlewareFactory: (path) => (_req, res, _next) => {
-      priced.push(path);
-      res.status(402).json({ x402Version: 2, error: 'Payment Required' });
-    },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-
-  for (const path of [
-    '/b20/exit-analysis',
-    '/b20/liquidity-evidence',
-    '/stocks/representations',
-    '/address/identity',
-    '/route-proofs/enhanced',
-  ]) {
-    await request(app).get(`/api/x402/intelligence/v1${path}`).expect(402);
-  }
-  assert.deepEqual(priced.sort(), [
-    '/address/identity',
-    '/b20/exit-analysis',
-    '/b20/liquidity-evidence',
-    '/route-proofs/enhanced',
-    '/stocks/representations',
-  ]);
-});
-
-test('pricing a bare request reads nothing and promises nothing', async () => {
-  // The 402 is the cheapest thing this surface can do: no evidence read, no
-  // proof lookup, no answer implied. A price that costs a database query is a
-  // free denial-of-service with extra steps.
-  let reads = 0;
-  let proofLookups = 0;
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    middlewareFactory: () => (_req, res) => res.status(402).json({ x402Version: 2 }),
-    loadB20: async () => { reads += 1; return { card: unmeasuredCard(), history: [] }; },
-    loadBundle: async () => { proofLookups += 1; return null; },
-  }));
-  await request(app).get('/api/x402/intelligence/v1/b20/exit-analysis').expect(402);
-  await request(app).get('/api/x402/intelligence/v1/route-proofs/enhanced').expect(402);
-  assert.equal(reads, 0);
-  assert.equal(proofLookups, 0);
-});
-
-test('a request that names an input is still validated before it is billed', async () => {
-  // The other half. Pricing a bare request must not turn a malformed ask into
-  // a charge for an answer nobody can deliver.
-  let paymentCalls = 0;
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    middlewareFactory: () => (_req, _res, next) => { paymentCalls += 1; next(); },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-  await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: 'not-an-address' })
-    .expect(400);
-  await request(app)
-    .get('/api/x402/intelligence/v1/route-proofs/enhanced')
-    .query({ publicId: 'not a public id' })
-    .expect(400);
-  assert.equal(paymentCalls, 0);
-});
-
-test('every paid route declares itself for the discovery list', async () => {
-  // Settling payments does not list a resource: three settled through the CDP
-  // facilitator in August and its discovery list held zero Miorail entries.
-  // A declaration on the 402 challenge is what lists it — so every route must
-  // carry one, and it must describe THAT route rather than a generic shape.
-  const seen: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
-  const app = express();
-  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
-    env: ENV,
-    dbEnabled: false,
-    middlewareFactory: (path, options) => {
-      seen.push({ path, options });
-      return PASS_THROUGH_V1;
-    },
-    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
-  }));
-  await request(app)
-    .get('/api/x402/intelligence/v1/b20/exit-analysis')
-    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
-    .expect(200);
-
-  assert.equal(seen.length, 5);
-  for (const entry of seen) {
-    const discovery = entry.options.discovery as
-      | { input?: Record<string, unknown>; inputSchema?: { required?: string[] }; output?: { example?: unknown } }
-      | undefined;
-    assert.ok(discovery, `${entry.path} must declare itself`);
-    assert.ok(discovery.output?.example, `${entry.path} must show the shape it returns`);
-    assert.ok(
-      (discovery.inputSchema?.required ?? []).length > 0,
-      `${entry.path} must name the input a caller has to send`,
-    );
-    // The declaration describes THIS route, not a template: every required
-    // input must actually appear in the example input.
-    for (const key of discovery.inputSchema?.required ?? []) {
-      assert.ok(key in (discovery.input ?? {}), `${entry.path} example must include ${key}`);
-    }
-  }
+  assert.ok(stamped > 0 && earlyReturn > 0 && stamped < earlyReturn,
+    'recording delivery after the early return is the defect: it never runs on a real sale');
 });

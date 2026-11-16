@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import {
-  PAID_API_EXAMPLE_TOKEN_V1,
   PAID_RESOURCES_V1,
   basescanTxUrlV1,
   examplesOfV1,
@@ -26,53 +25,41 @@ function header(accepts: unknown[]): string {
 }
 
 describe('the paid API page', () => {
-  test('offers the five resources the catalog sells, at the paths the server mounts', () => {
-    assert.deepEqual(
-      PAID_RESOURCES_V1.map((entry) => [entry.id, entry.path]),
-      [
-        ['address_identity_check', '/address/identity'],
-        ['stock_representation_choice', '/stocks/representations'],
-        ['b20_exit_analysis', '/b20/exit-analysis'],
-        ['b20_liquidity_evidence', '/b20/liquidity-evidence'],
-        ['enhanced_route_proof', '/route-proofs/enhanced'],
-      ],
-    );
+  test('offers the one resource the catalog sells, at the path the server mounts', () => {
+    assert.deepEqual(PAID_RESOURCES_V1.map((entry) => [entry.id, entry.path]), [['still_loan_quote', '/still/loan-quote']]);
   });
 
-  test('the prefilled examples are requests the server answers with its price, not a refusal', () => {
-    // Measured 2026-09-25 without paying: each of these reached the 402.
-    assert.deepEqual(paidRequestUrlV1(resource('address_identity_check'), examplesOfV1(resource('address_identity_check'))), {
+  test('the prefilled example is a request the server answers with its price, not a refusal', () => {
+    // The Bazaar declares the same example, and the server's own test sends it through its preload.
+    const quote = resource('still_loan_quote');
+    assert.deepEqual(paidRequestUrlV1(quote, examplesOfV1(quote)), {
       ok: true,
-      url: `/api/x402/intelligence/v1/address/identity?tokenAddress=${PAID_API_EXAMPLE_TOKEN_V1}`,
+      url: '/api/x402/intelligence/v1/still/loan-quote?asset=NVDAc&amount=10',
     });
-    assert.deepEqual(paidRequestUrlV1(resource('stock_representation_choice'), examplesOfV1(resource('stock_representation_choice'))), {
+    assert.deepEqual(paidRequestUrlV1(quote, { asset: 'cbBTC', amount: '0.01', borrowUsdc: '150' }), {
       ok: true,
-      url: '/api/x402/intelligence/v1/stocks/representations?underlyingKey=security%3Aisin%3AUS67066G1040&direction=buy&sizeUsdc=100',
-    });
-    // An empty optional field is left out, so the server applies its default.
-    assert.deepEqual(paidRequestUrlV1(resource('b20_exit_analysis'), examplesOfV1(resource('b20_exit_analysis'))), {
-      ok: true,
-      url: `/api/x402/intelligence/v1/b20/exit-analysis?tokenAddress=${PAID_API_EXAMPLE_TOKEN_V1}`,
+      url: '/api/x402/intelligence/v1/still/loan-quote?asset=cbBTC&amount=0.01&borrowUsdc=150',
     });
   });
 
   test('a malformed ask is stopped before the wallet, in the server’s own rules', () => {
-    const refusals = [
-      paidRequestUrlV1(resource('address_identity_check'), { tokenAddress: 'NVDA' }),
-      paidRequestUrlV1(resource('stock_representation_choice'), { underlyingKey: 'NVDA' }),
-      paidRequestUrlV1(resource('stock_representation_choice'), { underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '250' }),
-      paidRequestUrlV1(resource('stock_representation_choice'), { underlyingKey: 'security:isin:US67066G1040', direction: 'short' }),
-      paidRequestUrlV1(resource('b20_exit_analysis'), { tokenAddress: PAID_API_EXAMPLE_TOKEN_V1, positionUsdc: '0' }),
-      paidRequestUrlV1(resource('enhanced_route_proof'), { publicId: '' }),
-      paidRequestUrlV1(resource('enhanced_route_proof'), { publicId: 'abc' }),
+    const quote = resource('still_loan_quote');
+    const asks: Record<string, string>[] = [
+      { asset: 'NVDA', amount: '10' }, // a ticker names three issuers' contracts; Still lends against one
+      { asset: '', amount: '10' },
+      { asset: 'NVDAc', amount: '' },
+      { asset: 'NVDAc', amount: '0' },
+      { asset: 'NVDAc', amount: '-3' },
+      { asset: 'NVDAc', amount: '10', borrowUsdc: '0' },
+      { asset: 'NVDAc', amount: '10', borrowUsdc: '1.0000001' },
     ];
-    for (const refusal of refusals) assert.equal(refusal.ok, false, JSON.stringify(refusal));
-    // A proof id pasted in capitals is the same id.
-    const upper = 'AB'.repeat(24);
-    assert.deepEqual(paidRequestUrlV1(resource('enhanced_route_proof'), { publicId: upper }), {
-      ok: true,
-      url: `/api/x402/intelligence/v1/route-proofs/enhanced?publicId=${upper.toLowerCase()}`,
-    });
+    for (const values of asks) {
+      const refused = paidRequestUrlV1(quote, values);
+      assert.equal(refused.ok, false, JSON.stringify(values));
+    }
+    // An exact token address and WETH are names the server takes.
+    assert.equal(paidRequestUrlV1(quote, { asset: '0xb20000000000000000000078ee7ce2fe4908108c', amount: '1' }).ok, true);
+    assert.equal(paidRequestUrlV1(quote, { asset: 'weth', amount: '0.5' }).ok, true);
   });
 
   test('the price and payTo are read from the server’s 402, never assumed', () => {

@@ -51,6 +51,7 @@ export const EvidenceOutputExtensionV1 = { evidencePackage: EvidencePackageV1Sch
 
 type Row = Record<string, unknown>;
 type ClaimV1 = z.infer<typeof Claim>;
+export type EvidenceClaimV1 = ClaimV1;
 const row = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(row) : [];
 const iso = (value: unknown): string | null => typeof value === 'string'
@@ -246,6 +247,11 @@ export function evidencePackageV1(tool: EvidenceToolV1, payload: Row, now = new 
       break;
     }
   }
+  return packageEvidenceClaimsV1(claims, now);
+}
+
+/** The package around claims, whoever gathered them: a public MCP read or a paid x402 answer. */
+export function packageEvidenceClaimsV1(claims: readonly ClaimV1[], now = new Date()) {
   return EvidencePackageV1Schema.parse({ schemaVersion: 'miorail-evidence-package/v1', chainId: 8453,
     generatedAt: now.toISOString(), claims,
     availability: { claims: claims.length, withBlock: claims.filter(c => c.block !== null).length,

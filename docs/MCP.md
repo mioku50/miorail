@@ -309,13 +309,23 @@ fund portfolio asset movement. Miorail also implements the seller side:
 ```text
 external agent
   → x402 payment in Base USDC
-  → stored B20 intelligence / published proof verification
-  → versioned response + request hash + deterministic data hash
+  → a Still loan quote, read live at one Base block with Still's own engine
+  → versioned response + request hash + deterministic data hash + evidence package
 ```
 
-The free catalogue is at `/api/x402/intelligence/v1/catalog`. Paid resources
-are bound to stored evidence; missing or invalid inputs are rejected before
-payment middleware, and no seller endpoint prepares wallet calls.
+The free catalogue is at `/api/x402/intelligence/v1/catalog`. One resource is
+sold: `GET /api/x402/intelligence/v1/still/loan-quote?asset=NVDAc&amount=10`
+(optionally `&borrowUsdc=500`), what Still would lend against an exact amount
+of one collateral with no wallet: Still's limit beside the protocol's own, the
+venue's rate and liquidity, the liquidation price and a 10/20/30% fall table.
+Malformed or unsupported inputs are rejected before the price; a payment
+settles only with a delivered answer, so a reading of Base that fails answers
+503 and charges nothing. No seller endpoint prepares wallet calls.
+
+The five resources sold before 2026-11-16 (B20 exit analysis and liquidity
+evidence, enhanced route proof, stock representation choice, address identity
+check) answer `410` and name where the same answer is free: the public MCP
+tools above and `/api/public/proofs/{publicId}/bundle`.
 
 In a facilitated x402 seller payment, the external payer signs an
 authorization and the facilitator may build and broadcast the settlement

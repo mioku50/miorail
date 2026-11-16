@@ -28,9 +28,38 @@ export const X402_INTELLIGENCE_SERVICES_V1 = [
   // visible against a reviewed corpus.
   'stock_representation_choice',
   'address_identity_check',
+  // What Still would lend against an exact amount of one collateral, read live
+  // with the engine of the page and of a loan review (2026-11-16).
+  'still_loan_quote',
 ] as const;
+/** Every service Miorail has sold. Receipts name them, so a retired id stays a valid one. */
 export const X402IntelligenceServiceV1Schema = z.enum(X402_INTELLIGENCE_SERVICES_V1);
 export type X402IntelligenceServiceV1 = z.infer<typeof X402IntelligenceServiceV1Schema>;
+
+/**
+ * Retired 2026-11-16, each for a reason a buyer can check.
+ *
+ * Measured that day: one paid call in ten days, from a verification bot, and
+ * about two thousand unpaid probes a day. Four of the five answered what the
+ * free public MCP at /mcp answers, with more there (an evidence package the
+ * paid answers never had); the proof one sold the bundle the free
+ * /api/public/proofs endpoint serves, checked by the verifier anyone can run.
+ * The two B20 answers read a launch feed frozen since 2026-09-09, so they sold
+ * September's measurement. A paid answer has to be worth more than the free
+ * one, or it is not sold.
+ */
+export const X402_INTELLIGENCE_RETIRED_SERVICES_V1 = [
+  'b20_exit_analysis',
+  'b20_liquidity_evidence',
+  'enhanced_route_proof',
+  'stock_representation_choice',
+  'address_identity_check',
+] as const satisfies readonly X402IntelligenceServiceV1[];
+export const X402_INTELLIGENCE_RETIRED_AT_V1 = '2026-11-16' as const;
+
+export const X402_INTELLIGENCE_ACTIVE_SERVICES_V1 = ['still_loan_quote'] as const satisfies readonly X402IntelligenceServiceV1[];
+export const X402ActiveIntelligenceServiceV1Schema = z.enum(X402_INTELLIGENCE_ACTIVE_SERVICES_V1);
+export type X402ActiveIntelligenceServiceV1 = z.infer<typeof X402ActiveIntelligenceServiceV1Schema>;
 
 const X402_PRICE_V1 = {
   network: z.literal('eip155:8453'),
@@ -53,15 +82,28 @@ export const X402SellerCatalogV1Schema = z
       .array(
         z
           .object({
-            id: X402IntelligenceServiceV1Schema,
+            id: X402ActiveIntelligenceServiceV1Schema,
             method: z.literal('GET'),
             path: z.string().startsWith('/api/x402/intelligence/v1/'),
             description: z.string().min(1).max(300),
-            input: z.array(z.string().min(1).max(120)).max(8),
+            input: z.array(z.string().min(1).max(160)).max(8),
           })
           .strict(),
       )
-      .length(X402_INTELLIGENCE_SERVICES_V1.length),
+      .length(X402_INTELLIGENCE_ACTIVE_SERVICES_V1.length),
+    /** Where each retired resource's answer is now, so an agent that knew the old path is not left with a 410. */
+    retired: z
+      .array(
+        z
+          .object({
+            id: z.enum(X402_INTELLIGENCE_RETIRED_SERVICES_V1),
+            path: z.string().startsWith('/api/x402/intelligence/v1/'),
+            retiredAt: z.literal(X402_INTELLIGENCE_RETIRED_AT_V1),
+            instead: z.string().min(1).max(300),
+          })
+          .strict(),
+      )
+      .length(X402_INTELLIGENCE_RETIRED_SERVICES_V1.length),
     constraints: z.array(z.string().min(1).max(400)).min(1).max(12),
   })
   .strict();
@@ -301,6 +343,159 @@ export const X402AddressIdentityCheckV1Schema = z
   });
 export type X402AddressIdentityCheckV1 = z.infer<typeof X402AddressIdentityCheckV1Schema>;
 
+// ---------------------------------------------------------------------------
+// What Still would lend, with no wallet (2026-11-16).
+//
+// Every figure is the engine's: Still's share of the protocol's own limit, the
+// venue's caps and liquidity, the closed-market and earnings rules, and the
+// loan's health, liquidation price and stress as a loan review computes them.
+// A figure the reading could not carry is null, never a guess, and the read
+// that failed is named in `missingEvidence`.
+// ---------------------------------------------------------------------------
+
+const DigitsV1 = z.string().regex(/^\d+$/);
+const LowerAddressV1 = z.string().regex(/^0x[0-9a-f]{40}$/);
+export const X402_STILL_QUOTE_ASSETS_V1 = [
+  'AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH', 'PAXG',
+] as const;
+
+const X402StillLoanFiguresV1Schema = z
+  .object({
+    borrowAtomic: DigitsV1,
+    /** WAD. Liquidation can start below 1e18. */
+    healthFactor: DigitsV1,
+    /** The same, as people read it: rounded down to two decimals. */
+    healthFactorText: z.string().regex(/^\d+\.\d{2}$/),
+    /** How far the collateral can fall at once before liquidation can start. */
+    marginBps: z.number().int().min(0).max(10_000),
+    state: z.enum(['calm', 'watch', 'act', 'liquidation']),
+    /** Per whole token, in cents, rounded up. */
+    liquidationPriceCents: DigitsV1.nullable(),
+    liquidationUnreachable: z.boolean(),
+    /** A year of this loan at the rate charged now. */
+    borrowRateBps: z.number().int().min(0).nullable(),
+    /** The collateral 10%, 20% and 30% lower at once: no moment between to repay. */
+    stress: z
+      .array(z.object({ fallBps: z.number().int().min(1).max(9_999), healthFactor: DigitsV1, liquidationCanStart: z.boolean() }).strict())
+      .max(3),
+  })
+  .strict();
+
+const X402StillLoanAtV1Schema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('computed'), figures: X402StillLoanFiguresV1Schema }).strict(),
+  z
+    .object({
+      outcome: z.literal('refused'),
+      reason: z.enum(['unread', 'out_of_range', 'no_debt', 'no_collateral', 'exceeds_liquidity', 'exceeds_wallet']),
+    })
+    .strict(),
+]);
+
+export const X402StillLoanQuoteV1Schema = z
+  .object({
+    schemaVersion: z.literal('x402-still-loan-quote/v1'),
+    service: z.literal('still_loan_quote'),
+    answerSource: z.literal('live_chain_read'),
+    chainId: z.literal(8453),
+    question: z
+      .object({
+        asset: z.enum(X402_STILL_QUOTE_ASSETS_V1),
+        token: LowerAddressV1,
+        decimals: z.number().int().min(0).max(36),
+        amount: z.string().min(1).max(60),
+        amountRaw: DigitsV1,
+        borrowUsdc: z.string().min(1).max(20).nullable(),
+      })
+      .strict(),
+    reading: z.object({ block: DigitsV1, blockTime: TimestampV1Schema }).strict(),
+    collateral: z
+      .object({
+        name: z.string().min(1).max(80),
+        symbol: z.string().min(1).max(16),
+        kind: z.enum(['stock', 'crypto']),
+        isin: z.string().min(1).max(20).nullable(),
+        /** As the venue's own oracle reads it, per whole token, rounded down. */
+        priceCents: DigitsV1.nullable(),
+        priceUpdatedAt: TimestampV1Schema.nullable(),
+        valueCents: DigitsV1.nullable(),
+        /** What the venue would take now: all of it, or what its collateral cap leaves room for. */
+        pledgeableRaw: DigitsV1.nullable(),
+        protocolFactorBps: z.number().int().min(0).max(10_000).nullable(),
+        stillFactorBps: z.number().int().min(0).max(10_000).nullable(),
+        limits: z.array(z.string().min(1).max(40)).max(12),
+        earnings: z
+          .object({
+            source: z.enum(['calendar', 'unread']),
+            reportDate: z.string().min(1).max(20).nullable(),
+            window: z.object({ startsAt: TimestampV1Schema, endsAt: TimestampV1Schema }).strict().nullable(),
+            lowered: z.boolean(),
+          })
+          .strict()
+          .nullable(),
+      })
+      .strict(),
+    venue: z
+      .object({
+        venue: z.enum(['aave-v4', 'morpho']),
+        market: z.string().min(1).max(80),
+        label: z.string().min(1).max(80),
+        /** What the venue can lend now, in cents, rounded down. */
+        liquidityCents: DigitsV1.nullable(),
+        /** A year of a loan here at the rate charged now, before any premium a loan adds. */
+        borrowRateBps: z.number().int().min(0).nullable(),
+      })
+      .strict(),
+    terms: z
+      .object({
+        version: z.string().min(1).max(40),
+        stockShareBps: z.number().int().min(0).max(10_000),
+        cryptoShareBps: z.number().int().min(0).max(10_000),
+        weekend: z
+          .object({ active: z.boolean(), startsAt: TimestampV1Schema, endsAt: TimestampV1Schema, stockShareBps: z.number().int().min(0).max(10_000) })
+          .strict(),
+        earnings: z.object({ stockShareBps: z.number().int().min(0).max(10_000), calendarReadAt: TimestampV1Schema.nullable() }).strict(),
+      })
+      .strict(),
+    limit: z
+      .object({
+        /** Still's limit against this collateral, before what the venue can lend now. */
+        stillLimitCents: DigitsV1.nullable(),
+        /** What the protocol itself would lend against it: the figure Still lends a share of. */
+        protocolLimitCents: DigitsV1.nullable(),
+        /** Still's limit, bounded by the venue's own liquidity and caps. */
+        availableNowCents: DigitsV1.nullable(),
+        /** While Wall Street is closed: the same collateral on weekday terms. */
+        weekdayAvailableCents: DigitsV1.nullable(),
+        newLoans: z.enum(['open', 'closed']),
+        closedBecause: z.array(z.string().min(1).max(40)).max(8),
+      })
+      .strict(),
+    /** A loan of everything available now; null when nothing is. */
+    atStillLimit: X402StillLoanAtV1Schema.nullable(),
+    /** The loan asked about, when one was. */
+    requested: z
+      .object({ borrowAtomic: DigitsV1, withinStillLimit: z.boolean().nullable(), loan: X402StillLoanAtV1Schema })
+      .strict()
+      .nullable(),
+    /** The contracts every figure was read from. */
+    contracts: z.array(z.object({ label: z.string().min(1).max(80), address: LowerAddressV1 }).strict()).max(16),
+    missingEvidence: z.array(z.string().min(1).max(200)).max(24),
+    caveats: z.array(z.string().min(1).max(500)).min(1).max(16),
+    /** Per-claim provenance in the shape the public MCP answers carry (miorail-evidence-package/v1). */
+    evidencePackage: z.object({ schemaVersion: z.literal('miorail-evidence-package/v1') }).passthrough(),
+    generatedAt: TimestampV1Schema,
+    payment: X402DeliveredPaymentV1Schema,
+    requestHash: HashV1Schema,
+    dataHash: HashV1Schema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.dataHash !== hashX402IntelligenceDataV1(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['dataHash'], message: 'dataHash does not match the delivered loan quote' });
+    }
+  });
+export type X402StillLoanQuoteV1 = z.infer<typeof X402StillLoanQuoteV1Schema>;
+
 export function x402IntelligencePaymentV1() {
   return {
     network: 'eip155:8453' as const,
@@ -326,7 +521,8 @@ export type X402DeliverableV1 =
   | X402B20IntelligenceV1
   | X402EnhancedRouteProofV1
   | X402StockRepresentationChoiceV1
-  | X402AddressIdentityCheckV1;
+  | X402AddressIdentityCheckV1
+  | X402StillLoanQuoteV1;
 
 export function hashX402IntelligenceDataV1(
   value: X402DeliverableV1 | Omit<X402DeliverableV1, 'dataHash'>,

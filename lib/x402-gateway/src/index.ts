@@ -257,6 +257,14 @@ export interface CreateX402MiddlewareOptions {
    * Omitted, the resource stays the bare route path exactly as before.
    */
   resourceOrigin?: string;
+  /**
+   * What this resource answers, in a sentence, for the challenge's
+   * `resource.description`: the text the Bazaar indexes and an agent's model
+   * reads to decide whether this is the resource it needs. Every Miorail 402
+   * said "Miorail x402 paid resource" until 2026-11-16, so a search found
+   * nothing in it. Omitted, that generic line stays.
+   */
+  description?: string;
 }
 
 export interface X402MiddlewareDiagnostics {
@@ -765,7 +773,7 @@ export function createX402RoutesConfig(
   serviceName = 'Miorail',
   options: Pick<
     CreateX402MiddlewareOptions,
-    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery' | 'resourceOrigin'
+    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery' | 'resourceOrigin' | 'description'
   > = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
@@ -794,7 +802,7 @@ export function createX402RoutesConfig(
       extra: extraDomain,
     },
     resource: absoluteResourceV1(routePath, options.resourceOrigin),
-    description: 'Miorail x402 paid resource',
+    description: options.description?.trim() || 'Miorail x402 paid resource',
     mimeType: 'application/json',
     serviceName,
     tags: ['miorail', 'x402'],

@@ -543,6 +543,23 @@ describe('x402-gateway', () => {
     assert.equal(bazaar.info.input.queryParams.tokenAddress, '0xb200000000000000000000000000000000000001');
   });
 
+  it('says what the resource answers, not that it is a paid resource', () => {
+    // Until 2026-11-16 every Miorail 402 carried "Miorail x402 paid resource",
+    // the line the Bazaar indexes and an agent's model reads to choose.
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+    });
+    const described = (createX402RoutesConfig(config, '/paid-resource', 'Miorail', {
+      description: '  What Still would lend against a stock.  ',
+    }) as Record<string, any>)['GET /paid-resource'];
+    assert.equal(described.description, 'What Still would lend against a stock.');
+    assert.equal(described.mimeType, 'application/json');
+    const generic = (createX402RoutesConfig(config) as Record<string, any>)['GET /paid-resource'];
+    assert.equal(generic.description, 'Miorail x402 paid resource');
+  });
+
   it('leaves route price at global config.amountAtomic when no override is given', () => {
     const config = x402ConfigFromEnv({
       X402_FACILITATOR_URL: 'https://facilitator.example.test',

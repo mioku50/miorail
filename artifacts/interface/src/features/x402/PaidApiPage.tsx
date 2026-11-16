@@ -3,7 +3,6 @@ import { useAccount, useDisconnect, useSwitchChain, useWalletClient } from 'wagm
 import { mapPaidActionError, runX402PaidFetch, type PaidActionState } from '@mioagent/x402-actions';
 import { WalletPicker } from '../../shell/WalletPicker';
 import {
-  PAID_API_EXAMPLE_TOKEN_V1,
   PAID_RESOURCES_V1,
   X402_INTELLIGENCE_BASE_V1,
   basescanTxUrlV1,
@@ -40,7 +39,7 @@ function usePaymentTerms(): PaymentTermsV1 | null | undefined {
   const [terms, setTerms] = useState<PaymentTermsV1 | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
-    fetch(`${X402_INTELLIGENCE_BASE_V1}/address/identity`, { headers: { accept: 'application/json' } })
+    fetch(`${X402_INTELLIGENCE_BASE_V1}/still/loan-quote`, { headers: { accept: 'application/json' } })
       .then((response) => {
         if (!cancelled) setTerms(paymentTermsFromHeaderV1(response.headers.get('payment-required')));
       })
@@ -111,14 +110,16 @@ function ResourceCard({
     } catch (error) {
       const mapped = mapPaidActionError(error);
       setState(mapped.state);
-      // The server checks the input and loads its evidence BEFORE it names a
-      // price, so a 4xx here never reached the wallet. A 5xx may have come
-      // after, and is reported without that claim.
+      // The server checks the input BEFORE it names a price, so a 4xx here
+      // never reached the wallet. A 503 comes after the signature, when Base
+      // could not be read, and the payment is then not settled.
       if (mapped.state === 'failed' && mapped.status) {
         setRefusal(
           mapped.status >= 400 && mapped.status < 500
             ? `The server answered HTTP ${mapped.status} before naming a price, so nothing was signed or paid.`
-            : `The server answered HTTP ${mapped.status}.`,
+            : mapped.status === 503
+              ? 'Base could not be read just now, so the payment was not settled. Try again in a moment.'
+              : `The server answered HTTP ${mapped.status}.`,
         );
       }
     }
@@ -242,7 +243,7 @@ export function PaidApiPage() {
   const { address } = useAccount();
   const price = terms ? usdcLabelV1(terms.amountAtomic) : '0.002 USDC';
   const payBlocked = payerRefusalV1(address, terms ?? null);
-  const example = `${ORIGIN}${X402_INTELLIGENCE_BASE_V1}/address/identity?tokenAddress=${PAID_API_EXAMPLE_TOKEN_V1}`;
+  const example = `${ORIGIN}${X402_INTELLIGENCE_BASE_V1}/still/loan-quote?asset=NVDAc&amount=10`;
 
   return (
     <main className="mio-console pi-page">
@@ -250,10 +251,11 @@ export function PaidApiPage() {
         <p className="pi-eyebrow">Miorail · x402 on Base</p>
         <h1>Paid API</h1>
         <p className="lnote">
-          Five answers about Base tokens that an agent cannot compute for itself, sold per request over x402 for{' '}
-          {price} on Base. No account and no API key: the request answers 402 with the price, the client pays with a
-          USDC authorization, and the same request returns the answer. Every answer reports stored evidence and what
-          was not established; none is a recommendation or an executable quote.
+          One answer, sold per request over x402 for {price} on Base: what Still would lend against an exact amount of
+          a tokenized stock, bitcoin, ether or gold, read live with Still’s own engine. No account and no API key: the
+          request answers 402 with the price, the client pays with a USDC authorization, and the same request returns
+          the answer. It is a quote at one block, not an offer or a recommendation, and Still is not offered to US
+          persons.
         </p>
       </header>
 
@@ -273,8 +275,9 @@ export function PaidApiPage() {
           Any x402 v2 client pays and retries, for example <span className="mono">@x402/fetch</span>. The catalog is at{' '}
           <a className="mono" href={`${X402_INTELLIGENCE_BASE_V1}/catalog`}>{`${X402_INTELLIGENCE_BASE_V1}/catalog`}</a>, and
           the whole surface is described for agents as OpenAPI at{' '}
-          <a className="mono" href="/openapi.json">/openapi.json</a>. The free read tools are an MCP server at{' '}
-          <span className="mono">{`${ORIGIN}/mcp`}</span>.
+          <a className="mono" href="/openapi.json">/openapi.json</a>. The free read tools are MCP servers at{' '}
+          <span className="mono">{`${ORIGIN}/mcp`}</span> and, for a wallet’s own Still loans,{' '}
+          <span className="mono">{`${ORIGIN}/mcp/still`}</span>.
         </p>
       </section>
     </main>

@@ -69,6 +69,10 @@ export interface LendingStressV1 {
 const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 const NO_DEBT_HEALTH_SENTINEL = 1n << 128n;
 
+/** The rows a review shows, from one health ratio. A paid loan quote shows the same rows (x402 `still_loan_quote`), so both say one thing. */
+export function lendingStressScenariosV1(healthWad: bigint): LendingStressV1['scenarios'] {
+  return scenariosV1(healthWad);
+}
 function scenariosV1(healthWad: bigint): LendingStressV1['scenarios'] {
   return LENDING_STRESS_FALLS_BPS_V1.map((fallBps) => {
     const after = (healthWad * (BPS - BigInt(fallBps))) / BPS;

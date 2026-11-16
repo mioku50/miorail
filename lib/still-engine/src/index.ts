@@ -19,3 +19,13 @@ export { createMirrorService, type MirrorOutcome, type MirrorReadingV1, type Mir
 export { computeMirror, type MirrorInput } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
 export { StillTermsSchema, stillTerms, type StillTerms } from './terms.js';
+export {
+  STILL_QUOTE_CLOSING_LIMITS_V1,
+  marketOnlyInputV1,
+  stillLoanQuoteV1,
+  type StillLoanAtV1,
+  type StillLoanFiguresV1,
+  type StillLoanQuoteAskV1,
+  type StillLoanQuoteV1,
+  type StillQuoteClosedReasonV1,
+} from './quote.js';
