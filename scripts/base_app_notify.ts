@@ -163,8 +163,12 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ event: 'still_loans_read', outcome: 'failed',
       error: describeErrorV1(cause).slice(0, 120) }));
   }
-  // Each kind is read on its own: one that fails to read leaves the others to be told.
-  const quietly = async <T>(read: () => Promise<T[]>): Promise<T[]> => read().catch(() => []);
+  // Each kind is read on its own: one that fails to read leaves the others to be told, and says so in the journal.
+  const quietly = async <T>(channel: NotificationChannelV1, kind: string, read: () => Promise<T[]>): Promise<T[]> =>
+    read().catch((cause: unknown) => {
+      console.log(JSON.stringify({ event: 'still_loan_notices_read', channel, kind, outcome: 'failed', error: describeErrorV1(cause).slice(0, 120) }));
+      return [];
+    });
   const stillLoansFor = (channel: NotificationChannelV1) => ({
     due: async (): Promise<StillLoanDueV1[]> => {
       const now = new Date();
@@ -172,13 +176,13 @@ async function main(): Promise<void> {
       const bands: StillLoanDueV1[] = (await loanAlerts.due({ channel, freshSince }))
         .map((loan) => ({ walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode,
           ...stillLoanNoticeV1(loan, loanDebts.get(`${loan.walletAddress}|${loan.market}`) ?? null) }));
-      const holds = await quietly(async () => (await loanAlerts.holdsDue({ channel, freshSince })).flatMap((loan) => {
+      const holds = await quietly(channel, 'hold', async () => (await loanAlerts.holdsDue({ channel, freshSince })).flatMap((loan) => {
         const notice = stillLoanHoldNoticeV1(loan);
         return notice ? [{ walletAddress: loan.walletAddress, market: loan.market, episode: loan.holdEpisode, ...notice,
           kind: 'hold' as const, key: stillLoanHoldKeyV1(loan) }] : [];
       }));
       // A borrow is told while it is fresh: a wallet that connects a chat right after its loan still hears of it.
-      const opened = await quietly(async () => {
+      const opened = await quietly(channel, 'opened', async () => {
         const borrows = await loanAlerts.openedDue({ channel, wallets: [...reachable], since: new Date(now.getTime() - STILL_LOAN_OPENED_FOR_MS_V1) });
         const out: StillLoanDueV1[] = [];
         for (const borrow of borrows) {
@@ -191,7 +195,7 @@ async function main(): Promise<void> {
       });
       // The week's note, in the weekly summary's window: once a week per open loan Still has read for a day.
       const window = weeklySummaryDueV1(now);
-      const weeks = window ? await quietly(async () => (await loanAlerts.weekDue({ channel, weekCloseAt: window.weekCloseAt, freshSince,
+      const weeks = window ? await quietly(channel, 'week', async () => (await loanAlerts.weekDue({ channel, weekCloseAt: window.weekCloseAt, freshSince,
         firstReadBy: new Date(now.getTime() - STILL_LOAN_WEEK_AFTER_MS_V1) })).flatMap((week) => {
         const notice = stillLoanWeekNoticeV1(week);
         return notice ? [{ walletAddress: week.loan.walletAddress, market: week.loan.market, episode: 0, ...notice, kind: 'week' as const,
