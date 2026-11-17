@@ -110,7 +110,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
         title="Spend"
         sky={model.sky}
         // Who sells is said where the page begins: Bitrefill, under its own terms.
-        lede={<>What a loan against what you hold, or the USDC already in your wallet, could pay for: mobile data, phone top-ups and gift cards from <strong className="still-provider">Bitrefill</strong>, priced in USDC.</>}
+        lede={<>What a loan against what you hold, or the USDC already in your wallet, could pay for: subscriptions, mobile data, phone top-ups and gift cards from <strong className="still-provider">Bitrefill</strong>, priced in USDC.</>}
       />
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
@@ -127,8 +127,16 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
           <div className="still-step"><span className="n" aria-hidden="true">1</span>What</div>
           <h2 id={`${id}-what`}>Choose what to look at.</h2>
           <div className="still-spend-kinds" role="group" aria-label="Kind of product">
+            {/* Subscriptions are gift cards to Bitrefill, and their own kind to a person (operator, 2026-11-17). */}
+            {model.subscriptions ? (
+              <button className="still-spend-kind" type="button" aria-pressed={model.subscriptions.open} onClick={() => model.subscriptions!.onOpen(true)}>
+                <span className="still-spend-kind-icon"><StillIconV1 name="subscription" /></span>
+                <span><strong>Subscriptions</strong><span className="still-note">Discord Nitro, Netflix, Game Pass, and apps such as X Premium</span></span>
+              </button>
+            ) : null}
             {SPEND_TYPES_V1.map((kind) => (
-              <button key={kind.type} className="still-spend-kind" type="button" aria-pressed={model.type === kind.type} onClick={() => model.onType(kind.type)}>
+              <button key={kind.type} className="still-spend-kind" type="button" aria-pressed={model.type === kind.type && !model.subscriptions?.open}
+                onClick={() => model.onType(kind.type)}>
                 <span className="still-spend-kind-icon"><StillIconV1 name={kind.type} /></span>
                 <span><strong>{kind.label}</strong><span className="still-note">{kind.blurb}</span></span>
               </button>
@@ -138,7 +146,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
           <select id={`${id}-country`} className="still-borrow-stock-select" value={model.country} onChange={(event) => model.onCountry(event.target.value)}>
             {spendCountryOptionsV1().map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}
           </select>
-          {model.type === 'giftcard' ? (
+          {model.subscriptions?.open ? <SubscriptionsV1 subscriptions={model.subscriptions} /> : model.type === 'giftcard' ? (
             <form onSubmit={(event) => { event.preventDefault(); model.onSearch(); }}>
               <label className="still-borrow-label" htmlFor={`${id}-brand`}>Brand</label>
               <div className="still-spend-search-row">
@@ -150,12 +158,6 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
               </div>
               {model.onCategory ? (
                 <div className="still-spend-categories" role="group" aria-label="Gift cards by category">
-                  {model.subscriptions ? (
-                    <button type="button" className="still-spend-category" aria-pressed={model.subscriptions.open}
-                      onClick={() => model.subscriptions!.onOpen(!model.subscriptions!.open)}>
-                      <span className="still-spend-category-icon"><StillIconV1 name="subscription" /></span>Subscriptions
-                    </button>
-                  ) : null}
                   {SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => (
                     <button key={entry.category} type="button" className="still-spend-category" aria-pressed={model.category === entry.category}
                       onClick={() => model.onCategory!(model.category === entry.category ? null : entry.category)}>
@@ -164,7 +166,6 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                   ))}
                 </div>
               ) : null}
-              {model.subscriptions?.open ? <SubscriptionsV1 subscriptions={model.subscriptions} /> : null}
             </form>
           ) : null}
           <div className="still-spend-results" aria-live="polite">

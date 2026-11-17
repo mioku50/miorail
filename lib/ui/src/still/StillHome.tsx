@@ -164,6 +164,14 @@ export function StillSpendDoor() {
         </span>
         <span className="still-extra-go" aria-hidden="true">›</span>
       </StillLink>
+      <StillLink href="/subscriptions" className="still-extra">
+        <span className="still-extra-icon"><StillIconV1 name="subscription" /></span>
+        <span className="still-extra-body">
+          <span className="still-extra-title">Pay a subscription</span>
+          <span className="still-extra-note">Discord Nitro, Netflix, Game Pass, or X Premium and ChatGPT Plus through your app store, in USDC.</span>
+        </span>
+        <span className="still-extra-go" aria-hidden="true">›</span>
+      </StillLink>
     </div>
   );
 }

@@ -129,18 +129,19 @@ for (const width of [390, 1366]) {
   });
 }
 
-test('subscriptions: each service with what its card pays, and only that service’s cards when chosen', async ({ page }, testInfo) => {
+test('subscriptions: their own kind, each service with what its card pays, and only that service’s cards when chosen', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 900 });
   const state = await install(page, true);
   await page.goto('/spend');
-  await page.getByRole('button', { name: /^Gift cards/ }).click();
   await page.getByLabel('Country', { exact: true }).selectOption('DE');
-  const categories = page.getByRole('group', { name: 'Gift cards by category' });
+  const kinds = page.getByRole('group', { name: 'Kind of product' });
   const before = state.reads.length;
-  await categories.getByRole('button', { name: 'Subscriptions', exact: true }).click();
+  await kinds.getByRole('button', { name: /^Subscriptions/ }).click();
+  await expect(kinds.getByRole('button', { name: /^Subscriptions/ })).toHaveAttribute('aria-pressed', 'true');
   const services = page.getByRole('group', { name: 'Subscriptions', exact: true });
   await expect(services.getByRole('button', { name: /^Apple \(iPhone apps\).*X Premium, ChatGPT Plus or Claude Pro/ })).toBeVisible();
   await expect(page.getByText(/does not renew by itself/)).toBeVisible();
+  await expect(page.getByLabel('Brand', { exact: true })).toHaveCount(0);
   expect(state.reads.slice(before).filter(path => path.startsWith('/api/public/still/spend/search?type=giftcard')), 'the list reads nothing from Bitrefill').toEqual([]);
   await services.getByRole('button', { name: /^Disney\+/ }).click();
   await page.getByRole('button', { name: /^Disney\+ Germany/ }).waitFor();
@@ -151,9 +152,19 @@ test('subscriptions: each service with what its card pays, and only that service
   await page.getByRole('group', { name: 'Products' }).getByRole('button', { name: /^Discord Nitro USD/ }).waitFor();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('spend-subscriptions-390.png'), fullPage: true });
-  // A category closes them.
-  await categories.getByRole('button', { name: 'Games', exact: true }).click();
+  // Gift cards close them, and bring the brand search back.
+  await kinds.getByRole('button', { name: /^Gift cards/ }).click();
   await expect(services).toHaveCount(0);
+  await expect(page.getByLabel('Brand', { exact: true })).toBeVisible();
+  expect(state.writes).toEqual([]);
+});
+
+test('/subscriptions opens Spend on them, for a link a post can carry', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 900 });
+  const state = await install(page, true);
+  await page.goto('/subscriptions');
+  await expect(page.getByRole('group', { name: 'Kind of product' }).getByRole('button', { name: /^Subscriptions/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('group', { name: 'Subscriptions', exact: true }).getByRole('button', { name: /^Discord Nitro/ })).toBeVisible();
   expect(state.writes).toEqual([]);
 });
 

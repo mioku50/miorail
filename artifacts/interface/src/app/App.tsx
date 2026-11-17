@@ -411,6 +411,10 @@ export function App() {
         <Route path="/spend">
           <StillSpendPage />
         </Route>
+        {/* Spend, open on the subscriptions a card pays: a link a post can carry. */}
+        <Route path="/subscriptions">
+          <StillSpendPage />
+        </Route>
         {/* A purchase someone shared: public, from its signed link alone. */}
         <Route path="/spend/p/:token">
           <StillSpendSharePage />

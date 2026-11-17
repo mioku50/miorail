@@ -147,7 +147,10 @@ type MoreGroupV1 = { label: string; rows: ReadonlyArray<{ title: string; blurb: 
 const MORE_GROUPS_V1: ReadonlyArray<MoreGroupV1> = [
   // How the engine keeps a loan safe, for anyone who asks before borrowing (operator, 2026-11-08).
   { label: 'Safety', rows: [{ title: 'How Still keeps a loan safe', blurb: 'Its limits, the stricter weekend and earnings terms, the safety bands, and what it cannot prevent', href: STILL_SAFETY_V1.path, icon: 'shield' }] },
-  { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend', badge: 'New' }] },
+  { label: 'Spend', rows: [
+    { title: 'Subscriptions', blurb: 'Discord Nitro, Netflix, Game Pass, and apps such as X Premium, paid in USDC', href: '/subscriptions', icon: 'subscription', badge: 'New' },
+    { title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend' },
+  ] },
   { label: 'Trade', rows: [{ title: 'Swap AI', blurb: 'Any token on Base, by a checked route', href: '/routes', icon: 'swap' }] },
   // Discover and Watch left (operator, 2026-11-17): their addresses lead here,
   // and an issuer's pause on a pledged token reaches the loan's owner as a notice.

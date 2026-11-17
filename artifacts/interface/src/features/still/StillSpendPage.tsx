@@ -28,13 +28,15 @@ export function StillSpendPage() {
   const sky = useStillSky(), session = useStillWallet();
   const mine = useStillMine(session.wallet, { enabled: session.signedIn });
   const usdc = useStillUsdcV1(session.wallet, { enabled: session.signedIn });
-  const [type, setType] = useState<SpendTypeV1>('esim');
+  // /subscriptions opens on them: a link a post can carry.
+  const startsOnSubscriptions = location === '/subscriptions';
+  const [type, setType] = useState<SpendTypeV1>(startsOnSubscriptions ? 'giftcard' : 'esim');
   const [country, setCountry] = useState(() => spendCountryDefaultV1(typeof navigator === 'undefined' ? undefined : navigator.language));
   const [query, setQuery] = useState('');
   const [asked, setAsked] = useState('');
   const [category, setCategory] = useState<SpendGiftCategoryV1 | null>(null);
   // Subscriptions: the list open, and the service whose cards are searched for (lib/still-engine/src/subscriptions.ts).
-  const [subscriptionsOpen, setSubscriptionsOpen] = useState(false);
+  const [subscriptionsOpen, setSubscriptionsOpen] = useState(startsOnSubscriptions);
   const [service, setService] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -43,7 +45,9 @@ export function StillSpendPage() {
   const [payError, setPayError] = useState<string | null>(null);
   const [method, setMethod] = useState<'loan' | 'wallet'>('loan');
   // Gift cards are searched by brand or by one of Bitrefill's categories when the person asks; data and top-ups list at once.
-  const search = useStillSpendSearchV1({ type, country, query: type === 'giftcard' ? asked : '', category: type === 'giftcard' ? category : null });
+  // The subscriptions list itself reads nothing from Bitrefill: a search starts when a service is chosen.
+  const search = useStillSpendSearchV1(subscriptionsOpen && !service ? null
+    : { type, country, query: type === 'giftcard' ? asked : '', category: type === 'giftcard' ? category : null });
   const product = useStillSpendProductV1(selected);
   const order = useCreateStillSpendOrderV1();
   const room = mine.data?.headline.availableCents != null ? { cents: mine.data.headline.availableCents, complete: mine.data.headline.complete } : null;
@@ -76,7 +80,7 @@ export function StillSpendPage() {
     <StillFrame tab="more" sky={sky} entry>
       <StillSpend model={{
         sky, signedIn: session.signedIn, signInHref: `/signin?next=${encodeURIComponent(location)}`,
-        type, onType: (next) => { setType(next); setSelected(null); pick(null); },
+        type, onType: (next) => { setType(next); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         country, onCountry: (next) => { setCountry(next); setSelected(null); pick(null); },
         query, onQuery: setQuery,
         onSearch: () => { setAsked(query.trim()); setCategory(null); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
@@ -84,7 +88,10 @@ export function StillSpendPage() {
         category, onCategory: (next) => { setCategory(next); setQuery(''); setAsked(''); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         subscriptions: {
           open: subscriptionsOpen, chosen: service,
-          onOpen: (open) => { setSubscriptionsOpen(open); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null); },
+          onOpen: (open) => {
+            if (open) setType('giftcard');
+            setSubscriptionsOpen(open); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null);
+          },
           onChoose: (key) => {
             const chosen = STILL_SUBSCRIPTIONS_V1.find((row) => row.key === key);
             if (!chosen) return;

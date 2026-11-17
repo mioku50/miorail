@@ -259,14 +259,21 @@ describe('the Spend page', () => {
     assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />), /still-spend-categories/);
   });
 
-  it('subscriptions list each service with what its card pays, the limits said, and say when a country has none', () => {
+  it('subscriptions are their own kind first, list each service with what its card pays, the limits said, and say when a country has none', () => {
     const subscriptions = (patch: Partial<NonNullable<StillSpendModelV1['subscriptions']>> = {}) =>
       ({ open: true, chosen: null, onOpen: noop, onChoose: noop, ...patch });
+    const kind = (pressed: boolean, label: string) =>
+      new RegExp(`<button class="still-spend-kind" type="button" aria-pressed="${pressed}"><span class="still-spend-kind-icon"><svg[^>]*>.+?</svg></span><span><strong>${label}</strong>`);
     const closed = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions({ open: false }), products: null, selected: null, product: null })} />);
-    assert.match(closed, /<button type="button" class="still-spend-category" aria-pressed="false"><span class="still-spend-category-icon"><svg[^>]*>.+?<\/svg><\/span>Subscriptions<\/button>/);
-    assert.doesNotMatch(closed, /Discord Nitro/);
+    assert.match(closed, kind(false, 'Subscriptions'));
+    assert.match(closed, kind(true, 'Gift cards'));
+    assert.ok(closed.indexOf('<strong>Subscriptions</strong>') < closed.indexOf('<strong>Mobile data</strong>'), 'the first kind');
+    assert.match(closed, /Discord Nitro, Netflix, Game Pass, and apps such as X Premium/);
+    assert.doesNotMatch(closed, /<strong>Discord Nitro<\/strong>/);
     const open = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions(), products: null, selected: null, product: null })} />);
-    assert.match(open, /aria-pressed="true"><span class="still-spend-category-icon"><svg[^>]*>.+?<\/svg><\/span>Subscriptions</);
+    assert.match(open, kind(true, 'Subscriptions'));
+    assert.match(open, kind(false, 'Gift cards'), 'gift cards are not pressed while subscriptions are');
+    assert.doesNotMatch(open, /-brand">Brand<\/label>|still-spend-categories/, 'no brand search and no categories here');
     assert.match(open, /A card tops up a\s+balance and does not renew by itself\. Take an app store card of your account’s own country; a price inside an app can be above the\s+service’s own web price\./);
     for (const name of ['Discord Nitro', 'Netflix', 'Disney\\+', 'Xbox and Game Pass', 'PlayStation', 'Nintendo', 'Twitch', 'Crunchyroll', 'Apple \\(iPhone apps\\)', 'Google Play \\(Android apps\\)']) {
       assert.match(open, new RegExp(`<strong>${name}</strong>`), name);
@@ -275,8 +282,9 @@ describe('the Spend page', () => {
     const none = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions({ chosen: 'disney' }), products: [], selected: null, product: null })} />);
     assert.match(none, /aria-pressed="true"><span><strong>Disney\+<\/strong>/);
     assert.match(none, /Bitrefill lists no Disney\+ card\s+for Germany now\./);
+    assert.match(none, /subscriptions, mobile data, phone top-ups and gift cards from/);
     // Without a handler, they are not offered.
-    assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, products: [], selected: null, product: null })} />), /Subscriptions/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, products: [], selected: null, product: null })} />), /<strong>Subscriptions<\/strong>/);
   });
 
   it('a country with no top-up says so and offers its mobile data, rather than nothing in stock', () => {
