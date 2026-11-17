@@ -27,11 +27,15 @@ import {
   createDatabaseStillLoanAlertRepositoryV1,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
+  STILL_LOAN_STATES_V1,
   stillLoanHoldKeyV1,
   stillLoanRateKeyV1,
   stillLoanRecoveredKeyV1,
+  stillLoanStateRankV1,
+  stillLoanWeekendKeyV1,
   stillLoanWeekKeyV1,
   type NotificationChannelV1,
+  type StillLoanStateV1,
 } from '@mioagent/route-storage';
 import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
 import { reopenLineupStocksV1, reopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
@@ -71,8 +75,17 @@ import {
   stillLoanOpenedNoticeV1,
   stillLoanRateNoticeV1,
   stillLoanRecoveredNoticeV1,
+  stillLoanWeekendNoticeV1,
   stillLoanWeekNoticeV1,
 } from '../artifacts/api-server/lib/stillLoanNotices.js';
+import {
+  STILL_WEEKEND_LADDER_FOR_MS_V1,
+  readStillPaxgWeekendPriceV1,
+  stillLoanWeekendShadowsV1,
+  stillWeekendLadderPricesV1,
+  type StillLoanWeekendShadowV1,
+  type StillMirrorReportV1,
+} from '../artifacts/api-server/lib/stillLoanWeekend.js';
 import { createStillMirrorServiceV1 } from '../artifacts/api-server/lib/stillMirror.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
@@ -150,11 +163,14 @@ async function main(): Promise<void> {
   // Each loan's debt as this pass read it, for the numbers its notice says (audit LL-4).
   const loanDebts = new Map<string, string>();
   let reachable = new Set<string>();
+  // Each report this pass read, by wallet, and the endpoints it read on: the weekend's reading works from them.
+  const loanReports = new Map<string, StillMirrorReportV1>();
+  let holdClients: ReturnType<typeof stillLoanHoldClientsV1> = [];
   try {
     reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
     const mirror = createStillMirrorServiceV1();
     // The collateral tokens are asked at the block the Mirror read, on the same endpoints.
-    const holdClients = stillLoanHoldClientsV1();
+    holdClients = stillLoanHoldClientsV1();
     const refreshed = await refreshStillLoanAlertsV1({
       alerts: loanAlerts,
       reachable,
@@ -163,11 +179,31 @@ async function main(): Promise<void> {
       dry,
       debts: loanDebts,
       readHolds: (walletAddress, report) => readStillLoanTokenHoldsV1({ clients: holdClients, report, walletAddress }),
+      reports: loanReports,
     });
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
   } catch (cause) {
     console.log(JSON.stringify({ event: 'still_loans_read', outcome: 'failed',
       error: describeErrorV1(cause).slice(0, 120) }));
+  }
+  // While the market is closed and an oracle holds: each loan read this pass, at the price its collateral trades
+  // at (./stillLoanWeekend.ts). Stocks from the public ladder already in the database; PAXG from its own feed.
+  const loanShadows: { walletAddress: string; shadow: StillLoanWeekendShadowV1 }[] = [];
+  const windowed = [...loanReports].filter(([, report]) => report.terms?.weekend?.active);
+  if (windowed.length > 0) {
+    try {
+      const now = new Date();
+      const mids = await readPublicLadderMidsV1(client, { since: new Date(now.getTime() - STILL_WEEKEND_LADDER_FOR_MS_V1), until: now });
+      for (const [walletAddress, report] of windowed) {
+        const stocks = stillWeekendLadderPricesV1({ mids, windowStartsAt: report.terms.weekend.startsAt, now });
+        const paxg = await readStillPaxgWeekendPriceV1({ clients: holdClients, report }).catch(() => null);
+        for (const shadow of stillLoanWeekendShadowsV1({ report, stocks, paxg })) loanShadows.push({ walletAddress, shadow });
+      }
+      console.log(JSON.stringify({ event: 'still_loan_weekend_read', dry, read: windowed.length, loans: loanShadows.length,
+        worse: loanShadows.filter(({ shadow }) => stillLoanStateRankV1(shadow.state) > stillLoanStateRankV1(shadow.oracleState)).length }));
+    } catch (cause) {
+      console.log(JSON.stringify({ event: 'still_loan_weekend_read', outcome: 'failed', error: describeErrorV1(cause).slice(0, 120) }));
+    }
   }
   // Each kind is read on its own: one that fails to read leaves the others to be told, and says so in the journal.
   const quietly = async <T>(channel: NotificationChannelV1, kind: string, read: () => Promise<T[]>): Promise<T[]> =>
@@ -187,6 +223,21 @@ async function main(): Promise<void> {
         return notice ? [{ walletAddress: loan.walletAddress, market: loan.market, episode: loan.holdEpisode, ...notice,
           kind: 'hold' as const, key: stillLoanHoldKeyV1(loan) }] : [];
       }));
+      // A worse band at the price the collateral trades at while its oracle holds: once per band per window, and
+      // never a band no worse than one already told this window.
+      const weekend = await quietly(channel, 'weekend', async () => {
+        const worse = STILL_LOAN_STATES_V1.filter((state) => state !== 'calm');
+        const asked = loanShadows.flatMap(({ walletAddress, shadow }) => {
+          const notice = stillLoanWeekendNoticeV1(shadow);
+          if (!notice) return [];
+          const keyOf = (state: StillLoanStateV1) => stillLoanWeekendKeyV1({ walletAddress, market: shadow.market, windowStartsAt: shadow.windowStartsAt, state });
+          const atLeast = worse.filter((state) => stillLoanStateRankV1(state) >= stillLoanStateRankV1(shadow.state)).map(keyOf);
+          return [{ due: { walletAddress, market: shadow.market, episode: 0, ...notice, kind: 'weekend' as const, key: keyOf(shadow.state) }, atLeast }];
+        });
+        if (asked.length === 0) return [];
+        const told = await loanAlerts.noticesTold({ channel, kind: 'weekend', keys: asked.flatMap((row) => row.atLeast) });
+        return asked.filter((row) => !row.atLeast.some((key) => told.has(key))).map((row) => row.due);
+      });
       // A rate that has held a jump over the one its owner heard of for an hour.
       const rates = await quietly(channel, 'rate', async () => (await loanAlerts.rateDue({ channel, freshSince,
         highSince: new Date(now.getTime() - STILL_LOAN_RATE_HIGH_FOR_MS_V1) })).flatMap((loan) => {
@@ -226,7 +277,7 @@ async function main(): Promise<void> {
         return notice ? [{ walletAddress: week.loan.walletAddress, market: week.loan.market, episode: 0, ...notice, kind: 'week' as const,
           key: stillLoanWeekKeyV1(week.loan, window.weekCloseAt), interestAtomic: week.loan.interestAtomic, estimatedAtomic: week.loan.estimatedAtomic }] : [];
       })) : [];
-      return [...bands, ...holds, ...rates, ...recovered, ...opened, ...closed, ...weeks];
+      return [...bands, ...holds, ...weekend, ...rates, ...recovered, ...opened, ...closed, ...weeks];
     },
     told: async (notice: StillLoanDueV1) => {
       const at = new Date();

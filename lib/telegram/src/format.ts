@@ -29,7 +29,8 @@ export const TELEGRAM_REPLIES_V1 = {
     'an issuer changing or scheduling a multiplier, a move in the cost of exiting a stock you watch, your Radar ' +
     'alerts, and the week on Base every Friday evening. If you borrow through Still, you will also hear here ' +
     'when a loan opens and when it is repaid, its debt and interest every Friday evening, a jump in its rate, ' +
-    'a pause or freeze on its collateral, each time it gets closer to liquidation, and when its margin is back.\n\n' +
+    'a pause or freeze on its collateral, each time it gets closer to liquidation (while markets are closed, also at ' +
+    'the price its collateral trades at onchain), and when its margin is back.\n\n' +
     `${NEVER_SIGN_V1} /stop disconnects.`,
   alreadyConnected: (wallet: string) => `${shortWalletV1(wallet)} is already connected here. /status shows everything connected.`,
   expired:

@@ -35,9 +35,10 @@ before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loan_alerts, still_loan_notices, lending_executions CASCADE');
-  // The alerts table as 0093 made it, then 0099 and 0100 on top, each twice: they must re-run.
+  // The alerts table as 0093 made it, then 0099, 0100 and 0101 on top, each twice: they must re-run.
   for (const file of ['0093_still_loan_alerts.sql', '0099_still_loan_notices.sql', '0099_still_loan_notices.sql',
-    '0100_still_loan_closed_recovered_rate.sql', '0100_still_loan_closed_recovered_rate.sql']) {
+    '0100_still_loan_closed_recovered_rate.sql', '0100_still_loan_closed_recovered_rate.sql',
+    '0101_still_loan_weekend_notices.sql', '0101_still_loan_weekend_notices.sql']) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
   }

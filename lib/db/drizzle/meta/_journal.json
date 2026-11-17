@@ -708,6 +708,13 @@
       "when": 1795039200000,
       "tag": "0100_still_loan_closed_recovered_rate",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1795125600000,
+      "tag": "0101_still_loan_weekend_notices",
+      "breakpoints": true
     }
   ]
 }

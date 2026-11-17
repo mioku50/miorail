@@ -13,10 +13,12 @@ import {
   stillLoanOpenedNoticeV1,
   stillLoanRateNoticeV1,
   stillLoanRecoveredNoticeV1,
+  stillLoanWeekendNoticeV1,
   stillLoanWeekNoticeV1,
   stillTokenAmountV1,
   type StillLoanNoticeTextV1,
 } from './stillLoanNotices.js';
+import type { StillLoanWeekendShadowV1 } from './stillLoanWeekend.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const PAXG_MARKET = '0x48dca3ed245fb30931013a676d3451f7602b11150f92743ad93159628cbbe392';
@@ -208,5 +210,40 @@ describe('a rate that jumped', () => {
     assert.equal(stillLoanRateNoticeV1(jumped({ rateBps: null })), null);
     assert.equal(stillLoanRateNoticeV1(jumped({ rateToldBps: null, rateToldAt: null })), null);
     assert.equal(stillLoanRateNoticeV1(jumped({ debtAtomic: '0' })), null);
+  });
+});
+
+describe('a weekend band at the price the collateral trades at', () => {
+  const shadow = (over: Partial<StillLoanWeekendShadowV1> = {}): StillLoanWeekendShadowV1 => ({
+    market: STILL_AAVE_SPOKE_V1, venue: 'aave-v4', oracleState: 'calm', oracleMarginBps: 5_000, state: 'watch', marginBps: 2_857,
+    movers: [{ symbol: 'NVDAc', ratio: 0.964 }], source: 'onchain', heldSince: '2026-11-20T20:55:00.000Z',
+    windowStartsAt: '2026-11-21T01:00:00.000Z', windowEndsAt: '2026-11-23T01:00:00.000Z', debtAtomic: '1000000000', ...over,
+  });
+
+  test('the fall onchain, the margin at that price beside the one now, and when Aave\'s price can move', () => {
+    const notice = keepsTheRulesV1(stillLoanWeekendNoticeV1(shadow()));
+    assert.equal(notice.title, 'Still loan: NVDAc 3.6% lower');
+    assert.equal(notice.message, 'Onchain, NVDAc trades 3.6% below the price Aave has held since Fri. '
+      + 'At that price the collateral could fall 28% before liquidation, not 50%. Aave’s price can move Sun 20:00 ET.');
+    assert.match(keepsTheRulesV1(stillLoanWeekendNoticeV1(shadow({ movers: [{ symbol: 'NVDAc', ratio: 0.964 }, { symbol: 'AAPLc', ratio: 0.99 }] }))).message,
+      /^Onchain, NVDAc trades 3\.6% below the price Aave has held since Fri \(1 more of your stocks trades lower too\)\./);
+  });
+
+  test('a loan that could be liquidated at that price says so, and when; PAXG is told against gold', () => {
+    assert.equal(keepsTheRulesV1(stillLoanWeekendNoticeV1(shadow({ state: 'liquidation', marginBps: 0, oracleState: 'watch', oracleMarginBps: 3_000,
+      movers: [{ symbol: 'NVDAc', ratio: 0.62 }] }))).message,
+    'Onchain, NVDAc trades 38.0% below the price Aave has held since Fri. At that price the loan could be liquidated once Aave’s price moves. '
+      + 'Aave’s price can move Sun 20:00 ET.');
+    const gold = keepsTheRulesV1(stillLoanWeekendNoticeV1(shadow({ venue: 'morpho', market: PAXG_MARKET, source: 'paxg_feed', state: 'act', marginBps: 1_420,
+      oracleState: 'watch', oracleMarginBps: 2_100, movers: [{ symbol: 'PAXG', ratio: 0.9 }] })));
+    assert.equal(gold.title, 'Still loan: PAXG 10.0% lower');
+    assert.equal(gold.message, 'PAXG trades 10.0% below the gold price Morpho has held since Fri. At that price the collateral could fall 14% before liquidation, '
+      + 'not 21%. Morpho’s price can move when gold trades again.');
+  });
+
+  test('nothing when the band there is no worse, is calm, or nothing pledged trades lower', () => {
+    assert.equal(stillLoanWeekendNoticeV1(shadow({ oracleState: 'watch' })), null);
+    assert.equal(stillLoanWeekendNoticeV1(shadow({ state: 'calm', marginBps: 4_000 })), null);
+    assert.equal(stillLoanWeekendNoticeV1(shadow({ movers: [] })), null);
   });
 });

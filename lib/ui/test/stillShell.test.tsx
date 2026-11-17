@@ -968,7 +968,7 @@ describe('after a loan, the offer to hear about it', () => {
     const off = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(false)} />);
     assert.match(off, /Hear about this loan in Telegram/);
     assert.match(off, /Still messages you when a loan opens and when it is repaid, its debt and interest every Friday evening, a jump in its rate, a pause or freeze on its collateral, and when your collateral/);
-    assert.match(off, /when your collateral can fall less than 37\.5% before liquidation, again below 20%, and if the loan can be liquidated, then once more when the margin is back\. The bot never asks you to sign\./);
+    assert.match(off, /when your collateral can fall less than 37\.5% before liquidation, again below 20%, and if the loan can be liquidated \(while markets are closed, also at the price the collateral trades at onchain\), then once more when the margin is back\. The bot never asks you to sign\./);
     assert.match(off, />Connect<\/button>/);
     const on = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(true)} />);
     assert.match(on, /Telegram will tell you about this loan/);

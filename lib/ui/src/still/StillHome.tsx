@@ -220,7 +220,7 @@ export function StillLoanAlertsOffer({ telegram }: { telegram?: TelegramAlertsMo
   const view = telegram?.view ?? null;
   if (!telegram || !view) return null;
   const linked = view.state === 'linked';
-  const bands = `when your collateral can fall less than ${formatPercentBps(Number(TERMS.watchBelowBps), 1)} before liquidation, again below ${formatPercentBps(Number(TERMS.actBelowBps))}, and if the loan can be liquidated`;
+  const bands = `when your collateral can fall less than ${formatPercentBps(Number(TERMS.watchBelowBps), 1)} before liquidation, again below ${formatPercentBps(Number(TERMS.actBelowBps))}, and if the loan can be liquidated (while markets are closed, also at the price the collateral trades at onchain)`;
   const note = view.state === 'open' ? view.note
     : linked ? `Your Telegram chat gets a note that this loan opened and one when it is repaid, its debt and interest every Friday evening, word of a jump in its rate or a pause or freeze on its collateral, and a message ${bands}, then once more when the margin is back.`
       : `Still messages you when a loan opens and when it is repaid, its debt and interest every Friday evening, a jump in its rate, a pause or freeze on its collateral, and ${bands}, then once more when the margin is back. The bot never asks you to sign.`;

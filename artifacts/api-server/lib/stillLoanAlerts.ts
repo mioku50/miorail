@@ -109,6 +109,8 @@ export async function refreshStillLoanAlertsV1(input: {
   debts?: Map<string, string>;
   /** What the collateral tokens of this reading's loans say (./stillLoanHolds.ts). A failure reads as nothing read. */
   readHolds?: (walletAddress: string, report: MirrorReport) => Promise<ReadonlyMap<string, StillLoanHoldReadingV1>>;
+  /** Filled with each report read, by wallet, for what is worked out from it after the pass (./stillLoanWeekend.ts). */
+  reports?: Map<string, MirrorReport>;
 }): Promise<{ due: number; read: number; failed: number; notRead: number }> {
   const reachable = [...input.reachable].map((wallet) => wallet.toLowerCase()).filter((wallet) => /^0x[0-9a-f]{40}$/.test(wallet));
   const eligible = await input.alerts.borrowers({ reachable, limit: STILL_LOAN_BORROWERS_SEEN_V1 });
@@ -123,6 +125,7 @@ export async function refreshStillLoanAlertsV1(input: {
       continue;
     }
     report.read += 1;
+    input.reports?.set(walletAddress, outcome.report);
     for (const venue of outcome.report.venues) {
       if (venue.debtAtomic != null && /^[0-9]{1,78}$/.test(venue.debtAtomic)) input.debts?.set(`${walletAddress}|${venue.market.toLowerCase()}`, venue.debtAtomic);
     }

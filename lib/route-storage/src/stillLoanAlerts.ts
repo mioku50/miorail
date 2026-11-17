@@ -52,7 +52,7 @@ export type StillLoanHoldKindV1 = (typeof STILL_LOAN_HOLD_KINDS_V1)[number];
 const HOLD_V1 = new RegExp(`^[A-Za-z0-9]{1,16}:(${STILL_LOAN_HOLD_KINDS_V1.join('|')})$`);
 
 /** The notices told besides a worse band, each once per channel. */
-export const STILL_LOAN_NOTICE_KINDS_V1 = ['opened', 'week', 'hold', 'closed', 'recovered', 'rate'] as const;
+export const STILL_LOAN_NOTICE_KINDS_V1 = ['opened', 'week', 'hold', 'closed', 'recovered', 'rate', 'weekend'] as const;
 export type StillLoanNoticeKindV1 = (typeof STILL_LOAN_NOTICE_KINDS_V1)[number];
 
 export interface StillLoanAlertV1 {
@@ -203,6 +203,8 @@ export interface StillLoanAlertRepositoryV1 {
   rateDue(input: { channel: NotificationChannelV1; freshSince: Date; highSince: Date }): Promise<StillLoanAlertV1[]>;
   /** A notice told this loan's owner this rate: the rate they last heard of, which ends a stretch of jump. */
   markRateTold(input: { walletAddress: string; market: string; rateBps: number; at: Date }): Promise<void>;
+  /** Which of these keys this channel told under this kind. */
+  noticesTold(input: { channel: NotificationChannelV1; kind: StillLoanNoticeKindV1; keys: readonly string[] }): Promise<Set<string>>;
   /** This channel told this notice; telling it again changes nothing. */
   recordNotice(input: StillLoanNoticeRecordV1): Promise<void>;
 }
@@ -240,6 +242,11 @@ export function stillLoanRecoveredKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddr
 /** The key a rate jump is told under. */
 export function stillLoanRateKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'rateEpisode'>): string {
   return `${loan.walletAddress}|${loan.market}|${loan.rateEpisode}`;
+}
+
+/** The key a weekend band is told under: once per band per window, so a margin that wavers says nothing twice. */
+export function stillLoanWeekendKeyV1(input: { walletAddress: string; market: string; windowStartsAt: string; state: StillLoanStateV1 }): string {
+  return `${input.walletAddress}|${input.market}|${input.windowStartsAt}|${input.state}`;
 }
 
 /** How far a rate must rise over the one its owner heard of to be a jump: this many basis points, and half again. */
@@ -344,6 +351,12 @@ function assertReadingV1(input: { walletAddress: string; block: string; lines: r
     }
   }
   for (const market of input.unread) assertMarketV1(market);
+}
+
+function assertNoticesAskedV1(input: { channel: string; kind: string; keys: readonly string[] }): void {
+  assertChannelV1(input.channel);
+  if (!(STILL_LOAN_NOTICE_KINDS_V1 as readonly string[]).includes(input.kind)) throw new RouteStorageIntegrityError(`unknown loan notice: ${input.kind}`);
+  if (input.keys.length > 500 || input.keys.some((key) => !NOTICE_KEY_V1.test(key))) throw new RouteStorageIntegrityError('a notice key is short plain text');
 }
 
 function assertNoticeV1(input: StillLoanNoticeRecordV1): void {
@@ -524,6 +537,11 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
     const loan = this.loans.get(`${input.walletAddress}|${input.market}`);
     if (!loan) return;
     Object.assign(loan, { rateToldBps: input.rateBps, rateToldAt: input.at.toISOString(), rateHighSince: null });
+  }
+
+  async noticesTold(input: { channel: NotificationChannelV1; kind: StillLoanNoticeKindV1; keys: readonly string[] }): Promise<Set<string>> {
+    assertNoticesAskedV1(input);
+    return new Set(input.keys.filter((key) => this.notices.has(`${input.channel}|${input.kind}|${key}`)));
   }
 
   async recordNotice(input: StillLoanNoticeRecordV1): Promise<void> {
@@ -835,6 +853,15 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
         UPDATE still_loan_alerts
            SET rate_told_bps = ${input.rateBps}, rate_told_at = ${input.at.toISOString()}::timestamptz, rate_high_since = NULL
          WHERE wallet_address = ${input.walletAddress} AND market = ${input.market}`;
+    },
+
+    async noticesTold(input) {
+      assertNoticesAskedV1(input);
+      if (input.keys.length === 0) return new Set<string>();
+      const rows = (await sql`
+        SELECT notice_key FROM still_loan_notices
+         WHERE channel = ${input.channel} AND kind = ${input.kind} AND notice_key = ANY(${[...input.keys]}::text[])`) as Record<string, unknown>[];
+      return new Set(rows.map((row) => String(row.notice_key)));
     },
 
     async recordNotice(input) {

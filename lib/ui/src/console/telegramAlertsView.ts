@@ -32,8 +32,8 @@ const WHAT_ARRIVES_V1 =
   'a dividend paid in shares on a stock you hold, an issuer changing or scheduling a multiplier, ' +
   'a move in the cost of exiting a stock you watch, your Radar alerts, the week on Base every Friday evening, ' +
   'and for a loan taken through Still: a note when it opens and when it is repaid, its debt and interest every ' +
-  'Friday evening, a jump in its rate, a pause or freeze on its collateral, each time it gets closer to liquidation, ' +
-  'and when its margin is back';
+  'Friday evening, a jump in its rate, a pause or freeze on its collateral, each time it gets closer to liquidation ' +
+  '(while markets are closed, also at the price its collateral trades at onchain), and when its margin is back';
 
 const START_URL_V1 = /^https:\/\/t\.me\/([A-Za-z0-9_]{5,32})\?start=[A-Za-z0-9_-]{32}$/;
 

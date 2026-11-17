@@ -247,3 +247,18 @@ describe('the repayments a channel has not told', () => {
     assert.match(readFileSync(resolve(root, 'lib/db/drizzle/meta/_journal.json'), 'utf8'), /"tag": "0100_still_loan_closed_recovered_rate"/);
   });
 });
+
+describe('the weekend bands', () => {
+  test('a key per loan, window and band; the SQL asks only this channel and kind; 0101 lets the table keep the kind', async () => {
+    const { stillLoanWeekendKeyV1 } = await import('../src/stillLoanAlerts.js');
+    assert.equal(stillLoanWeekendKeyV1({ walletAddress: WALLET, market: SPOKE, windowStartsAt: '2026-11-21T01:00:00.000Z', state: 'act' }),
+      `${WALLET}|${SPOKE}|2026-11-21T01:00:00.000Z|act`);
+    const root = process.cwd().endsWith('lib/route-storage') ? resolve(process.cwd(), '..', '..') : process.cwd();
+    const source = readFileSync(resolve(root, 'lib/route-storage/src/stillLoanAlerts.ts'), 'utf8');
+    const query = source.slice(source.indexOf('async noticesTold(input) {'), source.indexOf('async recordNotice(input) {', source.indexOf('async noticesTold(input) {')));
+    assert.match(query, /WHERE channel = \$\{input\.channel\} AND kind = \$\{input\.kind\} AND notice_key = ANY\(\$\{\[\.\.\.input\.keys\]\}::text\[\]\)/);
+    const migration = readFileSync(resolve(root, 'lib/db/drizzle/0101_still_loan_weekend_notices.sql'), 'utf8');
+    assert.match(migration, /kind IN \('opened', 'week', 'hold', 'closed', 'recovered', 'rate', 'weekend'\)/);
+    assert.match(readFileSync(resolve(root, 'lib/db/drizzle/meta/_journal.json'), 'utf8'), /"tag": "0101_still_loan_weekend_notices"/);
+  });
+});

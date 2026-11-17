@@ -300,4 +300,18 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       assert.deepEqual([loan!.rateHighSince, loan!.rateEpisode], [null, 2]);
     });
   });
+
+  describe(`${label}: which weekend bands a channel told`, () => {
+    test('the told subset of the keys asked, per channel and kind; nothing asked, nothing told', async () => {
+      const alerts = await make();
+      const key = (state: string) => `${WALLET}|${SPOKE}|2026-11-21T01:00:00.000Z|${state}`;
+      assert.deepEqual(await alerts.noticesTold({ channel: 'telegram', kind: 'weekend', keys: [] }), new Set());
+      await alerts.recordNotice({ channel: 'telegram', kind: 'weekend', key: key('watch'), walletAddress: WALLET, market: SPOKE, at: AT });
+      assert.deepEqual(await alerts.noticesTold({ channel: 'telegram', kind: 'weekend', keys: [key('watch'), key('act'), key('liquidation')] }), new Set([key('watch')]));
+      assert.deepEqual(await alerts.noticesTold({ channel: 'base_app', kind: 'weekend', keys: [key('watch')] }), new Set(), 'the other channel told nothing');
+      assert.deepEqual(await alerts.noticesTold({ channel: 'telegram', kind: 'hold', keys: [key('watch')] }), new Set(), 'another kind is another notice');
+      await assert.rejects(() => alerts.noticesTold({ channel: 'telegram', kind: 'gift' as never, keys: [key('watch')] }), /unknown loan notice/);
+      await assert.rejects(() => alerts.noticesTold({ channel: 'telegram', kind: 'weekend', keys: ['a key with spaces'] }), /short plain text/);
+    });
+  });
 }

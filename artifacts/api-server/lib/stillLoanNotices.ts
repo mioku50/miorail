@@ -1,8 +1,15 @@
 import { TERMS, safetyFromHealthFactor } from '@mioagent/still-engine/policy';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
-import type { StillLoanAlertV1, StillLoanClosedV1, StillLoanOpenedV1, StillLoanWeekDueV1 } from '@mioagent/route-storage';
+import {
+  stillLoanStateRankV1,
+  type StillLoanAlertV1,
+  type StillLoanClosedV1,
+  type StillLoanOpenedV1,
+  type StillLoanWeekDueV1,
+} from '@mioagent/route-storage';
 
 import { stillLoanLabelV1 } from './stillLoanAlerts.js';
+import type { StillLoanWeekendShadowV1 } from './stillLoanWeekend.js';
 
 /** The loan row an Aave V4 borrow lands in: one USDC debt on the spoke, across every stock. */
 export const STILL_AAVE_SPOKE_V1 = ADDRESSES.aaveSpoke.toLowerCase();
@@ -35,6 +42,10 @@ export function stillLoanMarketOfV1(receipt: Pick<StillLoanOpenedV1, 'venue' | '
 // - A margin back: the collateral can fall more than Still's Watch line again.
 // - A rate that jumped over the one the owner last heard of, held for an hour,
 //   with what a day of the debt costs at it.
+// - While the market is closed and the oracle holds, a band worse at the price
+//   the collateral trades at than at the one the oracle holds
+//   (./stillLoanWeekend.ts): told as a reading at that price, with when the
+//   oracle's price can move, never as a forecast.
 //
 // Every notice fits the tightest channel whole (a 30-character title, a
 // 200-character message): the plainest wording that fits is chosen, never a
@@ -333,4 +344,56 @@ export function stillLoanHoldNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTe
     if (words) return { title: titleV1(words.title), message: fitV1([words.message]), targetPath: LOAN_PATH_V1 };
   }
   return null;
+}
+
+/** "Fri", in New York time: the day the oracle's price was printed. */
+function nyDayV1(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' });
+}
+
+/** "Sun 20:00 ET". */
+function nyTimeV1(iso: string): string {
+  const at = new Date(iso);
+  const day = at.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' });
+  const time = at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  return `${day} ${time} ET`;
+}
+
+/**
+ * What a loan is told while its oracle holds, when its band at the price its collateral trades at is worse than
+ * at the oracle's: the fall, the margin at that price beside the one now, and when the oracle's price can move.
+ * Null when the band there is no worse, or nothing pledged trades lower.
+ */
+export function stillLoanWeekendNoticeV1(shadow: StillLoanWeekendShadowV1): StillLoanNoticeTextV1 | null {
+  const top = shadow.movers[0];
+  if (!top || !SYMBOL_V1.test(top.symbol) || shadow.state === 'calm'
+    || stillLoanStateRankV1(shadow.state) <= stillLoanStateRankV1(shadow.oracleState)) return null;
+  const down = `${((1 - top.ratio) * 100).toFixed(1)}%`;
+  const since = shadow.heldSince ? ` since ${nyDayV1(shadow.heldSince)}` : '';
+  const gold = shadow.source === 'paxg_feed';
+  const others = shadow.movers.length - 1;
+  const what = gold
+    ? `PAXG trades ${down} below the gold price Morpho has held${since}.`
+    : `Onchain, ${top.symbol} trades ${down} below the price Aave has held${since}`
+      + `${others > 0 ? ` (${others} more of your stocks ${others === 1 ? 'trades' : 'trade'} lower too)` : ''}.`;
+  const when = gold ? ' Morpho’s price can move when gold trades again.' : ` Aave’s price can move ${nyTimeV1(shadow.windowEndsAt)}.`;
+  const venue = gold ? 'Morpho' : 'Aave';
+  const title = `Still loan: ${top.symbol} ${down} lower`;
+  const message = shadow.state === 'liquidation'
+    ? fitV1([
+      `${what} At that price the loan could be liquidated once ${venue}’s price moves.${when}`,
+      `${what} At that price the loan could be liquidated once ${venue}’s price moves.`,
+      `${top.symbol} trades ${down} lower. At that price the loan could be liquidated once ${venue}’s price moves.`,
+    ])
+    : fitV1([
+      `${what} At that price the collateral could fall ${marginV1(shadow.marginBps)} before liquidation, not ${marginV1(shadow.oracleMarginBps)}.${when}`,
+      `${what} At that price the collateral could fall ${marginV1(shadow.marginBps)} before liquidation.${when}`,
+      `${what} At that price the collateral could fall ${marginV1(shadow.marginBps)} before liquidation.`,
+      `${top.symbol} trades ${down} lower. At that price the collateral could fall ${marginV1(shadow.marginBps)} before liquidation.`,
+    ]);
+  return {
+    title: title.length <= STILL_LOAN_NOTICE_TITLE_MAX_V1 ? title : 'Still loan: weekend price',
+    message,
+    targetPath: LOAN_PATH_V1,
+  };
 }
