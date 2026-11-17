@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { LOOP_BRANDS_V1, type LoopBrandIdV1 } from '@mioagent/still-engine/loops';
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import type { LoanExecutionV1 } from './loanExecutionStore.js';
@@ -45,6 +46,22 @@ export interface StillSpendShareV1 {
   /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH, ETH or PAXG. */
   collateral: string;
   venue: 'aave-v4' | 'morpho';
+  /** A numbered Loop (lib/stillLoops.ts), only once its card arrived. Absent from every other purchase's link. */
+  loop?: StillSpendShareLoopV1;
+}
+export interface StillSpendShareLoopV1 {
+  loopNo: number;
+  brand: LoopBrandIdV1;
+  /** Who prepared it: Still's page, a named assistant, or another connected one. */
+  via: 'web' | 'claude' | 'chatgpt' | 'grok' | 'assistant';
+}
+const LOOP_VIAS_V1 = new Set(['web', 'claude', 'chatgpt', 'grok', 'assistant']);
+function shareLoopV1(value: unknown, collateral: unknown): value is StillSpendShareLoopV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const l = value as StillSpendShareLoopV1;
+  const brand = LOOP_BRANDS_V1.find((row) => row.brand === l.brand);
+  return Number.isSafeInteger(l.loopNo) && l.loopNo >= 1 && l.loopNo <= 1_000_000_000 && brand !== undefined && brand.collateral === collateral
+    && typeof l.via === 'string' && LOOP_VIAS_V1.has(l.via);
 }
 
 const COLLATERAL_V1 = new Set<string>([...STOCKS.map((stock) => stock.id), 'cbBTC', 'WETH', 'ETH', 'PAXG']);
@@ -89,10 +106,10 @@ export function stillSpendShareOfV1(execution: LoanExecutionV1): StillSpendShare
 }
 
 export function issueStillSpendShareV1(share: StillSpendShareV1, secret: string): string {
-  if (secret.length < 16 || !shareV1({ ...share })) throw new Error('still_spend_share_invalid');
-  const body = Buffer.from(JSON.stringify({
-    v: 1, n: share.productName, p: share.packageLabel, a: shareAmountAtomicV1(share.priceAtomic), c: share.collateral, m: share.venue,
-  })).toString('base64url');
+  if (secret.length < 16 || !shareV1({ ...share }) || (share.loop !== undefined && !shareLoopV1(share.loop, share.collateral))) throw new Error('still_spend_share_invalid');
+  const claim = { v: 1, n: share.productName, p: share.packageLabel, a: shareAmountAtomicV1(share.priceAtomic), c: share.collateral, m: share.venue };
+  // A Loop's link is the second version: the same claim with its number, brand and who prepared it.
+  const body = Buffer.from(JSON.stringify(share.loop ? { ...claim, v: 2, l: share.loop.loopNo, b: share.loop.brand, w: share.loop.via } : claim)).toString('base64url');
   return `${PREFIX_V1}.${body}.${signature(secret, body)}`;
 }
 
@@ -149,6 +166,13 @@ export function verifyStillLoanShareV1(token: unknown, secret: string): StillLoa
   }
 }
 
+/** A Loop's link: the purchase's own claim with its number, once Bitrefill said the card arrived. */
+export function stillLoopSharePathV1(execution: LoanExecutionV1, loop: StillSpendShareLoopV1, secret: string): { path: string } | null {
+  const share = secret.length < 16 ? null : stillSpendShareOfV1(execution);
+  if (!share || !shareLoopV1(loop, share.collateral)) return null;
+  return { path: `/spend/p/${issueStillSpendShareV1({ ...share, loop }, secret)}` };
+}
+
 /** The link a confirmed loan offers its owner: its purchase when it paid an invoice, the loan itself when not. */
 export function loanExecutionShareV1(execution: LoanExecutionV1, secret: string): { path: string } | null {
   if (secret.length < 16) return null;
@@ -170,9 +194,14 @@ export function verifyStillSpendShareV1(token: unknown, secret: string): StillSp
     const claim: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
     if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return null;
     const c = claim as Record<string, unknown>;
-    if (Object.keys(c).sort().join(',') !== 'a,c,m,n,p,v' || c.v !== 1) return null;
+    const keys = Object.keys(c).sort().join(',');
+    if (!(keys === 'a,c,m,n,p,v' && c.v === 1) && !(keys === 'a,b,c,l,m,n,p,v,w' && c.v === 2)) return null;
     const share = { productName: c.n, packageLabel: c.p, priceAtomic: c.a, collateral: c.c, venue: c.m };
-    return shareV1(share) ? { productName: share.productName, packageLabel: share.packageLabel, priceAtomic: share.priceAtomic, collateral: share.collateral, venue: share.venue } : null;
+    if (!shareV1(share)) return null;
+    const plain: StillSpendShareV1 = { productName: share.productName, packageLabel: share.packageLabel, priceAtomic: share.priceAtomic, collateral: share.collateral, venue: share.venue };
+    if (c.v === 1) return plain;
+    const loop = { loopNo: c.l, brand: c.b, via: c.w };
+    return shareLoopV1(loop, share.collateral) ? { ...plain, loop } : null;
   } catch {
     return null;
   }

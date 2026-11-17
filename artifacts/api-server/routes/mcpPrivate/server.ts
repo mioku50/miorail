@@ -72,6 +72,7 @@ import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 import type { LendingOriginV1 } from '../../lib/lendingDraft.js';
 import { mcpClientKindV1 } from '../../lib/mcpClientKind.js';
+import { stillLoopsRuntimeV1 } from '../../lib/stillLoops.js';
 import { mcpOAuthProviderV1 } from '../../lib/mcpOAuthProvider.js';
 
 // ---------------------------------------------------------------------------
@@ -284,7 +285,8 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   }, async (args) => {
     try {
       // The answer as the tool declares it; whether Bitrefill may pay Still a commission goes to the card as _meta.
-      const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now(), via: await viaV1() });
+      const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now(), via: await viaV1(),
+        loops: stillLoopsRuntimeV1.enabled() });
       return { ...reply(answer), ...stillPurchaseReplyMetaV1(commission) };
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };

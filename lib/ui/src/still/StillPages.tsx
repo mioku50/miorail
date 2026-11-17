@@ -139,9 +139,12 @@ export interface StillMoreModelV1 {
   /** The Basename, or the short address. Null when signed out. */
   account: string | null;
   signInHref: string;
+  /** The server has opened Loops: More offers their page. */
+  loops?: boolean;
 }
 
-const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title: string; blurb: string; href: string; icon: StillIconNameV1; badge?: string }> }> = [
+type MoreGroupV1 = { label: string; rows: ReadonlyArray<{ title: string; blurb: string; href: string; icon: StillIconNameV1; badge?: string }> };
+const MORE_GROUPS_V1: ReadonlyArray<MoreGroupV1> = [
   // How the engine keeps a loan safe, for anyone who asks before borrowing (operator, 2026-11-08).
   { label: 'Safety', rows: [{ title: 'How Still keeps a loan safe', blurb: 'Its limits, the stricter weekend and earnings terms, the safety bands, and what it cannot prevent', href: STILL_SAFETY_V1.path, icon: 'shield' }] },
   { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend', badge: 'New' }] },
@@ -157,6 +160,9 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
     rows: [{ title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Grok, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' }],
   },
 ];
+
+/** Offered once the server opens Loops (StillMoreModelV1.loops). */
+const LOOPS_GROUP_V1: MoreGroupV1 = { label: 'Loops', rows: [{ title: 'Loops', blurb: 'A company’s card, paid by a loan against its stock, which you keep', href: '/loops', icon: 'spend' }] };
 
 export function StillMore({ model }: { model: StillMoreModelV1 }) {
   return (
@@ -175,7 +181,7 @@ export function StillMore({ model }: { model: StillMoreModelV1 }) {
         </span>
       </div>
       <div className="still-more-groups">
-        {MORE_GROUPS_V1.map((group) => (
+        {(model.loops ? [...MORE_GROUPS_V1.slice(0, 2), LOOPS_GROUP_V1, ...MORE_GROUPS_V1.slice(2)] : MORE_GROUPS_V1).map((group) => (
           <section key={group.label} className="still-more-group" aria-label={group.label}>
             <h2 className="still-more-group-head">{group.label}</h2>
             <ul className="still-links">

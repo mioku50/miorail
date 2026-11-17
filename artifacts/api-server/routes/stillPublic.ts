@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { LOOP_BRANDS_V1 } from '@mioagent/still-engine/loops';
 import {
   SPEND_GIFT_CATEGORIES_V1,
   SPEND_PRODUCT_TYPES_V1,
@@ -15,7 +16,7 @@ import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { renderCardPngV1 } from '../lib/cardImage.js';
-import { stillBrandCardSvgV1, stillLoanCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
+import { stillBrandCardSvgV1, stillLoanCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1, stillLoopCardSvgV1, STILL_LOOP_VIA_WORDS_V1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillBitrefillClientV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { stillSpendShareWordsV1, verifyStillLoanShareV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
@@ -197,7 +198,8 @@ publicStillRouter.get('/spend-card.png', async (req: Request, res: Response) => 
       return;
     }
     sendCardPngV1(res, await spendCardCacheV1.read(`${token}|${shape}`,
-      () => publicStillRuntimeV1.renderPng(share ? stillSpendCardSvgV1(shape, share) : stillLoanCardSvgV1(shape, loan!))), 86_400);
+      () => publicStillRuntimeV1.renderPng(share?.loop ? stillLoopCardSvgV1(shape, { ...share, loop: share.loop })
+        : share ? stillSpendCardSvgV1(shape, share) : stillLoanCardSvgV1(shape, loan!))), 86_400);
   } catch (error) {
     logger.warn('Still Spend card render failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });
@@ -221,9 +223,12 @@ publicStillRouter.get('/spend-share', (req: Request, res: Response) => {
     return;
   }
   const words = stillSpendShareWordsV1(share);
+  const brand = share.loop ? LOOP_BRANDS_V1.find((row) => row.brand === share.loop!.brand)! : null;
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.json({ outcome: 'share', share: { productName: share.productName, packageLabel: share.packageLabel, priceUsdc: words.priceUsdc,
-    collateralLabel: words.collateralLabel, collateralName: words.collateralName, venueName: words.venueName } });
+    collateralLabel: words.collateralLabel, collateralName: words.collateralName, venueName: words.venueName,
+    ...(share.loop && brand ? { loop: { loopNo: share.loop.loopNo, brandName: brand.name, card: brand.card, via: share.loop.via,
+      viaWords: STILL_LOOP_VIA_WORDS_V1[share.loop.via] } } : {}) } });
 });
 
 // ---------------------------------------------------------------------------

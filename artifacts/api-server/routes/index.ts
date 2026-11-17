@@ -30,6 +30,7 @@ import { publicStillRouter } from './stillPublic';
 import { publicStillEligibilityRouter, stillEligibilityRouter } from './stillEligibility';
 import { stillMineRouter } from './stillMine';
 import { stillSpendRouter } from './stillSpend';
+import { publicStillLoopsRouter, stillLoopsRouter } from './stillLoops';
 import { cspReportRouter } from './cspReport';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
@@ -65,6 +66,7 @@ routes.use('/public/reopen', reopenGameRouter);
 // Before a new loan, purchase or stock buy: the region the server sees, and this sign-in's confirmation.
 routes.use('/public/still', publicStillEligibilityRouter);
 routes.use('/public/still', publicStillRouter);
+routes.use('/public/still', publicStillLoopsRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
@@ -100,6 +102,8 @@ routes.use('/stocks/dividends', stocksDividendsRouter);
 routes.use('/stocks', stocksTodayRouter);
 // Still Spend: a Bitrefill invoice for the session's wallet, paid by its own loan.
 routes.use('/still/spend', stillSpendRouter);
+// The session's own Loop, on the wall at its owner's word.
+routes.use('/still/loops', stillLoopsRouter);
 // The session's own loans and what Still could lend it, never an address the client names.
 // The sign-in's confirmation that it is not a US person (lib/stillRegion.ts).
 routes.use('/still', stillEligibilityRouter);

@@ -159,6 +159,29 @@ export interface LendingExecutionWireV1 {
   /** Still Spend: a loan in steps that stopped before its payment, whose Bitrefill invoice is still open
    * for the wallet to pay from its own USDC. */
   walletPay?: { orderId: string } | null;
+  /** A numbered Loop this confirmed loan made, and Bitrefill's word on its card. */
+  loop?: LendingLoopWireV1 | null;
+}
+export interface LendingLoopWireV1 {
+  loopNo: number;
+  brand: 'apple' | 'amazon' | 'google' | 'meta' | 'microsoft';
+  /** Bitrefill said the card arrived. */
+  complete: boolean;
+  /** Bitrefill stopped it instead. */
+  undelivered: 'blocked' | 'denied' | 'payment_error' | null;
+  onWall: boolean;
+  team: boolean;
+}
+/** The Loop as the server sent it, or null: anything else is no Loop. */
+export function lendingLoopWireV1(value: unknown): LendingLoopWireV1 | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const l = value as Record<string, unknown>;
+  return Number.isSafeInteger(l.loopNo) && (l.loopNo as number) >= 1 && ['apple', 'amazon', 'google', 'meta', 'microsoft'].includes(String(l.brand))
+    && typeof l.complete === 'boolean' && (l.undelivered === null || ['blocked', 'denied', 'payment_error'].includes(String(l.undelivered)))
+    && typeof l.onWall === 'boolean' && typeof l.team === 'boolean'
+    ? { loopNo: l.loopNo as number, brand: l.brand as LendingLoopWireV1['brand'], complete: l.complete, undelivered: l.undelivered as LendingLoopWireV1['undelivered'],
+      onWall: l.onWall, team: l.team }
+    : null;
 }
 const spendOrderId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 /** The wallet-pay offer as the server sent it, or null: an order id that is not one is no offer. */
@@ -256,6 +279,7 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
     text(value.releasing.checkAgainAt) && Number.isFinite(Date.parse(value.releasing.checkAgainAt as string))
     ? { check: value.releasing.check, checkAgainAt: value.releasing.checkAgainAt as string } : null;
   return { ...(value as unknown as LendingExecutionWireV1), walletPay: spendWalletPayWireV1(value.walletPay),
+    loop: value.state === 'confirmed' ? lendingLoopWireV1(value.loop) : null,
     positionMovedOutside: value.state === 'confirmed' && value.positionMovedOutside === true, releasing,
     paymentMayStillBeSent: value.state === 'failed' && value.paymentMayStillBeSent === true };
 }

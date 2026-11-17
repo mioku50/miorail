@@ -8,12 +8,14 @@ import {
   type StillLoopV1,
   type StillLoopViaV1,
 } from '@mioagent/route-storage';
-import { loopBrandOfV1 } from '@mioagent/still-engine/loops';
+import { LOOP_BRANDS_V1, loopBrandOfV1 } from '@mioagent/still-engine/loops';
 import { logger } from '@mioagent/utils';
+
+import { reverseBaseNameV1 } from './baseNameResolver.js';
 
 import type { LendingOriginV1 } from './lendingDraft.js';
 import type { LoanExecutionV1 } from './loanExecutionStore.js';
-import { shareAmountAtomicV1, stillSpendShareOfV1 } from './stillSpendShare.js';
+import { shareAmountAtomicV1, stillSpendShareOfV1, stillSpendShareWordsV1 } from './stillSpendShare.js';
 
 // ---------------------------------------------------------------------------
 // Loops on the server: which confirmed loans are Loops, and Bitrefill's word
@@ -101,11 +103,46 @@ export function stillLoopWireV1(loop: StillLoopV1): StillLoopWireV1 {
   return { loopNo: loop.loopNo, brand: loop.brand, complete: loop.deliveredAt !== null, undelivered: loop.undelivered, onWall: loop.onWall, team: loop.team };
 }
 
+/** A Loop as anybody may see it: no wallet, no transaction, the price to the dollar, the day without a time. */
+export interface StillLoopPublicV1 {
+  loopNo: number;
+  brand: StillLoopV1['brand'];
+  brandName: string;
+  card: string;
+  productName: string;
+  packageLabel: string;
+  /** Whole dollars, as "27". */
+  priceUsdc: string;
+  venueName: string;
+  via: StillLoopViaV1;
+  day: string;
+  /** The owner's checked Basename, when they chose to show it. */
+  label: string | null;
+}
+
+export function stillLoopPublicV1(loop: StillLoopV1): StillLoopPublicV1 {
+  const brand = LOOP_BRANDS_V1.find((row) => row.brand === loop.brand)!;
+  const words = stillSpendShareWordsV1({ priceAtomic: loop.priceRoundedAtomic, collateral: loop.collateral, venue: loop.venue });
+  return {
+    loopNo: loop.loopNo, brand: loop.brand, brandName: brand.name, card: brand.card, productName: loop.productName, packageLabel: loop.packageLabel,
+    priceUsdc: words.priceDollars, venueName: words.venueName, via: loop.via, day: loop.confirmedAt.slice(0, 10), label: loop.wallLabel,
+  };
+}
+
+/** Monday 00:00 UTC of the week `now` falls in: where "this week" starts. */
+export function stillLoopWeekStartV1(now: Date): Date {
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  return day;
+}
+
 export const stillLoopsRuntimeV1 = {
   enabled: (): boolean => stillLoopsEnabledV1(),
   team: (): ReadonlySet<string> => stillTeamWalletsV1(),
   repository: (): StillLoopRepositoryV1 => createDatabaseStillLoopRepositoryV1(client as unknown as SqlTemplateExecutor),
   now: (): Date => new Date(),
+  /** The wallet's Basename, read back and checked forward (lib/baseNameResolver.ts). */
+  basename: (wallet: string): Promise<string | null> => reverseBaseNameV1(wallet),
 };
 
 /** The Loop a loan read as confirmed made, written if it was not; null for any other loan, while Loops are

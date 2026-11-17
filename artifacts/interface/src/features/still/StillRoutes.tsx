@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Redirect, useLocation } from 'wouter';
-import { useMyDividends, useStillCheck, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { useMyDividends, useStillCheck, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
 import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
 import {
   StillAgent,
@@ -10,11 +10,13 @@ import {
   StillFrame,
   StillHomeSignedIn,
   StillHomeSignedOut,
+  StillLoops,
   StillMore,
   StillSafety,
   assetsViewV1,
   homeViewV1,
   stillCheckMessageV1,
+  stillLoopsViewV1,
   stillTabForPathV1,
 } from '@mioagent/ui/still';
 import { useAuthGate } from '../../app/AuthProvider';
@@ -213,9 +215,11 @@ export function StillMorePage() {
   const { wallet } = useStillWallet();
   const short = wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : null;
   const basename = useWalletBasenameV1(short);
+  // Loops are offered here once the server opens them, never before.
+  const loops = useStillLoopsV1();
   return (
     <StillFrame tab="more" sky={sky}>
-      <StillMore model={{ sky, account: basename ?? short, signInHref }} />
+      <StillMore model={{ sky, account: basename ?? short, signInHref, loops: loops.data !== undefined && loops.data !== null }} />
     </StillFrame>
   );
 }
@@ -225,6 +229,18 @@ export function StillSafetyPage() {
   return (
     <StillFrame tab="more" sky={sky}>
       <StillSafety model={{ sky }} />
+    </StillFrame>
+  );
+}
+
+/** Loops in public: the week's count, how one is made and the wall. Public, like Safety. */
+export function StillLoopsPage() {
+  const sky = useStillSky();
+  const loops = useStillLoopsV1();
+  const view = loops.data === undefined ? undefined : loops.data === null ? null : stillLoopsViewV1(loops.data);
+  return (
+    <StillFrame tab="more" sky={sky}>
+      <StillLoops model={{ sky, view, failed: loops.isError || (loops.data !== undefined && loops.data !== null && view === null) }} />
     </StillFrame>
   );
 }

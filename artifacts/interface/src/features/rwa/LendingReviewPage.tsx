@@ -4,8 +4,8 @@ import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, lendingFeeNoteV1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
-import { useSponsoredGasStatus, useStillEligibilityV1, useStillSpendOrderV1 } from '@mioagent/api-client-react';
-import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1, stillEligibilityViewV1 } from '@mioagent/ui/still';
+import { putStillLoopOnWallV1, useSponsoredGasStatus, useStillEligibilityV1, useStillSpendOrderV1 } from '@mioagent/api-client-react';
+import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillLoopOffer, StillSpendPaid, loanShareTextV1, loopShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1, stillEligibilityViewV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, attributedCallsV1, gasLimitedCallsV1, isWalletRejectionError, paymasterServiceSupportV1, publicGasMeterV1,
   requireLiveWalletAccountV1, sendCallsCapabilitiesV1, sendCallsKeepingCallCapabilitiesV1, sponsoredGasPlanV1, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
@@ -107,8 +107,11 @@ export function LendingReviewPage() {
   // The card the server signed once it confirmed the loan; its link names the purchase, never the wallet.
   const sharePath = paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
   const facts = review.model.body?.facts;
+  // A numbered Loop: its own words beside the card once the card arrived, and the owner's choice of the wall.
+  const loop = review.model.execution?.loop ?? null;
+  const executionId = review.model.execution?.executionId ?? null;
   const share = sharePath && facts?.payment ? { url: `${STILL_PUBLIC_ORIGIN_V1}${sharePath}`,
-    text: spendShareTextV1({ productName: facts.payment.productName, collateralSymbol: facts.collateralSymbol }) } : null;
+    text: loop?.complete ? loopShareTextV1(loop) : spendShareTextV1({ productName: facts.payment.productName, collateralSymbol: facts.collateralSymbol }) } : null;
   // A plain loan's card: how much, against what, through which protocol; never the wallet.
   const loanPath = confirmedLoan && !paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
   const loanShare = loanPath && facts ? { url: `${STILL_PUBLIC_ORIGIN_V1}${loanPath}`, text: loanShareTextV1({ collateralSymbol: facts.collateralSymbol }) } : null;
@@ -117,6 +120,10 @@ export function LendingReviewPage() {
     : <>
       <LendingReviewScreen model={review.model} />
       {paidOrder ? <StillSpendPaid order={orderView} reading={order.isFetching} share={share} /> : null}
+      {loop && executionId ? <StillLoopOffer model={{ loop, onWall: async (showName) => {
+        const answer = await putStillLoopOnWallV1(executionId, showName) as { label?: unknown };
+        return { label: typeof answer.label === 'string' ? answer.label : null };
+      } }} /> : null}
       {loanShare && loanPath ? <StillLoanShare share={loanShare} cardUrl={`/api/public/still/spend-card.png?t=${encodeURIComponent(loanPath.slice('/spend/p/'.length))}`} /> : null}
       {confirmedLoan ? <StillLoanAlertsOffer telegram={telegram} /> : null}
     </>}</StillFrame>;

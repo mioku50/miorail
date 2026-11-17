@@ -20,6 +20,8 @@ export * from './StillBorrow';
 export * from './borrowIntent';
 export * from './spendView';
 export * from './StillSpend';
+export * from './StillLoop';
+export * from './StillLoops';
 export * from './stillEligibility';
 export * from './StillEligibility';
 

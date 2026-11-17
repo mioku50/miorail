@@ -125,6 +125,14 @@ describe('session-owned lending HTTP boundary', () => {
         assert.deepEqual(answer.body.loop, { loopNo: 1, brand: 'apple', complete: false, undelivered: null, onWall: false, team: false });
       }
       assert.equal((await loops.byExecution(put.executionId))?.via, 'claude');
+      // Before the card arrived the link is the purchase's; once it did, the Loop's own.
+      const claimOf = (path: string) => JSON.parse(Buffer.from(path.split('/').pop()!.split('.')[1]!, 'base64url').toString());
+      const before = await request(app()).get(`${base}/lending/executions/${put.executionId}`).expect(200);
+      assert.equal(claimOf(before.body.share.path).v, 1);
+      await loops.markDelivery({ executionId: put.executionId, outcome: 'complete', at: now });
+      const after = await request(app()).get(`${base}/lending/executions/${put.executionId}`).expect(200);
+      assert.equal(after.body.loop.complete, true);
+      assert.deepEqual(claimOf(after.body.share.path), { v: 2, n: 'iTunes Germany', p: '25 EUR', a: '27000000', c: 'AAPLc', m: 'aave-v4', l: 1, b: 'apple', w: 'claude' });
     } finally {
       Object.assign(stillLoopsRuntimeV1, originalLoops);
     }

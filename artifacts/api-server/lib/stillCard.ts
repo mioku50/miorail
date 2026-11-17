@@ -1,5 +1,6 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import { formatCents } from '@mioagent/still-engine/format';
+import { LOOP_BRANDS_V1 } from '@mioagent/still-engine/loops';
 
 import { homeViewV1, type MobileInputV1 } from '../../../lib/ui/src/still/homeView.js';
 import { mobileLayoutV1 } from '../../../lib/ui/src/still/mobileLayout.js';
@@ -256,6 +257,46 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
     `Paid for ${share.productName} (${share.packageLabel}, ${words.priceWords}) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
   );
 }
+
+/** A Loop, as its owner shared it: its number, the stock that stayed and the card that arrived. No wallet, no transaction. */
+export function stillLoopCardSvgV1(shape: StillCardShapeV1, share: StillSpendShareV1 & { loop: NonNullable<StillSpendShareV1['loop']> }): string {
+  const words = stillSpendShareWordsV1(share);
+  const brand = LOOP_BRANDS_V1.find((row) => row.brand === share.loop.brand)!;
+  const article = brand.article;
+  const via = STILL_LOOP_VIA_WORDS_V1[share.loop.via];
+  const mobile: MobileInputV1 = {
+    holdings: [{ id: 'collateral', kind: words.collateralKind, label: words.collateralLabel, valueCents: 90_000 }],
+    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: `~${words.priceDollars}` },
+    state: 'calm',
+  };
+  return frameV1(
+    shape,
+    mobile,
+    ({ x, top, bottom, width }) => {
+      const headline = wrapV1(`${brand.name} stock stayed. ${article} ${brand.card} arrived.`, 54, width, 3);
+      const headTop = top + 196;
+      const last = headTop + (headline.length - 1) * 62;
+      const small = [`Borrowed against ${words.collateralLabel} through ${words.venueName}; the loan is open, with the stock as its collateral.`,
+        ...(via ? [via] : []), `Not affiliated with ${brand.name}.`].join(' ');
+      return [
+        brandV1(x, top + 18),
+        `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">LOOP #${share.loop.loopNo} · NOTHING SOLD</text>`,
+        textLinesV1(headline, x, headTop, 54, 62, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
+        `<text x="${x}" y="${last + 58}" font-family="${SANS}" font-size="34" fill="${INK}">${escapeXmlV1(share.packageLabel)}<tspan fill="${INK2}">\u00a0·\u00a0</tspan><tspan font-weight="600">${escapeXmlV1(words.priceWords)}</tspan></text>`,
+        textLinesV1(wrapV1(small, 24, width, 4), x, last + 112, 24, 34, `font-family="${SANS}" fill="${INK2}"`),
+        baseSquareV1(x, bottom - 26, 24),
+        `<text x="${x + 38}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">CHECKED ONCHAIN ON BASE</text>`,
+        `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">MIORAIL.XYZ</text>`,
+      ].join('');
+    },
+    `Loop #${share.loop.loopNo}: ${brand.name} stock stayed and ${article.toLowerCase()} ${brand.card} arrived (${share.packageLabel}, ${words.priceWords}), paid with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
+  );
+}
+
+/** Who prepared a Loop, as its card says it; nothing for Still's own page. */
+export const STILL_LOOP_VIA_WORDS_V1: Readonly<Record<NonNullable<StillSpendShareV1['loop']>['via'], string | null>> = {
+  web: null, claude: 'Done in Claude.', chatgpt: 'Done in ChatGPT.', grok: 'Done in Grok.', assistant: 'Done with an AI assistant.',
+};
 
 /** A loan, as its owner shared it: how much, against what, and through which protocol. No wallet, no transaction. */
 export function stillLoanCardSvgV1(shape: StillCardShapeV1, share: StillLoanShareV1): string {

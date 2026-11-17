@@ -190,6 +190,26 @@ test('a shared purchase previews with its own card, and reads and names no walle
     collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } });
 });
 
+test('a shared Loop previews with its number, the stock that stayed and the card that arrived, and names no wallet', async () => {
+  const { server, drawn } = app(async () => assert.fail('a Loop link reads no wallet'));
+  publicStillRuntimeV1.secret = () => SHARE_SECRET;
+  const token = issueStillSpendShareV1({ productName: 'iTunes Germany', packageLabel: '25 EUR', priceAtomic: '27340000', collateral: 'AAPLc', venue: 'aave-v4',
+    loop: { loopNo: 7, brand: 'apple', via: 'claude' } }, SHARE_SECRET);
+  const res = await request(server).get(`/spend/p/${token}`).set('Host', 'miorail.xyz');
+  assert.equal(res.status, 200);
+  assert.match(res.text, /<title>Loop #7: Apple stock stayed · Still<\/title>/);
+  assert.match(metaContent(res.text, 'description')[0]!, /^Apple stock stayed and an Apple gift card arrived: 25 EUR for about 27 USDC, borrowed against AAPL through Aave on Base\. The loan is open\. Not affiliated with Apple\.$/);
+  await request(server).get('/api/public/still/spend-card.png').query({ t: token }).expect(200);
+  const svg = drawn.at(-1)!;
+  assert.match(svg, /LOOP #7 · NOTHING SOLD/);
+  assert.match(svg, /Apple stock stayed\./);
+  assert.match(svg, /Done in Claude\./);
+  assert.match(svg, /Not affiliated with Apple\./);
+  assert.doesNotMatch(svg, /0x[0-9a-fA-F]{6}/);
+  const words = await request(server).get('/api/public/still/spend-share').query({ t: token }).expect(200);
+  assert.deepEqual(words.body.share.loop, { loopNo: 7, brandName: 'Apple', card: 'Apple gift card', via: 'claude', viaWords: 'Done in Claude.' });
+});
+
 test('a shared loan previews with its own card at the purchase cards’ address, and reads and names no wallet', async () => {
   // 2026-11-03, the operator: «нет карточки после успешного взятия займа для шаринга».
   const { server, drawn } = app(async () => assert.fail('a loan link reads no wallet'));

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { LOOP_BRANDS_V1 } from '@mioagent/still-engine/loops';
 import { formatCents } from '@mioagent/still-engine/format';
 import type { MirrorOutcome } from '@mioagent/still-engine';
 import { logger } from '@mioagent/utils';
@@ -190,6 +191,27 @@ export function stillSpendShareMetaV1(input: { origin: string; canonical: string
   const path = `/spend/p/${input.token}`;
   const card = (shape: 'wide' | 'tall') =>
     `${input.origin}/api/public/still/spend-card.png?t=${encodeURIComponent(input.token)}${shape === 'tall' ? '&shape=tall' : ''}`;
+  const brand = share.loop ? LOOP_BRANDS_V1.find((row) => row.brand === share.loop!.brand) : undefined;
+  if (share.loop && brand) {
+    const article = brand.article.toLowerCase();
+    return {
+      status: 200,
+      meta: {
+        canonicalUrl: `${input.origin}${path}`,
+        imageUrl: card('wide'),
+        noindex: true,
+        siteName: 'Still',
+        miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
+        title: `Loop #${share.loop.loopNo}: ${brand.name} stock stayed · Still`,
+        description: `${brand.name} stock stayed and ${article} ${brand.card} arrived: ${share.packageLabel} for ${words.priceWords}, borrowed against ${words.collateralLabel} through ${words.venueName} on Base. The loan is open. Not affiliated with ${brand.name}.`,
+        image: {
+          width: 1200,
+          height: 630,
+          alt: `Loop #${share.loop.loopNo}: ${brand.name} stock stayed and ${article} ${brand.card} arrived, paid with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
+        },
+      },
+    };
+  }
   return {
     status: 200,
     meta: {

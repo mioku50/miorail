@@ -27,16 +27,18 @@ export interface LoopBrandV1 {
   collateral: StockId;
   /** What the card is, in a sentence: "An Apple gift card arrived." */
   card: string;
+  /** Its article, as it is said: "An Xbox card", "A Google Play card". */
+  article: 'A' | 'An';
   /** Bitrefill product ids of this brand, in any country. */
   productIds: readonly RegExp[];
 }
 
 export const LOOP_BRANDS_V1: readonly LoopBrandV1[] = [
-  { brand: 'apple', name: 'Apple', collateral: 'AAPLc', card: 'Apple gift card', productIds: [/^itunes-/, /^apple-/] },
-  { brand: 'amazon', name: 'Amazon', collateral: 'AMZNc', card: 'Amazon gift card', productIds: [/^amazon[-_]/] },
-  { brand: 'google', name: 'Google', collateral: 'GOOGLc', card: 'Google Play card', productIds: [/^google-play-/] },
-  { brand: 'meta', name: 'Meta', collateral: 'METAc', card: 'Meta Quest card', productIds: [/^meta-quest-/] },
-  { brand: 'microsoft', name: 'Microsoft', collateral: 'MSFTc', card: 'Xbox card', productIds: [/^xbox-/] },
+  { brand: 'apple', name: 'Apple', collateral: 'AAPLc', card: 'Apple gift card', article: 'An', productIds: [/^itunes-/, /^apple-/] },
+  { brand: 'amazon', name: 'Amazon', collateral: 'AMZNc', card: 'Amazon gift card', article: 'An', productIds: [/^amazon[-_]/] },
+  { brand: 'google', name: 'Google', collateral: 'GOOGLc', card: 'Google Play card', article: 'A', productIds: [/^google-play-/] },
+  { brand: 'meta', name: 'Meta', collateral: 'METAc', card: 'Meta Quest card', article: 'A', productIds: [/^meta-quest-/] },
+  { brand: 'microsoft', name: 'Microsoft', collateral: 'MSFTc', card: 'Xbox card', article: 'An', productIds: [/^xbox-/] },
 ];
 
 /** Bitrefill's product id: a lowercase slug, as Still's own routes accept it. */

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SPEND_EMAIL_V1 } from '@mioagent/commerce-engine';
 import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
+import { loopBrandOfV1 } from '@mioagent/still-engine/loops';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { issueLendingDraftV1, type LendingOriginV1 } from '../../lib/lendingDraft.js';
@@ -176,6 +177,12 @@ export function stillPurchaseReplyMetaV1(commission: boolean): { _meta?: Record<
   return commission ? { _meta: { [STILL_COMMISSION_META_KEY_V1]: true } } : {};
 }
 
+/** Said when the purchase makes a Loop (lib/still-engine/src/loops.ts), while Loops are open. */
+function loopNextV1(open: boolean, token: string, productId: string): string {
+  const brand = open ? loopBrandOfV1({ collateralTokenAddress: token, productId }) : null;
+  return brand ? `This makes a Loop: a loan against ${brand.collateral} pays for ${brand.article.toLowerCase()} ${brand.card}, and the stock stays as the loan’s collateral, not sold. ` : '';
+}
+
 /** Said when the invoice was opened with Still's affiliate code at Bitrefill, as its review says too. */
 const COMMISSION_NEXT_V1 = 'Still is a Bitrefill affiliate: Bitrefill may pay Still a commission on this purchase, which does not change its price, and the review says so. ';
 
@@ -211,8 +218,8 @@ function spendOrderRefusalV1(opened: Extract<SpendOrderOpenedV1, { ok: false }>)
 export async function stillPreparePurchaseV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPreparePurchaseInputV1Schema>,
-  /** `via`: the assistant that asked, signed into the draft (lib/mcpClientKind.ts). */
-  deps: { secret: string; now: Date; origin?: string; via?: LendingOriginV1 },
+  /** `via`: the assistant that asked, signed into the draft (lib/mcpClientKind.ts). `loops`: Loops are open on this server. */
+  deps: { secret: string; now: Date; origin?: string; via?: LendingOriginV1; loops?: boolean },
 ): Promise<z.infer<typeof StillPreparePurchaseOutputV1Schema> & StillPurchaseCommissionV1> {
   // Everything that can be refused here is, before an invoice exists at Bitrefill.
   const { token, decimals, venue } = tokenOfV1(args.collateral);
@@ -253,7 +260,7 @@ export async function stillPreparePurchaseV1(
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
     commission: order.commission === true,
-    next: DELIVERY_NEXT_V1 + (order.commission ? COMMISSION_NEXT_V1 : '') + 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
+    next: DELIVERY_NEXT_V1 + (order.commission ? COMMISSION_NEXT_V1 : '') + loopNextV1(deps.loops === true, token, order.productId) + 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
   };
 }
 

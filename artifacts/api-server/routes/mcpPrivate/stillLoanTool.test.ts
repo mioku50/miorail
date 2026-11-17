@@ -52,6 +52,18 @@ test('the assistant that asked is signed into the loan’s draft, and into a pur
   assert.deepEqual(draftOf(purchase.reviewUrl).origin, { kind: 'mcp', client: 'chatgpt' });
 });
 
+test('a purchase that makes a Loop says so in its guidance, only while Loops are open, and adds no field', async (t) => {
+  spend(t);
+  const apple = { productId: 'itunes-germany', packageValue: '25', email: EMAIL, collateral: 'AAPLc' as const, addCollateral: '0' };
+  const closed = await stillPreparePurchaseV1(IDENTITY, apple, { secret: SECRET, now: NOW });
+  assert.doesNotMatch(closed.next, /Loop/);
+  const open = await stillPreparePurchaseV1(IDENTITY, apple, { secret: SECRET, now: NOW, loops: true });
+  assert.match(open.next, /This makes a Loop: a loan against AAPLc pays for an Apple gift card, and the stock stays as the loan’s collateral, not sold\. /);
+  assert.deepEqual(Object.keys(open).sort(), Object.keys(closed).sort());
+  const other = await stillPreparePurchaseV1(IDENTITY, { ...apple, collateral: 'NVDAc' }, { secret: SECRET, now: NOW, loops: true });
+  assert.doesNotMatch(other.next, /Loop/);
+});
+
 test('already-pledged collateral, cbBTC, and native ETH wrapped with the loan', () => {
   const pledged = stillPrepareLoanReviewV1(IDENTITY, { collateral: 'WETH', addCollateral: '0', borrowUsdc: '25.5' }, { secret: SECRET, now: NOW });
   assert.deepEqual(draftOf(pledged.reviewUrl).question, {
@@ -111,6 +123,8 @@ const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM
   packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00' }] };
 const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
   packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
+const APPLE_CARD: SpendProductV1 = { id: 'itunes-germany', name: 'iTunes Germany', country: 'DE', inStock: true, recipientType: 'none', url: null,
+  packages: [{ value: '25', faceCurrency: 'EUR', priceUsdc: '27.34' }] };
 
 function spend(t: test.TestContext, input: { enabled?: boolean; affiliated?: boolean } = {}) {
   const original = { ...stillSpendRuntimeV1 };
@@ -120,7 +134,7 @@ function spend(t: test.TestContext, input: { enabled?: boolean; affiliated?: boo
   const opened: Array<Parameters<BitrefillGuestCheckoutV1['createInvoice']>[0]> = [];
   Object.assign(stillSpendRuntimeV1, {
     orders, enabled: () => input.enabled ?? true, now: () => NOW,
-    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async (id: string) => ({ ok: true, value: id === TOP_UP.id ? TOP_UP : ESIM }) }),
+    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async (id: string) => ({ ok: true, value: id === TOP_UP.id ? TOP_UP : id === APPLE_CARD.id ? APPLE_CARD : ESIM }) }),
     checkout: (): BitrefillGuestCheckoutV1 => ({
       ...(input.affiliated ? { affiliated: true } : {}),
       async createInvoice(request) {

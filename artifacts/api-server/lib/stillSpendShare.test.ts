@@ -105,6 +105,31 @@ describe('a purchase card says what was bought, and nothing that leads to the wa
   });
 });
 
+describe('a Loop’s card is the purchase’s with its number, signed the same way', () => {
+  const APPLE: StillSpendShareV1 = { productName: 'iTunes Germany', packageLabel: '25 EUR', priceAtomic: '27340000', collateral: 'AAPLc', venue: 'aave-v4' };
+  const loop = { loopNo: 7, brand: 'apple' as const, via: 'claude' as const };
+
+  it('leaves every other purchase’s link exactly as it was', () => {
+    const token = issueStillSpendShareV1(PUBG, SECRET);
+    const claim = JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+    assert.deepEqual(Object.keys(claim).sort(), ['a', 'c', 'm', 'n', 'p', 'v']);
+    assert.equal(claim.v, 1);
+  });
+
+  it('reads back its number, brand and who prepared it, and nothing it did not sign', () => {
+    const token = issueStillSpendShareV1({ ...APPLE, loop }, SECRET);
+    assert.deepEqual(verifyStillSpendShareV1(token, SECRET), { ...APPLE, priceAtomic: '27000000', loop });
+    const [prefix, , mac] = token.split('.') as [string, string, string];
+    const forge = (claim: Record<string, unknown>) => `${prefix}.${Buffer.from(JSON.stringify(claim)).toString('base64url')}.${mac}`;
+    assert.equal(verifyStillSpendShareV1(forge({ v: 2, n: 'iTunes Germany', p: '25 EUR', a: '27000000', c: 'AAPLc', m: 'aave-v4', l: 1, b: 'apple', w: 'claude' }), SECRET), null);
+    // A brand whose stock was not pledged, an unknown assistant or number: never signed.
+    for (const bad of [{ ...loop, brand: 'amazon' }, { ...loop, via: 'gemini' }, { ...loop, loopNo: 0 }, { ...loop, loopNo: 1.5 }]) {
+      assert.throws(() => issueStillSpendShareV1({ ...APPLE, loop: bad as never }, SECRET), /still_spend_share_invalid/, JSON.stringify(bad));
+    }
+    assert.throws(() => issueStillSpendShareV1({ ...PUBG, loop }, SECRET), /still_spend_share_invalid/, 'NVDAc makes no Apple Loop');
+  });
+});
+
 describe('a loan card says how much, against what and where, and nothing that leads to the wallet', () => {
   // 2026-11-03, the operator: «нет карточки после успешного взятия займа для шаринга».
   const plainLoan = (patch: Partial<LoanExecutionV1> = {}, facts: Record<string, unknown> = {}) =>

@@ -76,6 +76,30 @@ export function lendingRequestV1<T = unknown>(path: string, options?: RequestIni
   return fetchApi<T>(path, options);
 }
 
+/** The session's own Loop, on the public wall at its owner's word; `showName` shows the wallet's checked Basename. */
+export function putStillLoopOnWallV1(executionId: string, showName: boolean): Promise<unknown> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(executionId)) throw new Error('loop_path_invalid');
+  return fetchApi(`/api/still/loops/${executionId}/wall`, { method: 'POST', body: JSON.stringify({ showName }) });
+}
+
+/** Loops in public: the counts and the wall. Null while Loops are off on this server. */
+export function useStillLoopsV1() {
+  return useQuery({
+    queryKey: ['still-loops'] as const,
+    retry: false,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      try {
+        return await fetchApi<unknown>('/api/public/still/loops');
+      } catch (error) {
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+  });
+}
+
 /** Still Spend paid from the wallet's own USDC: one invoice's review, arm, submission, a hash from the wallet and result, nothing else. */
 export function spendWalletRequestV1<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   if (!/^\/api\/still\/spend\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wallet(?:\/(?:arm|submission|transaction))?$/.test(path)) throw new Error('spend_wallet_path_invalid');
