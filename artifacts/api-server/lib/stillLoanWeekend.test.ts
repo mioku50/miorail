@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import { decodeFunctionData, encodeFunctionResult, parseAbi, type Address, type Hex } from 'viem';
-import type { MirrorReport } from '@mioagent/still-engine';
+import type { AaveCollateralV1, MirrorReport } from '@mioagent/still-engine';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 
 import type { StillLoanCallClientV1 } from './stillLoanHolds.js';
@@ -50,9 +50,13 @@ describe('a stock\'s price on Base while its feed holds', () => {
 });
 
 function stockLine(symbol: string, token: string, over: Record<string, unknown> = {}) {
-  return { asset: symbol.replace(/c$/, ''), kind: 'stock', symbol, token, venue: 'aave-v4', pledged: { raw: '100000000', decimals: 8 },
+  return { asset: symbol, kind: 'stock', symbol, token, venue: 'aave-v4', pledged: { raw: '100000000', decimals: 8 },
     priceCents: '18000', priceUpdatedAt: FRIDAY, protocolFactorBps: 7_000, limits: [], failed: [], ...over };
 }
+
+/** What the reading's own Aave position pledges, as still-engine's aaveCollateralOfV1 gives it: equal weights unless said. */
+const pledges = (...rows: [asset: string, token: string, weight?: bigint][]): AaveCollateralV1[] =>
+  rows.map(([asset, token, weight = 1_000n]) => ({ asset: asset as AaveCollateralV1['asset'], token: token as Address, weight }));
 
 function aaveLine(healthFactor = 2n * WAD, over: Record<string, unknown> = {}) {
   return { venue: 'aave-v4', market: ADDRESSES.aaveSpoke, debtAtomic: '1000000000',
@@ -71,6 +75,7 @@ describe('a loan at the price its collateral trades at', () => {
   test('one stock: the health factor read, times its move, in the band that gives', () => {
     const [shadow, ...rest] = stillLoanWeekendShadowsV1({
       report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)]),
+      aaveCollateral: pledges(['NVDAc', NVDA]),
       stocks: new Map([[NVDA, { ratio: 0.7, at: at(14) }]]),
     });
     assert.equal(rest.length, 0);
@@ -84,22 +89,47 @@ describe('a loan at the price its collateral trades at', () => {
   test('several stocks weigh by what each pledged is worth to the venue; one not measured counts at the oracle\'s price', () => {
     const [shadow] = stillLoanWeekendShadowsV1({
       report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA), stockLine('AAPLc', AAPL)]),
+      aaveCollateral: pledges(['NVDAc', NVDA], ['AAPLc', AAPL]),
       stocks: new Map([[NVDA, { ratio: 0.5, at: at(14) }]]),
     });
     // (0.5 + 1) / 2 of 2.0 is 1.5: a margin of 33.33%.
     assert.deepEqual([shadow!.state, shadow!.marginBps, shadow!.movers.map((row) => row.symbol)], ['watch', 3_333, ['NVDAc']]);
+    // The position's own weights, not equal shares: NVDAc weighs three times AAPLc, so (3 × 0.5 + 1) / 4 of 2.0 is 1.25.
+    const [weighed] = stillLoanWeekendShadowsV1({
+      report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA), stockLine('AAPLc', AAPL)]),
+      aaveCollateral: pledges(['NVDAc', NVDA, 3_000n], ['AAPLc', AAPL, 1_000n]),
+      stocks: new Map([[NVDA, { ratio: 0.5, at: at(14) }]]),
+    });
+    assert.deepEqual([weighed!.state, weighed!.marginBps], ['watch', 2_000]);
     // A stock whose feed printed since the window opened is not held: it counts at the oracle's price, so nothing is measured.
     assert.deepEqual(stillLoanWeekendShadowsV1({
       report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA, { priceUpdatedAt: at(12) })]),
+      aaveCollateral: pledges(['NVDAc', NVDA]),
       stocks: new Map([[NVDA, { ratio: 0.5, at: at(14) }]]),
     }), []);
   });
 
-  test('nothing outside the window, for a loan with no debt, or with no price measured', () => {
+  test('a stock supplied but not pledged weighs nothing, either way (audit ALERT-1)', () => {
+    const report = weekendReport([aaveLine()], [stockLine('NVDAc', NVDA), stockLine('AAPLc', AAPL)]);
+    // NVDAc is the collateral and falls by half; AAPLc is only supplied. Weighing both said a 33% margin; the
+    // position can be liquidated at that price.
+    const [diluted] = stillLoanWeekendShadowsV1({ report, aaveCollateral: pledges(['NVDAc', NVDA]), stocks: new Map([[NVDA, { ratio: 0.5, at: at(14) }]]) });
+    assert.deepEqual([diluted!.state, diluted!.marginBps], ['liquidation', 0]);
+    // AAPLc falls by half but is not collateral: nothing the loan stands on moved, so there is nothing to say.
+    assert.deepEqual(stillLoanWeekendShadowsV1({ report, aaveCollateral: pledges(['NVDAc', NVDA]), stocks: new Map([[AAPL, { ratio: 0.5, at: at(14) }]]) }), []);
+    // USDC pledged beside the stock counts at its own price.
+    const [beside] = stillLoanWeekendShadowsV1({ report, aaveCollateral: pledges(['NVDAc', NVDA], [null as unknown as string, ADDRESSES.usdc]),
+      stocks: new Map([[NVDA, { ratio: 0.5, at: at(14) }]]) });
+    assert.deepEqual([beside!.marginBps, beside!.movers.map((row) => row.symbol)], [3_333, ['NVDAc']]);
+  });
+
+  test('nothing outside the window, for a loan with no debt, with no price measured, or with its collateral not all read', () => {
     const stocks = new Map([[NVDA, { ratio: 0.5, at: at(14) }]]);
-    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)], false), stocks }), []);
-    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine(2n * WAD, { debtAtomic: '0' })], [stockLine('NVDAc', NVDA)]), stocks }), []);
-    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)]), stocks: new Map() }), []);
+    const aaveCollateral = pledges(['NVDAc', NVDA]);
+    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)], false), aaveCollateral, stocks }), []);
+    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine(2n * WAD, { debtAtomic: '0' })], [stockLine('NVDAc', NVDA)]), aaveCollateral, stocks }), []);
+    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)]), aaveCollateral, stocks: new Map() }), []);
+    assert.deepEqual(stillLoanWeekendShadowsV1({ report: weekendReport([aaveLine()], [stockLine('NVDAc', NVDA)]), aaveCollateral: null, stocks }), []);
   });
 
   test('PAXG on Morpho at its own feed against the gold Morpho holds', () => {
@@ -107,7 +137,7 @@ describe('a loan at the price its collateral trades at', () => {
       safety: { healthFactor: (15n * WAD / 10n).toString(), marginBps: 3_333, state: 'watch', source: 'computed' } };
     const paxg = { asset: 'PAXG', kind: 'crypto', symbol: 'PAXG', token: PAXG.token, venue: 'morpho', pledged: { raw: '20000000000000000', decimals: 18 },
       priceCents: '388101', priceUpdatedAt: FRIDAY, protocolFactorBps: 7_700, limits: [], failed: [] };
-    const [shadow] = stillLoanWeekendShadowsV1({ report: weekendReport([morpho], [paxg]), stocks: new Map(), paxg: { ratio: 0.9, at: at(14) } });
+    const [shadow] = stillLoanWeekendShadowsV1({ report: weekendReport([morpho], [paxg]), aaveCollateral: null, stocks: new Map(), paxg: { ratio: 0.9, at: at(14) } });
     // 1.5 × 0.9 = 1.35: 25.92%.
     assert.deepEqual([shadow!.source, shadow!.state, shadow!.marginBps, shadow!.oracleState, shadow!.movers], ['paxg_feed', 'watch', 2_592, 'watch', [{ symbol: 'PAXG', ratio: 0.9 }]]);
   });

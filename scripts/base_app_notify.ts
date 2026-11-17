@@ -63,6 +63,7 @@ import {
   STILL_LOAN_FRESH_FOR_MS_V1,
   refreshStillLoanAlertsV1,
   stillLoanNoticeV1,
+  type StillLoanReadV1,
 } from '../artifacts/api-server/lib/stillLoanAlerts.js';
 import { readStillLoanTokenHoldsV1, stillLoanHoldClientsV1 } from '../artifacts/api-server/lib/stillLoanHolds.js';
 import {
@@ -83,8 +84,9 @@ import {
   readStillPaxgWeekendPriceV1,
   stillLoanWeekendShadowsV1,
   stillWeekendLadderPricesV1,
+  aaveCollateralOfV1,
   type StillLoanWeekendShadowV1,
-  type StillMirrorReportV1,
+  type StillMirrorReadingV1,
 } from '../artifacts/api-server/lib/stillLoanWeekend.js';
 import { createStillMirrorServiceV1 } from '../artifacts/api-server/lib/stillMirror.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
@@ -160,11 +162,12 @@ async function main(): Promise<void> {
   // channels, with the Mirror engine. Only wallets that borrowed through Still
   // are read; a wallet nobody can tell is not read at all.
   const loanAlerts = createDatabaseStillLoanAlertRepositoryV1(client);
-  // Each loan's debt as this pass read it, for the numbers its notice says (audit LL-4).
-  const loanDebts = new Map<string, string>();
+  // Each loan's debt and health factor as this pass read them, at one block, for the numbers its notice says
+  // (audits LL-4 and ALERT-2).
+  const loanDebts = new Map<string, StillLoanReadV1>();
   let reachable = new Set<string>();
-  // Each report this pass read, by wallet, and the endpoints it read on: the weekend's reading works from them.
-  const loanReports = new Map<string, StillMirrorReportV1>();
+  // Each reading this pass took, by wallet, and the endpoints it read on: the weekend's reading works from them.
+  const loanReadings = new Map<string, StillMirrorReadingV1>();
   let holdClients: ReturnType<typeof stillLoanHoldClientsV1> = [];
   try {
     reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
@@ -179,7 +182,7 @@ async function main(): Promise<void> {
       dry,
       debts: loanDebts,
       readHolds: (walletAddress, report) => readStillLoanTokenHoldsV1({ clients: holdClients, report, walletAddress }),
-      reports: loanReports,
+      readings: loanReadings,
     });
     if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
   } catch (cause) {
@@ -189,15 +192,17 @@ async function main(): Promise<void> {
   // While the market is closed and an oracle holds: each loan read this pass, at the price its collateral trades
   // at (./stillLoanWeekend.ts). Stocks from the public ladder already in the database; PAXG from its own feed.
   const loanShadows: { walletAddress: string; shadow: StillLoanWeekendShadowV1 }[] = [];
-  const windowed = [...loanReports].filter(([, report]) => report.terms?.weekend?.active);
+  const windowed = [...loanReadings].filter(([, reading]) => reading.report.terms?.weekend?.active);
   if (windowed.length > 0) {
     try {
       const now = new Date();
       const mids = await readPublicLadderMidsV1(client, { since: new Date(now.getTime() - STILL_WEEKEND_LADDER_FOR_MS_V1), until: now });
-      for (const [walletAddress, report] of windowed) {
+      for (const [walletAddress, { report, input }] of windowed) {
         const stocks = stillWeekendLadderPricesV1({ mids, windowStartsAt: report.terms.weekend.startsAt, now });
         const paxg = await readStillPaxgWeekendPriceV1({ clients: holdClients, report }).catch(() => null);
-        for (const shadow of stillLoanWeekendShadowsV1({ report, stocks, paxg })) loanShadows.push({ walletAddress, shadow });
+        // What the position itself pledges, at the factor it is held under, from the same reading (audit ALERT-1).
+        const aaveCollateral = aaveCollateralOfV1(input);
+        for (const shadow of stillLoanWeekendShadowsV1({ report, aaveCollateral, stocks, paxg })) loanShadows.push({ walletAddress, shadow });
       }
       console.log(JSON.stringify({ event: 'still_loan_weekend_read', dry, read: windowed.length, loans: loanShadows.length,
         worse: loanShadows.filter(({ shadow }) => stillLoanStateRankV1(shadow.state) > stillLoanStateRankV1(shadow.oracleState)).length }));

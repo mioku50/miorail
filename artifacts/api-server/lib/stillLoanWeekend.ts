@@ -1,5 +1,5 @@
 import { decodeFunctionResult, encodeFunctionData, parseAbi, type Address, type Hex } from 'viem';
-import type { AssetLine, MirrorReport, VenueLine } from '@mioagent/still-engine';
+import { aaveCollateralOfV1, type AaveCollateralV1, type AssetLine, type MirrorReadingV1, type MirrorReport, type VenueLine } from '@mioagent/still-engine';
 import { safetyFromHealthFactor } from '@mioagent/still-engine/policy';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import type { PublicLadderMidRowV1, StillLoanStateV1 } from '@mioagent/route-storage';
@@ -30,7 +30,11 @@ import type { StillLoanCallClientV1 } from './stillLoanHolds.js';
 // Both venues weigh collateral linearly in its price, so the health factor at
 // those prices is the one read times the pledged value's weighted move. A
 // stock whose price was not measured, or whose feed has printed since the
-// window opened, counts at the oracle's price. The result is a reading at a
+// window opened, counts at the oracle's price. On Aave the weights are what
+// the position itself pledges, at the factor it is held under, from the same
+// reading as its health factor: a stock supplied but not used as collateral
+// weighs nothing, and when one of them was not read the loan's reading is not
+// worked out at all (audit ALERT-1, 2026-11-18). The result is a reading at a
 // price, never a forecast: over four weekends (Oct 24 to Nov 14) every move
 // above 1% on Base matched the direction of the next print, smaller ones about
 // seven times in ten.
@@ -48,6 +52,10 @@ const ATOMIC_V1 = /^[0-9]{1,78}$/;
 
 /** The Mirror's report, as the notifier hands it on. */
 export type StillMirrorReportV1 = MirrorReport;
+/** A reading with the chain reads it was computed from, as the notifier keeps it for the weekend's reading. */
+export type StillMirrorReadingV1 = Extract<MirrorReadingV1, { outcome: 'report' }>;
+/** For the notifier, which reaches the engine through this module. */
+export { aaveCollateralOfV1 };
 
 /** A price measured against the one the venue's oracle holds. */
 export interface StillWeekendPriceV1 {
@@ -114,19 +122,51 @@ export function stillWeekendLadderPricesV1(input: {
   return out;
 }
 
-/** What is pledged in this loan: every stock on the Aave spoke, or the one collateral of a Morpho market. */
-function pledgedInV1(report: MirrorReport, venue: VenueLine): AssetLine[] {
+/** The one collateral of a Morpho market, as the report read it. */
+function morphoPledgedV1(report: MirrorReport, venue: VenueLine): AssetLine[] {
   const market = venue.market.toLowerCase();
-  return report.assets.filter((asset) => {
-    if (asset.pledged === null || !ATOMIC_V1.test(asset.pledged.raw) || BigInt(asset.pledged.raw) === 0n) return false;
-    if (venue.venue === 'aave-v4') return asset.venue === 'aave-v4';
-    return asset.venue === 'morpho' && CRYPTO.find((row) => row.id === asset.asset)?.morphoMarket.toLowerCase() === market;
-  });
+  return report.assets.filter((asset) => asset.venue === 'morpho' && asset.pledged !== null && ATOMIC_V1.test(asset.pledged.raw)
+    && BigInt(asset.pledged.raw) > 0n && CRYPTO.find((row) => row.id === asset.asset)?.morphoMarket.toLowerCase() === market);
 }
 
-/** Each owed loan at the measured prices, while the report's window is open. A loan with nothing measured is absent. */
+interface WeighedV1 { symbol: string | null; priceUpdatedAt: string | null; weight: bigint; price: StillWeekendPriceV1 | null }
+
+/** Each collateral of the loan with its weight and the price it is measured at; null when the collateral is not known. */
+function weighedV1(input: {
+  report: MirrorReport; venue: VenueLine; opened: number;
+  aaveCollateral: readonly AaveCollateralV1[] | null;
+  stocks: ReadonlyMap<string, StillWeekendPriceV1>;
+  paxg: StillWeekendPriceV1 | null;
+}): WeighedV1[] | null {
+  // Only a price the oracle has held since the window opened is measured against.
+  const held = (line: AssetLine | undefined) => line !== undefined && line.priceUpdatedAt !== null && Date.parse(line.priceUpdatedAt) < input.opened;
+  if (input.venue.venue === 'aave-v4') {
+    if (input.aaveCollateral === null) return null;
+    return input.aaveCollateral.map((collateral) => {
+      const line = collateral.asset === null ? undefined
+        : input.report.assets.find((asset) => asset.venue === 'aave-v4' && asset.asset === collateral.asset);
+      // A reserve Still does not lend against, or USDC, counts at the oracle's price.
+      const price = held(line) ? input.stocks.get(collateral.token.toLowerCase()) ?? null : null;
+      return { symbol: line?.symbol ?? null, priceUpdatedAt: line?.priceUpdatedAt ?? null, weight: collateral.weight, price };
+    });
+  }
+  const weighed: WeighedV1[] = [];
+  for (const asset of morphoPledgedV1(input.report, input.venue)) {
+    const factor = asset.protocolFactorBps;
+    if (asset.priceCents === null || !ATOMIC_V1.test(asset.priceCents) || asset.pledged === null
+      || factor === null || !Number.isInteger(factor) || factor <= 0) return null;
+    const weight = (BigInt(asset.pledged.raw) * BigInt(asset.priceCents) * BigInt(factor)) / 10n ** BigInt(asset.pledged.decimals);
+    weighed.push({ symbol: asset.symbol, priceUpdatedAt: asset.priceUpdatedAt, weight, price: held(asset) && asset.asset === 'PAXG' ? input.paxg : null });
+  }
+  return weighed;
+}
+
+/** Each owed loan at the measured prices, while the report's window is open. A loan with nothing measured is absent,
+ * and so is one whose collateral was not all read. */
 export function stillLoanWeekendShadowsV1(input: {
   report: MirrorReport;
+  /** What the same reading's own Aave position pledges (still-engine's aaveCollateralOfV1); null when not all of it was read. */
+  aaveCollateral: readonly AaveCollateralV1[] | null;
   /** Stock prices on Base by token, lowercase (`stillWeekendLadderPricesV1`). */
   stocks: ReadonlyMap<string, StillWeekendPriceV1>;
   /** PAXG/USD over the gold price Morpho holds, at the reading's block (`readStillPaxgWeekendPriceV1`). */
@@ -139,18 +179,8 @@ export function stillLoanWeekendShadowsV1(input: {
   const out: StillLoanWeekendShadowV1[] = [];
   for (const venue of report.venues) {
     if (!owesV1(venue) || !venue.safety || !ATOMIC_V1.test(venue.safety.healthFactor)) continue;
-    const weighed = pledgedInV1(report, venue).flatMap((asset) => {
-      if (asset.priceCents === null || !ATOMIC_V1.test(asset.priceCents) || asset.pledged === null) return [];
-      const factor = asset.protocolFactorBps;
-      if (factor === null || !Number.isInteger(factor) || factor <= 0) return [];
-      const weight = (BigInt(asset.pledged.raw) * BigInt(asset.priceCents) * BigInt(factor)) / 10n ** BigInt(asset.pledged.decimals);
-      // Only a price the oracle has held since the window opened is measured against.
-      const held = asset.priceUpdatedAt !== null && Date.parse(asset.priceUpdatedAt) < opened;
-      const price = !held ? null
-        : venue.venue === 'aave-v4' ? input.stocks.get(asset.token.toLowerCase()) ?? null
-          : asset.asset === 'PAXG' ? input.paxg ?? null : null;
-      return [{ asset, weight, price }];
-    });
+    const weighed = weighedV1({ report, venue, opened, aaveCollateral: input.aaveCollateral, stocks: input.stocks, paxg: input.paxg ?? null });
+    if (weighed === null) continue;
     const priced = weighed.filter((row) => row.price !== null);
     const total = weighed.reduce((sum, row) => sum + row.weight, 0n);
     if (priced.length === 0 || total === 0n) continue;
@@ -159,7 +189,7 @@ export function stillLoanWeekendShadowsV1(input: {
     const healthFactor = (BigInt(venue.safety.healthFactor) * moved) / (total * RATIO_SCALE_V1);
     const { marginBps, state } = safetyFromHealthFactor(healthFactor);
     const movers = priced
-      .filter((row) => row.price!.ratio < 1)
+      .filter((row) => row.price!.ratio < 1 && row.symbol !== null)
       .sort((a, b) => a.price!.ratio - b.price!.ratio);
     out.push({
       market: venue.market.toLowerCase(),
@@ -168,9 +198,9 @@ export function stillLoanWeekendShadowsV1(input: {
       oracleMarginBps: venue.safety.marginBps,
       state,
       marginBps: Number(marginBps),
-      movers: movers.map((row) => ({ symbol: row.asset.symbol, ratio: row.price!.ratio })),
+      movers: movers.map((row) => ({ symbol: row.symbol!, ratio: row.price!.ratio })),
       source: venue.venue === 'aave-v4' ? 'onchain' : 'paxg_feed',
-      heldSince: movers[0]?.asset.priceUpdatedAt ?? null,
+      heldSince: movers[0]?.priceUpdatedAt ?? null,
       windowStartsAt: weekend.startsAt,
       windowEndsAt: weekend.endsAt,
       debtAtomic: venue.debtAtomic!,

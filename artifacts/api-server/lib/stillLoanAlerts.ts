@@ -24,6 +24,18 @@ import { stillLoanMirrorHoldsV1 } from './stillLoanHolds.js';
 // one, and not a repaid one either.
 // ---------------------------------------------------------------------------
 
+const ATOMIC_V1 = /^[0-9]{1,78}$/;
+const WAD_V1 = 10n ** 18n;
+const BPS_V1 = 10_000n;
+
+/** What one pass read of a loan, at one block: the debt and the health factor its notice works from (audit ALERT-2). */
+export interface StillLoanReadV1 {
+  debtAtomic: string;
+  /** WAD; null when the reading computed no safety. */
+  healthFactor: string | null;
+  block: string;
+}
+
 /** One Mirror reading per wallet per pass; the pass runs every five minutes. */
 export const STILL_LOAN_READS_PER_PASS_V1 = 25;
 /** How often the pass runs, which turns the rotation by one window. */
@@ -105,12 +117,13 @@ export async function refreshStillLoanAlertsV1(input: {
   now: Date;
   dry?: boolean;
   limit?: number;
-  /** Filled with each loan's debt as read, by `wallet|market`, for the words told about it (audit LL-4). */
-  debts?: Map<string, string>;
+  /** Filled with each loan's debt and health factor as read, by `wallet|market`, for the words told about it
+   * (audits LL-4 and ALERT-2). */
+  debts?: Map<string, StillLoanReadV1>;
   /** What the collateral tokens of this reading's loans say (./stillLoanHolds.ts). A failure reads as nothing read. */
   readHolds?: (walletAddress: string, report: MirrorReport) => Promise<ReadonlyMap<string, StillLoanHoldReadingV1>>;
-  /** Filled with each report read, by wallet, for what is worked out from it after the pass (./stillLoanWeekend.ts). */
-  reports?: Map<string, MirrorReport>;
+  /** Filled with each reading, by wallet, for what is worked out from it after the pass (./stillLoanWeekend.ts). */
+  readings?: Map<string, Extract<MirrorReadingV1, { outcome: 'report' }>>;
 }): Promise<{ due: number; read: number; failed: number; notRead: number }> {
   const reachable = [...input.reachable].map((wallet) => wallet.toLowerCase()).filter((wallet) => /^0x[0-9a-f]{40}$/.test(wallet));
   const eligible = await input.alerts.borrowers({ reachable, limit: STILL_LOAN_BORROWERS_SEEN_V1 });
@@ -125,9 +138,14 @@ export async function refreshStillLoanAlertsV1(input: {
       continue;
     }
     report.read += 1;
-    input.reports?.set(walletAddress, outcome.report);
+    input.readings?.set(walletAddress, outcome);
     for (const venue of outcome.report.venues) {
-      if (venue.debtAtomic != null && /^[0-9]{1,78}$/.test(venue.debtAtomic)) input.debts?.set(`${walletAddress}|${venue.market.toLowerCase()}`, venue.debtAtomic);
+      if (venue.debtAtomic == null || !ATOMIC_V1.test(venue.debtAtomic)) continue;
+      input.debts?.set(`${walletAddress}|${venue.market.toLowerCase()}`, {
+        debtAtomic: venue.debtAtomic,
+        healthFactor: venue.safety && ATOMIC_V1.test(venue.safety.healthFactor) ? venue.safety.healthFactor : null,
+        block: outcome.report.reading.block,
+      });
     }
     if (input.dry) continue;
     const holds = input.readHolds ? await input.readHolds(walletAddress, outcome.report).catch(() => undefined) : undefined;
@@ -156,22 +174,36 @@ function percentV1(bps: number | bigint): string {
 // all, against the rule that Still states options with their measured
 // consequences and never says what anyone should do. "To keep it" promised
 // what no repayment can: a liquidator may come first. Now each notice says the
-// debt, the margin and what repaying would do, in USDC: the margin is the share
-// by which all the collateral may fall, 1 - 1/HF, and the health factor moves
-// with the debt alone, so repaying R of a debt D at margin m leaves a margin
-// of at least the Watch line t when R = D(t - m)/(1 - m). A loan that can be
-// liquidated has a margin read as zero, so its amount is a least one.
+// debt, the margin and what repaying would do, in USDC.
+//
+// The amount is worked out from the health factor itself (audit ALERT-2,
+// 2026-11-18). The margin is 1 - 1/HF, and the health factor moves with the
+// debt alone, so the debt that may stay for the margin to be at least the
+// Watch line t is HF x D x (1 - t), and the rest is the repayment. Until then
+// it came from the margin, and a loan that can be liquidated has its margin
+// read as zero: at a debt of 500 USDC and a health factor of 0.90 the notice
+// said 187.50 USDC brings the margin back to 37.5%, where 218.75 does. The
+// debt and the health factor are the ones one reading took at one block, the
+// block the loan's band was recorded at; without them a liquidatable loan's
+// notice names no amount, and a margin above zero stands for the lowest
+// health factor that rounds to it, so the amount is never too small.
 // ---------------------------------------------------------------------------
 
 /** USDC that brings a loan's margin back to Still's Watch line, rounded up to the cent; null when it is there. */
-export function stillLoanRepayToWatchAtomicV1(debtAtomic: bigint, marginBps: number): bigint | null {
-  const target = TERMS.watchBelowBps, margin = BigInt(Math.floor(marginBps));
-  if (debtAtomic <= 0n || margin < 0n || margin >= target) return null;
-  const whole = 10_000n - margin;
-  const exact = (debtAtomic * (target - margin) + whole - 1n) / whole;
+export function stillLoanRepayToWatchAtomicV1(debtAtomic: bigint, healthFactorWad: bigint): bigint | null {
+  if (debtAtomic <= 0n || healthFactorWad < 0n) return null;
+  // The debt that may stay, rounded down, so the margin after is at least the line.
+  const keep = (debtAtomic * healthFactorWad * (BPS_V1 - TERMS.watchBelowBps)) / (WAD_V1 * BPS_V1);
+  if (keep >= debtAtomic) return null;
   // Up to the cent, and never more than the whole debt.
-  const cents = ((exact + 9_999n) / 10_000n) * 10_000n;
+  const cents = ((debtAtomic - keep + 9_999n) / 10_000n) * 10_000n;
   return cents < debtAtomic ? cents : debtAtomic;
+}
+
+/** The lowest health factor whose margin rounds down to `marginBps` (policy.safetyFromHealthFactor): 1/(1 - m). */
+export function stillLoanHealthOfMarginV1(marginBps: number): bigint | null {
+  const margin = BigInt(Math.floor(marginBps));
+  return margin > 0n && margin < BPS_V1 ? (WAD_V1 * BPS_V1) / (BPS_V1 - margin) : null;
 }
 
 /** "1,234.57 USDC", cents rounded up: a debt or a repayment is never said smaller than it is. */
@@ -182,7 +214,7 @@ function usdcCentsV1(atomic: bigint): string {
 
 /** What a chat is told about a loan whose band got worse: the debt, the margin and what repaying would do,
  * when this pass read the debt; the margin alone otherwise. */
-export function stillLoanNoticeV1(loan: Pick<StillLoanAlertV1, 'market' | 'state' | 'marginBps'>, debtAtomic: string | null = null): {
+export function stillLoanNoticeV1(loan: Pick<StillLoanAlertV1, 'market' | 'state' | 'marginBps' | 'readBlock'>, read: StillLoanReadV1 | null = null): {
   title: string;
   message: string;
   targetPath: string;
@@ -190,8 +222,12 @@ export function stillLoanNoticeV1(loan: Pick<StillLoanAlertV1, 'market' | 'state
   const label = stillLoanLabelV1(loan.market);
   const margin = `${Math.floor(loan.marginBps / 100)}%`;
   const watch = percentV1(TERMS.watchBelowBps), act = percentV1(TERMS.actBelowBps);
-  const debt = debtAtomic !== null && /^[1-9][0-9]{0,77}$/.test(debtAtomic) ? BigInt(debtAtomic) : null;
-  const repay = debt === null ? null : stillLoanRepayToWatchAtomicV1(debt, loan.marginBps);
+  // Only the reading the band was recorded at: a debt from one block beside a margin from another says nothing.
+  const same = read !== null && read.block === loan.readBlock ? read : null;
+  const debt = same && /^[1-9][0-9]{0,77}$/.test(same.debtAtomic) ? BigInt(same.debtAtomic) : null;
+  const health = same?.healthFactor != null && ATOMIC_V1.test(same.healthFactor) ? BigInt(same.healthFactor)
+    : loan.state === 'liquidation' ? null : stillLoanHealthOfMarginV1(loan.marginBps);
+  const repay = debt === null || health === null ? null : stillLoanRepayToWatchAtomicV1(debt, health);
   const owes = debt === null ? '' : ` debt ${usdcCentsV1(debt)};`;
   if (loan.state === 'liquidation') {
     return {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import type { CalendarRead } from '../src/calendar.js';
-import { computeMirror, morphoYearlyRateBpsV1 } from '../src/mirror.js';
+import { aaveCollateralOfV1, computeMirror, morphoYearlyRateBpsV1 } from '../src/mirror.js';
 import type { MirrorReport } from '../src/report.js';
 import { EXAMPLE, SATURDAY, SUNDAY, WEEKDAY, calendar, ok, reverted, snapshot, universe, type Holdings } from './fixtures.js';
 import { assertMatches } from './matches.js';
@@ -459,5 +459,42 @@ describe('a stock whose price the feed stopped refreshing (audit BASE-7)', () =>
     assert.deepEqual(line(r, 'NVDAc').limits, []);
     // And what a weekday would give is the open rate: Friday's price is not stale on Sunday.
     assert.equal(r.headline.weekdayAvailableCents, run(snapshot(EXAMPLE, SUNDAY)).headline.weekdayAvailableCents);
+  });
+});
+
+describe('what an Aave position pledges, as its health factor weighs it (audit ALERT-1)', () => {
+  const reading = (edit: (s: ReturnType<typeof snapshot>) => void = () => {}) => {
+    const s = snapshot({ pledged: { NVDAc: 340_000_000n, AAPLc: 150_000_000n }, aaveDebt: 240_170_000n });
+    edit(s);
+    return { universe: universe(), snapshot: s };
+  };
+  const reserveOf = (s: ReturnType<typeof snapshot>, id: string) =>
+    s.aave!.reserves.find((r) => r.info.role.kind === 'stock' && r.info.role.asset.id === id)!;
+
+  it('each stock used as collateral, at the factor the position is held under', () => {
+    const input = reading((s) => { reserveOf(s, 'NVDAc').userFactorBps = ok(6_500n); });
+    const pledged = aaveCollateralOfV1(input)!;
+    assert.deepEqual(pledged.map((row) => row.asset).sort(), ['AAPLc', 'NVDAc']);
+    const nvda = pledged.find((row) => row.asset === 'NVDAc')!;
+    // 3.4 NVDAc at the oracle's price, times the position's own 65%, not the reserve's 70% of today.
+    const r = reserveOf(input.snapshot, 'NVDAc');
+    assert.ok(r.price.ok && r.factorBps.ok && r.factorBps.value === 7_000n);
+    assert.equal(nvda.weight, (340_000_000n * (r.price.ok ? r.price.value : 0n) * 6_500n) / 10n ** BigInt(r.info.decimals));
+  });
+
+  it('a stock supplied but not used as collateral weighs nothing', () => {
+    const pledged = aaveCollateralOfV1(reading((s) => { reserveOf(s, 'AAPLc').status = ok({ usingAsCollateral: false, borrowing: false }); }))!;
+    assert.deepEqual(pledged.map((row) => row.asset), ['NVDAc']);
+  });
+
+  it('nothing is said when a supplied reserve’s status, factor, price or amount was not read', () => {
+    for (const edit of [
+      (s: ReturnType<typeof snapshot>) => { reserveOf(s, 'AAPLc').status = reverted(); },
+      (s: ReturnType<typeof snapshot>) => { reserveOf(s, 'AAPLc').userFactorBps = reverted(); },
+      (s: ReturnType<typeof snapshot>) => { reserveOf(s, 'NVDAc').price = reverted(); },
+      (s: ReturnType<typeof snapshot>) => { reserveOf(s, 'TSLAc').supplied = reverted(); },
+    ]) assert.equal(aaveCollateralOfV1(reading(edit)), null);
+    // A reserve with nothing supplied needs nothing else read.
+    assert.notEqual(aaveCollateralOfV1(reading((s) => { reserveOf(s, 'TSLAc').status = reverted(); })), null);
   });
 });

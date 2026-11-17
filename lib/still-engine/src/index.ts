@@ -16,7 +16,7 @@ export type * from './report.js';
 export { ChainUnavailable, createProviders, providerLabel, type Provider, type ProviderAttempt } from './rpc.js';
 export { createNames, displayName, parseSubject, resolveSubject, type Names, type ParsedSubject } from './subject.js';
 export { createMirrorService, type MirrorOutcome, type MirrorReadingV1, type MirrorService, type MirrorServiceOptions } from './service.js';
-export { computeMirror, type MirrorInput } from './mirror.js';
+export { aaveCollateralOfV1, computeMirror, type AaveCollateralV1, type MirrorInput } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
 export { StillTermsSchema, stillTerms, type StillTerms } from './terms.js';
 export {

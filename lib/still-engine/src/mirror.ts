@@ -9,6 +9,7 @@
 // rwa-issuer's morphoBorrowMath, the module Miorail's borrow review checks a borrow with, so an
 // offer here and the review of that borrow cannot disagree.
 
+import type { Address } from 'viem';
 import {
   morphoAccruedTotalsV1,
   morphoHealthV1,
@@ -22,7 +23,7 @@ import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, stillBorrowLimitV1 } from 
 import type { CalendarRead } from './calendar.js';
 import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceStale, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
-import { ADDRESSES, CRYPTO, STOCKS, type CryptoAsset, type StockAsset } from './registry.js';
+import { ADDRESSES, CRYPTO, STOCKS, type AssetId, type CryptoAsset, type StockAsset } from './registry.js';
 import type {
   AssetLine,
   EarningsNote,
@@ -594,6 +595,44 @@ function headlineOf(computed: Computed, weekdayAvailable: bigint | null): Headli
     reason,
     weekdayAvailableCents: weekdayAvailable === null ? null : weekdayAvailable.toString(),
   };
+}
+
+/** One reserve a reading's own Aave position counts as collateral, at the reading's block. */
+export interface AaveCollateralV1 {
+  /** The stock, or null for any other reserve the position pledged (USDC, or one Still does not lend against). */
+  asset: AssetId | null;
+  token: Address;
+  /** What Aave weighs it by: the amount supplied, at the oracle's price, times the collateral factor this
+   * position is held under. Oracle units times basis points; only its share of the sum means anything. */
+  weight: bigint;
+}
+
+/**
+ * What a reading's own Aave position counts as collateral, each reserve weighed as Aave weighs it in the
+ * health factor: supplied, used as collateral, at the factor the position holds and not the reserve's factor
+ * of today (audit ALERT-1, 2026-11-18: the weekend reading weighed every supplied stock, collateral or not, at
+ * the reserve's factor). A reserve supplied but not used as collateral counts for nothing. Null when the
+ * venue, or any supplied reserve's amount, status, factor or price, was not read: what the collateral is, is
+ * then not known.
+ */
+export function aaveCollateralOfV1(input: Pick<MirrorInput, 'universe' | 'snapshot'>): AaveCollateralV1[] | null {
+  const aave = input.snapshot.aave;
+  if (!input.universe.aave.ok || !aave) return null;
+  const out: AaveCollateralV1[] = [];
+  for (const reserve of aave.reserves) {
+    if (!reserve.supplied.ok) return null;
+    if (reserve.supplied.value === 0n) continue;
+    if (!reserve.status.ok) return null;
+    if (!reserve.status.value.usingAsCollateral) continue;
+    if (!reserve.userFactorBps.ok || !reserve.price.ok) return null;
+    const role = reserve.info.role;
+    out.push({
+      asset: role.kind === 'stock' ? role.asset.id : null,
+      token: reserve.info.underlying,
+      weight: mulDiv(reserve.supplied.value * reserve.price.value, reserve.userFactorBps.value, 10n ** BigInt(reserve.info.decimals), 'down'),
+    });
+  }
+  return out;
 }
 
 export interface MirrorInput {
