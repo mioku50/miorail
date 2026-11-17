@@ -784,6 +784,20 @@ describe('a commission from Bitrefill, said where it is true', () => {
     assert.equal((await request(app(OTHER)).post(`/api/still/spend/orders/${INVOICE}/wallet`)).body.commission, undefined);
   });
 
+  it('the team’s own purchase goes to Bitrefill without Still’s code, and says nothing of a commission', async () => {
+    const opened: string[] = [];
+    const through = (name: string, affiliated: boolean) => () => ({ ...checkout(), affiliated,
+      createInvoice: async (input: Parameters<ReturnType<typeof checkout>['createInvoice']>[0]) => { opened.push(name); return checkout().createInvoice(input); } });
+    Object.assign(stillSpendRuntimeV1, { checkout: through('affiliated', true), teamCheckout: through('team', false), team: () => new Set([WALLET]) });
+    const team = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(team.body.order.commission, false);
+    assert.deepEqual(opened, ['team']);
+    Object.assign(stillSpendRuntimeV1, { team: () => new Set([OTHER]) });
+    const someone = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(someone.body.order.commission, true);
+    assert.deepEqual(opened, ['team', 'affiliated'], 'anybody else’s goes with the code');
+  });
+
   it('one opened without a code, and a loan with no purchase, say nothing of a commission', async () => {
     const opened = await request(app()).post('/api/still/spend/orders').send(ORDER);
     assert.equal(opened.body.order.commission, false);

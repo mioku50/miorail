@@ -47,7 +47,7 @@ describe('which confirmed loans are Loops', () => {
       productName: 'iTunes Germany', packageLabel: '25 EUR', priceRoundedAtomic: '27000000', venue: 'aave-v4', via: 'claude', team: false,
       confirmedAt: '2026-11-20T12:01:00.000Z',
     });
-    assert.equal(stillLoopCandidateOfV1(paidLoan(), new Set([LOAN_WALLET_FIXTURE]))?.team, true);
+    assert.equal(stillLoopCandidateOfV1(paidLoan(), new Set([LOAN_WALLET_FIXTURE])), null, 'the team’s own loans make no Loop');
   });
 
   it('not a loan against another stock, before it is confirmed, without the product, or a repayment', () => {

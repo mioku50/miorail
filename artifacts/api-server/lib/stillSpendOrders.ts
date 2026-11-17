@@ -230,6 +230,19 @@ export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { 
   return { clientId, ...(clientSecret ? { clientSecret } : {}), ...code };
 }
 
+let teamCheckoutV1: BitrefillGuestCheckoutV1 | null = null;
+/** The Still team's own purchases (lib/stillTeam.ts) go through a checkout that carries no affiliate code:
+ * Bitrefill's affiliate terms (§14) forbid buying through one's own affiliate link, so they earn Still nothing.
+ * The same registered client otherwise, with its own token and rate window. */
+export const stillSpendTeamCheckoutV1 = (): BitrefillGuestCheckoutV1 => {
+  if (!teamCheckoutV1) {
+    const client = { ...stillBitrefillClientV1() };
+    delete client.affiliateCode;
+    teamCheckoutV1 = createBitrefillGuestCheckoutV1(client);
+  }
+  return teamCheckoutV1;
+};
+
 /** Which client Still presents to Bitrefill: its registered one, or the published document it falls back to,
  * which Bitrefill has not trusted since 2026-11-02 (every read is then refused). Never the id itself. */
 export function stillBitrefillClientKindV1(env: NodeJS.ProcessEnv = process.env): 'registered' | 'registered_without_secret' | 'published_document' {

@@ -21,11 +21,13 @@ import {
   spendOrderStoreV1,
   spendPriceAtomicV1,
   stillSpendCheckoutV1,
+  stillSpendTeamCheckoutV1,
   stillSpendPayEnabledV1,
   type SpendOrderOwnerV1,
   type SpendOrderV1,
 } from '../lib/stillSpendOrders.js';
 import { stillLoopDeliveryOfV1, stillLoopOfExecutionV1 } from '../lib/stillLoops.js';
+import { stillTeamWalletsV1 } from '../lib/stillTeam.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
 
@@ -46,6 +48,9 @@ export const stillSpendRuntimeV1 = {
   entryGate: stillEntryGateV1,
   catalog: () => publicStillRuntimeV1.spend(),
   checkout: (): BitrefillGuestCheckoutV1 => stillSpendCheckoutV1(),
+  // The team's own purchases carry no affiliate code (lib/stillTeam.ts, Bitrefill's affiliate terms §14).
+  teamCheckout: (): BitrefillGuestCheckoutV1 => stillSpendTeamCheckoutV1(),
+  team: (): ReadonlySet<string> => stillTeamWalletsV1(),
   orders: spendOrderStoreV1,
   enabled: () => stillSpendPayEnabledV1(),
   now: () => new Date(),
@@ -164,7 +169,7 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   if (quoted > STILL_SPEND_CAP_ATOMIC_V1) return refuse(409, 'spend_over_cap');
   if (options.payableAtomic !== undefined && quoted > options.payableAtomic) return { ...refuse(409, 'spend_wallet_usdc_short'), priceAtomic: quoted.toString() };
   const now = stillSpendRuntimeV1.now();
-  const checkout = stillSpendRuntimeV1.checkout();
+  const checkout = stillSpendRuntimeV1.team().has(owner.walletAddress.toLowerCase()) ? stillSpendRuntimeV1.teamCheckout() : stillSpendRuntimeV1.checkout();
   const invoice = await checkout.createInvoice({
     productId: product.value.id, packageValue: offered.value, email: request.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,
   });

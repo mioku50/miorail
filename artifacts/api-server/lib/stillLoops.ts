@@ -16,6 +16,7 @@ import { reverseBaseNameV1 } from './baseNameResolver.js';
 import type { LendingOriginV1 } from './lendingDraft.js';
 import type { LoanExecutionV1 } from './loanExecutionStore.js';
 import { shareAmountAtomicV1, stillSpendShareOfV1, stillSpendShareWordsV1 } from './stillSpendShare.js';
+import { stillTeamWalletsV1 } from './stillTeam.js';
 
 // ---------------------------------------------------------------------------
 // Loops on the server: which confirmed loans are Loops, and Bitrefill's word
@@ -32,18 +33,15 @@ export function stillLoopsEnabledV1(env: NodeJS.ProcessEnv = process.env): boole
   return (env.STILL_LOOPS_V1 ?? '').trim().toLowerCase() === 'on';
 }
 
-/** The Still team's wallets (STILL_TEAM_WALLETS, comma separated): their Loops are shown as the team's,
- * and never counted. A value that is not an address is left out. */
-export function stillTeamWalletsV1(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
-  return new Set((env.STILL_TEAM_WALLETS ?? '').split(',').map((value) => value.trim().toLowerCase()).filter((value) => /^0x[0-9a-f]{40}$/.test(value)));
-}
+export { stillTeamWalletsV1 };
 
 export function stillLoopViaV1(origin: LendingOriginV1 | undefined): StillLoopViaV1 {
   if (!origin) return 'web';
   return origin.client === 'other' ? 'assistant' : origin.client;
 }
 
-/** The Loop a confirmed loan made, or null: it paid a Bitrefill card of the company whose stock it pledged. */
+/** The Loop a confirmed loan made, or null: it paid a Bitrefill card of the company whose stock it pledged.
+ * The team's own loans make none (lib/stillTeam.ts): Loop #1 is the first real person's. */
 export function stillLoopCandidateOfV1(execution: LoanExecutionV1, team: ReadonlySet<string>): StillLoopCandidateV1 | null {
   const share = stillSpendShareOfV1(execution);
   const facts = execution.run.facts;
@@ -52,6 +50,7 @@ export function stillLoopCandidateOfV1(execution: LoanExecutionV1, team: Readonl
   const brand = loopBrandOfV1({ collateralTokenAddress: facts.collateralTokenAddress, productId: payment.productId });
   if (!brand) return null;
   const wallet = execution.walletAddress.toLowerCase();
+  if (team.has(wallet)) return null;
   return {
     executionId: execution.executionId,
     walletAddress: wallet,
@@ -63,7 +62,7 @@ export function stillLoopCandidateOfV1(execution: LoanExecutionV1, team: Readonl
     priceRoundedAtomic: shareAmountAtomicV1(share.priceAtomic),
     venue: share.venue,
     via: stillLoopViaV1(facts.origin),
-    team: team.has(wallet),
+    team: false,
     confirmedAt: execution.updatedAt,
   };
 }
