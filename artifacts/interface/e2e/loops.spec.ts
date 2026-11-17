@@ -51,3 +51,62 @@ test('while Loops are closed the page says so and More does not offer it', async
   await expect(page.getByRole('main').getByRole('link', { name: /^Loops/ })).toHaveCount(0);
   expect(writes).toEqual([]);
 });
+
+// The draw: a signed-in person enters free. The entry is the only write, and it is answered by this fixture.
+const WALLET = `0x${'4'.repeat(40)}`;
+const OPEN = { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winnerCount: 1, prizeUsdc: '10', state: 'open',
+  entries: 4, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [] };
+
+async function installSignedIn(page: Page, enter: { status: number; json: unknown }) {
+  const writes: Array<{ path: string; body: string | null }> = [];
+  let entered = false;
+  await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript',
+    body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
+  await page.route('**/api/**', (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() !== 'GET') writes.push({ path, body: request.postData() });
+    if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
+    if (path === '/api/public/still/loops') return route.fulfill({ json: { ...ANSWER, draws: { current: OPEN, past: [] } } });
+    if (path === '/api/public/still/eligibility') return route.fulfill({ json: { schemaVersion: 'still-eligibility/v1', gate: 'off', region: { state: 'allowed', country: null } } });
+    if (path === '/api/still/loops/draw') {
+      return route.fulfill({ json: { outcome: 'mine', team: false, entered: [],
+        current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: entered ? { label: 'Entry K3F9X2', kind: 'free' } : null } } });
+    }
+    if (path === '/api/still/loops/draw/enter' && request.method() === 'POST') {
+      entered = enter.status === 200;
+      return route.fulfill({ status: enter.status, json: enter.json });
+    }
+    return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
+  });
+  return { writes };
+}
+
+for (const width of [390, 1280]) {
+  test(`the draw takes a free entry once the rules are accepted, and says so (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { writes } = await installSignedIn(page, { status: 200, json: { outcome: 'entered', drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z',
+      entry: { label: 'Entry K3F9X2', kind: 'free' } } });
+    await page.goto('/loops');
+    await expect(page.getByRole('heading', { level: 2, name: 'The draw · 10 USDC' })).toBeVisible();
+    await expect(page.getByText('Closes Sat 28 Nov, 18:00 UTC. 4 entries so far. One winner, 10 USDC.')).toBeVisible();
+    const button = page.getByRole('button', { name: 'Enter free' });
+    await expect(button).toBeDisabled();
+    await page.getByLabel('I am 18 or older and I accept the rules below').check();
+    await button.click();
+    await expect(page.getByText('You are in this draw as Entry K3F9X2.', { exact: false })).toBeVisible();
+    expect(writes).toEqual([{ path: '/api/still/loops/draw/enter', body: '{"rules":true}' }]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`loops-draw-${width}.png`), fullPage: true });
+  });
+}
+
+test('a refused free entry says the server’s own words and enters nothing', async ({ page }) => {
+  const detail = 'A free entry needs Coinbase’s Verified Account attestation on this wallet: it is how a draw stays one person, one entry.';
+  await installSignedIn(page, { status: 403, json: { error: 'not_verified', detail } });
+  await page.goto('/loops');
+  await page.getByLabel('I am 18 or older and I accept the rules below').check();
+  await page.getByRole('button', { name: 'Enter free' }).click();
+  await expect(page.getByText(detail)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enter free' })).toBeEnabled();
+});

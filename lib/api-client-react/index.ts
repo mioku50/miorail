@@ -100,6 +100,29 @@ export function useStillLoopsV1() {
   });
 }
 
+/** The session's own entries in the Loop draws; null while the draws are off. */
+export function useStillLoopDrawMineV1(wallet: string | null) {
+  return useQuery({
+    queryKey: ['still-loop-draw-mine', wallet] as const,
+    enabled: wallet !== null,
+    retry: false,
+    staleTime: 15_000,
+    queryFn: async () => {
+      try {
+        return await fetchApi<unknown>('/api/still/loops/draw');
+      } catch (error) {
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+  });
+}
+
+/** A free entry into the Loop draw open now, its rules accepted. */
+export function enterStillLoopDrawV1(): Promise<unknown> {
+  return fetchApi('/api/still/loops/draw/enter', { method: 'POST', body: JSON.stringify({ rules: true }) });
+}
+
 /** Still Spend paid from the wallet's own USDC: one invoice's review, arm, submission, a hash from the wallet and result, nothing else. */
 export function spendWalletRequestV1<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   if (!/^\/api\/still\/spend\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wallet(?:\/(?:arm|submission|transaction))?$/.test(path)) throw new Error('spend_wallet_path_invalid');

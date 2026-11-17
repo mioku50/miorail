@@ -69,6 +69,27 @@ export function stillLoopsContractV1(label: string, make: () => Promise<StillLoo
         { total: 2, week: 1, byBrand: { apple: 1, amazon: 1, google: 0, meta: 0, microsoft: 0 }, viaAssistant: 1 });
     });
 
+    test('enter a draw once per wallet, by its first Loop whose card arrived in the window, never the team’s', async () => {
+      const repo = await make();
+      await repo.record([
+        loopCandidateV1(1), loopCandidateV1(2), loopCandidateV1(3, { walletAddress: OTHER }), loopCandidateV1(4, { team: true, walletAddress: `0x${'c'.repeat(40)}` }),
+        loopCandidateV1(5, { walletAddress: `0x${'d'.repeat(40)}` }), loopCandidateV1(6, { walletAddress: `0x${'e'.repeat(40)}` }),
+      ]);
+      await repo.markDelivery({ executionId: id(2), outcome: 'complete', at: new Date('2026-11-21T10:00:00.000Z') });
+      await repo.markDelivery({ executionId: id(1), outcome: 'complete', at: new Date('2026-11-22T10:00:00.000Z') });
+      await repo.markDelivery({ executionId: id(3), outcome: 'complete', at: new Date('2026-11-28T17:59:59.999Z') });
+      await repo.markDelivery({ executionId: id(4), outcome: 'complete', at: new Date('2026-11-22T10:00:00.000Z') });
+      await repo.markDelivery({ executionId: id(5), outcome: 'complete', at: new Date('2026-11-28T18:00:00.000Z') });
+      await repo.markDelivery({ executionId: id(6), outcome: 'denied', at: new Date('2026-11-22T10:00:00.000Z') });
+      const entrants = await repo.drawEntrants({ since: new Date('2026-11-21T00:00:00.000Z'), before: new Date('2026-11-28T18:00:00.000Z') });
+      assert.deepEqual(entrants, [
+        { walletAddress: WALLET, loopNo: 2, deliveredAt: '2026-11-21T10:00:00.000Z' },
+        { walletAddress: OTHER, loopNo: 3, deliveredAt: '2026-11-28T17:59:59.999Z' },
+      ]);
+      assert.deepEqual(await repo.drawEntrants({ since: new Date('2026-11-28T18:00:00.000Z'), before: new Date('2026-12-03T18:00:00.000Z') }),
+        [{ walletAddress: `0x${'d'.repeat(40)}`, loopNo: 5, deliveredAt: '2026-11-28T18:00:00.000Z' }], 'a card that arrived at the close is in the next');
+    });
+
     test('refuse what cannot be a Loop before anything is written', async () => {
       const repo = await make();
       for (const bad of [{ walletAddress: 'not-a-wallet' }, { brand: 'nvidia' }, { collateral: 'MSFTc' }, { priceRoundedAtomic: '27500000' },

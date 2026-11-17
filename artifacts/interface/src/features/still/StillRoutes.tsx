@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Redirect, useLocation } from 'wouter';
-import { useMyDividends, useStillCheck, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { enterStillLoopDrawV1, useMyDividends, useStillCheck, useStillLoopDrawMineV1, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
 import {
   StillAgent,
@@ -16,6 +17,7 @@ import {
   assetsViewV1,
   homeViewV1,
   stillCheckMessageV1,
+  stillLoopDrawMineViewV1,
   stillLoopsViewV1,
   stillTabForPathV1,
 } from '@mioagent/ui/still';
@@ -233,14 +235,30 @@ export function StillSafetyPage() {
   );
 }
 
-/** Loops in public: the week's count, how one is made and the wall. Public, like Safety. */
+/** Loops in public: the week's count, the draw, how one is made and the wall. Public, like Safety; the free entry needs a sign-in. */
 export function StillLoopsPage() {
   const sky = useStillSky();
+  const signInHref = useSignInHref();
+  const { signedIn, wallet } = useStillWallet();
+  const queryClient = useQueryClient();
   const loops = useStillLoopsV1();
   const view = loops.data === undefined ? undefined : loops.data === null ? null : stillLoopsViewV1(loops.data);
+  const drawsOn = Boolean(view?.draws);
+  const mineRead = useStillLoopDrawMineV1(signedIn && drawsOn ? wallet : null);
+  const mine = !signedIn || !drawsOn ? null : mineRead.data === undefined && !mineRead.isError ? undefined
+    : mineRead.data ? stillLoopDrawMineViewV1(mineRead.data) : null;
+  const entry = {
+    signedIn, signInHref, mine,
+    onEnter: async () => {
+      const answer = await enterStillLoopDrawV1() as { entry?: { label?: unknown } };
+      void queryClient.invalidateQueries({ queryKey: ['still-loop-draw-mine'] });
+      void queryClient.invalidateQueries({ queryKey: ['still-loops'] });
+      return { label: typeof answer?.entry?.label === 'string' ? answer.entry.label : 'your entry' };
+    },
+  };
   return (
     <StillFrame tab="more" sky={sky}>
-      <StillLoops model={{ sky, view, failed: loops.isError || (loops.data !== undefined && loops.data !== null && view === null) }} />
+      <StillLoops model={{ sky, view, entry, failed: loops.isError || (loops.data !== undefined && loops.data !== null && view === null) }} />
     </StillFrame>
   );
 }

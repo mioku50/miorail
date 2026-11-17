@@ -151,7 +151,8 @@ export function stillEligibilityConfirmedV1(req: SessionRequestV1): { confirmedA
   return Number.isFinite(at) && at <= now + 60_000 && now - at <= CONFIRMATION_LIFETIME_MS_V1 ? { confirmedAt: record.confirmedAt } : null;
 }
 
-export type StillEntryKindV1 = 'loan' | 'purchase' | 'stock_buy';
+/** What a new entry would open: a position, or a free entry into a Loop draw (not offered where Still is not). */
+export type StillEntryKindV1 = 'loan' | 'purchase' | 'stock_buy' | 'draw_entry';
 export type StillEntryRefusalV1 = 'region_restricted' | 'region_unchecked' | 'eligibility_required';
 export type StillEntryGateResultV1 = { ok: true } | { ok: false; refusal: StillEntryRefusalV1; detail: string };
 

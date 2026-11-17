@@ -8,7 +8,7 @@ void React;
 
 import { lendingLoopWireV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView';
 import { StillLoopOffer, loopSentenceV1, loopShareTextV1 } from '../src/still/StillLoop';
-import { STILL_LOOP_PROMPT_V1, StillLoops, stillLoopsViewV1 } from '../src/still/StillLoops';
+import { STILL_LOOP_PROMPT_V1, StillLoops, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsViewV1 } from '../src/still/StillLoops';
 import { StillMore } from '../src/still/StillPages';
 import { skyStateV1 } from '../src/still/skyState';
 
@@ -96,5 +96,94 @@ describe('/loops: Loops in public', () => {
     const on = renderToStaticMarkup(<StillMore model={{ sky: SKY, account: null, signInHref: '/signin', loops: true }} />);
     assert.match(on, /aria-label="Loops"><h2 class="still-more-group-head">Loops<\/h2>/);
     assert.match(on, /href="\/loops"/);
+  });
+});
+
+describe('/loops: the draw', () => {
+  const SKY = skyStateV1({ now: new Date('2026-11-22T12:00:00Z') });
+  const OPEN = { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winnerCount: 1, prizeUsdc: '10', state: 'open',
+    entries: 4, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [] };
+  const DRAWN = { ...OPEN, state: 'drawn', entries: 3, entriesHash: `0x${'1'.repeat(64)}`, lockedAt: '2026-11-28T18:00:31.000Z', blockAt: '2026-11-28T18:05:31.000Z',
+    block: { number: '38912345', hash: `0x${'2'.repeat(64)}`, time: '2026-11-28T18:05:31.000Z' }, winners: [{ no: 2, label: 'Entry K3F9X2', paid: true }] };
+  const answer = (draws: unknown) => ({ outcome: 'loops', weekStartsAt: '2026-11-16T00:00:00.000Z',
+    counts: { total: 0, week: 0, viaAssistant: 0, byBrand: { apple: 0, amazon: 0, google: 0, meta: 0, microsoft: 0 } }, wall: [], draws });
+  const render = (draws: unknown, entry?: Parameters<typeof StillLoops>[0]['model']['entry']) =>
+    renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(answer(draws)), failed: false, entry }} />);
+  const signedOut = { signedIn: false, signInHref: '/signin?next=%2Floops', mine: null, onEnter: never };
+  const mine = (patch: Record<string, unknown> = {}) => stillLoopDrawMineViewV1({ outcome: 'mine', team: false,
+    current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null }, entered: [], ...patch });
+
+  it('reads the draws the server sends, and leaves the page whole when it cannot', () => {
+    assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [] }))?.draws?.current?.entries, 4);
+    assert.equal(stillLoopsViewV1(answer(null))?.draws, null);
+    assert.equal(stillLoopsViewV1(answer({ current: { ...OPEN, state: 'maybe' }, past: [] }))?.draws, null);
+    assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [{ ...DRAWN, entriesHash: '0x12' }] }))?.draws, null);
+    assert.equal(stillLoopsViewV1(answer({ current: { ...OPEN, winnerCount: 0 }, past: [] }))?.draws, null);
+    assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [{ ...DRAWN, winners: [{ no: 2, label: 'x', paid: 'yes' }] }] }))?.draws, null);
+    assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [] }))?.wall.length, 0);
+    assert.equal(stillLoopDrawTimeV1('2026-11-28T18:00:00.000Z'), 'Sat 28 Nov, 18:00 UTC');
+    assert.equal(mine()?.current?.entry, null);
+    assert.equal(stillLoopDrawMineViewV1({ outcome: 'mine', team: false, current: { drawId: 'x', closesAt: 'never', entry: null }, entered: [] }), null);
+  });
+
+  it('offers two ways in side by side, the same button for each, with the prize, the close and the rules', () => {
+    const html = render({ current: OPEN, past: [] }, signedOut);
+    assert.match(html, /The draw · 10 USDC/);
+    assert.match(html, /Closes Sat 28 Nov, 18:00 UTC\. 4 entries so far\. One winner, 10 USDC\./);
+    assert.match(html, /Make a Loop.*A Loop whose card arrives before the close enters you by itself/);
+    assert.match(html, /Enter free.*No loan and no purchase: the same chance as a Loop/);
+    assert.match(html, /href="\/spend" class="still-btn sec">Spend</);
+    assert.match(html, /href="\/signin\?next=%2Floops" class="still-btn sec">Sign in to enter free</, 'the same button as Spend');
+    assert.match(html, /One entry per person per draw/);
+    assert.match(html, /not U\.S\. persons/);
+    assert.match(html, /keccak256\(block hash, draw\) mod N \+ 1/);
+    assert.match(html, /href="https:\/\/github\.com\/mioku50\/miorail\/blob\/main\/scripts\/verify_loop_draw\.ts"/);
+    assert.match(html, /href="https:\/\/www\.coinbase\.com\/onchain-verify"/);
+    assert.match(html, /10 USDC is sent on Base to the winning wallet within 7 days/);
+  });
+
+  it('asks a signed-in person to accept the rules, says when they are in, and never offers it to the team', () => {
+    const ask = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: mine() });
+    assert.match(ask, /type="checkbox"/);
+    assert.match(ask, /I am 18 or older and I accept the rules below/);
+    assert.match(ask, /<button type="button" class="still-btn sec" disabled="">Enter free<\/button>/, 'pressed only once the rules are accepted');
+    const reading = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: undefined });
+    assert.match(reading, /Reading your entry…/);
+    const loop = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true,
+      mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: { label: 'Loop #7', kind: 'loop' } } }) });
+    assert.match(loop, /You are in this draw as Loop #7\./);
+    assert.doesNotMatch(loop, /<button[^>]*>Enter free<\/button>/);
+    const team = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: mine({ team: true }) });
+    assert.match(team, /The Still team does not enter its own draws\./);
+    assert.doesNotMatch(team, /<button[^>]*>Enter free<\/button>/);
+  });
+
+  it('says when the next one opens, and what each past draw fixed, picked and paid, with the person’s own part', () => {
+    const upcoming = render({ current: { ...OPEN, state: 'upcoming', entries: 0 }, past: [] }, signedOut);
+    assert.match(upcoming, /Opens Sat 21 Nov, 00:00 UTC; closes Sat 28 Nov, 18:00 UTC\./);
+    assert.match(upcoming, /Free entry opens with the draw\./);
+    assert.doesNotMatch(upcoming, /Sign in to enter free/);
+    const past = render({ current: { ...OPEN, drawId: '2026-12-03', closesAt: '2026-12-03T18:00:00.000Z' }, past: [DRAWN] },
+      { ...signedOut, signedIn: true, mine: mine({ entered: [{ drawId: '2026-11-28', label: 'Entry K3F9X2', won: true, paid: true, prizeUsdc: '10' }] }) });
+    assert.match(past, /Draw of Sat 28 Nov · 10 USDC/);
+    assert.match(past, /3 entries · list 0x11111111…111111 · Base block 38912345 · won by Entry K3F9X2 \(paid\)/);
+    assert.match(past, /You won as Entry K3F9X2\. 10 USDC was sent to this wallet\./);
+    const nobody = render({ current: null, past: [{ ...DRAWN, entries: 0, entriesHash: `0x${'1'.repeat(64)}`, block: null, blockAt: null, winners: [] }] }, signedOut);
+    assert.match(nobody, /No draw is open now\./);
+    assert.match(nobody, /nobody entered, so nobody won/);
+    assert.doesNotMatch(past + nobody, /0x[0-9a-f]{40}(?![0-9a-f])/i, 'never a wallet');
+  });
+
+  it('says how many win and how much each, and names every winner', () => {
+    const three = { ...OPEN, winnerCount: 3, prizeUsdc: '5' };
+    const html = render({ current: three, past: [{ ...DRAWN, winnerCount: 3, prizeUsdc: '5',
+      winners: [{ no: 2, label: 'Entry K3F9X2', paid: true }, { no: 3, label: 'Loop #4', paid: false }, { no: 1, label: 'Entry AB12CD', paid: false }] }] }, signedOut);
+    assert.match(html, /The draw · 3 × 5 USDC/);
+    assert.match(html, /4 entries so far\. Three winners, 5 USDC each\./);
+    assert.match(html, /Each next winner is picked the same way from the entries not yet picked, so nobody wins twice\./);
+    assert.match(html, /5 USDC is sent on Base to each winning wallet within 7 days/);
+    assert.match(html, /Draw of Sat 28 Nov · 3 × 5 USDC/);
+    assert.match(html, /won by Entry K3F9X2 \(paid\), Loop #4, Entry AB12CD/);
+    assert.equal(stillLoopDrawPrizeV1({ winnerCount: 1, prizeUsdc: '10' }), '10 USDC');
   });
 });

@@ -21,7 +21,8 @@
     "./eligibility": "./src/eligibility.ts",
     "./repay": "./src/repay.ts",
     "./rpc": "./src/rpc.ts",
-    "./loops": "./src/loops.ts"
+    "./loops": "./src/loops.ts",
+    "./loop-draws": "./src/loopDraws.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
