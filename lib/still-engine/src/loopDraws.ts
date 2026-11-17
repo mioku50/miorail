@@ -29,8 +29,8 @@ export interface LoopDrawV1 {
 }
 
 export const LOOP_DRAWS_V1: readonly LoopDrawV1[] = [
-  { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winners: 1, prizeUsdc: '10' },
-  { drawId: '2026-12-03', opensAt: '2026-11-28T18:00:00.000Z', closesAt: '2026-12-03T18:00:00.000Z', winners: 1, prizeUsdc: '10' },
+  { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winners: 3, prizeUsdc: '5' },
+  { drawId: '2026-12-03', opensAt: '2026-11-28T18:00:00.000Z', closesAt: '2026-12-03T18:00:00.000Z', winners: 3, prizeUsdc: '5' },
 ];
 
 /** The most winners one draw may have. */

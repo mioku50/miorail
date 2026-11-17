@@ -19,10 +19,10 @@ import {
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
 describe('the Loop draws', () => {
-  it('are two, back to back: 21 Nov to 28 Nov 18:00 UTC, then to 3 Dec 18:00 UTC, 10 USDC each', () => {
+  it('are two, back to back: 21 Nov to 28 Nov 18:00 UTC, then to 3 Dec 18:00 UTC, three winners of 5 USDC each', () => {
     assert.deepEqual(LOOP_DRAWS_V1.map((draw) => [draw.drawId, draw.opensAt, draw.closesAt, draw.winners, draw.prizeUsdc]), [
-      ['2026-11-28', '2026-11-21T00:00:00.000Z', '2026-11-28T18:00:00.000Z', 1, '10'],
-      ['2026-12-03', '2026-11-28T18:00:00.000Z', '2026-12-03T18:00:00.000Z', 1, '10'],
+      ['2026-11-28', '2026-11-21T00:00:00.000Z', '2026-11-28T18:00:00.000Z', 3, '5'],
+      ['2026-12-03', '2026-11-28T18:00:00.000Z', '2026-12-03T18:00:00.000Z', 3, '5'],
     ]);
     assert.equal(loopDrawOpenAtV1(new Date('2026-11-20T23:59:59.999Z')), null);
     assert.equal(loopDrawCurrentV1(new Date('2026-11-20T23:59:59.999Z'))?.drawId, '2026-11-28', 'before it opens, the first is the next');

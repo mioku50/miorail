@@ -94,7 +94,7 @@ describe('the Loop draws', () => {
     assert.deepEqual(mine.current, { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: { label: 'Entry K3F9X2', kind: 'free' } });
     assert.equal((await request(app(TEAM)).get('/api/still/loops/draw').expect(200)).body.team, true);
     const open = (await publicLoops()).draws.current;
-    assert.deepEqual([open.drawId, open.state, open.entries, open.prizeUsdc, open.entriesHash], ['2026-11-28', 'open', 1, '10', null]);
+    assert.deepEqual([open.drawId, open.state, open.entries, open.winnerCount, open.prizeUsdc, open.entriesHash], ['2026-11-28', 'open', 1, 3, '5', null]);
   });
 
   it('ask the region and the confirmation a new loan asks, before anything is read or written', async () => {
@@ -113,6 +113,8 @@ describe('the Loop draws', () => {
   });
 
   it('fix the list after the close, then let the first Base block five minutes on pick the winner, as anybody can check', async () => {
+    // One winner here, so a loser can be told apart; three are picked below.
+    Object.assign(stillLoopDrawRuntimeV1, { draws: () => LOOP_DRAWS_V1.map((draw) => ({ ...draw, winners: 1, prizeUsdc: '10' })) });
     await enter(A).expect(200);                                             // Entry K3F9X2, 10:00
     await loopRepo.record([candidate(1, { walletAddress: C }), candidate(2, { walletAddress: A }), candidate(3, { walletAddress: TEAM, team: true })]);
     await loopRepo.markDelivery({ executionId: id(1), outcome: 'complete', at: new Date('2026-11-22T09:00:00.000Z') });   // Loop #1, before A
