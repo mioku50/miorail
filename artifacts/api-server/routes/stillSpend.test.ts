@@ -228,7 +228,7 @@ describe('a loan that pays the invoice', () => {
     assert.equal(verified.ok, true);
     assert.deepEqual(verified.ok && verified.claims.question.operation === 'borrow' && verified.claims.question.payment, {
       merchant: 'bitrefill', orderId: INVOICE, payTo: PAY_TO, assets: '13250000', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days',
-      faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' });
+      faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z', productId: 'bitrefill-esim-germany' });
     // Another amount, another wallet's order, or a payment with native ETH is not this loan.
     assert.equal((await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send(intent({ borrowAmountAtomic: '13250001' }))).status, 400);
     assert.equal((await request(app(OTHER)).post('/api/route-intelligence/rwa/borrow/intent').send(intent())).status, 409);

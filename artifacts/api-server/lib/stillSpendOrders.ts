@@ -199,8 +199,10 @@ export const spendOrderStoreV1 = createSpendOrderStoreV1();
  * exactly its price. Null when it would lapse before a review is signed. */
 export function spendDraftPaymentV1(order: SpendOrderV1, now: Date): LendingPaymentV1 | null {
   if (Date.parse(order.expiresAt) - now.getTime() < STILL_SPEND_REVIEW_MARGIN_MS_V1 + 60_000) return null;
+  // The product names a Loop's brand. An id the draft would refuse is left out rather than refusing the purchase.
+  const productId = /^[a-z0-9][a-z0-9_.-]{0,99}$/.test(order.productId) ? { productId: order.productId } : {};
   return { merchant: 'bitrefill', orderId: order.orderId, payTo: order.payTo, assets: order.priceAtomic, productName: order.productName,
-    packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
+    packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt, ...productId };
 }
 
 /** Still's affiliate code at Bitrefill (the operator's partner account, 2026-11-13), from the environment only:

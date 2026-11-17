@@ -1,5 +1,5 @@
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
-import type { LendingPaymentV1 } from './lendingDraft.js';
+import type { LendingOriginV1, LendingPaymentV1 } from './lendingDraft.js';
 import type { LendingStressV1 } from './lendingStress.js';
 
 /** Shared wire for risk-increasing borrowing and risk-reducing repayment.
@@ -35,6 +35,8 @@ export interface LendingFactsV1 {
   };
   /** Still Spend: the borrowed USDC pays this Bitrefill invoice in the same batch. */
   payment?: LendingPaymentV1;
+  /** The assistant that prepared it, from its signed draft. Absent for Still's own pages. */
+  origin?: LendingOriginV1;
   /** Repay all and take the stock back: the deposit that returns to the wallet, after the repayment. */
   collateralReturnAssets?: string;
   /** A new loan: what a fall at once and a pause of the collateral's transfers would do to it, read from the

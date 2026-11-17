@@ -85,6 +85,19 @@ describe('session-owned lending HTTP boundary', () => {
     const r = await request(app()).get(`${base}/lending/review/${signed}`);
     assert.equal(r.body.state, 'refused'); assert.equal(r.body.calls, undefined); assert.equal(r.body.executionId, undefined);
   });
+  it('keeps the assistant its signed draft names in the attempt’s facts, and adds none for Still’s own page', async () => {
+    const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+    const viaClaude = issueLendingDraftV1({ ...owner, question: repayQuestion, secret, now, origin: { kind: 'mcp', client: 'claude' } }).draft;
+    const read = await request(app()).get(`${base}/lending/review/${viaClaude}`);
+    assert.equal(read.body.state, 'ready');
+    assert.deepEqual((await store.get({ owner, executionId: read.body.executionId }))?.run.facts.origin, { kind: 'mcp', client: 'claude' });
+    // The review the page shows names no assistant: what it would sign is unchanged.
+    assert.equal(read.body.origin, undefined);
+    store = new MemoryLoanExecutionStoreV1();
+    const own = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
+    assert.equal(own.body.state, 'ready');
+    assert.equal('origin' in ((await store.get({ owner, executionId: own.body.executionId }))?.run.facts ?? {}), false);
+  });
   it('persists an immutable attempt before the wallet and never treats a batch hint as success', async () => {
     const signed = draft(repayQuestion), read = await request(app()).get(`${base}/lending/review/${signed}`);
     assert.equal(read.status, 200); assert.equal(read.body.state, 'ready'); assert(read.body.executionId);

@@ -219,6 +219,8 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   }
   if (payment) run = await rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now });
   if (run.state === 'refused') { res.json(lendingWireV1(run)); return; }
+  // Which assistant prepared it, as its signed draft says: what a Loop's card names. Not part of the calls.
+  if (claims.origin) run = { ...run, facts: { ...run.facts, origin: claims.origin } };
   const record = await store.putReady({ owner, draftId: claims.draftId, run, now: rwaLendingRuntimeV1.now() });
   if (record.state !== 'ready') { res.json({ state: 'refused', refusal: 'lending_submission_pending', detail: 'This review has an existing wallet attempt. Check its recorded result before preparing another.', executionId: record.executionId, executionState: record.state, facts: record.run.facts }); return; }
   res.json({ ...lendingWireV1(record.run), executionId: record.executionId, ...(deliverTo ? { deliverTo } : {}), ...(commission ? { commission: true } : {}) });

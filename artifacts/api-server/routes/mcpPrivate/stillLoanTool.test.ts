@@ -38,6 +38,18 @@ test('a stock loan is the same wallet-bound Aave V4 question Get money issues', 
   assert.equal(claims.venue, 'aave-v4');
   assert.deepEqual(claims.question, { operation: 'borrow', collateralTokenAddress: NVDAC, borrowAssets: '500000000', collateralSupplyAssets: '5000000' });
   assert.match(review.next, /Nothing has been sent/);
+  // Asked without an assistant named, the draft names none.
+  assert.equal('origin' in claims, false);
+});
+
+test('the assistant that asked is signed into the loan’s draft, and into a purchase’s', async (t) => {
+  const via = { kind: 'mcp' as const, client: 'claude' as const };
+  const loan = stillPrepareLoanReviewV1(IDENTITY, { collateral: 'NVDAc', addCollateral: '0', borrowUsdc: '5' }, { secret: SECRET, now: NOW, via });
+  assert.deepEqual(draftOf(loan.reviewUrl).origin, via);
+  spend(t);
+  const purchase = await stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW, via: { kind: 'mcp', client: 'chatgpt' } });
+  assert.deepEqual(draftOf(purchase.reviewUrl).origin, { kind: 'mcp', client: 'chatgpt' });
 });
 
 test('already-pledged collateral, cbBTC, and native ETH wrapped with the loan', () => {
@@ -135,7 +147,7 @@ test('a purchase opens the invoice as Spend does, and the link is the review of 
   assert.equal(prepared.reviewId, claims.draftId);
   assert.deepEqual(claims.question, { operation: 'borrow', collateralTokenAddress: NVDAC, borrowAssets: '9800000', collateralSupplyAssets: '0',
     payment: { merchant: 'bitrefill', orderId: INVOICE, payTo: PAY_TO, assets: '9800000', productName: ESIM.name, packageValue: '5GB, 30 Days',
-      faceCurrency: 'USD', expiresAt: '2026-11-02T15:15:00.000Z' } });
+      faceCurrency: 'USD', expiresAt: '2026-11-02T15:15:00.000Z', productId: ESIM.id } });
   // The order the review will read is this wallet's, and the email went to Bitrefill only.
   assert.equal(orders.get(IDENTITY, INVOICE)?.priceAtomic, '9800000');
   assert.equal(opened.length, 1);

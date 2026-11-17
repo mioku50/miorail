@@ -70,6 +70,9 @@ import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/r
 import { stillMineRuntimeV1 } from '../stillMine.js';
 import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
+import type { LendingOriginV1 } from '../../lib/lendingDraft.js';
+import { mcpClientKindV1 } from '../../lib/mcpClientKind.js';
+import { mcpOAuthProviderV1 } from '../../lib/mcpOAuthProvider.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -167,6 +170,10 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1, ...STILL_MCP_IDENTITY_V1 },
     { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
+  // Which assistant prepared a loan, signed into its draft: Claude, ChatGPT and Grok are told by where their
+  // connector's codes go, every other client is "other". A cookie is Still's own page, not an assistant.
+  const viaV1 = async (): Promise<LendingOriginV1 | undefined> => identity.source === 'browser_session' ? undefined
+    : { kind: 'mcp', client: await mcpClientKindV1(identity.clientId, mcpOAuthProviderV1.clientsStore) };
 
   // The read half, first — because it is the half a connected assistant needs
   // before any of the twenty below can be called at all. A client that connected
@@ -257,7 +264,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     ...card,
   }, async (args) => {
     try {
-      return reply(stillPrepareLoanReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
+      return reply(stillPrepareLoanReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now(), via: await viaV1() }));
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
       return refuse(error);
@@ -277,7 +284,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   }, async (args) => {
     try {
       // The answer as the tool declares it; whether Bitrefill may pay Still a commission goes to the card as _meta.
-      const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() });
+      const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now(), via: await viaV1() });
       return { ...reply(answer), ...stillPurchaseReplyMetaV1(commission) };
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };

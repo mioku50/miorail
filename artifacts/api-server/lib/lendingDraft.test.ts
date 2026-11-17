@@ -77,7 +77,42 @@ describe('owned lending questions bind consent, not calldata or a prior answer',
       { ...question, payment: { ...payment, payTo: '0x0000000000000000000000000000000000000000' } },
       { ...question, payment: { ...payment, merchant: 'somewhere' } },
       { ...question, payment: { ...payment, extra: true } },
+      { ...question, payment: { ...payment, productId: 'Itunes Germany' } },
+      { ...question, payment: { ...payment, productId: '' } },
+      { ...question, payment: { ...payment, productId: null } },
       { ...question, collateralTokenAddress: CRYPTO.find(asset => asset.id === 'ETH')!.token.toLowerCase(), collateralSupplyAssets: '1', nativeFundingAssets: '1' },
     ]) assert.throws(() => issueLendingDraftV1({ ...owner, question: bad as LendingQuestionV1, secret, now }), /lending_question_invalid/);
+  });
+  it('a paid loan names its Bitrefill product, signed, and one issued before it did still opens', () => {
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333',
+      assets: '25000000', productName: 'iTunes Germany', packageValue: '25 EUR', faceCurrency: 'EUR', expiresAt: '2026-11-01T12:15:00.000Z' };
+    const named: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: STOCKS[0]!.token.toLowerCase(), borrowAssets: '25000000', collateralSupplyAssets: '0',
+      payment: { ...payment, productId: 'itunes-germany' } };
+    const issued = issueLendingDraftV1({ ...owner, question: named, secret, now });
+    const verified = verifyLendingDraftV1({ ...owner, draft: issued.draft, secret, now });
+    assert.equal(verified.ok && verified.claims.question.operation === 'borrow' && verified.claims.question.payment?.productId, 'itunes-germany');
+    // The product is the server's word: changing it breaks the signature.
+    const parts = issued.draft.split('.'), changed = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString());
+    changed.question.payment.productId = 'amazon_de-germany'; parts[1] = Buffer.from(JSON.stringify(changed)).toString('base64url');
+    assert.equal(verifyLendingDraftV1({ ...owner, draft: parts.join('.'), secret, now }).ok, false);
+    // A draft from before the product was named, and the status reads of its attempt, still verify.
+    const older = issueLendingDraftV1({ ...owner, question: { ...named, payment }, secret, now });
+    assert.equal(verifyLendingDraftV1({ ...owner, draft: older.draft, secret, now }).ok, true);
+  });
+  it('the assistant that prepared a loan is signed into its draft, and Still’s own pages name none', () => {
+    const question: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: STOCKS[0]!.token.toLowerCase(), borrowAssets: '25000000', collateralSupplyAssets: '0' };
+    const fromClaude = issueLendingDraftV1({ ...owner, question, secret, now, origin: { kind: 'mcp', client: 'claude' } });
+    const verified = verifyLendingDraftV1({ ...owner, draft: fromClaude.draft, secret, now });
+    assert.deepEqual(verified.ok && verified.claims.origin, { kind: 'mcp', client: 'claude' });
+    // The page cannot rename it: a changed client breaks the signature.
+    const parts = fromClaude.draft.split('.'), changed = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString());
+    changed.origin.client = 'chatgpt'; parts[1] = Buffer.from(JSON.stringify(changed)).toString('base64url');
+    assert.equal(verifyLendingDraftV1({ ...owner, draft: parts.join('.'), secret, now }).ok, false);
+    // Still's own page: no origin claim at all, exactly as before.
+    const own = verifyLendingDraftV1({ ...owner, draft: issueLendingDraftV1({ ...owner, question, secret, now }).draft, secret, now });
+    assert.equal(own.ok && 'origin' in own.claims, false);
+    for (const bad of [{ kind: 'web', client: 'claude' }, { kind: 'mcp', client: 'gemini' }, { kind: 'mcp' }, { kind: 'mcp', client: 'claude', name: 'x' }]) {
+      assert.throws(() => issueLendingDraftV1({ ...owner, question, secret, now, origin: bad as never }), /lending_question_invalid/);
+    }
   });
 });

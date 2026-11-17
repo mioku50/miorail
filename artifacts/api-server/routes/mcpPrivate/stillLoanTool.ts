@@ -3,7 +3,7 @@ import { SPEND_EMAIL_V1 } from '@mioagent/commerce-engine';
 import { SPEND_DELIVERY_EMAIL_V1 } from '@mioagent/route-domain';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
-import { issueLendingDraftV1 } from '../../lib/lendingDraft.js';
+import { issueLendingDraftV1, type LendingOriginV1 } from '../../lib/lendingDraft.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
 import { openSpendOrderV1, stillSpendRuntimeV1, type SpendOrderOpenedV1 } from '../stillSpend.js';
@@ -74,7 +74,8 @@ function tokenOfV1(collateral: StillLoanCollateralV1): { token: string; decimals
 export function stillPrepareLoanReviewV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPrepareLoanReviewInputV1Schema>,
-  deps: { secret: string; now: Date; origin?: string },
+  /** `via`: the assistant that asked, signed into the draft (lib/mcpClientKind.ts). */
+  deps: { secret: string; now: Date; origin?: string; via?: LendingOriginV1 },
 ): z.infer<typeof StillPrepareLoanReviewOutputV1Schema> {
   const { token, decimals, venue } = tokenOfV1(args.collateral);
   const supply = unitsV1(args.addCollateral, decimals);
@@ -101,6 +102,7 @@ export function stillPrepareLoanReviewV1(
     },
     secret: deps.secret,
     now: deps.now,
+    ...(deps.via ? { origin: deps.via } : {}),
   });
   return {
     reviewUrl: `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}/lending/${issued.draft}`,
@@ -209,7 +211,8 @@ function spendOrderRefusalV1(opened: Extract<SpendOrderOpenedV1, { ok: false }>)
 export async function stillPreparePurchaseV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPreparePurchaseInputV1Schema>,
-  deps: { secret: string; now: Date; origin?: string },
+  /** `via`: the assistant that asked, signed into the draft (lib/mcpClientKind.ts). */
+  deps: { secret: string; now: Date; origin?: string; via?: LendingOriginV1 },
 ): Promise<z.infer<typeof StillPreparePurchaseOutputV1Schema> & StillPurchaseCommissionV1> {
   // Everything that can be refused here is, before an invoice exists at Bitrefill.
   const { token, decimals, venue } = tokenOfV1(args.collateral);
@@ -234,6 +237,7 @@ export async function stillPreparePurchaseV1(
     question: { operation: 'borrow', collateralTokenAddress: token, borrowAssets: order.priceAtomic, collateralSupplyAssets: supply.toString(), payment },
     secret: deps.secret,
     now: deps.now,
+    ...(deps.via ? { origin: deps.via } : {}),
   });
   const price = usdcTextV1(BigInt(order.priceAtomic));
   return {

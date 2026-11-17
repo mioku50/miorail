@@ -34,6 +34,9 @@ export interface McpPrivateIdentityV1 {
   /** For audit lines. `session` when the caller had a cookie instead. */
   tokenId: string;
   source: 'handoff_token' | 'oauth' | 'browser_session';
+  /** The OAuth client, from the verified access token: which assistant prepared a loan is read from it
+   * (lib/mcpClientKind.ts). Absent for the other sources. */
+  clientId?: string;
 }
 
 export type McpPrivateAuthRefusalV1 =
@@ -124,6 +127,7 @@ export async function resolvePrivateIdentityV1(req: Request): Promise<McpPrivate
             // refreshed, and would reset the per-caller rate limit with it.
             tokenId: grantId,
             source: 'oauth',
+            ...(typeof auth.clientId === 'string' && auth.clientId ? { clientId: auth.clientId } : {}),
           },
         };
       } catch {
