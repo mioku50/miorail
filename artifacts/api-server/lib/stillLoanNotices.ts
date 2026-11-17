@@ -1,6 +1,6 @@
-import { safetyFromHealthFactor } from '@mioagent/still-engine/policy';
+import { TERMS, safetyFromHealthFactor } from '@mioagent/still-engine/policy';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
-import type { StillLoanAlertV1, StillLoanOpenedV1, StillLoanWeekDueV1 } from '@mioagent/route-storage';
+import type { StillLoanAlertV1, StillLoanClosedV1, StillLoanOpenedV1, StillLoanWeekDueV1 } from '@mioagent/route-storage';
 
 import { stillLoanLabelV1 } from './stillLoanAlerts.js';
 
@@ -10,6 +10,13 @@ export const STILL_AAVE_SPOKE_V1 = ADDRESSES.aaveSpoke.toLowerCase();
 export const STILL_LOAN_OPENED_FOR_MS_V1 = 6 * 3_600_000;
 /** A loan gets a week's note once Still has read it for a day: one opened that evening has its own receipt. */
 export const STILL_LOAN_WEEK_AFTER_MS_V1 = 24 * 3_600_000;
+/** A rate jump is told once it has held this long: a market lent out for a few minutes is refilled before anyone reads of it. */
+export const STILL_LOAN_RATE_HIGH_FOR_MS_V1 = 3_600_000;
+
+/** The loan row an execution's position is in: the spoke on Aave V4, its market on Morpho. */
+export function stillLoanMarketOfV1(receipt: Pick<StillLoanOpenedV1, 'venue' | 'marketId'>): string {
+  return receipt.venue === 'aave-v4' ? STILL_AAVE_SPOKE_V1 : receipt.marketId.toLowerCase();
+}
 
 // ---------------------------------------------------------------------------
 // Still: what a loan's owner is told besides a worse band (2026-11-17).
@@ -21,6 +28,13 @@ export const STILL_LOAN_WEEK_AFTER_MS_V1 = 24 * 3_600_000;
 //   last note (or since Still first read the loan), the rate and the margin.
 // - A hold on the collateral, with what it means on this venue, as measured on
 //   the contracts (./stillLoanHolds.ts).
+// - A loan repaid through Still, from the receipt's verified effect: what was
+//   repaid, and whether the collateral came back to the wallet. Only the
+//   receipt can say that: a reading that finds nothing pledged cannot tell a
+//   collateral taken back from one a liquidator took.
+// - A margin back: the collateral can fall more than Still's Watch line again.
+// - A rate that jumped over the one the owner last heard of, held for an hour,
+//   with what a day of the debt costs at it.
 //
 // Every notice fits the tightest channel whole (a 30-character title, a
 // 200-character message): the plainest wording that fits is chosen, never a
@@ -35,6 +49,8 @@ export interface StillLoanNoticeTextV1 {
   title: string;
   message: string;
   targetPath: string;
+  /** The borrow rate the message states, when it states one: once told, the rate its owner last heard of. */
+  rateBps?: number;
 }
 
 const ATOMIC_V1 = /^(0|[1-9][0-9]{0,77})$/;
@@ -145,16 +161,18 @@ export function stillLoanOpenedNoticeV1(input: {
   const fall = (withPrice: boolean) => marginBps === null ? ''
     : ` The collateral can fall ${marginV1(marginBps)} before liquidation${withPrice ? price : ''}.`;
 
+  const message = fitV1([
+    `${head}${owes}${fall(true)}`,
+    `${head}${owes}${fall(false)}`,
+    `${head}${debt === null ? '' : ` Debt ${usdcUpV1(debt)} USDC.`}${fall(false)}`,
+    `${head}${debt === null ? '' : ` Debt ${usdcUpV1(debt)} USDC.`}`,
+    `Borrowed ${usdcUpV1(borrowed)} USDC on ${venue}.`,
+  ]);
   return {
     title: titleV1('Still loan opened'),
-    message: fitV1([
-      `${head}${owes}${fall(true)}`,
-      `${head}${owes}${fall(false)}`,
-      `${head}${debt === null ? '' : ` Debt ${usdcUpV1(debt)} USDC.`}${fall(false)}`,
-      `${head}${debt === null ? '' : ` Debt ${usdcUpV1(debt)} USDC.`}`,
-      `Borrowed ${usdcUpV1(borrowed)} USDC on ${venue}.`,
-    ]),
+    message,
     targetPath: LOAN_PATH_V1,
+    ...(rate !== '' && loan?.rateBps != null && message.includes(rate) ? { rateBps: loan.rateBps } : {}),
   };
 }
 
@@ -180,10 +198,91 @@ export function stillLoanWeekNoticeV1(due: StillLoanWeekDueV1): StillLoanNoticeT
   const gathered = ` Interest since ${dayV1(due.since)}: ${about}${interestV1(interest)}`;
   const rate = loan.rateBps !== null ? `, at ${rateV1(loan.rateBps)} a year now` : '';
   const fall = ` The collateral can fall ${marginV1(loan.marginBps)} before liquidation.`;
+  const message = fitV1([`${owes}${gathered}${rate}.${fall}`, `${owes}${gathered}.${fall}`, `${owes}${gathered}.`]);
   return {
     title: titleV1('Still loan: your week'),
-    message: fitV1([`${owes}${gathered}${rate}.${fall}`, `${owes}${gathered}.${fall}`, `${owes}${gathered}.`]),
+    message,
     targetPath: LOAN_PATH_V1,
+    ...(rate !== '' && loan.rateBps !== null && message.includes(rate) ? { rateBps: loan.rateBps } : {}),
+  };
+}
+
+/** "41.2%": a margin to the tenth, rounded down, so it is never said larger than it is. */
+function marginTenthsV1(bps: number): string {
+  return bps % 100 === 0 ? `${bps / 100}%` : `${Math.floor(bps / 10) / 10}%`;
+}
+
+/** What a repayment through Still that left no debt is told as: what was repaid, and whether the collateral came
+ * back to the wallet; null when its receipt does not say the debt is gone, or says nothing moved. */
+export function stillLoanClosedNoticeV1(closed: StillLoanClosedV1): StillLoanNoticeTextV1 | null {
+  const facts = closed.facts;
+  const proof = closed.proof ?? {};
+  if (atomicOfV1(proof.remainingDebtAssets) !== 0n) return null;
+  const repaid = atomicOfV1(proof.appliedAssets) ?? 0n;
+  const back = atomicOfV1(proof.collateralReturnedAssets);
+  const left = atomicOfV1(proof.collateralAssets);
+  const symbol = typeof facts.collateralSymbol === 'string' && SYMBOL_V1.test(facts.collateralSymbol) ? facts.collateralSymbol : null;
+  const decimals = typeof facts.collateralDecimals === 'number' && Number.isInteger(facts.collateralDecimals)
+    && facts.collateralDecimals >= 0 && facts.collateralDecimals <= 36 ? facts.collateralDecimals : null;
+  const tokens = (raw: bigint) => symbol === null ? null : decimals === null ? `your ${symbol}` : `${stillTokenAmountV1(raw, decimals)} ${symbol}`;
+  const venue = closed.venue === 'aave-v4' ? 'Aave V4' : 'Morpho';
+  const paid = repaid > 0n ? `Repaid ${usdcUpV1(repaid)} USDC on ${venue}` : null;
+  // The receipt matched the collateral arriving in the wallet: only then is it said to be back.
+  if (back !== null && back > 0n) {
+    const what = tokens(back) ?? 'the collateral';
+    const message = paid
+      ? `${paid}: no debt is left there, and ${what} came back to your wallet.`
+      : `${what.charAt(0).toUpperCase()}${what.slice(1)} came back to your wallet from ${venue}, where no debt is left.`;
+    return { title: titleV1('Still loan closed'), message: fitV1([message]), targetPath: LOAN_PATH_V1 };
+  }
+  if (!paid) return null;
+  const stays = left !== null && left > 0n ? tokens(left) : null;
+  return {
+    title: titleV1('Still loan repaid'),
+    message: fitV1([
+      ...(stays ? [`${paid}, and no debt is left there. ${stays} stays pledged; Still’s Repay page can take it back.`] : []),
+      `${paid}, and no debt is left there.`,
+    ]),
+    targetPath: LOAN_PATH_V1,
+  };
+}
+
+/** What a loan whose worse band was told is told once it reads calm again. */
+export function stillLoanRecoveredNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTextV1 {
+  const label = stillLoanLabelV1(loan.market);
+  const debt = atomicOfV1(loan.debtAtomic);
+  const fall = `the collateral can fall ${marginTenthsV1(loan.marginBps)} before liquidation now, no longer under Still’s `
+    + `${marginTenthsV1(Number(TERMS.watchBelowBps))} Watch line.`;
+  return {
+    title: titleV1('Still loan: margin back'),
+    message: fitV1([
+      ...(debt !== null && debt > 0n ? [`${label}: debt ${usdcUpV1(debt)} USDC, and ${fall}`] : []),
+      `${label}: ${fall}`,
+    ]),
+    targetPath: LOAN_PATH_V1,
+  };
+}
+
+/** What a rate that has held a jump over the one its owner heard of is told as, with what a day of the debt
+ * costs at it; null without a rate, a rate heard of, or a debt. */
+export function stillLoanRateNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTextV1 | null {
+  const debt = atomicOfV1(loan.debtAtomic);
+  if (loan.rateBps === null || loan.rateToldBps === null || loan.rateToldAt === null || debt === null || debt === 0n) return null;
+  const label = stillLoanLabelV1(loan.market);
+  const now = rateV1(loan.rateBps);
+  const head = `${label}: the rate is ${now} a year now, up from ${rateV1(loan.rateToldBps)} on ${dayV1(loan.rateToldAt)}, `
+    + 'and has been up for over an hour.';
+  const daily = (debt * BigInt(loan.rateBps)) / (10_000n * 365n);
+  const grows = daily < 10_000n ? 'under 0.01 USDC' : `about ${interestV1(daily)}`;
+  return {
+    title: titleV1(`Still loan: rate ${now}`),
+    message: fitV1([
+      `${head} At this rate the debt of ${usdcUpV1(debt)} USDC grows by ${grows} a day.`,
+      `${head} At this rate the debt grows by ${grows} a day.`,
+      head,
+    ]),
+    targetPath: LOAN_PATH_V1,
+    rateBps: loan.rateBps,
   };
 }
 

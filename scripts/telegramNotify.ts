@@ -60,7 +60,8 @@ export function createTelegramNotifyClientV1(input: {
         for (const chat of chats) walletsOfChat.set(chat, [...(walletsOfChat.get(chat) ?? []), wallet]);
       }
       const html = telegramNoticeHtmlV1(notice);
-      const button = { text: 'Open in Miorail', url: `${input.origin}${notice.targetPath}` };
+      // The site a button opens is Still: miorail.xyz serves it, and its pages call it Still.
+      const button = { text: 'Open in Still', url: `${input.origin}${notice.targetPath}` };
       const delivered = new Set<string>();
       let first = true;
       for (const [chatId, wallets] of walletsOfChat) {

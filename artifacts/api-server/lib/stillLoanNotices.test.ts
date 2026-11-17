@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import type { StillLoanAlertV1, StillLoanOpenedV1 } from '@mioagent/route-storage';
+import type { StillLoanAlertV1, StillLoanClosedV1, StillLoanOpenedV1 } from '@mioagent/route-storage';
 
 import {
   STILL_AAVE_SPOKE_V1,
   STILL_LOAN_NOTICE_MESSAGE_MAX_V1,
   STILL_LOAN_NOTICE_TITLE_MAX_V1,
+  stillLoanClosedNoticeV1,
   stillLoanHoldNoticeV1,
+  stillLoanMarketOfV1,
   stillLoanOpenedNoticeV1,
+  stillLoanRateNoticeV1,
+  stillLoanRecoveredNoticeV1,
   stillLoanWeekNoticeV1,
   stillTokenAmountV1,
   type StillLoanNoticeTextV1,
@@ -23,7 +27,8 @@ function loan(over: Partial<StillLoanAlertV1> = {}): StillLoanAlertV1 {
   return {
     walletAddress: WALLET, market: STILL_AAVE_SPOKE_V1, venue: 'aave-v4', state: 'calm', marginBps: 4_812, episode: 0,
     createdAt: '2026-11-10T09:00:00.000Z', readAt: NOW.toISOString(), readBlock: '58000000', told: { base_app: null, telegram: null },
-    debtAtomic: '26410000', rateBps: 366, interestAtomic: '0', estimatedAtomic: '0', holds: [], holdEpisode: 0, ...over,
+    debtAtomic: '26410000', rateBps: 366, interestAtomic: '0', estimatedAtomic: '0', holds: [], holdEpisode: 0,
+    stateSince: '2026-11-10T09:00:00.000Z', rateToldBps: 366, rateToldAt: '2026-11-10T09:00:00.000Z', rateHighSince: null, rateEpisode: 0, ...over,
   };
 }
 
@@ -55,12 +60,14 @@ describe('a loan just opened', () => {
     assert.equal(notice.title, 'Still loan opened');
     assert.equal(notice.message, 'Borrowed 46.80 USDC on Morpho against 0.03122 PAXG. Debt 46.81 USDC, at 4.10% a year now. '
       + 'The collateral can fall 50% before liquidation: PAXG at $1,946.64.');
+    assert.equal(notice.rateBps, 410, 'the rate it states becomes the one its owner heard of');
   });
 
   test('a stale reading gives no rate; with no stress the margin is the health the review expected', () => {
     const { stress: _stress, ...facts } = paxg.facts;
     const notice = keepsTheRulesV1(stillLoanOpenedNoticeV1({ opened: { ...paxg, facts }, loan: loan({ readAt: '2026-11-17T08:00:00.000Z' }), freshSince: FRESH }));
     assert.equal(notice.message, 'Borrowed 46.80 USDC on Morpho against 0.03122 PAXG. Debt 46.81 USDC. The collateral can fall 50% before liquidation.');
+    assert.equal(notice.rateBps, undefined, 'no rate said, none heard of');
   });
 
   test('a purchase paid by the loan says so, and the plainer wording is chosen when the full one would not fit', () => {
@@ -100,6 +107,8 @@ describe('the week\'s note', () => {
     assert.equal(notice.title, 'Still loan: your week');
     assert.equal(notice.message, 'Aave V4 · Coinbase Stocks: debt 1,000.68 USDC. Interest since Nov 13: 0.67 USDC, at 3.66% a year now. '
       + 'The collateral can fall 48% before liquidation.');
+    assert.equal(notice.rateBps, 366);
+    assert.equal(stillLoanWeekNoticeV1(week({ rateBps: null }))!.rateBps, undefined);
   });
 
   test('"about" when part of it was estimated across a borrow; under a cent is said as such', () => {
@@ -135,5 +144,69 @@ describe('a hold on the collateral', () => {
     assert.equal(notice.title, 'Still loan: NVDAc paused');
     assert.equal(stillLoanHoldNoticeV1(loan({ holds: ['NVDAc:market_frozen'] })), null, 'Aave V4 has no market freeze');
     assert.equal(stillLoanHoldNoticeV1(loan({ holds: [] })), null);
+  });
+});
+
+describe('a loan repaid through Still', () => {
+  const repay = (proof: Record<string, unknown> | null, over: Partial<StillLoanClosedV1> = {}): StillLoanClosedV1 => ({
+    executionId: '00000000-0000-4000-8000-000000000009', walletAddress: WALLET, venue: 'morpho', marketId: PAXG_MARKET, confirmedAt: NOW.toISOString(),
+    facts: { venue: 'morpho', operation: 'repay', amountMode: 'all', collateralSymbol: 'PAXG', collateralDecimals: 18 },
+    proof, ...over,
+  });
+
+  test('repaid and the collateral back: only what the receipt proved arrived in the wallet is said to be back', () => {
+    const closed = keepsTheRulesV1(stillLoanClosedNoticeV1(repay({ appliedAssets: '46812345', remainingDebtAssets: '0', collateralAssets: '0',
+      collateralReturnedAssets: '31222722452866554' })));
+    assert.equal(closed.title, 'Still loan closed');
+    assert.equal(closed.message, 'Repaid 46.82 USDC on Morpho: no debt is left there, and 0.03122 PAXG came back to your wallet.');
+    const back = keepsTheRulesV1(stillLoanClosedNoticeV1(repay({ appliedAssets: '0', remainingDebtAssets: '0', collateralAssets: '0',
+      collateralReturnedAssets: '31222722452866554' })));
+    assert.equal(back.message, '0.03122 PAXG came back to your wallet from Morpho, where no debt is left.');
+  });
+
+  test('repaid with the collateral left pledged says where it is and what can take it back', () => {
+    const aave = repay({ appliedAssets: '26410000', remainingDebtAssets: '0', collateralAssets: '500000000000000000' },
+      { venue: 'aave-v4', marketId: 'aave-v4:NVDA', facts: { collateralSymbol: 'NVDAc', collateralDecimals: 18 } });
+    const notice = keepsTheRulesV1(stillLoanClosedNoticeV1(aave));
+    assert.equal(notice.title, 'Still loan repaid');
+    assert.equal(notice.message, 'Repaid 26.41 USDC on Aave V4, and no debt is left there. 0.5 NVDAc stays pledged; Still’s Repay page can take it back.');
+    assert.equal(stillLoanMarketOfV1(aave), STILL_AAVE_SPOKE_V1, 'told about the spoke the debt is on');
+    assert.equal(stillLoanMarketOfV1(repay(null, { marketId: PAXG_MARKET.toUpperCase().replace('0X', '0x') })), PAXG_MARKET);
+  });
+
+  test('nothing is told while a debt is left, when nothing moved, or without a verified effect', () => {
+    assert.equal(stillLoanClosedNoticeV1(repay({ appliedAssets: '20000000', remainingDebtAssets: '26810000', collateralAssets: '31222722452866554' })), null);
+    assert.equal(stillLoanClosedNoticeV1(repay({ appliedAssets: '0', remainingDebtAssets: '0', collateralAssets: '31222722452866554' })), null);
+    assert.equal(stillLoanClosedNoticeV1(repay(null)), null);
+  });
+});
+
+describe('a margin back', () => {
+  test('the margin now, to the tenth and rounded down, against the Watch line it is no longer under', () => {
+    const notice = keepsTheRulesV1(stillLoanRecoveredNoticeV1(loan({ venue: 'morpho', market: PAXG_MARKET, marginBps: 4_129, debtAtomic: '46810000', episode: 1 })));
+    assert.equal(notice.title, 'Still loan: margin back');
+    assert.equal(notice.message, 'Morpho · PAXG/USDC: debt 46.81 USDC, and the collateral can fall 41.2% before liquidation now, no longer under Still’s 37.5% Watch line.');
+    assert.match(keepsTheRulesV1(stillLoanRecoveredNoticeV1(loan({ debtAtomic: null, marginBps: 3_750 }))).message,
+      /^Aave V4 · Coinbase Stocks: the collateral can fall 37\.5% before liquidation now/);
+  });
+});
+
+describe('a rate that jumped', () => {
+  const jumped = (over: Partial<StillLoanAlertV1> = {}) => loan({ rateBps: 1_240, rateToldBps: 410, rateToldAt: '2026-11-17T08:00:00.000Z',
+    rateHighSince: '2026-11-17T08:30:00.000Z', rateEpisode: 1, debtAtomic: '1000680000', ...over });
+
+  test('the rate now, the one heard of and when, and what a day of the debt costs at it', () => {
+    const notice = keepsTheRulesV1(stillLoanRateNoticeV1(jumped()));
+    assert.equal(notice.title, 'Still loan: rate 12.40%');
+    assert.equal(notice.message, 'Aave V4 · Coinbase Stocks: the rate is 12.40% a year now, up from 4.10% on Nov 17, and has been up for over an hour. '
+      + 'At this rate the debt of 1,000.68 USDC grows by about 0.34 USDC a day.');
+    assert.equal(notice.rateBps, 1_240, 'once told, the jump is the rate heard of');
+    assert.match(keepsTheRulesV1(stillLoanRateNoticeV1(jumped({ debtAtomic: '1000000' }))).message, /grows by under 0\.01 USDC a day\.$/);
+  });
+
+  test('nothing is told without a rate, a rate heard of, or a debt', () => {
+    assert.equal(stillLoanRateNoticeV1(jumped({ rateBps: null })), null);
+    assert.equal(stillLoanRateNoticeV1(jumped({ rateToldBps: null, rateToldAt: null })), null);
+    assert.equal(stillLoanRateNoticeV1(jumped({ debtAtomic: '0' })), null);
   });
 });

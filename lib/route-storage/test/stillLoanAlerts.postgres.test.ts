@@ -35,8 +35,9 @@ before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loan_alerts, still_loan_notices, lending_executions CASCADE');
-  // The alerts table as 0093 made it, then 0099 on top, twice: it must re-run.
-  for (const file of ['0093_still_loan_alerts.sql', '0099_still_loan_notices.sql', '0099_still_loan_notices.sql']) {
+  // The alerts table as 0093 made it, then 0099 and 0100 on top, each twice: they must re-run.
+  for (const file of ['0093_still_loan_alerts.sql', '0099_still_loan_notices.sql', '0099_still_loan_notices.sql',
+    '0100_still_loan_closed_recovered_rate.sql', '0100_still_loan_closed_recovered_rate.sql']) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
   }
@@ -69,16 +70,17 @@ if (!throwaway) {
     const MARKET = `0x${'ab'.repeat(32)}`;
     const executor = (): SqlTemplateExecutor => (strings, ...values) =>
       (sql as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>)(strings, ...values);
-    const insert = async (id: string, state: 'confirmed' | 'submitted', updatedAt: string) => {
+    const insert = async (id: string, state: 'confirmed' | 'submitted', updatedAt: string, operation: 'borrow' | 'repay' = 'borrow',
+      remainingDebtAssets = '46800001') => {
       const hash = `0x${'cd'.repeat(32)}`;
       await sql!.unsafe(`
         INSERT INTO lending_executions (execution_id, tenant_id, wallet_address, draft_id, venue, operation, market_id, calls_hash, run_json,
           state, attempt_id, transaction_hash, verification_json, created_at, updated_at, expires_at)
-        VALUES ('${id}', 'eip155:8453:${WALLET}', '${WALLET}', 'draft-${id.slice(-4)}', 'morpho', 'borrow', '${MARKET}', '${hash}',
-          jsonb_build_object('state', 'ready', 'callsHash', '${hash}', 'facts', jsonb_build_object('venue', 'morpho', 'operation', 'borrow',
+        VALUES ('${id}', 'eip155:8453:${WALLET}', '${WALLET}', 'draft-${id.slice(-4)}', 'morpho', '${operation}', '${MARKET}', '${hash}',
+          jsonb_build_object('state', 'ready', 'callsHash', '${hash}', 'facts', jsonb_build_object('venue', 'morpho', 'operation', '${operation}',
             'marketId', '${MARKET}', 'requestedAssets', '46800000', 'collateralSymbol', 'PAXG')),
           '${state}', '00000000-0000-4000-8000-0000000000aa', ${state === 'confirmed' ? `'0x${'ef'.repeat(32)}'` : 'NULL'},
-          ${state === 'confirmed' ? `'{"effect":{"appliedAssets":"46800000","remainingDebtAssets":"46800001"}}'::jsonb` : 'NULL'},
+          ${state === 'confirmed' ? `'{"effect":{"appliedAssets":"46800000","remainingDebtAssets":"${remainingDebtAssets}"}}'::jsonb` : 'NULL'},
           '${updatedAt}', '${updatedAt}', '${updatedAt}'::timestamptz + interval '1 day')`);
     };
 
@@ -98,6 +100,24 @@ if (!throwaway) {
       await alerts.recordNotice({ channel: 'telegram', kind: 'opened', key: due!.executionId, walletAddress: WALLET, market: MARKET, at: since });
       assert.deepEqual(await alerts.openedDue({ channel: 'telegram', wallets: [WALLET], since }), []);
       assert.equal((await alerts.openedDue({ channel: 'base_app', wallets: [WALLET], since })).length, 1);
+    });
+
+    test('a repayment is told when it is confirmed, recent and left no debt; a borrow is not one', async () => {
+      await sql!.unsafe('TRUNCATE lending_executions, still_loan_notices');
+      await sql!.unsafe(`INSERT INTO users (id) VALUES ('eip155:8453:${WALLET}') ON CONFLICT DO NOTHING`);
+      await insert('00000000-0000-4000-8000-000000000011', 'confirmed', '2026-11-17T10:00:00.000Z', 'repay', '0');
+      await insert('00000000-0000-4000-8000-000000000012', 'confirmed', '2026-11-17T10:00:00.000Z', 'repay', '26810000');
+      await insert('00000000-0000-4000-8000-000000000013', 'confirmed', '2026-11-17T01:00:00.000Z', 'repay', '0');
+      await insert('00000000-0000-4000-8000-000000000014', 'confirmed', '2026-11-17T10:00:00.000Z', 'borrow', '0');
+      await insert('00000000-0000-4000-8000-000000000015', 'submitted', '2026-11-17T10:00:00.000Z', 'repay');
+      const alerts = createDatabaseStillLoanAlertRepositoryV1(executor());
+      const since = new Date('2026-11-17T04:00:00.000Z');
+      const due = await alerts.closedDue({ channel: 'telegram', wallets: [WALLET], since });
+      assert.deepEqual(due.map((row) => [row.executionId, row.facts.operation, row.proof?.remainingDebtAssets]),
+        [['00000000-0000-4000-8000-000000000011', 'repay', '0']]);
+      await alerts.recordNotice({ channel: 'telegram', kind: 'closed', key: due[0]!.executionId, walletAddress: WALLET, market: MARKET, at: since });
+      assert.deepEqual(await alerts.closedDue({ channel: 'telegram', wallets: [WALLET], since }), []);
+      assert.equal((await alerts.closedDue({ channel: 'base_app', wallets: [WALLET], since })).length, 1);
     });
   });
 }

@@ -25,6 +25,14 @@ import type { SqlTemplateExecutor } from './types.js';
 // holds on its collateral, with an episode that moves when one appears. What
 // each channel told of those (a loan opened, a week's note, a hold) is in
 // still_loan_notices, once each.
+//
+// Since migration 0100 three more are told the same way. A loan repaid through
+// Still, from the receipt. A margin back above the Watch line: the row keeps
+// when it entered its band, so calm must hold for two readings in a row. And a
+// rate that jumped: the row keeps the rate its owner last heard of (from a
+// notice that said it, else the first reading) and since when the rate has
+// read a jump over it, with an episode that moves each time such a stretch
+// starts. The rate heard of is the loan's, whichever channel said it.
 // ---------------------------------------------------------------------------
 
 export const STILL_LOAN_STATES_V1 = ['calm', 'watch', 'act', 'liquidation'] as const;
@@ -44,7 +52,7 @@ export type StillLoanHoldKindV1 = (typeof STILL_LOAN_HOLD_KINDS_V1)[number];
 const HOLD_V1 = new RegExp(`^[A-Za-z0-9]{1,16}:(${STILL_LOAN_HOLD_KINDS_V1.join('|')})$`);
 
 /** The notices told besides a worse band, each once per channel. */
-export const STILL_LOAN_NOTICE_KINDS_V1 = ['opened', 'week', 'hold'] as const;
+export const STILL_LOAN_NOTICE_KINDS_V1 = ['opened', 'week', 'hold', 'closed', 'recovered', 'rate'] as const;
 export type StillLoanNoticeKindV1 = (typeof STILL_LOAN_NOTICE_KINDS_V1)[number];
 
 export interface StillLoanAlertV1 {
@@ -73,6 +81,16 @@ export interface StillLoanAlertV1 {
   holds: string[];
   /** What "once" counts in for holds: it moves each time a hold appears. */
   holdEpisode: number;
+  /** When the loan entered the band it is in: the first reading that read it there. */
+  stateSince: string;
+  /** The borrow rate its owner last heard of, a year, in basis points: from a notice that said it, else the
+   * first reading's. Null before a reading said one. */
+  rateToldBps: number | null;
+  rateToldAt: string | null;
+  /** Since when the rate has read a jump over `rateToldBps`; null when the last reading of it did not. */
+  rateHighSince: string | null;
+  /** What "once" counts in for a rate jump: it moves each time such a stretch starts. */
+  rateEpisode: number;
 }
 
 /** What a reading could tell of the holds on a loan's collateral. A hold in neither list was not read, and stays as it was. */
@@ -105,8 +123,8 @@ export interface StillLoanWeekDueV1 {
   estimatedBeforeAtomic: string;
 }
 
-/** A borrow through Still that landed, as its review and receipt left it. */
-export interface StillLoanOpenedV1 {
+/** A borrow or a repayment through Still that landed, as its review and receipt left it. */
+export interface StillLoanReceiptV1 {
   executionId: string;
   walletAddress: string;
   venue: StillLoanVenueV1;
@@ -117,6 +135,11 @@ export interface StillLoanOpenedV1 {
   facts: Record<string, unknown>;
   proof: Record<string, unknown> | null;
 }
+
+/** A borrow through Still that landed. */
+export type StillLoanOpenedV1 = StillLoanReceiptV1;
+/** A repayment through Still that landed and left no debt there. */
+export type StillLoanClosedV1 = StillLoanReceiptV1;
 
 export interface StillLoanNoticeRecordV1 {
   channel: NotificationChannelV1;
@@ -168,6 +191,18 @@ export interface StillLoanAlertRepositoryV1 {
   weekDue(input: { channel: NotificationChannelV1; weekCloseAt: string; freshSince: Date; firstReadBy: Date }): Promise<StillLoanWeekDueV1[]>;
   /** Borrows by these wallets confirmed at or after `since`, that this channel has not told. */
   openedDue(input: { channel: NotificationChannelV1; wallets: readonly string[]; since: Date }): Promise<StillLoanOpenedV1[]>;
+  /** Repayments by these wallets confirmed at or after `since` whose verified effect left no debt, that this channel has not told. */
+  closedDue(input: { channel: NotificationChannelV1; wallets: readonly string[]; since: Date }): Promise<StillLoanClosedV1[]>;
+  /**
+   * Calm loans whose worse band of this episode this channel told, calm at two readings in a row (so a margin
+   * that only touches the Watch line is not news), read at or after `freshSince`, and not yet told as back.
+   */
+  recoveredDue(input: { channel: NotificationChannelV1; freshSince: Date }): Promise<StillLoanAlertV1[]>;
+  /** Loans with a debt whose rate has read a jump over the one their owner heard of since `highSince` or before,
+   * read at or after `freshSince`, whose rate episode this channel has not told. */
+  rateDue(input: { channel: NotificationChannelV1; freshSince: Date; highSince: Date }): Promise<StillLoanAlertV1[]>;
+  /** A notice told this loan's owner this rate: the rate they last heard of, which ends a stretch of jump. */
+  markRateTold(input: { walletAddress: string; market: string; rateBps: number; at: Date }): Promise<void>;
   /** This channel told this notice; telling it again changes nothing. */
   recordNotice(input: StillLoanNoticeRecordV1): Promise<void>;
 }
@@ -195,6 +230,43 @@ export function stillLoanHoldKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' 
 /** The key a loan's week is told under. */
 export function stillLoanWeekKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market'>, weekCloseAt: string): string {
   return `${loan.walletAddress}|${loan.market}|${weekCloseAt}`;
+}
+
+/** The key a margin back is told under: the episode whose worse band it ends. */
+export function stillLoanRecoveredKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'episode'>): string {
+  return `${loan.walletAddress}|${loan.market}|${loan.episode}`;
+}
+
+/** The key a rate jump is told under. */
+export function stillLoanRateKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'rateEpisode'>): string {
+  return `${loan.walletAddress}|${loan.market}|${loan.rateEpisode}`;
+}
+
+/** How far a rate must rise over the one its owner heard of to be a jump: this many basis points, and half again. */
+export const STILL_LOAN_RATE_JUMP_BPS_V1 = 200;
+
+/** A rate is a jump over the one heard of when it is at least 2 points more and at least half again as much:
+ * 3.66% jumps at 5.66%, 10% at 15%. */
+export function stillLoanRateJumpedV1(toldBps: number, rateBps: number): boolean {
+  return rateBps >= toldBps + STILL_LOAN_RATE_JUMP_BPS_V1 && rateBps * 2 >= toldBps * 3;
+}
+
+/** What a loan keeps of its rate between readings. */
+export type StillLoanRateStateV1 = Pick<StillLoanAlertV1, 'rateToldBps' | 'rateToldAt' | 'rateHighSince' | 'rateEpisode'>;
+
+/**
+ * The rate state after a reading. A reading that said no rate changes nothing. The first rate read is the one
+ * the owner is taken to have heard of: what Still showed when the loan was made. A jump over the rate heard of
+ * starts a stretch, and the next episode, unless one is running; a rate that is no jump ends it.
+ */
+export function stillLoanRateAfterV1(before: StillLoanRateStateV1 | null, rateBps: number | null, at: string): StillLoanRateStateV1 {
+  const prior: StillLoanRateStateV1 = before
+    ? { rateToldBps: before.rateToldBps, rateToldAt: before.rateToldAt, rateHighSince: before.rateHighSince, rateEpisode: before.rateEpisode }
+    : { rateToldBps: null, rateToldAt: null, rateHighSince: null, rateEpisode: 0 };
+  if (rateBps === null) return prior;
+  if (prior.rateToldBps === null) return { ...prior, rateToldBps: rateBps, rateToldAt: at, rateHighSince: null };
+  if (!stillLoanRateJumpedV1(prior.rateToldBps, rateBps)) return { ...prior, rateHighSince: null };
+  return prior.rateHighSince !== null ? prior : { ...prior, rateHighSince: at, rateEpisode: prior.rateEpisode + 1 };
 }
 
 /**
@@ -248,6 +320,10 @@ function assertChannelV1(channel: string): void {
   }
 }
 
+function assertRateV1(rateBps: number): void {
+  if (!Number.isInteger(rateBps) || rateBps < 0 || rateBps > 1_000_000) throw new RouteStorageIntegrityError('a rate is whole basis points from 0 to 1000000');
+}
+
 function assertReadingV1(input: { walletAddress: string; block: string; lines: readonly StillLoanReadingLineV1[]; unread: readonly string[] }): void {
   assertWalletV1(input.walletAddress);
   if (!/^[1-9][0-9]{0,18}$/.test(input.block)) throw new RouteStorageIntegrityError('a block is a positive number');
@@ -262,9 +338,7 @@ function assertReadingV1(input: { walletAddress: string; block: string; lines: r
       throw new RouteStorageIntegrityError('a margin is whole basis points from 0 to 10000');
     }
     if (line.debtAtomic != null && !ATOMIC_V1.test(line.debtAtomic)) throw new RouteStorageIntegrityError('a debt is whole USDC base units');
-    if (line.rateBps != null && (!Number.isInteger(line.rateBps) || line.rateBps < 0 || line.rateBps > 1_000_000)) {
-      throw new RouteStorageIntegrityError('a rate is whole basis points from 0 to 1000000');
-    }
+    if (line.rateBps != null) assertRateV1(line.rateBps);
     if (line.holds && [...line.holds.held, ...line.holds.cleared].some((hold) => !HOLD_V1.test(hold))) {
       throw new RouteStorageIntegrityError("a hold is 'SYMBOL:kind'");
     }
@@ -296,6 +370,8 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
   readonly confirmedBorrowers = new Set<string>();
   /** Test seam: confirmed borrows through Still, as `openedDue` reads them. */
   readonly confirmedLoans: StillLoanOpenedV1[] = [];
+  /** Test seam: confirmed repayments through Still, as `closedDue` reads them; it keeps those that left no debt. */
+  readonly confirmedRepays: StillLoanClosedV1[] = [];
 
   async borrowers(input: { reachable: readonly string[]; limit: number }): Promise<string[]> {
     const reachable = new Set(input.reachable);
@@ -324,6 +400,7 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
           told: { base_app: null, telegram: null },
           debtAtomic: line.debtAtomic ?? null, rateBps: line.rateBps ?? null, interestAtomic: '0', estimatedAtomic: '0',
           holds, holdEpisode: appeared ? 1 : 0,
+          stateSince: at, ...stillLoanRateAfterV1(null, line.rateBps ?? null, at),
         });
         continue;
       }
@@ -332,11 +409,13 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
       const { holds, appeared } = stillLoanHoldsAfterV1(row.holds, line.holds);
       Object.assign(row, {
         episode: row.episode + (stillLoanStateRankV1(line.state) > stillLoanStateRankV1(row.state) ? 1 : 0),
+        stateSince: line.state === row.state ? row.stateSince : at,
         venue: line.venue, state: line.state, marginBps: line.marginBps, readAt: at, readBlock: input.block,
         debtAtomic: line.debtAtomic ?? row.debtAtomic, rateBps: line.rateBps ?? row.rateBps,
         interestAtomic: (BigInt(row.interestAtomic) + step.interest).toString(),
         estimatedAtomic: (BigInt(row.estimatedAtomic) + step.estimated).toString(),
         holds, holdEpisode: row.holdEpisode + (appeared ? 1 : 0),
+        ...stillLoanRateAfterV1(row, line.rateBps ?? null, at),
       });
     }
   }
@@ -407,6 +486,46 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
       .map((loan) => structuredClone(loan));
   }
 
+  async closedDue(input: { channel: NotificationChannelV1; wallets: readonly string[]; since: Date }): Promise<StillLoanClosedV1[]> {
+    assertChannelV1(input.channel);
+    const wallets = new Set(input.wallets);
+    return this.confirmedRepays
+      .filter((repay) => wallets.has(repay.walletAddress) && Date.parse(repay.confirmedAt) >= input.since.getTime()
+        && repay.proof?.remainingDebtAssets === '0' && !this.notices.has(`${input.channel}|closed|${repay.executionId}`))
+      .sort((a, b) => Date.parse(a.confirmedAt) - Date.parse(b.confirmedAt) || a.executionId.localeCompare(b.executionId))
+      .map((repay) => structuredClone(repay));
+  }
+
+  async recoveredDue(input: { channel: NotificationChannelV1; freshSince: Date }): Promise<StillLoanAlertV1[]> {
+    assertChannelV1(input.channel);
+    return [...this.loans.values()]
+      .filter((loan) => loan.state === 'calm' && loan.episode > 0 && loan.told[input.channel] === loan.episode
+        && Date.parse(loan.stateSince) < Date.parse(loan.readAt) && Date.parse(loan.readAt) >= input.freshSince.getTime()
+        && !this.notices.has(`${input.channel}|recovered|${stillLoanRecoveredKeyV1(loan)}`))
+      .sort(byLoanV1)
+      .map((loan) => structuredClone(loan));
+  }
+
+  async rateDue(input: { channel: NotificationChannelV1; freshSince: Date; highSince: Date }): Promise<StillLoanAlertV1[]> {
+    assertChannelV1(input.channel);
+    return [...this.loans.values()]
+      .filter((loan) => loan.rateHighSince !== null && Date.parse(loan.rateHighSince) <= input.highSince.getTime()
+        && loan.rateBps !== null && loan.rateToldBps !== null && loan.debtAtomic !== null && BigInt(loan.debtAtomic) > 0n
+        && Date.parse(loan.readAt) >= input.freshSince.getTime()
+        && !this.notices.has(`${input.channel}|rate|${stillLoanRateKeyV1(loan)}`))
+      .sort(byLoanV1)
+      .map((loan) => structuredClone(loan));
+  }
+
+  async markRateTold(input: { walletAddress: string; market: string; rateBps: number; at: Date }): Promise<void> {
+    assertWalletV1(input.walletAddress);
+    assertMarketV1(input.market);
+    assertRateV1(input.rateBps);
+    const loan = this.loans.get(`${input.walletAddress}|${input.market}`);
+    if (!loan) return;
+    Object.assign(loan, { rateToldBps: input.rateBps, rateToldAt: input.at.toISOString(), rateHighSince: null });
+  }
+
   async recordNotice(input: StillLoanNoticeRecordV1): Promise<void> {
     assertNoticeV1(input);
     const key = `${input.channel}|${input.kind}|${input.key}`;
@@ -439,12 +558,33 @@ function loanOfRowV1(row: Record<string, unknown>): StillLoanAlertV1 {
     estimatedAtomic: text(row.estimated_atomic) ?? '0',
     holds: Array.isArray(row.holds) ? row.holds.map(String).sort() : [],
     holdEpisode: Number(row.hold_episode ?? 0),
+    // A row written before migration 0100 entered its band no later than its last reading.
+    stateSince: at(row.state_since ?? row.read_at),
+    rateToldBps: int(row.rate_told_bps),
+    rateToldAt: row.rate_told_at == null ? null : at(row.rate_told_at),
+    rateHighSince: row.rate_high_since == null ? null : at(row.rate_high_since),
+    rateEpisode: Number(row.rate_episode ?? 0),
   };
 }
 
 function jsonObjectV1(value: unknown): Record<string, unknown> | null {
   const parsed = typeof value === 'string' ? (() => { try { return JSON.parse(value) as unknown; } catch { return null; } })() : value;
   return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+}
+
+/** A landed execution as a notice reads it; none when its review left no facts. */
+function receiptOfRowV1(row: Record<string, unknown>): StillLoanReceiptV1[] {
+  const facts = jsonObjectV1(row.facts);
+  if (!facts) return [];
+  return [{
+    executionId: String(row.execution_id),
+    walletAddress: String(row.wallet_address),
+    venue: String(row.venue) as StillLoanVenueV1,
+    marketId: String(row.market_id),
+    confirmedAt: new Date(row.updated_at as string | Date).toISOString(),
+    facts,
+    proof: jsonObjectV1(row.proof),
+  }];
 }
 
 /** Each loan's change is one statement, so two passes cannot interleave into
@@ -484,22 +624,35 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
       for (const line of input.lines) {
         const rank = stillLoanStateRankV1(line.state);
         const [row] = (await sql`
-          SELECT debt_atomic, rate_bps, read_at, read_block, holds FROM still_loan_alerts
+          SELECT debt_atomic, rate_bps, read_at, read_block, holds, state, state_since,
+                 rate_told_bps, rate_told_at, rate_high_since, rate_episode
+            FROM still_loan_alerts
            WHERE wallet_address = ${input.walletAddress} AND market = ${line.market}`) as Record<string, unknown>[];
+        const iso = (value: unknown) => new Date(value as string | Date).toISOString();
         const before = row
           ? { debtAtomic: row.debt_atomic == null ? null : String(row.debt_atomic), rateBps: row.rate_bps == null ? null : Number(row.rate_bps),
-            readAt: new Date(row.read_at as string | Date).toISOString(), readBlock: String(row.read_block),
-            holds: Array.isArray(row.holds) ? row.holds.map(String) : [] }
+            readAt: iso(row.read_at), readBlock: String(row.read_block),
+            holds: Array.isArray(row.holds) ? row.holds.map(String) : [],
+            state: String(row.state), stateSince: iso(row.state_since ?? row.read_at),
+            rateToldBps: row.rate_told_bps == null ? null : Number(row.rate_told_bps),
+            rateToldAt: row.rate_told_at == null ? null : iso(row.rate_told_at),
+            rateHighSince: row.rate_high_since == null ? null : iso(row.rate_high_since),
+            rateEpisode: Number(row.rate_episode ?? 0) }
           : null;
         const step = stillLoanInterestStepV1({ before, debtAtomic: line.debtAtomic ?? null, at: input.at });
         const { holds, appeared } = stillLoanHoldsAfterV1(before?.holds ?? [], line.holds);
+        const stateSince = before && before.state === line.state ? before.stateSince : at;
+        const rate = stillLoanRateAfterV1(before, line.rateBps ?? null, at);
         await sql`
           INSERT INTO still_loan_alerts AS a
             (wallet_address, market, venue, state, margin_bps, episode, created_at, read_at, read_block,
-             debt_atomic, rate_bps, interest_atomic, estimated_atomic, holds, hold_episode)
+             debt_atomic, rate_bps, interest_atomic, estimated_atomic, holds, hold_episode,
+             state_since, rate_told_bps, rate_told_at, rate_high_since, rate_episode)
           VALUES (${input.walletAddress}, ${line.market}, ${line.venue}, ${line.state}, ${line.marginBps},
                   ${line.state === 'calm' ? 0 : 1}, ${at}::timestamptz, ${at}::timestamptz, ${input.block}::bigint,
-                  ${line.debtAtomic ?? null}::numeric, ${line.rateBps ?? null}::integer, 0, 0, ${holds}::text[], ${appeared ? 1 : 0})
+                  ${line.debtAtomic ?? null}::numeric, ${line.rateBps ?? null}::integer, 0, 0, ${holds}::text[], ${appeared ? 1 : 0},
+                  ${stateSince}::timestamptz, ${rate.rateToldBps}::integer, ${rate.rateToldAt}::timestamptz,
+                  ${rate.rateHighSince}::timestamptz, ${rate.rateEpisode}::int)
           ON CONFLICT (wallet_address, market) DO UPDATE
              SET episode = a.episode + CASE
                    WHEN ${rank}::int > array_position(ARRAY['calm', 'watch', 'act', 'liquidation'], a.state) - 1
@@ -514,7 +667,12 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
                  interest_atomic = a.interest_atomic + ${step.interest.toString()}::numeric,
                  estimated_atomic = a.estimated_atomic + ${step.estimated.toString()}::numeric,
                  holds = EXCLUDED.holds,
-                 hold_episode = a.hold_episode + ${appeared ? 1 : 0}::int
+                 hold_episode = a.hold_episode + ${appeared ? 1 : 0}::int,
+                 state_since = EXCLUDED.state_since,
+                 rate_told_bps = EXCLUDED.rate_told_bps,
+                 rate_told_at = EXCLUDED.rate_told_at,
+                 rate_high_since = EXCLUDED.rate_high_since,
+                 rate_episode = EXCLUDED.rate_episode
            WHERE a.read_block <= EXCLUDED.read_block
              AND a.read_block = ${before ? before.readBlock : '0'}::bigint`;
       }
@@ -614,19 +772,69 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
               WHERE n.channel = ${input.channel} AND n.kind = 'opened' AND n.notice_key = e.execution_id::text)
          ORDER BY e.updated_at, e.execution_id
          LIMIT 50`) as Record<string, unknown>[];
-      return rows.flatMap((row) => {
-        const facts = jsonObjectV1(row.facts);
-        if (!facts) return [];
-        return [{
-          executionId: String(row.execution_id),
-          walletAddress: String(row.wallet_address),
-          venue: String(row.venue) as StillLoanVenueV1,
-          marketId: String(row.market_id),
-          confirmedAt: new Date(row.updated_at as string | Date).toISOString(),
-          facts,
-          proof: jsonObjectV1(row.proof),
-        }];
-      });
+      return rows.flatMap(receiptOfRowV1);
+    },
+
+    async closedDue(input) {
+      assertChannelV1(input.channel);
+      const wallets = input.wallets.filter((wallet) => WALLET_V1.test(wallet));
+      if (wallets.length === 0) return [];
+      const rows = (await sql`
+        SELECT e.execution_id::text AS execution_id, e.wallet_address, e.venue, e.market_id, e.updated_at,
+               e.run_json -> 'facts' AS facts, e.verification_json -> 'effect' AS proof
+          FROM lending_executions e
+         WHERE e.operation = 'repay' AND e.state = 'confirmed'
+           AND e.verification_json -> 'effect' ->> 'remainingDebtAssets' = '0'
+           AND e.updated_at >= ${input.since.toISOString()}::timestamptz
+           AND e.wallet_address = ANY(${wallets}::text[])
+           AND NOT EXISTS (
+             SELECT 1 FROM still_loan_notices n
+              WHERE n.channel = ${input.channel} AND n.kind = 'closed' AND n.notice_key = e.execution_id::text)
+         ORDER BY e.updated_at, e.execution_id
+         LIMIT 50`) as Record<string, unknown>[];
+      return rows.flatMap(receiptOfRowV1);
+    },
+
+    async recoveredDue(input) {
+      assertChannelV1(input.channel);
+      const rows = (await sql`
+        SELECT a.* FROM still_loan_alerts a
+         WHERE a.state = 'calm' AND a.episode > 0
+           AND (CASE WHEN ${input.channel}::text = 'base_app' THEN a.told_base_app ELSE a.told_telegram END) = a.episode
+           AND COALESCE(a.state_since, a.read_at) < a.read_at
+           AND a.read_at >= ${input.freshSince.toISOString()}::timestamptz
+           AND NOT EXISTS (
+             SELECT 1 FROM still_loan_notices n
+              WHERE n.channel = ${input.channel} AND n.kind = 'recovered'
+                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || a.episode::text)
+         ORDER BY a.wallet_address, a.market`) as Record<string, unknown>[];
+      return rows.map(loanOfRowV1);
+    },
+
+    async rateDue(input) {
+      assertChannelV1(input.channel);
+      const rows = (await sql`
+        SELECT a.* FROM still_loan_alerts a
+         WHERE a.rate_high_since IS NOT NULL
+           AND a.rate_high_since <= ${input.highSince.toISOString()}::timestamptz
+           AND a.rate_bps IS NOT NULL AND a.rate_told_bps IS NOT NULL AND a.debt_atomic > 0
+           AND a.read_at >= ${input.freshSince.toISOString()}::timestamptz
+           AND NOT EXISTS (
+             SELECT 1 FROM still_loan_notices n
+              WHERE n.channel = ${input.channel} AND n.kind = 'rate'
+                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || a.rate_episode::text)
+         ORDER BY a.wallet_address, a.market`) as Record<string, unknown>[];
+      return rows.map(loanOfRowV1);
+    },
+
+    async markRateTold(input) {
+      assertWalletV1(input.walletAddress);
+      assertMarketV1(input.market);
+      assertRateV1(input.rateBps);
+      await sql`
+        UPDATE still_loan_alerts
+           SET rate_told_bps = ${input.rateBps}, rate_told_at = ${input.at.toISOString()}::timestamptz, rate_high_since = NULL
+         WHERE wallet_address = ${input.walletAddress} AND market = ${input.market}`;
     },
 
     async recordNotice(input) {

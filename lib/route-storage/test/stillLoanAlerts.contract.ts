@@ -122,6 +122,11 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'week' }), /only a week's note counts interest/);
       await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'week', interestAtomic: '1', estimatedAtomic: '2' }), /only a week's note counts interest/);
       await assert.rejects(() => alerts.recordNotice({ ...notice, key: 'a key with spaces' }), /short plain text/);
+      await assert.rejects(() => alerts.recordNotice({ ...notice, kind: 'rate', interestAtomic: '1', estimatedAtomic: '0' }), /only a week's note counts interest/);
+      await assert.rejects(() => alerts.markRateTold({ walletAddress: WALLET, market: SPOKE, rateBps: 1.5, at: AT }), /from 0 to 1000000/);
+      await assert.rejects(() => alerts.markRateTold({ walletAddress: WALLET, market: '0x1234', rateBps: 100, at: AT }), /Aave spoke or a Morpho market id/);
+      await assert.rejects(() => alerts.recoveredDue({ channel: 'sms' as never, freshSince: AT }), /unknown notification channel/);
+      await assert.rejects(() => alerts.rateDue({ channel: 'sms' as never, freshSince: AT, highSince: AT }), /unknown notification channel/);
     });
   });
 
@@ -215,6 +220,84 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [owed('1000000950')], unread: [] });
       [week] = await alerts.weekDue({ ...ask, weekCloseAt: NEXT, freshSince: later(10) });
       assert.deepEqual([week!.loan.interestAtomic, week!.since, week!.interestBeforeAtomic], ['950', later(6).toISOString(), '475']);
+    });
+  });
+
+  describe(`${label}: a margin back is told once, after two calm readings, to a chat that heard the worse band`, () => {
+    test('calm once could be a margin touching the line; calm twice is told, once per episode, where the band was told', async () => {
+      const alerts = await make();
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [aave('watch', 3_000)], unread: [] });
+      await alerts.markTold({ walletAddress: WALLET, market: SPOKE, channel: 'telegram', episode: 1 });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [aave('calm', 3_900)], unread: [] });
+      let [loan] = await alerts.loansOf(WALLET);
+      assert.equal(loan!.stateSince, later(5).toISOString(), 'a new band begins at the reading that read it');
+      assert.deepEqual(await alerts.recoveredDue({ channel: 'telegram', freshSince: AT }), []);
+
+      await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [aave('calm', 4_100)], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.equal(loan!.stateSince, later(5).toISOString(), 'the same band keeps when it began');
+      const [back] = await alerts.recoveredDue({ channel: 'telegram', freshSince: AT });
+      assert.deepEqual([back!.state, back!.marginBps, back!.episode], ['calm', 4_100, 1]);
+      assert.deepEqual(await alerts.recoveredDue({ channel: 'base_app', freshSince: AT }), [], 'that channel never told the band');
+      assert.deepEqual(await alerts.recoveredDue({ channel: 'telegram', freshSince: later(11) }), [], 'only a fresh reading is told');
+      await alerts.recordNotice({ channel: 'telegram', kind: 'recovered', key: `${WALLET}|${SPOKE}|1`, walletAddress: WALLET, market: SPOKE, at: later(10) });
+      assert.deepEqual(await alerts.recoveredDue({ channel: 'telegram', freshSince: AT }), []);
+
+      // A later fall is a new episode: its margin back is told once its band was.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(15), block: '400', lines: [aave('act', 1_500)], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(20), block: '500', lines: [aave('calm', 4_000)], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: later(25), block: '600', lines: [aave('calm', 4_000)], unread: [] });
+      assert.deepEqual(await alerts.recoveredDue({ channel: 'telegram', freshSince: AT }), [], 'the act band of episode 2 was not told');
+      await alerts.markTold({ walletAddress: WALLET, market: SPOKE, channel: 'telegram', episode: 2 });
+      assert.deepEqual((await alerts.recoveredDue({ channel: 'telegram', freshSince: AT })).map((row) => row.episode), [2]);
+      // A loan calm from its first reading never had a band to be back from.
+      await alerts.recordReading({ walletAddress: OTHER, at: later(20), block: '500', lines: [morpho('calm', 6_000)], unread: [] });
+      await alerts.recordReading({ walletAddress: OTHER, at: later(25), block: '600', lines: [morpho('calm', 6_000)], unread: [] });
+      assert.deepEqual((await alerts.recoveredDue({ channel: 'telegram', freshSince: AT })).map((row) => row.walletAddress), [WALLET]);
+    });
+  });
+
+  describe(`${label}: a rate jump over the rate heard of is told once per stretch`, () => {
+    const rated = (rateBps: number) => ({ ...aave('calm', 5_000), debtAtomic: '1000000000', rateBps });
+
+    test('the first rate read is the one heard of; a jump held long enough is due; telling a rate makes it the one heard of', async () => {
+      const alerts = await make();
+      const read = (minutes: number, block: string, line: StillLoanReadingLineV1) =>
+        alerts.recordReading({ walletAddress: WALLET, at: later(minutes), block, lines: [line], unread: [] });
+      await read(0, '100', rated(410));
+      let [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateToldBps, loan!.rateToldAt, loan!.rateHighSince, loan!.rateEpisode], [410, AT.toISOString(), null, 0]);
+      // Up, but less than 2 points: no jump.
+      await read(5, '200', rated(600));
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateBps, loan!.rateHighSince], [600, null]);
+      // A jump starts a stretch; a reading with no rate, or one still high, keeps when it began.
+      await read(10, '300', rated(1_240));
+      await read(15, '400', aave('calm', 5_000));
+      await read(20, '500', rated(1_300));
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateBps, loan!.rateToldBps, loan!.rateHighSince, loan!.rateEpisode], [1_300, 410, later(10).toISOString(), 1]);
+      const ask = { channel: 'telegram' as const, freshSince: AT };
+      assert.deepEqual(await alerts.rateDue({ ...ask, highSince: later(9) }), [], 'not held long enough yet');
+      assert.deepEqual(await alerts.rateDue({ ...ask, freshSince: later(21), highSince: later(10) }), [], 'only a fresh reading is told');
+      const [due] = await alerts.rateDue({ ...ask, highSince: later(10) });
+      assert.deepEqual([due!.walletAddress, due!.rateBps, due!.rateToldBps, due!.rateEpisode], [WALLET, 1_300, 410, 1]);
+      await alerts.recordNotice({ channel: 'telegram', kind: 'rate', key: `${WALLET}|${SPOKE}|1`, walletAddress: WALLET, market: SPOKE, at: later(20) });
+      assert.deepEqual(await alerts.rateDue({ ...ask, highSince: later(20) }), []);
+      assert.equal((await alerts.rateDue({ ...ask, channel: 'base_app', highSince: later(20) })).length, 1, 'the other channel has not told it');
+
+      await alerts.markRateTold({ walletAddress: WALLET, market: SPOKE, rateBps: 1_300, at: later(20) });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateToldBps, loan!.rateToldAt, loan!.rateHighSince, loan!.rateEpisode], [1_300, later(20).toISOString(), null, 1]);
+      await read(25, '600', rated(1_300));
+      assert.deepEqual(await alerts.rateDue({ ...ask, channel: 'base_app', highSince: later(30) }), [], 'no jump over the rate heard of now');
+      // Past a jump over 13% (15% and 19.5%): a new stretch, a new episode; back under ends it.
+      await read(30, '700', rated(2_000));
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateHighSince, loan!.rateEpisode], [later(30).toISOString(), 2]);
+      await read(35, '800', rated(1_900));
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.rateHighSince, loan!.rateEpisode], [null, 2]);
     });
   });
 }

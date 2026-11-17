@@ -78,7 +78,7 @@ describe('the Telegram client', () => {
     assert.deepEqual(sent.map((message) => message.chatId), [CHAT_A, CHAT_B]);
     assert.deepEqual(result, { sent: [ME, BASE_APP, YOU], failed: { notSaved: 0, disabled: 0, other: 0 } });
     assert.equal(sent[0]!.html, '<b>GOOGL: dividend in shares</b>\nYour &lt;GOOGLc&gt; now track 0.038% more GOOGL shares each.');
-    assert.deepEqual(sent[0]!.button, { text: 'Open in Miorail', url: 'https://miorail.xyz/stocks/googl' });
+    assert.deepEqual(sent[0]!.button, { text: 'Open in Still', url: 'https://miorail.xyz/stocks/googl' });
   });
 
   test('a chat that blocked the bot is disconnected, and the others still hear', async () => {

@@ -1450,17 +1450,21 @@ describe('Still loans: told once per worse band, ahead of everything else', () =
     assert.notEqual(broken.outcome, 'stopped');
   });
 
-  test('a band first, then a hold, a loan opened and the week\'s note; each is marked told with what it was', async () => {
+  test('a band first, then a hold, a rate jump, a margin back, a loan opened, one repaid and the week\'s note; each is marked told with what it was', async () => {
     const plan = planStillLoanNoticesV1({
       due: [
-        { ...due(A), kind: 'week', key: `${A}|${SPOKE}|w`, interestAtomic: '10', estimatedAtomic: '0', title: 'Still loan: your week' },
+        { ...due(A), kind: 'week', key: `${A}|${SPOKE}|w`, interestAtomic: '10', estimatedAtomic: '0', title: 'Still loan: your week', rateBps: 366 },
+        { ...due(B), kind: 'closed', key: 'exec-2', title: 'Still loan closed' },
         { ...due(B), kind: 'opened', key: 'exec-1', title: 'Still loan opened' },
+        { ...due(A), kind: 'recovered', key: `${A}|${SPOKE}|1`, title: 'Still loan: margin back' },
         { ...due(B, 4), title: 'Still loan: margin 19%' },
+        { ...due(B), kind: 'rate', key: `${B}|${SPOKE}|1`, title: 'Still loan: rate 12.40%', rateBps: 1_240 },
         { ...due(A), kind: 'hold', key: `${A}|${SPOKE}|1`, title: 'Still loan: NVDAc paused' },
       ],
       enabled: new Set([A, B]),
     });
-    assert.deepEqual(plan.groups.map((group) => group.title), ['Still loan: margin 19%', 'Still loan: NVDAc paused', 'Still loan opened', 'Still loan: your week']);
+    assert.deepEqual(plan.groups.map((group) => group.title), ['Still loan: margin 19%', 'Still loan: NVDAc paused', 'Still loan: rate 12.40%',
+      'Still loan: margin back', 'Still loan opened', 'Still loan closed', 'Still loan: your week']);
 
     const repository = new InMemoryBaseAppNotificationRepositoryV1();
     const { client } = fakeClient({ enabledWallets: async () => new Set([A, B]) });
@@ -1476,9 +1480,11 @@ describe('Still loans: told once per worse band, ahead of everything else', () =
         },
       },
     });
-    assert.deepEqual(report.stillLoans, { due: 4, sent: 4, notEnabled: 0 });
+    assert.deepEqual(report.stillLoans, { due: 7, sent: 7, notEnabled: 0 });
     assert.deepEqual(told.map((notice) => [notice.kind ?? 'band', notice.key ?? null, notice.walletAddress]),
-      [['band', null, B], ['hold', `${A}|${SPOKE}|1`, A], ['opened', 'exec-1', B], ['week', `${A}|${SPOKE}|w`, A]]);
-    assert.deepEqual([told[3]!.interestAtomic, told[3]!.estimatedAtomic], ['10', '0'], "a week's note is marked with the interest it told");
+      [['band', null, B], ['hold', `${A}|${SPOKE}|1`, A], ['rate', `${B}|${SPOKE}|1`, B], ['recovered', `${A}|${SPOKE}|1`, A],
+        ['opened', 'exec-1', B], ['closed', 'exec-2', B], ['week', `${A}|${SPOKE}|w`, A]]);
+    assert.deepEqual([told[6]!.interestAtomic, told[6]!.estimatedAtomic], ['10', '0'], "a week's note is marked with the interest it told");
+    assert.deepEqual(told.map((notice) => notice.rateBps ?? null), [null, null, 1_240, null, null, null, 366], 'a notice that said a rate is marked with it');
   });
 });

@@ -28,7 +28,8 @@ export const TELEGRAM_REPLIES_V1 = {
     'You will get here what Miorail knows about your stocks: a dividend paid in shares on a stock you hold, ' +
     'an issuer changing or scheduling a multiplier, a move in the cost of exiting a stock you watch, your Radar ' +
     'alerts, and the week on Base every Friday evening. If you borrow through Still, you will also hear here ' +
-    'each time the loan gets closer to liquidation.\n\n' +
+    'when a loan opens and when it is repaid, its debt and interest every Friday evening, a jump in its rate, ' +
+    'a pause or freeze on its collateral, each time it gets closer to liquidation, and when its margin is back.\n\n' +
     `${NEVER_SIGN_V1} /stop disconnects.`,
   alreadyConnected: (wallet: string) => `${shortWalletV1(wallet)} is already connected here. /status shows everything connected.`,
   expired:

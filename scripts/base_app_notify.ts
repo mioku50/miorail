@@ -28,6 +28,8 @@ import {
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
   stillLoanHoldKeyV1,
+  stillLoanRateKeyV1,
+  stillLoanRecoveredKeyV1,
   stillLoanWeekKeyV1,
   type NotificationChannelV1,
 } from '@mioagent/route-storage';
@@ -60,11 +62,15 @@ import {
 } from '../artifacts/api-server/lib/stillLoanAlerts.js';
 import { readStillLoanTokenHoldsV1, stillLoanHoldClientsV1 } from '../artifacts/api-server/lib/stillLoanHolds.js';
 import {
-  STILL_AAVE_SPOKE_V1,
   STILL_LOAN_OPENED_FOR_MS_V1,
+  STILL_LOAN_RATE_HIGH_FOR_MS_V1,
   STILL_LOAN_WEEK_AFTER_MS_V1,
+  stillLoanClosedNoticeV1,
   stillLoanHoldNoticeV1,
+  stillLoanMarketOfV1,
   stillLoanOpenedNoticeV1,
+  stillLoanRateNoticeV1,
+  stillLoanRecoveredNoticeV1,
   stillLoanWeekNoticeV1,
 } from '../artifacts/api-server/lib/stillLoanNotices.js';
 import { createStillMirrorServiceV1 } from '../artifacts/api-server/lib/stillMirror.js';
@@ -181,18 +187,37 @@ async function main(): Promise<void> {
         return notice ? [{ walletAddress: loan.walletAddress, market: loan.market, episode: loan.holdEpisode, ...notice,
           kind: 'hold' as const, key: stillLoanHoldKeyV1(loan) }] : [];
       }));
+      // A rate that has held a jump over the one its owner heard of for an hour.
+      const rates = await quietly(channel, 'rate', async () => (await loanAlerts.rateDue({ channel, freshSince,
+        highSince: new Date(now.getTime() - STILL_LOAN_RATE_HIGH_FOR_MS_V1) })).flatMap((loan) => {
+        const notice = stillLoanRateNoticeV1(loan);
+        return notice ? [{ walletAddress: loan.walletAddress, market: loan.market, episode: loan.rateEpisode, ...notice,
+          kind: 'rate' as const, key: stillLoanRateKeyV1(loan) }] : [];
+      }));
+      // A loan whose worse band this chat heard of, calm again at two readings in a row.
+      const recovered = await quietly(channel, 'recovered', async () => (await loanAlerts.recoveredDue({ channel, freshSince })).map((loan) => ({
+        walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode, ...stillLoanRecoveredNoticeV1(loan),
+        kind: 'recovered' as const, key: stillLoanRecoveredKeyV1(loan) })));
       // A borrow is told while it is fresh: a wallet that connects a chat right after its loan still hears of it.
+      const receiptsSince = new Date(now.getTime() - STILL_LOAN_OPENED_FOR_MS_V1);
       const opened = await quietly(channel, 'opened', async () => {
-        const borrows = await loanAlerts.openedDue({ channel, wallets: [...reachable], since: new Date(now.getTime() - STILL_LOAN_OPENED_FOR_MS_V1) });
+        const borrows = await loanAlerts.openedDue({ channel, wallets: [...reachable], since: receiptsSince });
         const out: StillLoanDueV1[] = [];
         for (const borrow of borrows) {
-          const market = borrow.venue === 'aave-v4' ? STILL_AAVE_SPOKE_V1 : borrow.marketId.toLowerCase();
+          const market = stillLoanMarketOfV1(borrow);
           const loan = (await loanAlerts.loansOf(borrow.walletAddress)).find((row) => row.market === market) ?? null;
           const notice = stillLoanOpenedNoticeV1({ opened: borrow, loan, freshSince });
-          if (notice) out.push({ walletAddress: borrow.walletAddress, market: borrow.marketId, episode: 0, ...notice, kind: 'opened', key: borrow.executionId });
+          if (notice) out.push({ walletAddress: borrow.walletAddress, market, episode: 0, ...notice, kind: 'opened', key: borrow.executionId });
         }
         return out;
       });
+      // A repayment that left no debt, told the same way, from its receipt.
+      const closed = await quietly(channel, 'closed', async () => (await loanAlerts.closedDue({ channel, wallets: [...reachable], since: receiptsSince }))
+        .flatMap((repay) => {
+          const notice = stillLoanClosedNoticeV1(repay);
+          return notice ? [{ walletAddress: repay.walletAddress, market: stillLoanMarketOfV1(repay), episode: 0, ...notice,
+            kind: 'closed' as const, key: repay.executionId }] : [];
+        }));
       // The week's note, in the weekly summary's window: once a week per open loan Still has read for a day.
       const window = weeklySummaryDueV1(now);
       const weeks = window ? await quietly(channel, 'week', async () => (await loanAlerts.weekDue({ channel, weekCloseAt: window.weekCloseAt, freshSince,
@@ -201,15 +226,25 @@ async function main(): Promise<void> {
         return notice ? [{ walletAddress: week.loan.walletAddress, market: week.loan.market, episode: 0, ...notice, kind: 'week' as const,
           key: stillLoanWeekKeyV1(week.loan, window.weekCloseAt), interestAtomic: week.loan.interestAtomic, estimatedAtomic: week.loan.estimatedAtomic }] : [];
       })) : [];
-      return [...bands, ...holds, ...opened, ...weeks];
+      return [...bands, ...holds, ...rates, ...recovered, ...opened, ...closed, ...weeks];
     },
     told: async (notice: StillLoanDueV1) => {
+      const at = new Date();
       if (!notice.kind || notice.kind === 'band') {
         await loanAlerts.markTold({ walletAddress: notice.walletAddress, market: notice.market, episode: notice.episode, channel });
-        return;
+      } else {
+        await loanAlerts.recordNotice({ channel, kind: notice.kind, key: notice.key!, walletAddress: notice.walletAddress, market: notice.market,
+          at, ...(notice.kind === 'week' ? { interestAtomic: notice.interestAtomic!, estimatedAtomic: notice.estimatedAtomic! } : {}) });
       }
-      await loanAlerts.recordNotice({ channel, kind: notice.kind, key: notice.key!, walletAddress: notice.walletAddress, market: notice.market,
-        at: new Date(), ...(notice.kind === 'week' ? { interestAtomic: notice.interestAtomic!, estimatedAtomic: notice.estimatedAtomic! } : {}) });
+      // A notice that said the rate makes it the one its owner heard of: a later jump is counted from it. The
+      // notice is already kept as told, so a failure here only leaves the older rate to count from, and is said so.
+      if (notice.rateBps !== undefined) {
+        await loanAlerts.markRateTold({ walletAddress: notice.walletAddress, market: notice.market, rateBps: notice.rateBps, at })
+          .catch((cause: unknown) => {
+            console.log(JSON.stringify({ event: 'still_loan_rate_told', channel, kind: notice.kind ?? 'band', outcome: 'failed',
+              error: describeErrorV1(cause).slice(0, 120) }));
+          });
+      }
     },
   });
 

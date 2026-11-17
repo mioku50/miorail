@@ -1327,9 +1327,10 @@ export function planAerodromeRewardNoticesV1(input: {
 // Still loans
 // ---------------------------------------------------------------------------
 
-/** What a Still loan notice tells: a worse band, a hold on the collateral, a loan just opened, or the week's note. */
-export type StillLoanNoticeKindV1 = 'band' | 'hold' | 'opened' | 'week';
-const STILL_LOAN_NOTICE_ORDER_V1: readonly StillLoanNoticeKindV1[] = ['band', 'hold', 'opened', 'week'];
+/** What a Still loan notice tells: a worse band, a hold on the collateral, a rate that jumped, a margin back, a loan
+ * just opened or repaid, or the week's note. */
+export type StillLoanNoticeKindV1 = 'band' | 'hold' | 'rate' | 'recovered' | 'opened' | 'closed' | 'week';
+const STILL_LOAN_NOTICE_ORDER_V1: readonly StillLoanNoticeKindV1[] = ['band', 'hold', 'rate', 'recovered', 'opened', 'closed', 'week'];
 
 /** A Still loan notice, ready to be told. */
 export interface StillLoanDueV1 {
@@ -1348,14 +1349,17 @@ export interface StillLoanDueV1 {
   /** A week's note: the interest count it tells up to. */
   interestAtomic?: string;
   estimatedAtomic?: string;
+  /** The borrow rate the message states, when it states one: once told, the rate the loan's owner last heard of. */
+  rateBps?: number;
 }
 
 /**
  * One push per notice, to the wallet that holds the loan. The daily cap does
  * not apply: a margin running out or a collateral held is not one more update,
- * and none of these can flood a chat (each band, hold and borrow is told once,
- * a loan's note once a week). A band goes first, then a hold, then a loan
- * opened, then the week's notes.
+ * and none of these can flood a chat (each band, hold, jump, margin back,
+ * borrow and repayment is told once, a loan's note once a week). A band goes
+ * first, then a hold, a rate that jumped, a margin back, a loan opened, a loan
+ * repaid, then the week's notes.
  */
 export function planStillLoanNoticesV1(input: {
   due: readonly StillLoanDueV1[];
