@@ -176,14 +176,37 @@ test('a reading Bitrefill could not give again stays, named as its last word and
   assert.deepEqual(invoiceReads, []);
 });
 
-test('a repayment that took the stock back names how much of it came back, once confirmed', async () => {
-  const { deps } = await fixture({ payment: null, state: 'confirmed', returning: true });
-  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
-  assert.deepEqual([status.operation, status.collateralReturned], ['repay', '0.03014121']);
-  assert.match(status.next, /The loan is closed and 0\.03014121 NVDAc is back in the wallet\./);
-  assert.equal(StillReviewStatusOutputV1Schema.safeParse(status).success, true);
-  const open = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, (await fixture({ payment: null, state: 'submitted', returning: true })).deps);
-  assert.doesNotMatch(open.next, /back in the wallet/);
+test('a repayment that took the stock back names how much of it came back, as its receipt shows (audit MCP-1)', async () => {
+  const proven = async (state: LoanExecutionV1['state'], effect?: Record<string, unknown>) => {
+    const { deps } = await fixture({ payment: null, state, returning: true });
+    const base = deps.refresh;
+    deps.refresh = async (input) => {
+      const record = await base(input);
+      return record && (effect ? { ...record, verification: { effect } } : record);
+    };
+    const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+    assert.equal(StillReviewStatusOutputV1Schema.safeParse(status).success, true);
+    return status;
+  };
+  const closed = await proven('confirmed', { remainingDebtAssets: '0', collateralReturnedAssets: '3014121' });
+  assert.deepEqual([closed.operation, closed.collateralReturned], ['repay', '0.03014121']);
+  assert.match(closed.next, /The loan is closed and 0\.03014121 NVDAc is back in the wallet\./);
+  // Not yet sent, or sent and not read: what it is to return, said as that, and no amount as returned.
+  for (const state of ['ready', 'submitted'] as const) {
+    const open = await proven(state);
+    assert.equal(open.collateralReturned, undefined, state);
+    assert.match(open.next, /Once it lands, this review returns 0\.03014121 NVDAc to the wallet; nothing has come back yet\./);
+    assert.doesNotMatch(open.next, /back in the wallet|closed/);
+  }
+  // Failed, or confirmed with no receipt effect read: nothing came back as far as Still knows.
+  for (const status of [await proven('failed'), await proven('confirmed')]) {
+    assert.equal(status.collateralReturned, undefined);
+    assert.doesNotMatch(status.next, /back in the wallet|came back|is closed/);
+  }
+  // Confirmed with debt still owing: never "closed".
+  const owing = await proven('confirmed', { remainingDebtAssets: '23', collateralReturnedAssets: '3014121' });
+  assert.doesNotMatch(owing.next, /The loan is closed/);
+  assert.match(owing.next, /0\.03014121 NVDAc came back to the wallet\..*0\.000023 USDC owing: the loan is not closed until that is repaid too\./);
 });
 
 test('a loan without a purchase has no purchase block, and unknown is never called a failure', async () => {

@@ -33,7 +33,7 @@ export const StillReviewStatusOutputV1Schema = z.object({
   operation: z.enum(['borrow', 'repay']).optional(),
   venue: z.enum(['aave-v4', 'morpho']).optional(),
   collateral: z.string().optional(),
-  /** Repay all and take the stock back: how much of the stock this review returns to the wallet, in its own units. */
+  /** Repay all and take the stock back, confirmed: how much of the stock the receipt shows back in the wallet, in its own units. */
   collateralReturned: z.string().optional(),
   transactionHash: z.string().nullable().optional(),
   errorCode: z.string().nullable().optional(),
@@ -133,10 +133,22 @@ export async function stillReviewStatusV1(
   const paid = record.state === 'confirmed' && purchase
     ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares the purchase without naming the wallet.`
     : '';
-  const returned = facts.collateralReturnAssets === undefined ? null : unitsTextV1(BigInt(facts.collateralReturnAssets), facts.collateralDecimals);
-  // What a confirmed Repay all left owing, as the review page reads it from the same record.
-  const left = (record.verification?.effect as { remainingDebtAssets?: unknown } | undefined)?.remainingDebtAssets;
-  const tail = record.state === 'confirmed' && facts.operation === 'repay' && facts.amountMode === 'all' && typeof left === 'string' && /^[1-9][0-9]{0,38}$/.test(left) ? left : null;
+  // What came back and what is left are what the receipt proved, never what the plan expected (audit MCP-1,
+  // 2026-11-18: the plan's return was said in every state, and "the loan is closed" beside a debt still owing).
+  const effect = record.verification?.effect as { remainingDebtAssets?: unknown; collateralReturnedAssets?: unknown } | undefined;
+  const provenReturn = record.state === 'confirmed' && typeof effect?.collateralReturnedAssets === 'string' && /^[1-9][0-9]{0,38}$/.test(effect.collateralReturnedAssets)
+    ? effect.collateralReturnedAssets : null;
+  const returned = provenReturn === null ? null : unitsTextV1(BigInt(provenReturn), facts.collateralDecimals);
+  // What this review is to return once it lands: said as that, while it has not.
+  const planned = facts.collateralReturnAssets !== undefined && (record.state === 'ready' || record.state === 'awaiting_wallet' || record.state === 'submitted')
+    ? unitsTextV1(BigInt(facts.collateralReturnAssets), facts.collateralDecimals) : null;
+  // What a confirmed repayment left owing, as the review page reads it from the same record.
+  const leftRaw = record.state === 'confirmed' && typeof effect?.remainingDebtAssets === 'string' && /^[0-9]{1,39}$/.test(effect.remainingDebtAssets)
+    ? BigInt(effect.remainingDebtAssets) : null;
+  const left = leftRaw !== null && leftRaw > 0n ? leftRaw.toString() : null;
+  const tail = facts.operation === 'repay' && facts.amountMode === 'all' ? left : null;
+  // Closed only when the receipt shows the stock came back and nothing owing.
+  const closed = returned !== null && leftRaw === 0n;
   // Confirmed, and another hand moved the position too around then (audit LM-1).
   const movedOutside = loanPositionMovedOutsideV1(record);
   return {
@@ -147,7 +159,9 @@ export async function stillReviewStatusV1(
     next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? `${STOPPED_NEXT_V1}${loanPaymentMayStillBeSentV1(record)
       ? ' The user stopped it after their wallet was asked for the payment, and that request may still be open in the wallet: confirmed, it pays this invoice from the loan’s USDC; declined, the USDC stays in the wallet. Paying the invoice from the wallet another way is not offered, so it is never paid twice.' : ''}`
       : record.state === 'failed' && record.errorCode === LOAN_WALLET_SENT_NOTHING_V1 ? RELEASED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
-      record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}${
+      closed ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.`
+        : returned !== null ? ` ${returned} ${facts.collateralSymbol} came back to the wallet.`
+          : planned !== null ? ` Once it lands, this review returns ${planned} ${facts.collateralSymbol} to the wallet; nothing has come back yet.` : ''}${
       // A Repay all on Aave that landed and left interest owing (audit LEND-2): the loan is not closed yet.
       tail === null ? '' : movedOutside ? ` ${usdcTextV1(tail)} USDC is still owing after it: the loan is not closed until that is repaid too.`
         : ` Interest that added to the debt until the repayment landed left ${usdcTextV1(tail)} USDC owing: the loan is not closed until that is repaid too.`}${
