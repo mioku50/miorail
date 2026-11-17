@@ -11,6 +11,9 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
+import { loanReadyFixture } from '../lib/loanExecutionTestFixtures.js';
+import { stillLoopsRuntimeV1 } from '../lib/stillLoops.js';
+import { InMemoryStillLoopRepositoryV1 } from '@mioagent/route-storage';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendInvoiceReadsV1 } from '../lib/stillSpendInvoiceReads.js';
@@ -434,6 +437,37 @@ describe('what one wallet reads of its own invoice', () => {
     }
     assert.deepEqual(settled, { unpaid: false, payment_detected: false, payment_confirmed: false, pending: false,
       complete: true, blocked: true, denied: true, payment_error: true });
+  });
+
+  it('keeps Bitrefill’s word that the card arrived for the Loop the confirmed loan that paid it made', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    const owner = { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET };
+    const run = loanReadyFixture({ expiresAt: new Date(NOW.getTime() + 30_000).toISOString() });
+    run.facts = { ...run.facts, operation: 'borrow', venue: 'aave-v4', collateralTokenAddress: STOCKS.find((stock) => stock.id === 'AAPLc')!.token.toLowerCase(),
+      collateralSymbol: 'AAPLc', payment: { merchant: 'bitrefill', orderId: INVOICE, payTo: PAY_TO, assets: '27340000', productName: 'iTunes Germany',
+        packageValue: '25', faceCurrency: 'EUR', expiresAt: '2026-11-01T12:15:00.000Z', productId: 'itunes-germany' } };
+    const put = await loans.putReady({ owner, draftId: 'loop-draft', run, now: NOW });
+    const armed = await loans.arm({ owner, executionId: put.executionId, callsHash: run.callsHash, signingTermsHash: run.signingTermsHash, now: NOW });
+    assert.ok(armed.ok);
+    await loans.recordSubmission({ owner, executionId: put.executionId, attemptId: armed.attemptId, outcome: 'submitted', batchId: 'loop-batch', now: NOW });
+    await loans.recordVerification({ owner, executionId: put.executionId, expectedVersion: (await loans.get({ owner, executionId: put.executionId }))!.version,
+      state: 'confirmed', transactionHash: `0x${'ab'.repeat(32)}`, proof: { callsHash: run.callsHash, blockNumber: '53100050', receiptFingerprint: 'fixture' }, errorCode: null, now: NOW });
+    const repository = new InMemoryStillLoopRepositoryV1();
+    const originalLoops = { ...stillLoopsRuntimeV1 };
+    try {
+      Object.assign(stillLoopsRuntimeV1, { enabled: () => true, repository: () => repository, team: () => new Set<string>(), now: () => NOW });
+      invoiceStatus = 'pending';
+      Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1() });
+      await read();
+      assert.equal(await repository.byExecution(put.executionId), null, 'an unsettled invoice reads nothing more');
+      invoiceStatus = 'complete';
+      Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1() });
+      assert.equal((await read()).body.settled, true);
+      const loop = await repository.byExecution(put.executionId);
+      assert.deepEqual([loop?.loopNo, loop?.deliveredAt], [1, NOW.toISOString()]);
+    } finally {
+      Object.assign(stillLoopsRuntimeV1, originalLoops);
+    }
   });
 
   it('keeps Bitrefill’s last reading, with the reason, when it cannot be asked again', async () => {

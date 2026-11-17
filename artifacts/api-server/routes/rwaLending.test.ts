@@ -8,6 +8,8 @@ import { repayAllTailAtomicV1, rwaLendingRouter, rwaLendingRuntimeV1 } from './r
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { issueLendingDraftV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
+import { stillLoopsRuntimeV1 } from '../lib/stillLoops.js';
+import { InMemoryStillLoopRepositoryV1 } from '@mioagent/route-storage';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 
 const wallet = '0x1111111111111111111111111111111111111111', other = '0x2222222222222222222222222222222222222222';
@@ -97,6 +99,35 @@ describe('session-owned lending HTTP boundary', () => {
     const own = await request(app()).get(`${base}/lending/review/${draft(repayQuestion)}`);
     assert.equal(own.body.state, 'ready');
     assert.equal('origin' in ((await store.get({ owner, executionId: own.body.executionId }))?.run.facts ?? {}), false);
+  });
+  it('a confirmed loan that paid its own company’s card answers with its Loop, written once', async () => {
+    const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+    const apple = STOCKS.find((stock) => stock.id === 'AAPLc')!.token.toLowerCase();
+    const run = ready({ operation: 'borrow', collateralTokenAddress: apple, borrowAssets: '27340000', collateralSupplyAssets: '0' });
+    run.facts = { ...run.facts, collateralSymbol: 'AAPLc', origin: { kind: 'mcp', client: 'claude' }, payment: { merchant: 'bitrefill',
+      orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: `0x${'3'.repeat(40)}`, assets: '27340000', productName: 'iTunes Germany', packageValue: '25',
+      faceCurrency: 'EUR', expiresAt: '2026-10-29T03:15:00.000Z', productId: 'itunes-germany' } };
+    const put = await store.putReady({ owner, draftId: 'loop-draft', run, now });
+    const armed = await store.arm({ owner, executionId: put.executionId, callsHash: run.callsHash, signingTermsHash: run.signingTermsHash, now });
+    assert.ok(armed.ok);
+    await store.recordSubmission({ owner, executionId: put.executionId, attemptId: armed.attemptId, outcome: 'submitted', batchId: 'loop-batch', now });
+    const sent = await store.get({ owner, executionId: put.executionId });
+    await store.recordVerification({ owner, executionId: put.executionId, expectedVersion: sent!.version, state: 'confirmed', transactionHash: `0x${'ab'.repeat(32)}`,
+      proof: { callsHash: run.callsHash, blockNumber: '53100050', receiptFingerprint: 'fixture' }, errorCode: null, now });
+    const loops = new InMemoryStillLoopRepositoryV1();
+    const originalLoops = { ...stillLoopsRuntimeV1 };
+    try {
+      Object.assign(stillLoopsRuntimeV1, { enabled: () => false, repository: () => loops, team: () => new Set<string>(), now: () => now });
+      assert.equal((await request(app()).get(`${base}/lending/executions/${put.executionId}`).expect(200)).body.loop, undefined, 'off: no Loop');
+      Object.assign(stillLoopsRuntimeV1, { enabled: () => true });
+      for (let read = 0; read < 2; read += 1) {
+        const answer = await request(app()).get(`${base}/lending/executions/${put.executionId}`).expect(200);
+        assert.deepEqual(answer.body.loop, { loopNo: 1, brand: 'apple', complete: false, undelivered: null, onWall: false, team: false });
+      }
+      assert.equal((await loops.byExecution(put.executionId))?.via, 'claude');
+    } finally {
+      Object.assign(stillLoopsRuntimeV1, originalLoops);
+    }
   });
   it('persists an immutable attempt before the wallet and never treats a batch hint as success', async () => {
     const signed = draft(repayQuestion), read = await request(app()).get(`${base}/lending/review/${signed}`);

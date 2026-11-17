@@ -23,6 +23,7 @@ import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDeliveryV1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1, type SpendDeliveryV1 } from '../lib/stillSpendOrders.js';
 import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1, loanStepsStandingV1, loanStoppedBeforePaymentV1, nextStoppedStepLandedV1, recheckLoanStepsV1, remainingQuestionV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
+import { stillLoopOfExecutionV1, stillLoopWireV1 } from '../lib/stillLoops.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import { offerSponsorshipV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
@@ -538,7 +539,8 @@ rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   if (!id.safeParse(req.params.id).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
   const record = await refreshLoanExecutionV1({ owner, executionId: String(req.params.id), refresh: true }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
   if (!record) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
-  res.json(executionAnswerV1(record));
+  const loop = await stillLoopOfExecutionV1(record);
+  res.json({ ...executionAnswerV1(record), ...(loop ? { loop: stillLoopWireV1(loop) } : {}) });
 });
 /** A loan or repayment sent as one batch that its wallet never sent: its owner releases it, once Base shows
  * the wallet has sent nothing since the review and has nothing waiting (lib/loanRelease.ts, audit LEND-1).

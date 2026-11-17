@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { stillLoopOfExecutionV1 } from '../../lib/stillLoops.js';
+import type { SpendInvoiceStatusNameV1 } from '@mioagent/commerce-engine';
 import { LOAN_WALLET_SENT_NOTHING_V1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1 } from '../../lib/lendingSteps.js';
 import { loanPositionMovedOutsideV1 } from '../../lib/loanExecutionStatus.js';
@@ -120,10 +122,13 @@ export async function stillReviewStatusV1(
   if (facts.operation === 'borrow' && facts.payment) {
     const payment = facts.payment;
     const share = loanExecutionShareV1(record, deps.secret);
+    const invoice = await invoiceReadV1(owner, payment.orderId, record.state, deps);
     purchase = {
-      ...orderPurchaseV1({ ...payment, priceAtomic: payment.assets }), ...await invoiceReadV1(owner, payment.orderId, record.state, deps),
+      ...orderPurchaseV1({ ...payment, priceAtomic: payment.assets }), ...invoice,
       shareUrl: share ? `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}${share.path}` : null,
     };
+    // A Loop's number, and Bitrefill's word on its card: kept, and not part of this answer.
+    await stillLoopOfExecutionV1(record, invoice.invoiceStatusError === null ? invoice.invoiceStatus as SpendInvoiceStatusNameV1 | null : null);
   }
   const paid = record.state === 'confirmed' && purchase
     ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares the purchase without naming the wallet.`

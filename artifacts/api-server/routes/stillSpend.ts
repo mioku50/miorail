@@ -25,6 +25,7 @@ import {
   type SpendOrderOwnerV1,
   type SpendOrderV1,
 } from '../lib/stillSpendOrders.js';
+import { stillLoopDeliveryOfV1, stillLoopOfExecutionV1 } from '../lib/stillLoops.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
 
@@ -224,6 +225,12 @@ stillSpendRouter.get('/orders/:id', async (req: Request, res: Response) => {
     return;
   }
   const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
+  // Bitrefill's word on the card, kept for the Loop the confirmed loan that paid it made. Read only once it settled.
+  const settled = read.status?.status;
+  if (settled && stillLoopDeliveryOfV1(settled)) {
+    const paid = (await (await stillSpendRuntimeV1.loans()).listByPaymentOrder({ owner, orderId: id })).find((row) => row.state === 'confirmed');
+    if (paid) await stillLoopOfExecutionV1(paid, settled);
+  }
   res.json({ order: orderWireV1(order), ...orderStatusWireV1(read) });
 });
 
