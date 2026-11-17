@@ -285,8 +285,9 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   }, async (args) => {
     try {
       // The answer as the tool declares it; whether Bitrefill may pay Still a commission goes to the card as _meta.
+      // A Loop is said only where one is made: the team's own loans make none (lib/stillTeam.ts).
       const { commission, ...answer } = await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now(), via: await viaV1(),
-        loops: stillLoopsRuntimeV1.enabled() });
+        loops: stillLoopsRuntimeV1.enabled() && !stillLoopsRuntimeV1.team().has(identity.walletAddress.toLowerCase()) });
       return { ...reply(answer), ...stillPurchaseReplyMetaV1(commission) };
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
