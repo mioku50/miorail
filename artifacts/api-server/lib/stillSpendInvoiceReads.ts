@@ -19,7 +19,9 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 //    wallet, because a refusal here ends a loan that has already moved money;
 //    one failed read is tried once more. It and opening an invoice have the
 //    last two of the ten to themselves: no review or page can take them
-//    (audit SPEND-2, 2026-11-14).
+//    (audit SPEND-2, 2026-11-14), and the very last is its alone, so new
+//    invoices cannot keep a loan already taken from paying its own
+//    (audit SPEND-2, 2026-11-18).
 //
 // The caller has already found the order as its owner's: nothing here is
 // reachable by an order id alone.
@@ -116,7 +118,7 @@ export function createSpendInvoiceReadsV1(options: {
     },
 
     async step(input: { order: InvoiceRefV1; checkout: CheckoutV1 }): Promise<InvoiceReadV1> {
-      // From the part of the window no review or page can take (audit SPEND-2, 2026-11-14).
+      // From the part of the window no review, page or new invoice can take (audit SPEND-2).
       let read = await ask(input.checkout, input.order, 'step');
       if (!read.ok && passingV1(read.reason)) {
         await wait(1_000);

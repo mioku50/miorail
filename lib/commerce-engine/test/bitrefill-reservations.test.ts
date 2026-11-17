@@ -110,7 +110,7 @@ describe('Bitrefill reserves capacity inside the existing transport windows', ()
     assert.deepEqual(await catalog.product('checkout-over-total', { freshForCheckout: true }), REFUSED);
   });
 
-  it('two orders polling status cannot spend the four slots reserved for a third purchase and payment checks', async () => {
+  it('two orders polling status cannot spend the four slots reserved for a purchase, payment checks and a loan’s next step', async () => {
     let at = 1_000;
     const mock = provider();
     const checkout = createBitrefillGuestCheckoutV1({ fetchImpl: mock.fetchImpl, now: () => at });
@@ -122,7 +122,9 @@ describe('Bitrefill reserves capacity inside the existing transport windows', ()
     assert.equal((await checkout.createInvoice(CREATE)).ok, true);
     assert.equal((await checkout.readInvoice(PAYMENT)).ok, true); // An omitted purpose remains a safety read.
     assert.equal((await checkout.readInvoice(PAYMENT, { purpose: 'payment' })).ok, true);
-    assert.equal((await checkout.createInvoice(CREATE)).ok, true);
+    // The tenth slot is a loan's next step's alone (audit SPEND-2, 2026-11-18): another invoice waits for it.
+    assert.deepEqual(await checkout.createInvoice(CREATE), REFUSED);
+    assert.equal((await checkout.readInvoice(PAYMENT, { purpose: 'step' })).ok, true);
     assert.equal(mock.calls.length, 10);
     assert.deepEqual(await checkout.createInvoice(CREATE), REFUSED);
     assert.deepEqual(await checkout.readInvoice(PAYMENT), REFUSED);

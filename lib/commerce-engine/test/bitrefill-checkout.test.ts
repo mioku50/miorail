@@ -279,9 +279,25 @@ describe('the last part of the checkout window is kept for buying and for a loan
     assert.equal(calls.length, 8);
     assert.equal((await checkout.readInvoice(read, { purpose: 'step' })).ok, true, 'a loan under way reads its invoice');
     assert.equal(calls.length, 9);
-    // And the tenth is still there for opening one.
+    // And the tenth is still there for the next step.
     assert.equal((await checkout.readInvoice(read, { purpose: 'step' })).ok, true);
     assert.deepEqual(await checkout.readInvoice(read, { purpose: 'step' }), { ok: false, reason: 'bitrefill_rate_limited', local: true });
+  });
+
+  it('new invoices never take the last slot: a loan already taken can always read the invoice it pays (audit SPEND-2, 2026-11-18)', async () => {
+    // Bitrefill refuses each invoice here; only the window is under test.
+    const { fetchImpl, calls } = bitrefill([token, ...Array.from({ length: 14 }, () => () => new Response('{}', { status: 400 }))]);
+    const checkout = createBitrefillGuestCheckoutV1({ fetchImpl, now: () => 1_000 });
+    const opened: unknown[] = [];
+    for (let index = 0; index < 10; index++) {
+      opened.push(await checkout.createInvoice({ productId: 'bitrefill-esim-germany', packageValue: '10GB, 30 Days', email: 'buyer@example.com', quotedAtomic: QUOTED, now: NOW }));
+    }
+    // The token and eight invoices make nine: the ninth invoice and the tenth are refused here.
+    assert.equal(calls.length, 9);
+    assert.deepEqual(opened.slice(-2), [{ ok: false, reason: 'bitrefill_rate_limited', local: true }, { ok: false, reason: 'bitrefill_rate_limited', local: true }]);
+    const step = await checkout.readInvoice(read, { purpose: 'step' });
+    assert.notDeepEqual(step, { ok: false, reason: 'bitrefill_rate_limited', local: true }, 'the loan’s next step still reads its invoice');
+    assert.equal(calls.length, 10);
   });
 
   it('a limit Bitrefill itself answers is not said to be Still’s own', async () => {

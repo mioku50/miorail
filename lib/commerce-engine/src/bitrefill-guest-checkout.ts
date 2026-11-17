@@ -224,8 +224,9 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
   // The same ten slots, including OAuth: display polling cannot spend the four
   // kept for opening invoices and checking them immediately before payment.
   // Of the ten, reviews and display reads never take the last two: those are kept for opening an invoice
-  // and for the read before a loan's next step (audit SPEND-2, 2026-11-14).
-  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, priorityPerMinute: 8, ...options });
+  // and for the read before a loan's next step (audit SPEND-2, 2026-11-14). Opening an invoice never takes
+  // the last one: a loan already taken always has a slot to pay its invoice by (audit SPEND-2, 2026-11-18).
+  const transport = createBitrefillGuestTransportV1(BITREFILL_CHECKOUT_TOOLS_V1, { perMinute: 10, normalPerMinute: 6, priorityPerMinute: 8, reservedPerMinute: 9, ...options });
   return {
     // The transport has refused a code that breaks Bitrefill's rule by now, so a code here is one it sends.
     affiliated: options.affiliateCode !== undefined,
@@ -248,7 +249,7 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
     async readInvoice(input, readOptions) {
       if (!UUID_V1.test(input.invoiceId) || !TOKEN_V1.test(input.accessToken)) return { ok: false, reason: 'bitrefill_refused' };
       const answer = await transport.callTool('get-invoice-by-id', { invoice_id: input.invoiceId, invoice_access_token: input.accessToken },
-        readOptions?.purpose === 'step' ? { reserved: true } : { priority: readOptions?.purpose !== 'display' });
+        readOptions?.purpose === 'step' ? { step: true } : { priority: readOptions?.purpose !== 'display' });
       if (!answer.ok) return answer;
       return spendInvoiceStatusFromAnswerV1(answer.value);
     },

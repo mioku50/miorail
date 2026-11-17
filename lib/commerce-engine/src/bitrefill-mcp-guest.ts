@@ -190,20 +190,27 @@ export interface BitrefillGuestOptionsV1 {
   /** The ordinary part of that same window; the remainder is reserved for priority calls.
    * OAuth and every retry count too. This never increases perMinute. */
   normalPerMinute?: number;
-  /** The ordinary and priority parts together; what is left of perMinute only reserved calls may use:
+  /** The ordinary and priority parts together; what is left of perMinute only reserved and step calls may use:
    * opening an invoice and the read before a loan's next step (audit SPEND-2, 2026-11-14: reviews read
    * by a few free wallets kept the window full, and a buyer's invoice and a loan's last step were refused).
    * Unset: priority calls may use the whole window, as reserved ones do. */
   priorityPerMinute?: number;
+  /** Every part but the last together; what is left of perMinute only step calls may use: the read before a
+   * loan's next step, once the loan has moved money (audit SPEND-2, 2026-11-18: new invoices could take every
+   * reserved slot, and a loan already taken waited to pay its invoice). Unset: reserved calls may use the whole
+   * window, as step ones do. */
+  reservedPerMinute?: number;
 }
 
 /** Chosen by server code, never copied from a browser or an assistant's arguments. */
 export interface BitrefillGuestCallOptionsV1 {
   priority?: boolean;
-  /** Buying, or what a loan already under way needs: the last part of the window is kept for it. */
+  /** Buying: the last part of the window but one is kept for it. */
   reserved?: boolean;
+  /** What a loan already under way needs: the very last part of the window is kept for it alone. */
+  step?: boolean;
 }
-type CallTierV1 = 'normal' | 'priority' | 'reserved';
+type CallTierV1 = 'normal' | 'priority' | 'reserved' | 'step';
 
 /** A guest's token and its own rate window, for the tools one caller may use.
  * A tool outside that list is refused here, before anything is sent. */
@@ -219,6 +226,7 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
   const perMinute = options.perMinute ?? 20;
   const normalPerMinute = Math.min(perMinute, options.normalPerMinute ?? perMinute);
   const priorityPerMinute = Math.max(normalPerMinute, Math.min(perMinute, options.priorityPerMinute ?? perMinute));
+  const reservedPerMinute = Math.max(priorityPerMinute, Math.min(perMinute, options.reservedPerMinute ?? perMinute));
   let token: { value: string; expiresAt: number } | null = null;
   let tokenRequest: Promise<SpendResultV1<string>> | null = null;
   let window: Array<{ at: number; tier: CallTierV1 }> = [];
@@ -230,7 +238,8 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     window = window.filter((entry) => at - entry.at < 60_000);
     if (window.length >= perMinute) return false;
     if (tier === 'normal' && window.filter((entry) => entry.tier === 'normal').length >= normalPerMinute) return false;
-    if (tier === 'priority' && window.filter((entry) => entry.tier !== 'reserved').length >= priorityPerMinute) return false;
+    if (tier === 'priority' && window.filter((entry) => entry.tier === 'normal' || entry.tier === 'priority').length >= priorityPerMinute) return false;
+    if (tier === 'reserved' && window.filter((entry) => entry.tier !== 'step').length >= reservedPerMinute) return false;
     window.push({ at, tier });
     return true;
   }
@@ -320,7 +329,8 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     return { ok: true, value: text };
   }
 
-  return { callTool: (name, args, callOptions) => callTool(name, args, callOptions?.reserved === true ? 'reserved' : callOptions?.priority === true ? 'priority' : 'normal') };
+  return { callTool: (name, args, callOptions) => callTool(name, args, callOptions?.step === true ? 'step'
+    : callOptions?.reserved === true ? 'reserved' : callOptions?.priority === true ? 'priority' : 'normal') };
 }
 
 export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCatalogV1 {
