@@ -76,8 +76,10 @@ test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
   // Still's own places lead; all existing console destinations remain available.
   // Wallet MCP is Coinbase's: its page stays, the palette does not offer it.
+  // Discover and Watch left Still (2026-11-17): their sections' addresses lead to More, so the palette offers none of them.
+  const absent = new Set(['extensions', 'opportunities', 'investigate', 'portfolio', 'radar']);
   for (const section of CONSOLE_SECTIONS_V1) {
-    assert.equal(commands.filter((command) => command.path === CONSOLE_SECTION_TABLE_V1[section].path).length, section === 'extensions' ? 0 : 1, section);
+    assert.equal(commands.filter((command) => command.path === CONSOLE_SECTION_TABLE_V1[section].path).length, absent.has(section) ? 0 : 1, section);
   }
   for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']]) {
     assert.equal(commands.filter((command) => command.path === path && command.label === label).length, 1);
@@ -85,10 +87,10 @@ test('no command carries an emoji or the retired vocabulary', () => {
   assert.equal(new Set(commands.map((command) => command.id)).size, commands.length);
   assert.equal(commands.some((command) => command.path === '/today'), true);
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
-  assert.equal(commands.some((command) => command.path === '/portfolio'), true);
-  assert.equal(commands.some((command) => command.path === '/opportunities'), true);
+  for (const retired of ['/portfolio', '/opportunities', '/investigate', '/radar', '/watch']) {
+    assert.equal(commands.some((command) => command.path === retired), false, retired);
+  }
   assert.equal(commands.some((command) => command.path === '/market'), true);
-  assert.equal(commands.some((command) => command.path === '/radar'), true);
   assert.equal(commands.some((command) => command.path === '/settings'), true);
   for (const command of commands) {
     assert.equal(command.icon, '', 'navigation carries no emoji');

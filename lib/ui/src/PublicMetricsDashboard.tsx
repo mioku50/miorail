@@ -62,7 +62,7 @@ function MetricNode({
 
 export function PublicMetricsDashboard({
   endpoint = '/api/public/metrics',
-  productHref = '/opportunities',
+  productHref = '/',
   productLabel = 'Open Miorail',
 }: PublicMetricsDashboardProps) {
   const [state, setState] = useState<MetricsStateV1>({ kind: 'loading', snapshot: null });

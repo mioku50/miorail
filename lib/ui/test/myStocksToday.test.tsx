@@ -110,7 +110,14 @@ test('a delayed personal change links to exact evidence and cannot imply ownersh
   };
   const html = renderToStaticMarkup(<MyStocksTodayCard model={model} />);
   assert.match(html, /Your stock/);
-  assert.match(html, new RegExp(`href="/investigate\\?token=${token}"`));
+  // The brief's links open Investigate, which left with Watch (2026-11-17): the card draws none of them.
+  assert.doesNotMatch(html, /href="\/investigate/);
+  assert.doesNotMatch(html, />See details</);
+  const hash = `0x${'ab'.repeat(32)}`;
+  const withTransaction = renderToStaticMarkup(
+    <MyStocksTodayCard model={{ ...model, data: { ...data, inbox: { ...data.inbox, items: data.inbox.items.map((item) => ({ ...item, transactionHash: hash })) } } }} />,
+  );
+  assert.match(withTransaction, new RegExp(`<a href="https://basescan.org/tx/${hash}" target="_blank" rel="noreferrer">View transaction</a>`));
   // Ten days late: the reader is told why an old event is new here.
   assert.match(html, /Sep 20, 10:00 AM UTC · seen by Miorail Sep 30/);
   assert.match(html, /does not establish that you held the token/);

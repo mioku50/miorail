@@ -284,8 +284,9 @@ export interface TodayInputV1 {
     onQuestionChange: (value: string) => void;
     onRoute: (route: TodayRouteV1) => void;
     onInvestigate: (tokenAddress: string) => void;
-    onOpenRadar: () => void;
-    onOpenB20: () => void;
+    /** Absent where no Radar or B20 controls page exists; the item then offers no button. */
+    onOpenRadar?: () => void;
+    onOpenB20?: () => void;
     onAskWallet: (question: string) => void;
     onOpenStock: (symbol: string) => void;
     onOpenDividends?: () => void;
@@ -366,7 +367,7 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
         ? `Latest established change: ${latest.title}, ${latest.headline.toLowerCase()}.`
         : 'No change has been established since the first comparable reading.',
       attention: false,
-      actions: [{ label: 'Open Radar', onClick: actions.onOpenRadar }],
+      actions: actions.onOpenRadar ? [{ label: 'Open Radar', onClick: actions.onOpenRadar }] : [],
     });
   } else if (radar && check && check.official.length > 0) {
     const held = check.official[0]!;
@@ -385,7 +386,7 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
       title: `${plural(input.wallet.trackedB20!, 'B20 token')} tracked`,
       body: 'Market watches run in the background. Controls are read when you request them; their last read can be older than the market measurement.',
       attention: false,
-      actions: [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }],
+      actions: actions.onOpenB20 ? [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }] : [],
     });
     for (const entry of input.wallet.controlWatches?.slice(0, 3) ?? []) {
       const held = input.wallet.rows?.find(row => row.address.toLowerCase() === entry.tokenAddress.toLowerCase());
@@ -396,7 +397,7 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
         body: reading.failure ?? 'Each date describes its own reading.',
         attention: false,
         clocks: reading.clocks,
-        actions: [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }],
+        actions: actions.onOpenB20 ? [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }] : [],
       });
     }
   }

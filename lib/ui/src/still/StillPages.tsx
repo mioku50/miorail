@@ -146,14 +146,9 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
   { label: 'Safety', rows: [{ title: 'How Still keeps a loan safe', blurb: 'Its limits, the stricter weekend and earnings terms, the safety bands, and what it cannot prevent', href: STILL_SAFETY_V1.path, icon: 'shield' }] },
   { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend', badge: 'New' }] },
   { label: 'Trade', rows: [{ title: 'Swap AI', blurb: 'Any token on Base, by a checked route', href: '/routes', icon: 'swap' }] },
-  {
-    label: 'Research',
-    rows: [
-      { title: 'Discover', blurb: 'Officially issued assets, and what getting back out costs', href: '/opportunities', icon: 'discover' },
-      { title: 'Watch', blurb: 'Any address read in full, what issuers can do to your tokens, the markets you watch', href: '/watch', icon: 'watch' },
-      { title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today', icon: 'today' },
-    ],
-  },
+  // Discover and Watch left (operator, 2026-11-17): their addresses lead here,
+  // and an issuer's pause on a pledged token reaches the loan's owner as a notice.
+  { label: 'Classic', rows: [{ title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today', icon: 'today' }] },
   // Wallet MCP is Coinbase's wallet, not a place of Still's, and people took it
   // for one (operator, 2026-11-03). Its page stays at /extensions for the links
   // that lead into it; More no longer offers it.

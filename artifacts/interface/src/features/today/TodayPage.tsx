@@ -34,9 +34,9 @@ export function TodayPage() {
   const signIn = () => navigate(`/signin?next=${encodeURIComponent(location)}`);
   const askWallet = (question: string) =>
     navigate(`${consoleSectionPathV1('extensions')}?ask=${encodeURIComponent(question)}`);
-  const investigate = (tokenAddress: string) =>
-    // A reader with no session gets the public answer to the same question.
-    navigate(signedIn ? `/investigate?token=${tokenAddress}` : `/is-it-real/${tokenAddress}`);
+  // The public answer to "is this the real one", for every reader: Watch, where a
+  // session's reading went, left Still (operator, 2026-11-17).
+  const investigate = (tokenAddress: string) => navigate(`/is-it-real/${tokenAddress}`);
   const openStock = (symbol: string) => navigate(`/stocks/${symbol.toLowerCase()}`);
 
   const model = useTodayConsoleV1({
@@ -55,8 +55,7 @@ export function TodayPage() {
         navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(route.goal)}`);
       },
       onInvestigate: investigate,
-      onOpenRadar: () => navigate(consoleSectionPathV1('radar')),
-      onOpenB20: () => navigate(consoleSectionPathV1('portfolio')),
+      // No Open Radar and no Open B20 controls: both were sections of Watch.
       onAskWallet: askWallet,
       onOpenStock: openStock,
       onOpenDividends: () => navigate('/stocks/dividends'),

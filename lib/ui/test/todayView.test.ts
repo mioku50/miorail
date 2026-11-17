@@ -183,6 +183,26 @@ describe("what the wallet's balances already say", () => {
     assert.equal(start.title, 'Watch the market of NVDAc');
   });
 
+  // The web has no Radar or B20 controls page since Watch left Still (2026-11-17); the Base App has both.
+  test('where no Radar or B20 controls page exists, the facts stay and no button leads to one', () => {
+    const wallet = { check: todayWalletCheckV1(rows), loading: false, failed: false, radar: { watches: [{}], events: [] }, trackedB20: 2 };
+    const withPages = todayModelV1(input({ wallet }).input);
+    assert.deepEqual(withPages.wallet!.items.find((item) => item.key === 'radar')!.actions.map((action) => action.label), ['Open Radar']);
+    assert.deepEqual(withPages.wallet!.items.find((item) => item.key === 'b20')!.actions.map((action) => action.label), ['Open B20 controls']);
+
+    const base = input({ wallet }).input;
+    const actions = { ...base.actions };
+    delete actions.onOpenRadar;
+    delete actions.onOpenB20;
+    const web = todayModelV1({ ...base, actions });
+    const radar = web.wallet!.items.find((item) => item.key === 'radar')!;
+    assert.equal(radar.title, '1 market under watch');
+    assert.deepEqual(radar.actions, []);
+    const b20 = web.wallet!.items.find((item) => item.key === 'b20')!;
+    assert.equal(b20.title, '2 B20 tokens tracked');
+    assert.deepEqual(b20.actions, []);
+  });
+
   test('the question is routed on submit, not before', () => {
     const { input: value, routed } = input();
     const model = todayModelV1(value);

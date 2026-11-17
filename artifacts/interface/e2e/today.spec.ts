@@ -147,9 +147,9 @@ for (const width of [1280, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`today-holder-${width}.png`), fullPage: true });
 
     await page.getByRole('button', { name: 'See the evidence', exact: true }).click();
-    // Investigate is a section of Watch now; the old address redirects there.
-    await expect(page).toHaveURL(new RegExp(`/watch\\?token=${LOOKALIKE}#investigate`));
-    await expect.poll(() => reads.includes(`/api/route-intelligence/rwa/investigate/${LOOKALIKE}`)).toBe(true);
+    // Watch left Still (2026-11-17): the evidence is the public dossier, signed in or not.
+    await expect(page).toHaveURL(new RegExp(`/is-it-real/${LOOKALIKE}`));
+    expect(reads).not.toContain(`/api/route-intelligence/rwa/investigate/${LOOKALIKE}`);
     await page.goto('/today');
     await page.locator('.today-details > summary').filter({ hasText: /^Rewards$/ }).click();
     await page.getByRole('button', { name: 'What can I claim?', exact: true }).first().click();

@@ -25,7 +25,6 @@ import {
   StillMorePage,
   StillSafetyPage,
   StillWalletPage,
-  StillWatchGate,
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
 import { StillWalletControlsProvider } from '../features/still/StillWalletControls';
@@ -75,15 +74,6 @@ const PublicFoundPage = lazy(() =>
   import('../features/proof/PublicFoundPage').then((m) => ({ default: m.PublicFoundPage })),
 );
 
-const WatchPage = lazy(() =>
-  import('../features/watch/WatchPage').then((m) => ({ default: m.WatchPage })),
-);
-const OpportunitiesPage = lazy(() =>
-  import('../features/opportunities/OpportunitiesPage').then((m) => ({ default: m.OpportunitiesPage })),
-);
-const RwaDiscoverPage = lazy(() =>
-  import('../features/rwa/RwaDiscoverPage').then((m) => ({ default: m.RwaDiscoverPage })),
-);
 const MarketRealityPage = lazy(() =>
   import('../features/rwa/MarketRealityPage').then((m) => ({ default: m.MarketRealityPage })),
 );
@@ -267,26 +257,20 @@ export function App() {
           <SignInPage />
         </Route>
 
-        {/* Phase 6 — Discover opens on the official corpus: assets an issuer
-            publishes, what it costs to get back out of one, what has changed,
-            and which contracts are wearing an official name.
-
-            The launch feed below is not deleted — it is the deepest thing
-            Miorail has measured. It is no longer the first screen, because a
-            contract anybody can deploy is not an asset an issuer publishes.
-            The more specific path is declared FIRST: wouter matches in order,
-            and `/opportunities` would otherwise swallow nothing while
-            `/opportunities/launches` fell through to the 404. */}
-        <Route path="/opportunities/launches">
-          <RequireSession>
-            <OpportunitiesPage />
-          </RequireSession>
-        </Route>
-        <Route path="/opportunities">
-          <RequireSession>
-            <RwaDiscoverPage />
-          </RequireSession>
-        </Route>
+        {/* Discover and Watch left Still (operator, 2026-11-17). Discover's
+            B20 launch feed has stood still since 2026-09-09, and Watch spoke
+            the words of Miorail's research years to a reader who came to spend
+            without selling. What Watch held of use, an issuer pausing or freezing a
+            token a loan pledges, reaches the loan's owner as a notice. Every
+            address either page had leads to More, so an old link is not a dead
+            end. Only the pages went: their server reads stay, because Stocks
+            and the Base App read them, and so do the MCP tools registries list. */}
+        <Route path="/opportunities/*?">{() => <Redirect to="/more" replace />}</Route>
+        <Route path="/watch/*?">{() => <Redirect to="/more" replace />}</Route>
+        <Route path="/investigate/*?">{() => <Redirect to="/more" replace />}</Route>
+        <Route path="/portfolio/*?">{() => <Redirect to="/more" replace />}</Route>
+        <Route path="/radar/*?">{() => <Redirect to="/more" replace />}</Route>
+        <Route path="/b20/*?">{() => <Redirect to="/more" replace />}</Route>
 
         {/* Phase 10B — one security, every reviewed way to hold it on Base.
             The whole question lives in the query string, so a refresh, a Back
@@ -331,19 +315,6 @@ export function App() {
           <TodayPage />
         </Route>
 
-        {/* Watch — Investigate, B20 controls and Radar on one page, each
-            half empty alone. The three old addresses keep working: each
-            redirects here with its query and the hash of its section, so a
-            Discover link's `?token=` reaches the section it was meant for. */}
-        <Route path="/watch">
-          <StillWatchGate>
-            <WatchPage />
-          </StillWatchGate>
-        </Route>
-        <Route path="/investigate">{() => <Redirect to={`/watch${window.location.search}#investigate`} replace />}</Route>
-        <Route path="/portfolio">{() => <Redirect to={`/watch${window.location.search}#tokens`} replace />}</Route>
-        <Route path="/radar">{() => <Redirect to={`/watch${window.location.search}#radar`} replace />}</Route>
-
         {/* Wallet MCP (formerly Base MCP): plugins, the console and Miorail's
             own plugin. Public since 2026-10-04, like /stocks: a visitor sees
             everything, and asking needs a session. Any write is approved in
@@ -369,9 +340,6 @@ export function App() {
             <SettingsPage />
           </RequireSession>
         </Route>
-
-        {/* The old B20 path. Bookmarked by anyone who used the tab. */}
-        <Route path="/b20">{() => <Redirect to="/watch#tokens" replace />}</Route>
 
         {/* Activity — route runs, paid intelligence, and proofs once a route
             is signed. No longer wrapped in DeepLink: it renders its own

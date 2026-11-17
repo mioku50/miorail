@@ -35,11 +35,16 @@ export interface AppCommand {
   path: string;
 }
 
+/** Discover and Watch left Still (operator, 2026-11-17): these sections' addresses
+ * lead to More now, so the palette does not offer them. The shared table keeps
+ * them for the Base App. */
+const RETIRED_SECTIONS_V1: ReadonlySet<ConsoleSectionV1> = new Set(['opportunities', 'investigate', 'portfolio', 'radar']);
+
 /** Every section, Settings included — the palette is where you reach the things
  * that are deliberately not in the header. All but Wallet MCP, which is
  * Coinbase's wallet and not a place of Still's (operator, 2026-11-03): its page
  * stays at its path for the links that lead into it. */
-export const CONSOLE_COMMANDS: AppCommand[] = CONSOLE_SECTIONS_V1.filter((section) => section !== 'extensions').map((section: ConsoleSectionV1) => {
+export const CONSOLE_COMMANDS: AppCommand[] = CONSOLE_SECTIONS_V1.filter((section) => section !== 'extensions' && !RETIRED_SECTIONS_V1.has(section)).map((section: ConsoleSectionV1) => {
   const definition = CONSOLE_SECTION_TABLE_V1[section];
   return {
     id: definition.id,

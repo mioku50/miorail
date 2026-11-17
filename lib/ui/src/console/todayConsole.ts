@@ -42,8 +42,10 @@ export interface TodayConsoleInputV1 {
   actions: {
     onRoute: (route: Exclude<TodayRouteV1, { kind: 'unknown' }>) => void;
     onInvestigate: (tokenAddress: string) => void;
-    onOpenRadar: () => void;
-    onOpenB20: () => void;
+    /** Absent where there is no Radar or B20 controls page to open: the web,
+     * since Watch left Still (operator, 2026-11-17). The Base App has both. */
+    onOpenRadar?: () => void;
+    onOpenB20?: () => void;
     onAskWallet: (question: string) => void;
     onOpenStock: (symbol: string) => void;
     onOpenDividends: () => void;

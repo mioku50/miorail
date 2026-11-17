@@ -210,7 +210,6 @@ export function StockActionReviewPage() {
           onSize: () => undefined,
           onSurface: () => undefined,
           onHistoryPeriod: () => undefined,
-          onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
         },
       }
     : null;

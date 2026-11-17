@@ -79,14 +79,15 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
             ? ` · seen by Miorail ${date(recordedAt)}`
             : ''}
         </span>
-        {item ? (
+        {/* The brief's own links open Investigate, a section of Watch, which
+            left Still (operator, 2026-11-17); the brief keeps them for the
+            assistants that read it. What is left to open here is the issuer's
+            transaction, under Source records when there are several. */}
+        {item?.transactionHash && (item.evidenceSignalIds?.length ?? 1) <= 1 ? (
           <div className="stocks-today-change-links">
-            <a href={item.inspectionHref}>See details</a>
-            {item.relatedInspectionHref ? (
-              <a href={item.relatedInspectionHref}>
-                {item.relation === 'held' ? 'See my stock' : 'See the stock I watch'}
-              </a>
-            ) : null}
+            <a href={`https://basescan.org/tx/${item.transactionHash}`} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
           </div>
         ) : null}
         {item?.evidenceSignalIds && item.evidenceSignalIds.length > 1 ? (

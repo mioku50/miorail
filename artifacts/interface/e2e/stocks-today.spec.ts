@@ -151,9 +151,8 @@ for (const width of [1440, 390]) {
     await expect(card.getByRole('heading', { name: 'Unread updates' })).toBeVisible();
     await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
     await expect(card.getByText(/Sep 20.*seen by Miorail Sep 30/)).toBeVisible();
-    await expect(
-      card.getByRole('link', { name: 'See details', exact: true }),
-    ).toHaveAttribute('href', `/investigate?token=${briefFixture().holdings[0]!.tokenAddress}`);
+    // The brief's link opened Investigate, which left with Watch (2026-11-17).
+    await expect(card.getByRole('link', { name: 'See details', exact: true })).toHaveCount(0);
     await page.reload();
     await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeEnabled();
     expect(fixture.writes.filter((p) => !p.endsWith('/measure'))).toEqual([]);

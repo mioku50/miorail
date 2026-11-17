@@ -181,8 +181,8 @@ export function MarketRealityPage({ symbol: segment }: { symbol?: string | null 
     },
     // The ticker's own address: the path is both the stock and the tab.
     onOpenStock: ({ symbol }) => navigate(`/stocks/${symbol.toLowerCase()}`),
-    onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
-    onOpenRadar: () => navigate('/radar'),
+    // No Investigate and no Open Radar: both opened Watch, which left Still
+    // (operator, 2026-11-17), and the screen draws neither button without them.
     onInspectRoute: ({ tokenAddress, goal, minimumVerification }) => {
       const params = new URLSearchParams({
         goal,

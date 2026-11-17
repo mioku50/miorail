@@ -28,10 +28,7 @@ const LAZY_SCREENS_V1 = [
   'RouteHistoryPage',
   'RouteIntelligenceConsole',
   'PublicProofPage',
-  // Investigate, B20 controls and Radar, one page since 2026-10-31.
-  'WatchPage',
-  'OpportunitiesPage',
-  'RwaDiscoverPage',
+  // Discover and Watch left Still on 2026-11-17: their pages are routed nowhere.
   'MarketRealityPage',
   'SettingsPage',
   'PublicMetricsPage',

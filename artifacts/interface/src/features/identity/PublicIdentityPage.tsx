@@ -4,8 +4,8 @@ export function PublicIdentityPage({ tokenAddress }: { tokenAddress?: string }) 
   return (
     <PublicIdentityCheck
       tokenAddress={tokenAddress ?? null}
-      productHref="/opportunities"
-      productLabel="Open Discover"
+      productHref="/"
+      productLabel="Open Still"
     />
   );
 }

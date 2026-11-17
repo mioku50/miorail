@@ -892,16 +892,17 @@ describe('the frame', () => {
     assert.match(html, /href="https:\/\/github\.com\/mioku50\/miorail"/);
     assert.match(html, /data-sky="day"/);
     const more = renderToStaticMarkup(<StillMore model={{ sky: skyStateV1({ now: WEDNESDAY }), account: null, signInHref: '/signin' }} />);
-    for (const label of ['Swap AI', 'Discover', 'Watch', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    for (const label of ['Swap AI', 'Today', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
     // How Still keeps a loan safe leads More (2026-11-08), and Grok is named with the other assistants.
     assert.match(more, /<section class="still-more-group" aria-label="Safety"><h2 class="still-more-group-head">Safety<\/h2><ul class="still-links"><li><a [^>]*href="\/safety"/);
     assert.ok(more.indexOf('aria-label="Safety"') < more.indexOf('aria-label="Spend"'), 'Safety comes first');
     assert.match(more, /Connect Claude, ChatGPT, Grok, Cursor or Codex/);
     // Wallet MCP is Coinbase's: its page stays (the path map above), More does not offer it.
     assert.doesNotMatch(more, /Wallet MCP|href="\/extensions"/);
-    // Investigate, B20 controls and Radar are one page now, and More has one door to it.
-    assert.match(more, /href="\/watch"/);
-    assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
+    // Discover and Watch left Still (operator, 2026-11-17): More offers neither, and their addresses lead here.
+    assert.doesNotMatch(more, /href="\/(?:opportunities|watch|investigate|radar|portfolio|b20)"/);
+    assert.doesNotMatch(more, />(?:Discover|Watch|Research)</);
+    assert.match(more, /aria-label="Classic"><h2 class="still-more-group-head">Classic<\/h2><ul class="still-links"><li><a [^>]*href="\/today"/);
     const assistants = renderToStaticMarkup(<StillAssistants model={{ sky: skyStateV1({ now: WEDNESDAY }) }} />);
     // The signed-in server leads, under Still's name: it prepares. Another wallet and a what-if stay on the read-only one.
     assert.ok(assistants.includes(`claude mcp add --transport http still https://miorail.xyz/mcp/private`));

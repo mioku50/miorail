@@ -60,6 +60,23 @@ test('the console is the app root and old entry points redirect into the flow', 
   assert.equal(/CockpitRoute|OpsRail|FuelMeter|ConfigureView|BottomNav|TopBar/.test(app), false);
 });
 
+test('Discover and Watch left Still: every address they had leads to More, and no route draws them', () => {
+  const app = source('../app/App.tsx');
+  for (const retired of ['/opportunities', '/watch', '/investigate', '/portfolio', '/radar', '/b20']) {
+    // The optional wildcard keeps the deeper addresses too, such as /opportunities/launches.
+    assert.ok(
+      app.includes(`<Route path="${retired}/*?">{() => <Redirect to="/more" replace />}</Route>`),
+      `${retired} must lead to More`,
+    );
+  }
+  assert.equal(/\b(?:WatchPage|RwaDiscoverPage|OpportunitiesPage|StillWatchGate)\b/.test(app), false);
+  // Their server reads stay: Stocks and the Base App read them. Only the pages went.
+  const stocks = source('../features/rwa/MarketRealityPage.tsx');
+  assert.doesNotMatch(stocks, /navigate\(`?['"]?\/(?:investigate|radar|watch)/);
+  assert.doesNotMatch(source('../features/today/TodayPage.tsx'), /\/investigate\?/);
+  assert.doesNotMatch(source('../features/rwa/StockActionReviewPage.tsx'), /\/investigate\?/);
+});
+
 test('no surviving surface uses the retired vocabulary in navigation', () => {
   const routes = source('../app/routes.tsx');
   assert.equal(/cockpit|kill switch|\bscan\b/i.test(routes.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')), false);
