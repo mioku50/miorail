@@ -259,6 +259,26 @@ describe('the Spend page', () => {
     assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />), /still-spend-categories/);
   });
 
+  it('subscriptions list each service with what its card pays, the limits said, and say when a country has none', () => {
+    const subscriptions = (patch: Partial<NonNullable<StillSpendModelV1['subscriptions']>> = {}) =>
+      ({ open: true, chosen: null, onOpen: noop, onChoose: noop, ...patch });
+    const closed = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions({ open: false }), products: null, selected: null, product: null })} />);
+    assert.match(closed, /<button type="button" class="still-spend-category" aria-pressed="false"><span class="still-spend-category-icon"><svg[^>]*>.+?<\/svg><\/span>Subscriptions<\/button>/);
+    assert.doesNotMatch(closed, /Discord Nitro/);
+    const open = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions(), products: null, selected: null, product: null })} />);
+    assert.match(open, /aria-pressed="true"><span class="still-spend-category-icon"><svg[^>]*>.+?<\/svg><\/span>Subscriptions</);
+    assert.match(open, /A card tops up a\s+balance and does not renew by itself\. Take an app store card of your account’s own country; a price inside an app can be above the\s+service’s own web price\./);
+    for (const name of ['Discord Nitro', 'Netflix', 'Disney\\+', 'Xbox and Game Pass', 'PlayStation', 'Nintendo', 'Twitch', 'Crunchyroll', 'Apple \\(iPhone apps\\)', 'Google Play \\(Android apps\\)']) {
+      assert.match(open, new RegExp(`<strong>${name}</strong>`), name);
+    }
+    assert.match(open, /subscriptions bought inside iPhone apps, such as X Premium, ChatGPT Plus or Claude Pro/);
+    const none = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions({ chosen: 'disney' }), products: [], selected: null, product: null })} />);
+    assert.match(none, /aria-pressed="true"><span><strong>Disney\+<\/strong>/);
+    assert.match(none, /Bitrefill lists no Disney\+ card\s+for Germany now\./);
+    // Without a handler, they are not offered.
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, products: [], selected: null, product: null })} />), /Subscriptions/);
+  });
+
   it('a country with no top-up says so and offers its mobile data, rather than nothing in stock', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', country: 'RU', products: [], selected: null, product: null })} />);
     assert.match(html, /Bitrefill lists no top-up for a number in Russia\./);

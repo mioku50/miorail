@@ -111,6 +111,20 @@ test('the instructions and every tool name the host Still’s links use', async 
   assert.equal(words.includes('stills.lat'), STILL_PUBLIC_HOST_V1 === 'stills.lat');
 });
 
+// A subscription: the service's own card first, else the app store's balance of the person's own country, and the limits said.
+test('the instructions and the spend search tell an assistant how a subscription is paid', async (t) => {
+  fixture(t, { check: async () => assert.fail('listing reads no wallet') });
+  const client = await connected(t);
+  const { tools } = await client.listTools();
+  const search = tools.find((tool) => tool.name === 'still_find_spend')?.description ?? '';
+  for (const words of [client.getInstructions() ?? '', search]) {
+    assert.match(words, /service's own card first \(Discord Nitro, Netflix/);
+    assert.match(words, /X Premium, ChatGPT Plus, Claude Pro/);
+    assert.match(words, /does not renew by itself/);
+    assert.match(words, /Never suggest another country’s card or a VPN\./);
+  }
+});
+
 // Bitrefill's answers below are synthetic, in the guest client's own shapes.
 const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM Japan', country: 'JP', inStock: true, recipientType: 'mixed', url: null,
   packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00' }] };

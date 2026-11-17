@@ -759,6 +759,8 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 /* Gift cards by Bitrefill's own categories: pills under the brand search, drawn as the kinds above them
    are (an icon on a soft disc, the chosen one filled), in the page's one accent: a category claims nothing. */
 .still-spend .still-spend-categories { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.still-spend .still-spend-subscriptions { display: grid; gap: 10px; margin-top: 14px; }
+.still-spend .still-spend-subscriptions .still-borrow-choice .still-note { display: block; margin-top: 2px; }
 .still-spend .still-spend-category { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 15px 5px 5px; border: 1px solid var(--sm-line); border-radius: 999px; background: var(--sm-ground); color: var(--sm-ink); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .still-spend .still-spend-category:hover { border-color: var(--sm-accent); }
 .still-spend .still-spend-category:focus-visible { outline: 2px solid var(--sm-focus); outline-offset: 2px; }

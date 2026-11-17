@@ -23,6 +23,7 @@ export type StillIconNameV1 =
   | 'giftcard'
   | 'games'
   | 'entertainment'
+  | 'subscription'
   | 'ai'
   | 'marketplace'
   | 'food'
@@ -109,6 +110,14 @@ const PATHS_V1: Record<StillIconNameV1, React.ReactNode> = {
       <path d="M7.5 7.5h9a4.5 4.5 0 0 1 4.4 5.4l-.8 4a2.4 2.4 0 0 1-4.2 1l-1.7-2.2h-4.4l-1.7 2.2a2.4 2.4 0 0 1-4.2-1l-.8-4A4.5 4.5 0 0 1 7.5 7.5z" />
       <path d="M8 10.5v3M6.5 12h3" />
       <path d="M15.5 11h.01M17.5 13h.01" strokeWidth="2.4" />
+    </>
+  ),
+  subscription: (
+    <>
+      <path d="M4.5 12a7.5 7.5 0 0 1 12.9-5.2L19.5 9" />
+      <path d="M19.5 4.5V9H15" />
+      <path d="M19.5 12a7.5 7.5 0 0 1-12.9 5.2L4.5 15" />
+      <path d="M4.5 19.5V15H9" />
     </>
   ),
   entertainment: (

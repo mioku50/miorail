@@ -27,3 +27,5 @@ export * from './StillEligibility';
 
 export { useStillBorrowEntryV1 } from './useStillBorrowEntry';
 export { useSpendWalletPaymentV1, type SpendWalletSentV1, type StillSpendWalletModelV1 } from './useSpendWalletPayment';
+// Subscriptions a card pays: the same table the Spend page shows and an assistant is told (lib/still-engine/src/subscriptions.ts).
+export { STILL_SUBSCRIPTIONS_V1, stillSubscriptionProductsV1, type StillSubscriptionV1 } from '@mioagent/still-engine/subscriptions';

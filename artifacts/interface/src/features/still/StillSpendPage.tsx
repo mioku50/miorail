@@ -12,6 +12,8 @@ import {
   spendProductViewV1,
   spendSearchViewV1,
   spendUsdcTextV1,
+  STILL_SUBSCRIPTIONS_V1,
+  stillSubscriptionProductsV1,
   type SpendGiftCategoryV1,
   type SpendTypeV1,
 } from '@mioagent/ui/still';
@@ -31,6 +33,9 @@ export function StillSpendPage() {
   const [query, setQuery] = useState('');
   const [asked, setAsked] = useState('');
   const [category, setCategory] = useState<SpendGiftCategoryV1 | null>(null);
+  // Subscriptions: the list open, and the service whose cards are searched for (lib/still-engine/src/subscriptions.ts).
+  const [subscriptionsOpen, setSubscriptionsOpen] = useState(false);
+  const [service, setService] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [email, setEmail] = useState('');
@@ -43,6 +48,8 @@ export function StillSpendPage() {
   const order = useCreateStillSpendOrderV1();
   const room = mine.data?.headline.availableCents != null ? { cents: mine.data.headline.availableCents, complete: mine.data.headline.complete } : null;
   const results = useMemo(() => search.data !== undefined ? spendSearchViewV1(search.data) : null, [search.data]);
+  // A service's search keeps only that service's cards: "Disney" also finds a park ticket, "Xbox" a game's points.
+  const listed = results?.products && subscriptionsOpen && service ? stillSubscriptionProductsV1(service, results.products) : results?.products ?? null;
   const walletAtomic = usdc.data?.raw ?? null;
   const detail = useMemo(() => product.data !== undefined ? spendProductViewV1(product.data, room, walletAtomic) : null, [product.data, room?.cents, room?.complete, walletAtomic]);
   const productError = product.error
@@ -71,11 +78,22 @@ export function StillSpendPage() {
         sky, signedIn: session.signedIn, signInHref: `/signin?next=${encodeURIComponent(location)}`,
         type, onType: (next) => { setType(next); setSelected(null); pick(null); },
         country, onCountry: (next) => { setCountry(next); setSelected(null); pick(null); },
-        query, onQuery: setQuery, onSearch: () => { setAsked(query.trim()); setCategory(null); setSelected(null); pick(null); },
-        // A category replaces the brand searched for, and a brand replaces the category.
-        category, onCategory: (next) => { setCategory(next); setQuery(''); setAsked(''); setSelected(null); pick(null); },
+        query, onQuery: setQuery,
+        onSearch: () => { setAsked(query.trim()); setCategory(null); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
+        // A category replaces the brand searched for, and a brand replaces the category; either closes the subscriptions.
+        category, onCategory: (next) => { setCategory(next); setQuery(''); setAsked(''); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
+        subscriptions: {
+          open: subscriptionsOpen, chosen: service,
+          onOpen: (open) => { setSubscriptionsOpen(open); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null); },
+          onChoose: (key) => {
+            const chosen = STILL_SUBSCRIPTIONS_V1.find((row) => row.key === key);
+            if (!chosen) return;
+            setService(key); setCategory(null); setQuery(''); setAsked(chosen.search); setSelected(null); pick(null);
+          },
+        },
         searching: search.isFetching,
-        products: results?.products ?? null,
+        // Nothing listed while the subscriptions are open and no service is chosen yet.
+        products: subscriptionsOpen && !service ? null : listed,
         searchError: search.error ? 'Bitrefill’s catalogue could not be read just now. Try again in a minute.' : results?.error ?? null,
         selected, onSelect: (id) => { setSelected(id); pick(null); },
         product: detail?.product ?? null, productLoading: product.isFetching, productError,

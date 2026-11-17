@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { formatCents } from '@mioagent/still-engine/format';
+import { STILL_SUBSCRIPTIONS_V1 } from '@mioagent/still-engine/subscriptions';
 
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
@@ -48,6 +49,9 @@ export interface StillSpendModelV1 {
   category?: SpendGiftCategoryV1 | null;
   /** Pressing the chosen category again lets it go. Without this, no category is offered. */
   onCategory?: (category: SpendGiftCategoryV1 | null) => void;
+  /** Subscriptions a card pays (lib/still-engine/src/subscriptions.ts): the list, and the service chosen in it.
+   * Without this, they are not offered. */
+  subscriptions?: { open: boolean; chosen: string | null; onOpen: (open: boolean) => void; onChoose: (key: string) => void };
   searching: boolean;
   products: SpendProductRowV1[] | null;
   searchError: string | null;
@@ -146,6 +150,12 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
               </div>
               {model.onCategory ? (
                 <div className="still-spend-categories" role="group" aria-label="Gift cards by category">
+                  {model.subscriptions ? (
+                    <button type="button" className="still-spend-category" aria-pressed={model.subscriptions.open}
+                      onClick={() => model.subscriptions!.onOpen(!model.subscriptions!.open)}>
+                      <span className="still-spend-category-icon"><StillIconV1 name="subscription" /></span>Subscriptions
+                    </button>
+                  ) : null}
                   {SPEND_GIFT_CATEGORY_CHIPS_V1.map((entry) => (
                     <button key={entry.category} type="button" className="still-spend-category" aria-pressed={model.category === entry.category}
                       onClick={() => model.onCategory!(model.category === entry.category ? null : entry.category)}>
@@ -154,6 +164,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                   ))}
                 </div>
               ) : null}
+              {model.subscriptions?.open ? <SubscriptionsV1 subscriptions={model.subscriptions} /> : null}
             </form>
           ) : null}
           <div className="still-spend-results" aria-live="polite">
@@ -168,6 +179,10 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                       <span className="still-spend-category-icon"><StillIconV1 name="esim" /></span>Mobile data for {spendCountryNameV1(model.country)}
                     </button>
                   </div>
+                )
+                : model.products && model.products.length === 0 && model.type === 'giftcard' && model.subscriptions?.open && model.subscriptions.chosen ? (
+                  <p className="still-note">Bitrefill lists no {STILL_SUBSCRIPTIONS_V1.find((row) => row.key === model.subscriptions!.chosen)?.name ?? 'such'} card
+                    for {spendCountryNameV1(model.country)} now.</p>
                 )
                 : model.products && model.products.length === 0 ? (
                   <p className="still-note">Nothing in stock here for {spendCountryNameV1(model.country)}{model.type === 'giftcard' && model.category
@@ -548,6 +563,27 @@ export function StillSpendShared({ sky, view, reading, cardUrl }: { sky: SkyStat
           Still is not a lender: a wallet borrows from the lending protocol directly, and Bitrefill sells under its own terms. A loan creates debt, and collateral can be liquidated. Not offered to US persons.
         </p>
         <StillLink href="/spend">See what a loan could pay for</StillLink>
+      </div>
+    </div>
+  );
+}
+
+/** The services a card pays, each with what it pays; choosing one searches Bitrefill for its cards in the country chosen. */
+function SubscriptionsV1({ subscriptions }: { subscriptions: NonNullable<StillSpendModelV1['subscriptions']> }) {
+  return (
+    <div className="still-spend-subscriptions">
+      <p className="still-note">
+        Pay a subscription with a card: the service’s own, or your app store’s balance for one bought inside an app. A card tops up a
+        balance and does not renew by itself. Take an app store card of your account’s own country; a price inside an app can be above the
+        service’s own web price.
+      </p>
+      <div className="still-borrow-assets" role="group" aria-label="Subscriptions">
+        {STILL_SUBSCRIPTIONS_V1.map((service) => (
+          <button key={service.key} type="button" className="still-borrow-choice" aria-pressed={subscriptions.chosen === service.key}
+            onClick={() => subscriptions.onChoose(service.key)}>
+            <span><strong>{service.name}</strong><span className="still-note">{service.pays}</span></span>
+          </button>
+        ))}
       </div>
     </div>
   );
