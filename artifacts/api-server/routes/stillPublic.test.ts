@@ -256,3 +256,15 @@ test('a product is its USDC packages, and one Bitrefill does not have is a 404, 
   const unknown = await request(server).get('/api/public/still/spend/product').query({ id: 'unknown-operator' });
   assert.deepEqual(unknown.body.checkout, { enabled: true, available: false, capAtomic: '100000000', phone: null });
 });
+
+test('Spend says whether Still pays Bitrefill here before anything is searched, from the switch alone', async (t) => {
+  fakeSpend({ search: async () => assert.fail('no catalogue read'), product: async () => assert.fail('no catalogue read') });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  const before = process.env.STILL_SPEND_PAY_V1;
+  t.after(() => { if (before === undefined) delete process.env.STILL_SPEND_PAY_V1; else process.env.STILL_SPEND_PAY_V1 = before; });
+  delete process.env.STILL_SPEND_PAY_V1;
+  const off = await request(server).get('/api/public/still/spend/status').expect(200);
+  assert.deepEqual(off.body, { outcome: 'status', checkout: { enabled: false } });
+  process.env.STILL_SPEND_PAY_V1 = 'on';
+  assert.deepEqual((await request(server).get('/api/public/still/spend/status').expect(200)).body, { outcome: 'status', checkout: { enabled: true } });
+});

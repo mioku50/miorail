@@ -285,6 +285,13 @@ export function spendProductCheckoutV1(product: SpendProductV1) {
   return { enabled, available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone };
 }
 
+/** Whether Still pays Bitrefill on this server now: the page's one line about paying, before it has searched
+ * anything (the subscriptions list searches nothing until a service is chosen). The server's own switch only. */
+publicStillRouter.get('/spend/status', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({ outcome: 'status', checkout: { enabled: stillSpendPayEnabledV1() } });
+});
+
 publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
   const type = typeof req.query.type === 'string' ? req.query.type : '';
   const country = typeof req.query.country === 'string' ? req.query.country.trim().toUpperCase() : '';

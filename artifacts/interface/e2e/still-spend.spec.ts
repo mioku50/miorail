@@ -60,6 +60,7 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean; 
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(), cached: false } });
     if (path === '/api/still/mine/usdc' && signedIn && options.usdcAtomic) return route.fulfill({ json: { outcome: 'read', usdc: { raw: options.usdcAtomic, decimals: 6, block: '53470000' } } });
+    if (path === '/api/public/still/spend/status') return route.fulfill({ json: { outcome: 'status', checkout: { enabled: Boolean(options.pay) } } });
     if (path === '/api/public/still/spend/search') {
       if (url.searchParams.get('type') === 'refill') {
         return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'refill', country: url.searchParams.get('country'), query: '', readAt: NOW.toISOString(),
@@ -161,10 +162,13 @@ test('subscriptions: their own kind, each service with what its card pays, and o
 
 test('/subscriptions opens Spend on them, for a link a post can carry', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 900 });
-  const state = await install(page, true);
+  const state = await install(page, true, { pay: true });
   await page.goto('/subscriptions');
   await expect(page.getByRole('group', { name: 'Kind of product' }).getByRole('button', { name: /^Subscriptions/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('group', { name: 'Subscriptions', exact: true }).getByRole('button', { name: /^Discord Nitro/ })).toBeVisible();
+  // Nothing searched yet, and the page still says what paying is here: the server's own switch.
+  await expect(page.getByText(/Paying with Still is not open on this server/)).toHaveCount(0);
+  await expect(page.getByText(/Pay with Still: a loan for the exact price pays/)).toBeVisible();
   expect(state.writes).toEqual([]);
 });
 

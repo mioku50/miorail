@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
-import { useCreateStillSpendOrderV1, useStillMine, useStillSpendProductV1, useStillSpendSearchV1, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { useCreateStillSpendOrderV1, useStillMine, useStillSpendProductV1, useStillSpendSearchV1, useStillSpendStatusV1, useStillUsdcV1 } from '@mioagent/api-client-react';
 import {
   StillFrame,
   StillSpend,
@@ -59,7 +59,10 @@ export function StillSpendPage() {
   const productError = product.error
     ? /\b404\b/.test(product.error.message) ? 'Bitrefill does not offer this product now.' : 'This product could not be read from Bitrefill just now.'
     : detail?.error ?? null;
-  const payOpen = session.signedIn && (spendPayOpenV1(product.data) || spendPayOpenV1(search.data));
+  // The server's own switch, read once: the subscriptions list searches nothing that would carry it.
+  const status = useStillSpendStatusV1();
+  const payOn = spendPayOpenV1(product.data) || spendPayOpenV1(search.data) || spendPayOpenV1(status.data);
+  const payOpen = session.signedIn && payOn;
   const pick = (next: string | null) => { setChosen(next); setPayError(null); };
 
   const onCreate = async (paidWith: 'loan' | 'wallet') => {
@@ -105,7 +108,7 @@ export function StillSpendPage() {
         selected, onSelect: (id) => { setSelected(id); pick(null); },
         product: detail?.product ?? null, productLoading: product.isFetching, productError,
         room, owedCents: spendOwedCentsV1(mine.data), walletUsdc: walletAtomic !== null ? spendUsdcTextV1(walletAtomic) : null,
-        payAfterSignIn: !session.signedIn && (spendPayOpenV1(product.data) || spendPayOpenV1(search.data)),
+        payAfterSignIn: !session.signedIn && payOn,
         pay: payOpen ? {
           chosen, onChoose: pick, email, onEmail: (next) => { setEmail(next); setPayError(null); },
           phone, onPhone: (next) => { setPhone(next); setPayError(null); },

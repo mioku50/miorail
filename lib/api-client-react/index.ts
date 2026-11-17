@@ -2098,6 +2098,16 @@ export function useStillSpendSearchV1(input: { type: 'esim' | 'refill' | 'giftca
   });
 }
 
+/** Whether Still pays Bitrefill on this server now, before anything was searched. */
+export function useStillSpendStatusV1() {
+  return useQuery({
+    queryKey: ['still-spend-status'] as const,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => fetchApi<unknown>('/api/public/still/spend/status'),
+  });
+}
+
 /** One Bitrefill product's packages, priced in USDC. */
 export function useStillSpendProductV1(id: string | null) {
   return useQuery({
