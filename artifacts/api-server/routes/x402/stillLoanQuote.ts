@@ -5,6 +5,7 @@ import {
   type MirrorInput,
   type StillLoanAtV1,
   type StillLoanQuoteAskV1,
+  type StillLoanQuoteReadsV1,
   type StillLoanQuoteV1,
 } from '@mioagent/still-engine';
 import { healthFactorTextV1 } from '@mioagent/still-engine/scenario';
@@ -254,7 +255,7 @@ export function stillLoanQuoteDraftV1(input: {
   return { ...body, evidencePackage: packageEvidenceClaimsV1(claimsV1(body), input.now) };
 }
 
-/** The quote for a question, from one market reading. */
-export function stillLoanQuoteFromReadingV1(reading: MirrorInput, question: StillQuoteQuestionV1): StillLoanQuoteV1 {
-  return stillLoanQuoteV1(reading, question.ask);
+/** The quote for a question, from one market reading and what was read beside it at the same block. */
+export function stillLoanQuoteFromReadingV1(reading: MirrorInput, question: StillQuoteQuestionV1, reads: StillLoanQuoteReadsV1 = {}): StillLoanQuoteV1 {
+  return stillLoanQuoteV1(reading, question.ask, reads);
 }

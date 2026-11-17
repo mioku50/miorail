@@ -32,7 +32,15 @@ export const STILL_QUOTE_CLOSING_LIMITS_V1: readonly AssetLimit[] = [
 ];
 
 /** Why new borrowing against this collateral is closed now: a venue or issuer state, or a venue with nothing to lend. */
-export type StillQuoteClosedReasonV1 = AssetLimit | 'venue_has_no_liquidity';
+export type StillQuoteClosedReasonV1 = AssetLimit | 'venue_has_no_liquidity' | 'venue_frozen_by_issuer';
+
+/** What the server read beside the Mirror, at the same block. */
+export interface StillLoanQuoteReadsV1 {
+  /** What cbBTC's or PAXG's own contract says of a new pledge: every transfer paused, or Morpho Blue's address
+   * frozen, the reads a Morpho borrow review refuses on; null when neither holds it. Absent for a collateral no
+   * issuer can hold this way. */
+  collateralHold?: 'paused' | 'venue_frozen' | null;
+}
 
 export interface StillLoanQuoteAskV1 {
   asset: AssetId;
@@ -86,6 +94,14 @@ export interface StillLoanQuoteV1 {
   requested: (StillLoanAtV1 & { borrowAtomic: string; withinStillLimit: boolean | null }) | null;
   failed: MirrorReport['coverage']['failed'];
   evidence: MirrorReport['evidence'];
+  /**
+   * Every read this collateral's answer rests on was taken: its line and its venue with no read of ours failed,
+   * the issuer's own pause of a stock read, and the limit, what is available now and what the venue takes all
+   * known. A quote that is not complete is not an answer to sell (audit QUOTE-1, 2026-11-18: a reading with no
+   * Aave in it said newLoans "open" with every limit null). What a protocol does not publish, such as a stock
+   * Aave's calendar lists no date for, leaves it complete: Still's rule for it is fixed.
+   */
+  complete: boolean;
 }
 
 /** The reading with everything that belongs to a wallet set to nothing, whoever it was read for. */
@@ -183,7 +199,7 @@ function loanAtV1(held: MirrorInput, asset: Asset, pledge: bigint, borrowAtomic:
   };
 }
 
-export function stillLoanQuoteV1(input: MirrorInput, ask: StillLoanQuoteAskV1): StillLoanQuoteV1 {
+export function stillLoanQuoteV1(input: MirrorInput, ask: StillLoanQuoteAskV1, reads: StillLoanQuoteReadsV1 = {}): StillLoanQuoteV1 {
   if (ask.raw <= 0n) throw new RangeError('Still quote: the amount must be above zero');
   if (ask.borrowAtomic !== null && ask.borrowAtomic <= 0n) throw new RangeError('Still quote: a borrow must be above zero');
   const asset = assetById(ask.asset);
@@ -192,12 +208,21 @@ export function stillLoanQuoteV1(input: MirrorInput, ask: StillLoanQuoteAskV1): 
   const line = report.assets.find((entry) => entry.asset === asset.id) ?? null;
   const venueLine = report.venues.find(venueOfV1(asset)) ?? null;
   const pledgeable = pledgeableRawV1(held, asset, ask.raw);
-  const closing = (line?.limits ?? []).filter((limit) => STILL_QUOTE_CLOSING_LIMITS_V1.includes(limit));
+  const limits = line?.limits ?? [];
+  // The collateral's own contract holding a new pledge closes it the way a paused reserve does (audit QUOTE-1).
+  const hold: StillQuoteClosedReasonV1[] = reads.collateralHold === 'paused' && !limits.includes('issuer_paused') ? ['issuer_paused']
+    : reads.collateralHold === 'venue_frozen' ? ['venue_frozen_by_issuer'] : [];
+  const closing: StillQuoteClosedReasonV1[] = [...limits.filter((limit) => STILL_QUOTE_CLOSING_LIMITS_V1.includes(limit)), ...hold];
   const closedBecause: StillQuoteClosedReasonV1[] = closing.length === 0 && venueLine?.liquidityCents === '0'
     ? ['venue_has_no_liquidity']
     : closing;
-  const available = venueLine?.availableCents ?? null;
-  const stillLimit = venueLine?.capacityCents ?? null;
+  const available = hold.length > 0 ? '0' : venueLine?.availableCents ?? null;
+  const stillLimit = hold.length > 0 ? '0' : venueLine?.capacityCents ?? null;
+  const ours = new Set(report.coverage.failed.filter((failure) => failure.owner === 'us').map((failure) => failure.what));
+  // A stock's issuer pause is read from Coinbase's registry; a registry that did not answer left it unread.
+  const issuerRead = asset.kind !== 'stock' || held.snapshot.coinbase.get(asset.id)?.ok === true;
+  const complete = line !== null && venueLine !== null && venueLine.failed.length === 0 && !line.failed.some((what) => ours.has(what))
+    && issuerRead && pledgeable !== null && stillLimit !== null && available !== null;
 
   const atStillLimit = available !== null && BigInt(available) > 0n && pledgeable !== null
     ? loanAtV1(held, asset, pledgeable, BigInt(available) * USDC_UNITS_PER_CENT)
@@ -234,5 +259,6 @@ export function stillLoanQuoteV1(input: MirrorInput, ask: StillLoanQuoteAskV1): 
     requested,
     failed: report.coverage.failed,
     evidence: report.evidence,
+    complete,
   };
 }

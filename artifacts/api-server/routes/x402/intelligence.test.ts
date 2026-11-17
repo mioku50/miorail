@@ -72,6 +72,8 @@ function appV1(options: Record<string, unknown> = {}) {
     now: () => new Date('2026-10-21T15:00:02.000Z'),
     middlewareFactory: () => PASS_THROUGH_V1,
     readStillMarket: async () => readingV1(),
+    // cbBTC and PAXG held by nothing, unless a test says otherwise.
+    readStillCollateralHold: async () => ({ paused: false, marketFrozen: false, walletFrozen: false }),
     ...options,
   }));
   return app;
@@ -252,6 +254,44 @@ test('when Base cannot be read the answer is 503, so the payment is never settle
   const response = await request(app).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(503);
   assert.equal(response.body.code, 'still_reading_unavailable');
   assert.equal(response.headers['retry-after'], '15');
+});
+
+test('a reading without everything the quote rests on is 503 and settles nothing (audit QUOTE-1)', async () => {
+  // A reading with no Aave in it gave newLoans "open" with every limit null, sold as an answer.
+  const noAave = readingV1();
+  noAave.universe = { ...noAave.universe, aave: { ok: false, problem: 'unreadable' } } as MirrorInput['universe'];
+  const app = appV1({ readStillMarket: async () => noAave });
+  const response = await request(app).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(503);
+  assert.equal(response.body.code, 'still_reading_unavailable');
+  // The same reading still answers for a collateral that does not rest on Aave.
+  await request(app).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(200);
+});
+
+test('cbBTC and PAXG are asked whether their own contract holds a pledge, at the reading\'s block (audit QUOTE-1)', async () => {
+  const asked: string[] = [];
+  const held = (answer: { paused: boolean | null; marketFrozen: boolean | null } | null) => appV1({
+    readStillCollateralHold: async (asset: { id: string }, block: bigint) => {
+      asked.push(`${asset.id}@${block}`);
+      return answer === null ? null : { ...answer, walletFrozen: null };
+    },
+  });
+  const paused = await request(held({ paused: true, marketFrozen: false })).get(QUOTE).query({ asset: 'PAXG', amount: '1', borrowUsdc: '100' }).expect(200);
+  const quote = X402StillLoanQuoteV1Schema.parse(paused.body);
+  assert.deepEqual([quote.limit.newLoans, quote.limit.closedBecause, quote.limit.availableNowCents, quote.atStillLimit],
+    ['closed', ['issuer_paused'], '0', null]);
+  const frozen = X402StillLoanQuoteV1Schema.parse((await request(held({ paused: false, marketFrozen: true })).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(200)).body);
+  assert.deepEqual(frozen.limit.closedBecause, ['venue_frozen_by_issuer']);
+  // A hold that could not be read is not read as none: 503, nothing settled.
+  for (const answer of [null, { paused: null, marketFrozen: false }, { paused: false, marketFrozen: null }]) {
+    const response = await request(held(answer)).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(503);
+    assert.equal(response.body.code, 'still_reading_unavailable');
+  }
+  // Asked at the block the Mirror read; a stock and WETH are never asked.
+  assert.ok(asked.every((entry) => entry.endsWith(`@${readingV1().snapshot.block.number}`)), asked.join());
+  const before = asked.length;
+  await request(held({ paused: true, marketFrozen: true })).get(QUOTE).query({ asset: 'ETH', amount: '1' }).expect(200);
+  await request(held({ paused: true, marketFrozen: true })).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200);
+  assert.equal(asked.length, before);
 });
 
 test('a request that asks for nothing is answered with the price, and reads nothing', async () => {

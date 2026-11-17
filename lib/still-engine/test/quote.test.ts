@@ -130,3 +130,41 @@ describe('a Still loan quote, with no wallet', () => {
     assert.throws(() => stillLoanQuoteV1(input(), { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: 0n }), RangeError);
   });
 });
+
+describe('a quote is complete only when everything it rests on was read (audit QUOTE-1)', () => {
+  it('a complete reading is complete', () => {
+    assert.equal(stillLoanQuoteV1(input(), { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null }).complete, true);
+    assert.equal(stillLoanQuoteV1(input(), { asset: 'cbBTC', raw: 1_000_000n, borrowAtomic: null }, { collateralHold: null }).complete, true);
+  });
+
+  it('a reading with no Aave in it says newLoans open with every limit null, and is not complete', () => {
+    const noAave = input();
+    noAave.universe = { ...noAave.universe, aave: { ok: false, problem: 'unreadable' } } as typeof noAave.universe;
+    const quote = stillLoanQuoteV1(noAave, { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null });
+    assert.deepEqual([quote.stillLimitCents, quote.availableNowCents, quote.complete], [null, null, false]);
+  });
+
+  it('one failed read of ours on the collateral or its venue, or the issuer registry unread, leaves it incomplete', () => {
+    const noPrice = input();
+    noPrice.snapshot.aave!.reserves.find((r) => r.info.role.kind === 'stock' && r.info.role.asset.id === 'NVDAc')!.price = { ok: false, reason: 'reverted' };
+    assert.equal(stillLoanQuoteV1(noPrice, { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null }).complete, false);
+    const noLiquidity = input();
+    noLiquidity.snapshot.aave!.usdcLiquidity = { ok: false, reason: 'reverted' };
+    assert.equal(stillLoanQuoteV1(noLiquidity, { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null }).complete, false);
+    const noRegistry = input();
+    noRegistry.snapshot.coinbase.set('NVDAc', { ok: false, reason: 'reverted' });
+    assert.equal(stillLoanQuoteV1(noRegistry, { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null }).complete, false);
+    // Another stock's failure is not this answer's.
+    const other = input();
+    other.snapshot.aave!.reserves.find((r) => r.info.role.kind === 'stock' && r.info.role.asset.id === 'TSLAc')!.price = { ok: false, reason: 'reverted' };
+    assert.equal(stillLoanQuoteV1(other, { asset: 'NVDAc', raw: TEN_NVDA, borrowAtomic: null }).complete, true);
+  });
+
+  it('cbBTC or PAXG held by its own contract closes new loans the way a paused reserve does', () => {
+    const paused = stillLoanQuoteV1(input(), { asset: 'PAXG', raw: 10n ** 18n, borrowAtomic: USDC(100) }, { collateralHold: 'paused' });
+    assert.deepEqual([paused.newLoans, paused.closedBecause, paused.stillLimitCents, paused.availableNowCents, paused.protocolLimitCents, paused.atStillLimit],
+      ['closed', ['issuer_paused'], '0', '0', '0', null]);
+    const frozen = stillLoanQuoteV1(input(), { asset: 'cbBTC', raw: 1_000_000n, borrowAtomic: null }, { collateralHold: 'venue_frozen' });
+    assert.deepEqual([frozen.newLoans, frozen.closedBecause, frozen.complete], ['closed', ['venue_frozen_by_issuer'], true]);
+  });
+});

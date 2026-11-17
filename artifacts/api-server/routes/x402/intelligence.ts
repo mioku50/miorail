@@ -16,7 +16,7 @@ import {
   type X402ActiveIntelligenceServiceV1,
   type X402IntelligenceServiceV1,
 } from '@mioagent/route-domain';
-import type { MirrorInput } from '@mioagent/still-engine';
+import type { CryptoAsset, MirrorInput, StillLoanQuoteReadsV1 } from '@mioagent/still-engine';
 import {
   createX402MiddlewareFromEnv,
   x402ConfigFromEnv,
@@ -26,6 +26,8 @@ import {
 } from '@mioagent/x402-gateway';
 
 import { stillMirrorRuntimeV1 } from '../../lib/stillMirror.js';
+import { morphoCollateralHoldableV1, readMorphoCollateralTransfersV1, type MorphoCollateralTransfersV1 } from '../../lib/morphoCollateralHold.js';
+import { stillLoanHoldClientsV1 } from '../../lib/stillLoanHolds.js';
 import {
   parseStillQuoteQuestionV1,
   stillLoanQuoteDraftV1,
@@ -61,6 +63,8 @@ interface CreateX402IntelligenceRouterOptionsV1 {
   ) => RequestHandler;
   /** One market reading for a quote: Still's own reading of Base at one block. A seam, so a test hands one in. */
   readStillMarket?: () => Promise<MirrorInput>;
+  /** What cbBTC's or PAXG's own contract says at the reading's block (lib/morphoCollateralHold.ts); null when unread. */
+  readStillCollateralHold?: (asset: CryptoAsset, blockNumber: bigint) => Promise<MorphoCollateralTransfersV1 | null>;
 }
 
 const requestContext = new AsyncLocalStorage<SellerRequestContextV1>();
@@ -430,12 +434,19 @@ async function readStillMarketV1(): Promise<MirrorInput> {
   return reading.input;
 }
 
+/** The collateral's own pause and its freeze of Morpho Blue, at the reading's block; the wallet's own freeze is no
+ * quote's, so the address asked about is nobody's. */
+function readStillCollateralHoldV1(asset: CryptoAsset, blockNumber: bigint): Promise<MorphoCollateralTransfersV1 | null> {
+  return readMorphoCollateralTransfersV1(stillLoanHoldClientsV1(), asset, '0x0000000000000000000000000000000000000000', blockNumber);
+}
+
 export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRouterOptionsV1 = {}) {
   const router = Router();
   const env = options.env ?? process.env;
   const dbEnabled = options.dbEnabled !== false;
   const now = options.now ?? (() => new Date());
   const readStillMarket = options.readStillMarket ?? readStillMarketV1;
+  const readStillCollateralHold = options.readStillCollateralHold ?? readStillCollateralHoldV1;
 
   const featureGate: RequestHandler = (_req, res, next) => {
     if (!sellerEnabledV1(env)) {
@@ -565,6 +576,13 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   // probe costs one regex. Base is read only after the payment verifies, and a
   // reading that fails answers 503 — the middleware settles nothing on an
   // answer of 400 or more, so a quote that could not be read is never charged.
+  //
+  // So does a reading that answered without everything this collateral's
+  // quote rests on (audit QUOTE-1, 2026-11-18): one with no Aave in it sold
+  // `newLoans: open` with every limit null. And cbBTC and PAXG are asked, at
+  // the same block, whether their own contract pauses transfers or freezes
+  // Morpho Blue, the holds a borrow review refuses on: a quote said open
+  // where the review would have said no.
   // ------------------------------------------------------------------
   const preloadQuote: RequestHandler = (req, res, next) => {
     const parsed = parseStillQuoteQuestionV1(req.query as Record<string, unknown>);
@@ -587,8 +605,16 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     let draft;
     try {
       const reading = await readStillMarket();
+      const reads: StillLoanQuoteReadsV1 = {};
+      if (question.asset.kind === 'crypto' && morphoCollateralHoldableV1(question.asset)) {
+        const hold = await readStillCollateralHold(question.asset, reading.snapshot.block.number);
+        if (!hold || hold.paused === null || hold.marketFrozen === null) throw new Error('still collateral hold unread');
+        reads.collateralHold = hold.paused ? 'paused' : hold.marketFrozen ? 'venue_frozen' : null;
+      }
+      const quote = stillLoanQuoteFromReadingV1(reading, question, reads);
+      if (!quote.complete) throw new Error('still quote incomplete');
       draft = stillLoanQuoteDraftV1({
-        quote: stillLoanQuoteFromReadingV1(reading, question),
+        quote,
         question,
         now: now(),
         payment: x402IntelligencePaymentV1(),

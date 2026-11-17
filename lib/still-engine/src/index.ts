@@ -26,6 +26,7 @@ export {
   type StillLoanAtV1,
   type StillLoanFiguresV1,
   type StillLoanQuoteAskV1,
+  type StillLoanQuoteReadsV1,
   type StillLoanQuoteV1,
   type StillQuoteClosedReasonV1,
 } from './quote.js';
