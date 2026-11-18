@@ -23,6 +23,7 @@ import {
 } from '@mioagent/ui/still';
 import { useAuthGate } from '../../app/AuthProvider';
 import { AppLoading } from '../../app/AppLoading';
+import { stillHomeRedirectV1 } from './homeQuery';
 import { useCreateWalletV1 } from './useCreateWallet';
 import { useStillSky, useStillWallet } from './useStillSky';
 
@@ -66,14 +67,15 @@ export function StillConsoleFrame(props: ConsoleFrameV1Props) {
 
 /**
  * "/". A link that carried a question here keeps landing where it always
- * did: the Stocks board reads its query, for a session and without one.
+ * did: the Stocks board reads its query, for a session and without one. A
+ * query the board does not read, such as a campaign's tag, opens Home.
  */
 export function StillHomeRoute() {
   const gate = useAuthGate();
-  const search = window.location.search;
-  if (!search) return <StillHomePage />;
+  const redirect = stillHomeRedirectV1(window.location.search, gate.showPrivateSurfaces);
+  if (redirect === null) return <StillHomePage />;
   if (gate.phase === 'booting') return <AppLoading />;
-  return <Redirect to={`${gate.showPrivateSurfaces ? '/market' : '/stocks'}${search}`} replace />;
+  return <Redirect to={redirect} replace />;
 }
 
 /** Decode the old wallet permalink once, from the browser's encoded path. */
