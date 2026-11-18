@@ -38,9 +38,11 @@ import {
   type OfficialSourceKeyV1,
 } from '@mioagent/rwa-official';
 import { BACKED_BTOKENS_SOURCE_URL_V1, fetchBackedBaseTokensV1 } from '@mioagent/rwa-issuer';
+import { createB20ReaderV1, withCallFailoverV1 } from '@mioagent/b20-control';
 import {
   REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseOfficialAssetRepository,
+  createDatabaseRepresentationSupplyRepository,
   createDatabaseRwaSignalRepository,
   createDatabaseUnderlyingAssetRepository,
   type OfficialAssetIdentityV1,
@@ -51,8 +53,47 @@ import { officialSourceSignalsV1 } from '@mioagent/rwa-dossier';
 
 import { bindCoinbaseStocksApiV1 } from './coinbaseStockBindings.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import { anchorPatientlyV1, rpcEndpointsV1 } from './rwaBlockAnchor.js';
+import { readAndRecordSupplyV1, sharpShrinkV1, supplyDisagreementsV1 } from './rwaSupplyRead.js';
 
 const CHAIN_ID_V1 = 8453 as const;
+/** Contracts read again in one pass, at most, and the pause between two of them. */
+const SUPPLY_RECHECKS_PER_PASS_V1 = 20;
+const SUPPLY_RECHECK_GAP_MS_V1 = 1_000;
+
+/**
+ * The supply of every contract the issuer's own list and Miorail's latest reading disagree on, read again at
+ * once (audit STOCK-1, 2026-11-18). The supply reader passes every three hours, and a stock minted between two
+ * passes stayed empty on the board beside a list that named it. A failure leaves it to that reader.
+ */
+async function recheckDisagreeingSuppliesV1(listed: readonly OfficialSourceAssetV1[]): Promise<void> {
+  const supplies = createDatabaseRepresentationSupplyRepository(client);
+  const stored = await supplies.readSupplies({ chainId: CHAIN_ID_V1, tokenAddresses: listed.map((asset) => asset.tokenAddress) });
+  const due = supplyDisagreementsV1({ listed, stored, limit: SUPPLY_RECHECKS_PER_PASS_V1 });
+  if (due.length === 0) {
+    console.log('  supply: the issuer\'s list and Miorail\'s latest readings agree');
+    return;
+  }
+  const rpcUrls = rpcEndpointsV1([process.env.BASE_MAINNET_RPC_URL, process.env.BASE_RPC_URL, process.env.MIORAIL_POOLS_RPC_URL]);
+  if (rpcUrls.length === 0) {
+    console.log(`  supply: ${due.length} to read again, and no endpoint here; the supply reader reads them`);
+    return;
+  }
+  const readers = rpcUrls.map((rpcUrl) => createB20ReaderV1({ rpcUrl }));
+  const anchored = await anchorPatientlyV1(readers);
+  if (!anchored.ok) {
+    console.log(`  supply: ${due.length} to read again, no block anchor (${anchored.refusals.join(', ')}); the supply reader reads them`);
+    return;
+  }
+  const reader = withCallFailoverV1(anchored.reader, readers.slice(anchored.position + 1));
+  const now = new Date();
+  console.log(`  supply: ${due.length} contract(s) the issuer's list disagrees with, read again at block ${anchored.anchor.blockNumber}`);
+  for (const tokenAddress of due) {
+    const read = await readAndRecordSupplyV1({ reader, anchor: anchored.anchor, tokenAddress, supplies, now });
+    console.log(`    ${tokenAddress}  ${read.decoded ? `${read.totalSupply} (${read.stored.outcome})` : `unknown (${read.failureCode})`}`);
+    await new Promise((resolve) => setTimeout(resolve, SUPPLY_RECHECK_GAP_MS_V1));
+  }
+}
 
 /** The feed Miorail holds for an asset: a current listing's first, else any. */
 function heldReferenceFeedV1(identity: OfficialAssetIdentityV1): string | null {
@@ -202,6 +243,14 @@ async function main(): Promise<void> {
     const outcome = await repository.recordSnapshot({ snapshot, assets });
     if (outcome.added.length > 0) console.log(`  added:    ${outcome.added.join(', ')}`);
     if (outcome.delisted.length > 0) console.log(`  DELISTED: ${outcome.delisted.join(', ')}`);
+    // A list that lost a tenth of itself in one pass is a signal, not a change, until a person has looked (audit
+    // STOCK-1: 377 to 74 on 2026-11-17, and nothing said so). It is recorded, as the source said it; a wallet's
+    // holdings are still identified by every contract the issuer ever listed (artifacts/api-server/lib/portfolioRegistry.ts).
+    const before = assets.length - outcome.added.length + outcome.delisted.length;
+    if (snapshot.status === 'ok' && sharpShrinkV1(before, assets.length)) {
+      console.error(`  LIST SHRANK SHARPLY — ${before} → ${assets.length} in one pass; a person checks why`);
+      process.exitCode = 1;
+    }
     if (outcome.added.length === 0 && outcome.delisted.length === 0 && outcome.status === 'ok') {
       console.log('  membership unchanged');
     }
@@ -215,6 +264,9 @@ async function main(): Promise<void> {
         console.error(`  conflicting ISIN mappings refused: ${bindings.conflicts.join(', ')}`);
         process.exitCode = 1;
       }
+      await recheckDisagreeingSuppliesV1(sourceAssets).catch((error: unknown) => {
+        console.log(`  supply: not read again (${describeErrorV1(error).slice(0, 120)}); the supply reader reads them`);
+      });
     }
     // Each source gets its own baseline. Adding an API is not 58 new issuances.
     if (watchOpenedNow || previous === null) continue;

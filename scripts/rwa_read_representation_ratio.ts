@@ -27,17 +27,8 @@
  *   pnpm rwa:read-ratio --gap-ms 2000 --lanes 2
  */
 import { describeErrorV1 } from '@mioagent/utils';
-import {
-  B20_SELECTORS_V1,
-  callManyV1,
-  createB20ReaderV1,
-  decodeUint8V1,
-  decodeUintV1,
-  encodeNoArgsV1,
-  withCallFailoverV1,
-} from '@mioagent/b20-control';
+import { createB20ReaderV1, withCallFailoverV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
-import { stableHashV1 } from '@mioagent/route-domain';
 import {
   REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseDividendDeclarationRepositoryV1,
@@ -56,6 +47,7 @@ import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 import { recordDividendSuppliesV1 } from './dividendRecordSupply.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import { anchorPatientlyV1, blockAnchorExitCodeV1, rpcEndpointsV1 } from './rwaBlockAnchor.js';
+import { readAndRecordSupplyV1 } from './rwaSupplyRead.js';
 
 const CHAIN_ID_V1 = 8453 as const;
 /** Two reads per representation against an endpoint the measurement workers
@@ -201,56 +193,10 @@ async function main(): Promise<void> {
   // ratios. Every reviewed exact address is asked the same pinned
   // totalSupply()/decimals() question; ticker and issuer never select it.
   await pacedV1(reviewedBindings, lanes, gapMs, async (binding) => {
-    const [totalResult, decimalsResult] = await callManyV1(reader, [
-      {
-        to: binding.tokenAddress,
-        data: encodeNoArgsV1(B20_SELECTORS_V1.totalSupply),
-        blockTag: anchor.blockTag,
-      },
-      {
-        to: binding.tokenAddress,
-        data: encodeNoArgsV1(B20_SELECTORS_V1.decimals),
-        blockTag: anchor.blockTag,
-      },
-    ]);
-    const totalSupply = totalResult?.ok ? decodeUintV1(totalResult.value) : null;
-    const decimals = decimalsResult?.ok ? decodeUint8V1(decimalsResult.value) : null;
-    const successful = totalResult?.ok === true && decimalsResult?.ok === true;
-    const decoded = successful && totalSupply !== null && decimals !== null;
-    const failureCode = decoded
-      ? null
-      : successful
-        ? 'erc20_supply_decode_failed'
-        : `erc20_supply_rpc_${
-            [
-              totalResult && !totalResult.ok ? totalResult.reason : null,
-              decimalsResult && !decimalsResult.ok ? decimalsResult.reason : null,
-            ]
-              .filter(Boolean)
-              .join('_') || 'unavailable'
-          }`;
-    const evidenceHash = stableHashV1('representation-supply-read/v1', {
-      chainId: CHAIN_ID_V1,
-      tokenAddress: binding.tokenAddress,
-      blockNumber: anchor.blockNumber,
-      totalSupplyRaw: totalResult?.ok ? totalResult.raw : null,
-      decimalsRaw: decimalsResult?.ok ? decimalsResult.raw : null,
-      failureCode,
+    const { decoded, totalSupply, stored, failureCode } = await readAndRecordSupplyV1({
+      reader, anchor, tokenAddress: binding.tokenAddress, supplies, now,
     });
-    const stored = await supplies.recordObservation({
-      chainId: CHAIN_ID_V1,
-      tokenAddress: binding.tokenAddress,
-      totalSupplyAtomic: decoded ? totalSupply.toString() : null,
-      decimals: decoded ? decimals : null,
-      blockNumber: anchor.blockNumber,
-      blockHash: anchor.blockHash,
-      evidenceHash,
-      readOutcome: decoded ? 'success' : successful ? 'decode_failure' : 'rpc_failure',
-      failureCode,
-      observedAt: now.toISOString(),
-      now: now.toISOString(),
-    });
-    if (decoded) {
+    if (decoded && totalSupply !== null) {
       supplyRead += 1;
       if (totalSupply === 0n) supplyZero += 1;
       if (stored.outcome === 'first_observation') supplyFirst += 1;

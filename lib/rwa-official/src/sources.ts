@@ -70,6 +70,10 @@ export interface OfficialSourceAssetV1 {
    * token: a feed exists, whether or not anyone has published its address. */
   referenceValuePublished?: boolean;
   tokenDecimals?: number;
+  /** The issuer's own list says tokens of this contract are outstanding (Coinbase's `total_supply` above zero; the
+   * field is left out at zero). Absent where the source says nothing of supply. Not part of the corpus hash: it
+   * moves with every mint, and only says which contracts to read again (audit STOCK-1, 2026-11-18). */
+  issuerSupplyPositive?: boolean;
 }
 
 export type OfficialParseResultV1 =

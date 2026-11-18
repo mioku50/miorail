@@ -174,6 +174,7 @@ export function parseCoinbaseStocksApiV1(body: string): OfficialParseResultV1 {
       underlyingIsin: row.isin,
       tokenDecimals: row.decimals,
       referenceValuePublished: row.nav_price != null,
+      issuerSupplyPositive: typeof row.total_supply === 'number' && row.total_supply > 0,
     });
   }
   return { ok: true, assets, otherEntries: [] };

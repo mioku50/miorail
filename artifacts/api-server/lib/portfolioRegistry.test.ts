@@ -94,3 +94,18 @@ describe('the portfolio answer', () => {
     }
   });
 });
+
+describe('the registry a wallet is read against', () => {
+  test('is every contract a reviewed source ever listed, not only the ones it lists now (audit STOCK-1)', async () => {
+    const asked: unknown[] = [];
+    const original = portfolioRegistryRuntime.repository;
+    portfolioRegistryRuntime.repository = () => ({ officialAssets: async (input) => { asked.push(input); return REGISTRY; } });
+    try {
+      const marked = await withRegistryMarksV1([{ symbol: 'AAPLc', address: AAPLC }], 'mainnet');
+      assert.deepEqual(marked[0]?.registry, { standing: 'official', ticker: 'AAPLc' });
+      assert.equal((asked[0] as { currentlyListedOnly?: boolean }).currentlyListedOnly, false);
+    } finally {
+      portfolioRegistryRuntime.repository = original;
+    }
+  });
+});

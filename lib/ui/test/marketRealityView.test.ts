@@ -4446,6 +4446,18 @@ describe('a scoped list says what it is a slice of', () => {
     }
   });
 
+  test('the Coinbase counts say what they count, and a count over rows cut short is a floor (audit STOCK-1)', () => {
+    type Wire = NonNullable<Parameters<typeof underlyingCountersV1>[0]>;
+    const entry = (live: number) => ({ liveRepresentationCount: live }) as unknown as Wire['entries'][number];
+    const whole = underlyingCountersV1({ scope: 'coinbase_b20', entries: [entry(1), entry(0), entry(2)], totals: { ...totals, underlyings: 3 }, observedAt: NOW });
+    assert.deepEqual(whole.map((counter) => [counter.label, counter.value, counter.note]), [
+      ['Coinbase stocks', '3', 'companies Coinbase’s list names now'],
+      ['With tokens outstanding', '2', 'companies among them whose Coinbase contract holds any, as Base was last read'],
+    ]);
+    const cut = underlyingCountersV1({ scope: 'coinbase_b20', entries: [entry(1), entry(0)], totals: { ...totals, underlyings: 600 }, observedAt: NOW });
+    assert.deepEqual([cut[1]!.value, cut[1]!.note], ['at least 1', 'companies, of the first 2 read here, whose Coinbase contract holds any, as Base was last read']);
+  });
+
   test('the wide scope says why several contracts for one company is the point', () => {
     const scope = stockScopeViewV1({
       scope: 'all_representations',

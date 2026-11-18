@@ -3684,18 +3684,29 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
     // can use: how many stocks, and how many of them hold any tokens at all —
     // the same split the grid below draws.
     return [
+      // What each number counts, said with it (audit STOCK-1, 2026-11-18): the first is the companies Coinbase's
+      // own list names at its last reading, not every contract Coinbase ever deployed; the second is Miorail's own
+      // reading of Base, which can trail a mint by a pass.
       {
         label: 'Coinbase stocks',
         value: String(wire.totals.underlyings),
-        note: 'companies with a Coinbase B20 contract',
+        note: 'companies Coinbase’s list names now',
         tone: 'neutral',
       },
-      {
-        label: 'With tokens outstanding',
-        value: String(wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length),
-        note: 'companies whose Coinbase contract holds any',
-        tone: 'neutral',
-      },
+      // Counted on the rows this answer carries: when the index cut them short of the total (it serves 500 at
+      // most), the count is a floor and says so, never a total beside one it cannot add up to.
+      (() => {
+        const live = wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length;
+        const cut = wire.entries.length < wire.totals.underlyings;
+        return {
+          label: 'With tokens outstanding',
+          value: cut ? `at least ${live}` : String(live),
+          note: cut
+            ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, as Base was last read`
+            : 'companies among them whose Coinbase contract holds any, as Base was last read',
+          tone: 'neutral' as const,
+        };
+      })(),
     ];
   }
   return [

@@ -83,11 +83,19 @@ let cached: { at: number; assets: Promise<OfficialAssetIdentityV1[]> } | null = 
 /** A testing seam; production never replaces it. */
 export const portfolioRegistryRuntime = {
   now: (): number => Date.now(),
-  /** The registry changes when an issuer publishes, so five minutes is fresh. */
+  repository: (): Pick<ReturnType<typeof createDatabaseOfficialAssetRepository>, 'officialAssets'> => createDatabaseOfficialAssetRepository(client),
+  /**
+   * The registry changes when an issuer publishes, so five minutes is fresh.
+   *
+   * Every contract a reviewed source ever listed, not only the ones it lists now (audit STOCK-1, 2026-11-18): on
+   * 2026-11-17 Coinbase's list went from 377 contracts to 74 in one pass, it seems by leaving out those with
+   * nothing outstanding, and a contract minted again stayed out of it until the next pass. A contract's identity
+   * does not end when a list stops naming it, so a wallet holding it is told what it holds.
+   */
   officialAssets: (): Promise<OfficialAssetIdentityV1[]> => {
     const now = portfolioRegistryRuntime.now();
     if (!cached || now - cached.at > REGISTRY_TTL_MS_V1) {
-      const assets = createDatabaseOfficialAssetRepository(client).officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
+      const assets = portfolioRegistryRuntime.repository().officialAssets({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1, currentlyListedOnly: false });
       cached = { at: now, assets };
       assets.catch(() => {
         if (cached?.assets === assets) cached = null;

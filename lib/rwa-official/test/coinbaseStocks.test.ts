@@ -54,6 +54,15 @@ test('protobuf omission of zero supply and optional NAV is accepted', () => {
   );
 });
 
+test('the issuer’s own word on whether tokens are outstanding is kept, outside the identity hash (audit STOCK-1)', () => {
+  const read = (total_supply: unknown) => {
+    const result = parse([{ ...netflix, total_supply }]);
+    assert.ok(result.ok);
+    return result.assets[0]!.issuerSupplyPositive;
+  };
+  assert.deepEqual([read(16), read(0), read(undefined), read(null)], [true, false, false, false]);
+});
+
 test('malformed or truncated responses refuse the whole snapshot', () => {
   for (const body of ['{', '{}', '{"tokens":[]}', '{"tokens":null}'])
     assert.equal(parseCoinbaseStocksApiV1(body).ok, false);
