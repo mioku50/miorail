@@ -305,6 +305,72 @@ describe('terminal-status invariants', () => {
   });
 });
 
+describe('receipts are exactly the transactions of the proof', () => {
+  // Re-sealed with the proof's own hash recomputed too, so each case is caught
+  // by the receipt checks and not by a hash that no longer matches.
+  function resealProof(bundle: PublicRouteProofBundleV1, mutate: (proof: Record<string, unknown>) => void): unknown {
+    return reseal(bundle, (draft) => {
+      mutate(draft.proof);
+      draft.proof.proofHash = hashRouteProofV1(draft.proof as unknown as RouteProofV1);
+    });
+  }
+  const receiptCoverage = (bundle: unknown) =>
+    verifyPublicProofBundleV1(bundle).checks.find((check) => check.key === 'receipt_coverage');
+
+  test('an untouched bundle covers every transaction with exactly one receipt', () => {
+    for (const status of ['completed', 'partial_failure'] as const) {
+      assert.equal(receiptCoverage(bundleFor(status))?.outcome, 'passed', status);
+    }
+  });
+
+  test('a receipt for a transaction the proof does not name is refused, and is not counted', () => {
+    // One transaction that succeeded, claimed as a partial failure on the
+    // strength of somebody else's revert. Before the re-audit (P2 Route Proof,
+    // 2026-11-18) this bundle verified as valid.
+    const tampered = resealProof(bundleFor('completed'), (proof) => {
+      proof.status = 'partial_failure';
+      proof.finalStatus = 'partial_failure';
+      (proof.receipts as Record<string, unknown>[]).push({
+        transactionHash: hash('9'),
+        status: 'reverted',
+        blockNumber: '49000000',
+        gasUsed: '1',
+      });
+    });
+    const result = verifyPublicProofBundleV1(tampered);
+    assert.equal(result.valid, false);
+    assert.equal(outcome(tampered, 'proof_hash'), 'passed');
+    assert.equal(outcome(tampered, 'schema'), 'failed');
+    assert.deepEqual(receiptCoverage(tampered), {
+      key: 'receipt_coverage',
+      label: 'Receipt coverage',
+      outcome: 'failed',
+      detail: 'a receipt belongs to no transaction hash of this proof',
+    });
+    // The outcome is read from the proof's own receipt, which succeeded.
+    assert.equal(outcome(tampered, 'final_status'), 'failed');
+  });
+
+  test('a transaction hash with no receipt is refused', () => {
+    const tampered = resealProof(bundleFor('completed'), (proof) => {
+      proof.transactionHashes = [...(proof.transactionHashes as string[]), hash('9')];
+    });
+    assert.equal(verifyPublicProofBundleV1(tampered).valid, false);
+    assert.equal(outcome(tampered, 'proof_hash'), 'passed');
+    assert.equal(receiptCoverage(tampered)?.detail, 'a transaction hash has no receipt');
+  });
+
+  test('a transaction hash with two receipts is refused', () => {
+    const tampered = resealProof(bundleFor('completed'), (proof) => {
+      const [receipt] = proof.receipts as Record<string, unknown>[];
+      proof.receipts = [receipt, { ...receipt }];
+    });
+    assert.equal(verifyPublicProofBundleV1(tampered).valid, false);
+    assert.equal(outcome(tampered, 'proof_hash'), 'passed');
+    assert.equal(receiptCoverage(tampered)?.detail, 'a transaction hash has more than one receipt');
+  });
+});
+
 describe('the CLI answers the same way, without a running server', () => {
   const file = (content: string) => () => content;
 

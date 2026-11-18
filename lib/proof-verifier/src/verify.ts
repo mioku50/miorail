@@ -180,23 +180,39 @@ function verifyFamilyV1(
       new Set(hashes).size === hashes.length,
       'a transaction hash appears more than once',
     );
-    const receiptHashes = new Set(proof.receipts.map((receipt) => receipt.transactionHash));
+    // One receipt per transaction hash and nothing else: the two sets are
+    // equal. Coverage used to run one way only, and the outcome below counted
+    // every receipt, so a receipt for a transaction the proof does not name
+    // could supply the success or the revert its claim needed (re-audit P2
+    // Route Proof, 2026-11-18).
+    const hashSet = new Set(hashes);
+    const receiptHashes = proof.receipts.map((receipt) => receipt.transactionHash);
+    const receiptHashSet = new Set(receiptHashes);
+    const missing = hashes.some((hash) => !receiptHashSet.has(hash));
+    const foreign = receiptHashes.some((hash) => !hashSet.has(hash));
+    const repeated = receiptHashSet.size !== receiptHashes.length;
     checks.assert(
       'receipt_coverage',
       'Receipt coverage',
-      hashes.every((hash) => receiptHashes.has(hash)),
-      'a transaction hash has no receipt',
+      !missing && !foreign && !repeated,
+      missing
+        ? 'a transaction hash has no receipt'
+        : foreign
+          ? 'a receipt belongs to no transaction hash of this proof'
+          : 'a transaction hash has more than one receipt',
     );
 
     // Terminal-status invariants. These are what stop a proof from claiming an
-    // outcome its receipts do not support.
-    const successes = proof.receipts.filter((receipt) => receipt.status === 'success');
-    const failures = proof.receipts.filter((receipt) => receipt.status !== 'success');
+    // outcome its receipts do not support, read from the receipts of its own
+    // transactions only.
+    const ownReceipts = proof.receipts.filter((receipt) => hashSet.has(receipt.transactionHash));
+    const successes = ownReceipts.filter((receipt) => receipt.status === 'success');
+    const failures = ownReceipts.filter((receipt) => receipt.status !== 'success');
     if (proof.finalStatus === 'completed') {
       checks.assert(
         'final_status',
         'Final-status invariants',
-        proof.receipts.length > 0 && failures.length === 0,
+        ownReceipts.length > 0 && failures.length === 0,
         'a completed proof carries a receipt that did not succeed',
       );
     } else if (proof.finalStatus === 'partial_failure') {

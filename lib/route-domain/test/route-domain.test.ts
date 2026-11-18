@@ -18,7 +18,9 @@ import {
   RouteIntentV1Schema,
   RouteProofEventV1Schema,
   RouteProofV1Schema,
+  hashRouteProofV1,
   type RouteIntentV1,
+  type RouteProofV1,
 } from '../src/index.js';
 import {
   completeEvidenceSetFixture,
@@ -257,6 +259,39 @@ test('Route Proof captures completed and EIP-5792-style partial-failure outcomes
     partialFailureRouteProofFixture.receipts.some((receipt) => receipt.status === 'reverted'),
   );
   assert.equal(completedRouteProofFixture.approvedCallsHash, validBlueprintFixture.callsHash);
+});
+
+test('Route Proof receipts are exactly its transactions: none missing, none extra, none twice', () => {
+  // Coverage ran one way only, and the outcome rules read every receipt, so a
+  // proof whose one transaction succeeded could claim a partial failure by
+  // carrying a revert for a transaction it does not name (re-audit P2 Route
+  // Proof, 2026-11-18).
+  const sealed = (proof: RouteProofV1) => ({ ...proof, proofHash: hashRouteProofV1(proof) });
+  const issuesOf = (proof: RouteProofV1) => {
+    const result = RouteProofV1Schema.safeParse(sealed(proof));
+    return result.success ? [] : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+  };
+  const base = completedRouteProofFixture;
+  const [own] = base.receipts;
+  const other = `0x${'9'.repeat(64)}` as const;
+
+  const extra = issuesOf({
+    ...base,
+    status: 'partial_failure',
+    finalStatus: 'partial_failure',
+    receipts: [...base.receipts, { transactionHash: other, status: 'reverted', blockNumber: '33123461', gasUsed: '1' }],
+  });
+  assert.ok(extra.some((issue) => /^receipts\.1\.transactionHash: Every receipt must belong/.test(issue)), extra.join('\n'));
+
+  const missing = issuesOf({ ...base, transactionHashes: [...base.transactionHashes, other] });
+  assert.ok(missing.some((issue) => /^transactionHashes\.1: Every transaction hash must have a receipt/.test(issue)), missing.join('\n'));
+
+  const twice = issuesOf({ ...base, receipts: [own, { ...own }] });
+  assert.ok(twice.some((issue) => /unique transaction hashes/.test(issue)), twice.join('\n'));
+
+  // The untouched proofs still hold.
+  assert.deepEqual(issuesOf(base), []);
+  assert.deepEqual(issuesOf(partialFailureRouteProofFixture), []);
 });
 
 test('Route Proof events form a deterministic append-only hash chain', () => {

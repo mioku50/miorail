@@ -343,6 +343,20 @@ export const RouteProofV1Schema = RouteProofV1ObjectSchema.superRefine((value, c
       });
     }
   }
+  // And the other way: the receipts are exactly the proof's own transactions.
+  // The outcome rules below read every receipt, so one for a transaction this
+  // proof does not name could carry a success or a revert the proof never had
+  // (re-audit P2 Route Proof, 2026-11-18).
+  const proofTransactionHashes = new Set(value.transactionHashes);
+  for (const [index, receipt] of value.receipts.entries()) {
+    if (!proofTransactionHashes.has(receipt.transactionHash)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receipts', index, 'transactionHash'],
+        message: 'Every receipt must belong to one of the proof transaction hashes',
+      });
+    }
+  }
   if (
     value.finalStatus === 'completed' &&
     value.receipts.some((receipt) => receipt.status !== 'success')
