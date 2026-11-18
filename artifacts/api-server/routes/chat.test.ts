@@ -15,6 +15,7 @@ import type { LlmRequest } from '@mioagent/llm';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { chatLimitsRuntimeV1 } from '../middleware/chatLimits.js';
 import { ModelBudgetV1, modelBudgetRuntimeV1 } from '../lib/modelBudget.js';
+import { ObservabilityService, type AuditLogEntry } from '@mioagent/observability';
 
 const DB_TEST_USER_ID = testTenantId();
 const originalLimiter = chatLimitsRuntimeV1.limiter;
@@ -733,6 +734,57 @@ describe('Chat API & Recommendation Guardrails', () => {
       restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
+  });
+
+  // Audit P2 chat privacy, 2026-11-18: the portfolio scan and the inference
+  // call wrote the person's message into audit_logs, and clearing the history
+  // deletes `chats` only, so that copy outlived it.
+  test('audit_logs keeps the operation, ids and cost of a chat turn, never its words', async () => {
+    clearTokenSecurityCacheForTests();
+    const env = ['CHAIN_ENV', 'MAINNET_EXECUTION_ENABLED', 'TOKEN_SECURITY_PROVIDER', 'TOKEN_BALANCES_PROVIDER', 'PRICE_PROVIDER', 'APPROVAL_PROVIDER']
+      .map((name) => [name, process.env[name]] as const);
+    const original = { ...chatRouteRuntime };
+    Object.assign(process.env, {
+      CHAIN_ENV: 'mainnet-readonly', MAINNET_EXECUTION_ENABLED: 'false',
+      TOKEN_SECURITY_PROVIDER: 'none', TOKEN_BALANCES_PROVIDER: 'none', PRICE_PROVIDER: 'none', APPROVAL_PROVIDER: 'none',
+    });
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
+    chatRouteRuntime.createStructuredLlmProvider = () => ({
+      async generate() { throw new Error('semantic routing is stubbed in this test'); },
+    });
+    chatRouteRuntime.routeSemanticIntent = async () => ({ extraction: null, normalized: null });
+    chatRouteRuntime.createLlmProvider = () => ({
+      async generate() { return { message: { role: 'assistant' as const, content: 'A plain answer.' } }; },
+    });
+    const logged: AuditLogEntry[] = [];
+    mock.method(ObservabilityService, 'logAction', async (entry: AuditLogEntry) => { logged.push(entry); });
+    await request(app).delete('/api/chat/history');
+    const portfolioScan = 'review my portfolio near the sapphire orchard';
+    const inference = 'describe the violet lighthouse at dusk';
+    try {
+      for (const message of [portfolioScan, inference]) {
+        const response = await request(app).post('/api/chat').send({
+          message,
+          walletAddress: '0x1234567890123456789012345678901234567890',
+        });
+        assert.equal(response.status, 200);
+      }
+      assert.deepEqual(logged.map((entry) => entry.actionType), ['portfolio_scan', 'inference_call']);
+      for (const [index, entry] of logged.entries()) {
+        const recorded = JSON.stringify(entry.details);
+        for (const word of ['sapphire', 'orchard', 'violet', 'lighthouse']) {
+          assert.equal(recorded.includes(word), false, `${entry.actionType} must not keep the message: ${recorded}`);
+        }
+        assert.equal(entry.details?.messageLength, [portfolioScan, inference][index]!.length);
+        assert.equal(entry.cost, '0.0010');
+        assert.ok(entry.actionId);
+      }
+      assert.ok(logged[0]!.details?.actionId, 'the portfolio scan still names the action it created');
+    } finally {
+      mock.restoreAll();
+      Object.assign(chatRouteRuntime, original);
+      for (const [name, value] of env) restoreEnv(name, value);
     }
   });
 

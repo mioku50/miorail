@@ -75,6 +75,16 @@ export const chatRouteRuntime = {
   routeSemanticIntent,
 };
 
+/**
+ * What audit_logs keeps of a chat turn: its ids, the operation and its length,
+ * never the words. DELETE /history clears `chats` and nothing else, so a copy
+ * of the message in an audit row outlived the history its owner cleared
+ * (audit P2 chat privacy, 2026-11-18).
+ */
+export function chatAuditDetailsV1(message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...details, messageLength: message.length };
+}
+
 const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
 
 function deterministicPreparedIntent(message: string, kind: string): NormalizedSemanticIntent | null {
@@ -801,7 +811,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
           userId,
           actionId: assistantMsg.messageId,
           actionType: 'portfolio_scan',
-          details: { message, intentType: intent.intentType, actionId },
+          details: chatAuditDetailsV1(message, { intentType: intent.intentType, actionId }),
           cost: '0.0010',
         }));
       } catch {
@@ -926,7 +936,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
         userId,
         actionId: assistantMessageId,
         actionType: 'inference_call',
-        details: { message },
+        details: chatAuditDetailsV1(message),
         cost: '0.0010',
       }));
     } catch {
