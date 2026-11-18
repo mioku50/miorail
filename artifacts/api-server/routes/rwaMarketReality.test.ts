@@ -191,6 +191,38 @@ describe('GET the reviewed-securities chooser', () => {
     assert.equal(response.status, 503);
     assert.equal(response.body.code, 'market_reality_storage_unavailable');
   });
+
+  test("an unread current list is the chooser's failure, never every company ever bound", async () => {
+    // The real assembly over two bound companies, with Coinbase's current list
+    // unreadable. It used to answer 200 with both, as the list "now"
+    // (re-audit P3, 2026-11-18).
+    const row = (key: string) => ({
+      underlying: {
+        underlyingKey: key, assetClass: 'equity' as const, canonicalName: key, displaySymbol: null,
+        identifierScheme: null, identifierValue: null, sourceKind: 'coinbase_stocks_api' as const,
+        sourceRef: 'https://api.coinbase.com/v1/tokenized-stocks', sourceHash: 'cd'.repeat(32),
+        observedAt: '2026-11-18T12:00:00.000Z',
+      },
+      representationCount: 1, liveRepresentationCount: 0, issuerIds: ['coinbase'],
+      representationCountsByIssuer: { coinbase: 1 }, liveRepresentationCountsByIssuer: {},
+    });
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.underlyings = () =>
+      ({
+        listUnderlyings: async () => [row(UNDERLYING), row('security:isin:US0378331005')],
+        representationsOf: async () => [],
+      }) as never;
+    rwaMarketRealityRuntime.official = () =>
+      ({
+        officialAssets: async () => {
+          throw new Error('storage down');
+        },
+      }) as never;
+    const response = await request(app()).get('/api/route-intelligence/rwa/underlyings');
+    assert.equal(response.status, 500);
+    assert.equal(response.body.code, 'market_reality_failed');
+    assert.equal(response.body.entries, undefined);
+  });
 });
 
 describe('POST the live measurement', () => {

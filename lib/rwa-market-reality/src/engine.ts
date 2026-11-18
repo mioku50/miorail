@@ -639,10 +639,10 @@ export async function assembleMarketRealityIndexV1(
      * stays on the board only while one of its Coinbase contracts is listed:
      * COIN's contract exists, but Base dropped it on 2026-09-10 and Coinbase's
      * own API never listed it, and the board counted 128 stocks where the
-     * issuer lists 127. Null, or absent, when the corpus could not be read:
-     * then nothing is dropped.
+     * issuer lists 127. Absent when there is no list to read: then nothing is
+     * dropped. A read that fails rejects, and so does the index.
      */
-    currentOfficialAddresses?: () => Promise<ReadonlySet<string> | null>;
+    currentOfficialAddresses?: () => Promise<ReadonlySet<string>>;
   },
   input: { limit: number; scope?: MarketRealityIndexScopeV1 },
 ): Promise<MarketRealityIndexV1> {
@@ -654,9 +654,12 @@ export async function assembleMarketRealityIndexV1(
   const stockRows = reviewedRows.filter(
     (row) => row.underlying.assetClass === 'equity' && row.issuerIds.includes('coinbase'),
   );
-  const listed = deps.currentOfficialAddresses
-    ? await deps.currentOfficialAddresses().catch(() => null)
-    : null;
+  // A list that was asked for and could not be read fails the index. It used
+  // to fall back to every company ever bound, under the caption "companies
+  // Coinbase's list names now": since Coinbase lists only minted tokens
+  // (2026-11-17), that was about 377 companies where the list names 87
+  // (re-audit P3, 2026-11-18). The route answers with its own failure.
+  const listed = deps.currentOfficialAddresses ? await deps.currentOfficialAddresses() : null;
   const listedKeys = listed === null
     ? null
     : new Set(

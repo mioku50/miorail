@@ -587,12 +587,19 @@ test('the Coinbase board keeps a company only while a Coinbase contract of it is
   const board = await assembleMarketRealityIndexV1({ underlyings, now, currentOfficialAddresses: async () => listed }, { limit: 50 });
   assert.deepEqual(board.entries.map((entry) => entry.underlyingKey), ['security:isin:nvda']);
   assert.equal(board.totals.underlyings, 1);
-  // A corpus that cannot be read drops nothing.
-  const unread = await assembleMarketRealityIndexV1(
-    { underlyings, now, currentOfficialAddresses: async () => { throw new Error('storage down'); } },
-    { limit: 50 },
+  // A list that cannot be read fails the index. It grew from one to two here,
+  // every company ever bound shown as the list "now" (re-audit P3, 2026-11-18).
+  await assert.rejects(
+    () =>
+      assembleMarketRealityIndexV1(
+        { underlyings, now, currentOfficialAddresses: async () => { throw new Error('storage down'); } },
+        { limit: 50 },
+      ),
+    /storage down/,
   );
-  assert.equal(unread.totals.underlyings, 2);
+  // With no list to read at all, nothing is dropped.
+  const unlisted = await assembleMarketRealityIndexV1({ underlyings, now }, { limit: 50 });
+  assert.equal(unlisted.totals.underlyings, 2);
 });
 
 test('a security with tokens outstanding is not ranked below an empty contract', async () => {
