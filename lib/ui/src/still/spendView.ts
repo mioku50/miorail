@@ -105,6 +105,15 @@ export function spendPayOpenV1(payload: unknown): boolean {
   return object(payload) && object(payload.checkout) && payload.checkout.enabled === true;
 }
 
+/** Whether paying with Still is open, from the server's own status answer: on or off as it says; checking while it
+ * has not answered; unknown when it could not be read or said nothing readable. */
+export function spendPayStateV1(payload: unknown, read: { pending: boolean }): 'on' | 'off' | 'checking' | 'unknown' {
+  if (object(payload) && payload.outcome === 'status' && object(payload.checkout) && typeof payload.checkout.enabled === 'boolean') {
+    return payload.checkout.enabled ? 'on' : 'off';
+  }
+  return read.pending ? 'checking' : 'unknown';
+}
+
 /** The server's search answer, or null and why it cannot be shown. */
 export function spendSearchViewV1(payload: unknown): { products: SpendProductRowV1[] | null; error: string | null } {
   const failed = { products: null, error: 'Bitrefill’s catalogue could not be read just now. Try again in a minute.' };

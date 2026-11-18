@@ -14,6 +14,7 @@ import {
   spendOrderErrorV1,
   spendOrderViewV1,
   spendPayOpenV1,
+  spendPayStateV1,
   spendPhoneDraftV1,
   spendPhonePrefixesTextV1,
   spendProductViewV1,
@@ -319,6 +320,21 @@ describe('the Spend page', () => {
     const guest = renderToStaticMarkup(<StillSpend model={model({ pay: null, payAfterSignIn: true })} />);
     assert.match(guest, /Sign in with your wallet to pay with Still/);
     assert.doesNotMatch(guest, /not open on this server|Nothing can be bought/);
+    // The switch not read yet, or not readable: said as that, never as closed (audit P3, 2026-11-18).
+    const checking = renderToStaticMarkup(<StillSpend model={model({ pay: null, payState: 'checking' })} />);
+    assert.match(checking, /Checking whether paying with Still is open here\./);
+    const unknown = renderToStaticMarkup(<StillSpend model={model({ pay: null, payState: 'unknown' })} />);
+    assert.match(unknown, /Still could not check just now whether paying is open here; try again in a minute\./);
+    for (const html of [checking, unknown]) assert.doesNotMatch(html, /not open on this server/);
+  });
+
+  it('reads the switch from the server’s own status answer alone', () => {
+    assert.equal(spendPayStateV1({ outcome: 'status', checkout: { enabled: true } }, { pending: false }), 'on');
+    assert.equal(spendPayStateV1({ outcome: 'status', checkout: { enabled: false } }, { pending: false }), 'off');
+    assert.equal(spendPayStateV1(undefined, { pending: true }), 'checking');
+    assert.equal(spendPayStateV1(undefined, { pending: false }), 'unknown');
+    assert.equal(spendPayStateV1({ outcome: 'products', checkout: { enabled: true } }, { pending: false }), 'unknown', 'a search answer is not the switch');
+    assert.equal(spendPayStateV1({ outcome: 'status', checkout: { enabled: 'yes' } }, { pending: false }), 'unknown');
   });
 
   it('a top-up asks for the number with its calling code, says what Bitrefill tops up, and waits for a whole number', () => {

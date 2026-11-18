@@ -8,7 +8,7 @@ import {
   spendOrderErrorV1,
   spendOrderViewV1,
   spendOwedCentsV1,
-  spendPayOpenV1,
+  spendPayStateV1,
   spendProductViewV1,
   spendSearchViewV1,
   spendUsdcTextV1,
@@ -28,8 +28,8 @@ export function StillSpendPage() {
   const sky = useStillSky(), session = useStillWallet();
   const mine = useStillMine(session.wallet, { enabled: session.signedIn });
   const usdc = useStillUsdcV1(session.wallet, { enabled: session.signedIn });
-  // /subscriptions opens on them: a link a post can carry.
-  const startsOnSubscriptions = location === '/subscriptions';
+  // /subscriptions opens on them: a link a post can carry, with or without a slash after it.
+  const startsOnSubscriptions = location.replace(/\/+$/, '') === '/subscriptions';
   const [type, setType] = useState<SpendTypeV1>(startsOnSubscriptions ? 'giftcard' : 'esim');
   const [country, setCountry] = useState(() => spendCountryDefaultV1(typeof navigator === 'undefined' ? undefined : navigator.language));
   const [query, setQuery] = useState('');
@@ -59,9 +59,12 @@ export function StillSpendPage() {
   const productError = product.error
     ? /\b404\b/.test(product.error.message) ? 'Bitrefill does not offer this product now.' : 'This product could not be read from Bitrefill just now.'
     : detail?.error ?? null;
-  // The server's own switch, read once: the subscriptions list searches nothing that would carry it.
+  // The server's own switch, from its own answer alone: a search or a product read earlier says what the switch was
+  // then, and a fresh "off" is not outweighed by an older "on". Until it answers the page says it is checking, and
+  // when it cannot be read, that it could not check; neither is "closed".
   const status = useStillSpendStatusV1();
-  const payOn = spendPayOpenV1(product.data) || spendPayOpenV1(search.data) || spendPayOpenV1(status.data);
+  const payState = spendPayStateV1(status.data, { pending: status.data === undefined && !status.isError });
+  const payOn = payState === 'on';
   const payOpen = session.signedIn && payOn;
   const pick = (next: string | null) => { setChosen(next); setPayError(null); };
 
@@ -109,6 +112,7 @@ export function StillSpendPage() {
         product: detail?.product ?? null, productLoading: product.isFetching, productError,
         room, owedCents: spendOwedCentsV1(mine.data), walletUsdc: walletAtomic !== null ? spendUsdcTextV1(walletAtomic) : null,
         payAfterSignIn: !session.signedIn && payOn,
+        ...(payState === 'checking' || payState === 'unknown' ? { payState } : {}),
         pay: payOpen ? {
           chosen, onChoose: pick, email, onEmail: (next) => { setEmail(next); setPayError(null); },
           phone, onPhone: (next) => { setPhone(next); setPayError(null); },

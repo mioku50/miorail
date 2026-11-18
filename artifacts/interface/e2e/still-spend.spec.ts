@@ -22,7 +22,7 @@ const ORDER = { orderId: ORDER_ID, productId: 'bitrefill-esim-germany', productN
 // A top-up's order, as the server holds it for its owner: the number it goes to included. The number is made up.
 const TOP_UP_ORDER = { ...ORDER, productId: 'beeline-kazakhstan', productName: 'Beeline Kazakhstan', packageValue: '100', faceCurrency: 'KZT', priceAtomic: '260000', refillTo: '+77771234567' };
 
-async function install(page: Page, signedIn: boolean, options: { pay?: boolean; usdcAtomic?: string } = {}) {
+async function install(page: Page, signedIn: boolean, options: { pay?: boolean; usdcAtomic?: string; status?: 'hold' | 'fail' } = {}) {
   const reads: string[] = [], writes: string[] = [], walletMethods: string[] = [], bodies: Record<string, unknown> = {};
   let opened: typeof ORDER = ORDER;
   const checkout = options.pay ? { checkout: { enabled: true, available: true, capAtomic: '100000000' } } : {};
@@ -60,7 +60,12 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean; 
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(), cached: false } });
     if (path === '/api/still/mine/usdc' && signedIn && options.usdcAtomic) return route.fulfill({ json: { outcome: 'read', usdc: { raw: options.usdcAtomic, decimals: 6, block: '53470000' } } });
-    if (path === '/api/public/still/spend/status') return route.fulfill({ json: { outcome: 'status', checkout: { enabled: Boolean(options.pay) } } });
+    if (path === '/api/public/still/spend/status') {
+      // 'hold': the server has not answered yet; 'fail': it answered 503.
+      if (options.status === 'hold') return new Promise<void>(() => {});
+      if (options.status === 'fail') return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fulfill({ json: { outcome: 'status', checkout: { enabled: Boolean(options.pay) } } });
+    }
     if (path === '/api/public/still/spend/search') {
       if (url.searchParams.get('type') === 'refill') {
         return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'refill', country: url.searchParams.get('country'), query: '', readAt: NOW.toISOString(),
@@ -170,6 +175,23 @@ test('/subscriptions opens Spend on them, for a link a post can carry', async ({
   await expect(page.getByText(/Paying with Still is not open on this server/)).toHaveCount(0);
   await expect(page.getByText(/Pay with Still: a loan for the exact price pays/)).toBeVisible();
   expect(state.writes).toEqual([]);
+});
+
+test('/subscriptions/ with a slash opens them too, and the switch unread is never said to be closed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await install(page, true, { pay: true, status: 'hold' });
+  await page.goto('/subscriptions/');
+  await expect(page.getByRole('group', { name: 'Kind of product' }).getByRole('button', { name: /^Subscriptions/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/Checking whether paying with Still is open here\./)).toBeVisible();
+  await expect(page.getByText(/Paying with Still is not open on this server/)).toHaveCount(0);
+});
+
+test('a status the server could not give says Still could not check, not that paying is closed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await install(page, true, { pay: true, status: 'fail' });
+  await page.goto('/subscriptions');
+  await expect(page.getByText(/Still could not check just now whether paying is open here/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Paying with Still is not open on this server/)).toHaveCount(0);
 });
 
 test('gift cards by Bitrefill’s category, and a country with no top-up offers its mobile data', async ({ page }) => {

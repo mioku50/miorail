@@ -68,6 +68,8 @@ export interface StillSpendModelV1 {
   walletUsdc?: string | null;
   /** Paying open on this server, for a reader who has not signed in yet. */
   payAfterSignIn?: boolean;
+  /** The server's switch not read yet, or not readable: said as that, never as closed. */
+  payState?: 'checking' | 'unknown';
   /** Paying from Still: null when this server does not pay Bitrefill from a loan. */
   pay?: null | {
     /** The package value chosen to pay, or none yet. */
@@ -118,6 +120,10 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
           <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, or the USDC already in your wallet does, with no loan. Your own wallet approves either. Up to 100 USDC a purchase.</span>
         ) : model.payAfterSignIn ? (
           <span>Sign in with your wallet to pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it. Up to 100 USDC a purchase.</span>
+        ) : model.payState === 'checking' ? (
+          <span role="status">Checking whether paying with Still is open here. The prices below are <strong>Bitrefill</strong>’s own, in USDC.</span>
+        ) : model.payState === 'unknown' ? (
+          <span role="status">Still could not check just now whether paying is open here; try again in a minute. The prices below are <strong>Bitrefill</strong>’s own, in USDC.</span>
         ) : (
           <span>Paying with Still is not open on this server. The prices below are <strong>Bitrefill</strong>’s own, in USDC.</span>
         )}
