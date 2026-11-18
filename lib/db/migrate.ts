@@ -64,6 +64,19 @@ async function run() {
     if (legacy.users && legacy.oauth && legacy.permissions && legacy.autonomy && legacy.executedAt) {
       // This database predates the Drizzle journal but already contains the
       // complete 0000..0008 schema. Baseline it once so only newer migrations run.
+      //
+      // The journal is created first, in drizzle's own words (drizzle-orm
+      // pg-core/dialect.js, `migrate()`), so that `migrate()` below finds it and
+      // leaves it as it is. The insert used to come first and failed with 42P01
+      // on the very database it exists for (audit P3 migrator, 2026-11-18).
+      await migrationClient`CREATE SCHEMA IF NOT EXISTS "drizzle"`;
+      await migrationClient`
+        CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+          id SERIAL PRIMARY KEY,
+          hash text NOT NULL,
+          created_at bigint
+        )
+      `;
       await migrationClient`
         insert into drizzle.__drizzle_migrations (hash, created_at)
         values ('legacy-schema-baseline-through-0008', 1783680219000)
