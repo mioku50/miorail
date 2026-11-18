@@ -10,7 +10,8 @@
 //   others can be bought there), as Apple and Google say. A plan bought on the
 //   service's own website is billed by the service, and no store card pays it
 //   (audit P3, 2026-11-18); a card works only for an account of its own
-//   country.
+//   country, which an assistant says whenever it shows another country's
+//   card (operator, 2026-11-18).
 //
 // A card is a prepaid top-up: nothing renews by itself, and every purchase is
 // the person's own, signed. The page searches Bitrefill for `search` in the
@@ -62,7 +63,9 @@ export function stillSubscriptionGuideV1(): string {
     + 'own website is billed by the service, and a store card does not pay it. '
     + 'Say that a card tops up a balance and does not renew by itself, that a price inside an app can be above the service’s own web price, '
     + 'and when no card for the service is listed, say so. '
-    + 'Search only the country of the person’s own account (for an Apple or Google Play card, their store account), and ask which it is '
-    + 'when you do not know. When that country lists no card, say so and stop there: do not list or price other countries’ cards, and do not '
-    + 'explain how to move an account to another country. Never suggest another country’s card or a VPN.';
+    + 'Search the country of the person’s own account first (for an Apple or Google Play card, their store account), and ask which it is '
+    + 'when you do not know. When that country lists no card, say so; you may then show another country’s cards, and if you do, say how they '
+    + 'work: a card tops up only an account of its own country, so it does not work on the person’s account as it is; whether an account can '
+    + 'move to another country, and on what terms, is the store’s own rule, so point to the store’s help page rather than promise it; and a '
+    + 'price inside the app there can differ. Never suggest a VPN.';
 }

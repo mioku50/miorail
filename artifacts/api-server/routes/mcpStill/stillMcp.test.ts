@@ -121,8 +121,8 @@ test('the instructions and the spend search tell an assistant how a subscription
     assert.match(words, /service's own card first \(Discord Nitro, Netflix/);
     assert.match(words, /X Premium, ChatGPT Plus, Claude Pro/);
     assert.match(words, /does not renew by itself/);
-    assert.match(words, /Never suggest another country’s card or a VPN\./);
-    assert.match(words, /do not list or price other countries’ cards/);
+    assert.match(words, /Never suggest a VPN\./);
+    assert.match(words, /a card tops up only an account of its own country/);
   }
   // An assistant read prepayment false as "no prepayment needed" (operator's check, 2026-11-18).
   const product = tools.find((tool) => tool.name === 'still_spend_product')?.description ?? '';
