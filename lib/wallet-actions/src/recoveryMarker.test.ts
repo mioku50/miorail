@@ -110,6 +110,60 @@ describe('the marker holds handles and nothing else', () => {
   });
 });
 
+// Audit P2 wallet switch, 2026-11-18: a read for wallet B deleted wallet A's
+// valid marker, so switching A → B → A counted markers 1 → 0 → 0, and A's
+// submission had nothing left to recover it from.
+describe('switching wallets leaves every other wallet’s marker alone', () => {
+  const sortedKeys = (storage: FakeStorage) =>
+    Array.from({ length: storage.length }, (_, index) => storage.key(index)!).sort();
+
+  test('A → B → A: only A sees its marker, and it is still there when A comes back', () => {
+    const storage = new FakeStorage();
+    assert.equal(writeRecoveryMarkerV1(storage, marker()), true);
+    const steps = [WALLET, OTHER, WALLET].map((walletAddress) => ({
+      shown: readRecoveryMarkersV1(storage, { walletAddress, chainId: 8453 }).map((found) => found.attemptId),
+      stored: storage.length,
+    }));
+    assert.deepEqual(steps, [
+      { shown: ['submission-attempt:1'], stored: 1 },
+      { shown: [], stored: 1 },
+      { shown: ['submission-attempt:1'], stored: 1 },
+    ]);
+  });
+
+  test('the wallet is found by its address in any case', () => {
+    const storage = new FakeStorage();
+    writeRecoveryMarkerV1(storage, marker());
+    const shouted = `0x${WALLET.slice(2).toUpperCase()}`;
+    assert.equal(readRecoveryMarkersV1(storage, { walletAddress: shouted, chainId: 8453 }).length, 1);
+  });
+
+  test('a read deletes only its own wallet’s unusable markers', () => {
+    const storage = new FakeStorage();
+    writeRecoveryMarkerV1(storage, marker());
+    writeRecoveryMarkerV1(storage, marker({ walletAddress: OTHER, attemptId: 'submission-attempt:2' }));
+    storage.setItem(submissionRecoveryMarkerKeyV1(OTHER, 'unreadable'), '{not json');
+    storage.setItem(submissionRecoveryMarkerKeyV1(WALLET, 'unreadable'), '{not json');
+    storage.setItem(submissionRecoveryMarkerKeyV1(WALLET, 'testnet'), JSON.stringify({ ...marker(), attemptId: 'testnet', chainId: 84532 }));
+    // Under this wallet's key, naming another: not a marker this wallet can trust.
+    storage.setItem(submissionRecoveryMarkerKeyV1(WALLET, 'foreign'), JSON.stringify({ ...marker({ walletAddress: OTHER }), attemptId: 'foreign' }));
+
+    assert.deepEqual(readRecoveryMarkersV1(storage, { walletAddress: WALLET, chainId: 8453 }).map((found) => found.attemptId), ['submission-attempt:1']);
+    assert.deepEqual(sortedKeys(storage), [
+      submissionRecoveryMarkerKeyV1(WALLET, 'submission-attempt:1'),
+      submissionRecoveryMarkerKeyV1(OTHER, 'submission-attempt:2'),
+      submissionRecoveryMarkerKeyV1(OTHER, 'unreadable'),
+    ].sort());
+
+    // The other wallet's own read is the one that judges its markers.
+    assert.deepEqual(readRecoveryMarkersV1(storage, { walletAddress: OTHER, chainId: 8453 }).map((found) => found.attemptId), ['submission-attempt:2']);
+    assert.deepEqual(sortedKeys(storage), [
+      submissionRecoveryMarkerKeyV1(WALLET, 'submission-attempt:1'),
+      submissionRecoveryMarkerKeyV1(OTHER, 'submission-attempt:2'),
+    ].sort());
+  });
+});
+
 describe('when a marker stops being worth keeping', () => {
   test('a wallet success does NOT clear it while the proof is still pending', () => {
     // Dropping the handle here would strand a proof that still needs

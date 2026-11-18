@@ -1,5 +1,4 @@
 import {
-  SUBMISSION_RECOVERY_MARKER_PREFIX_V1,
   SubmissionRecoveryMarkerV1Schema,
   parseSubmissionRecoveryMarkerV1,
   submissionRecoveryMarkerKeyV1,
@@ -85,21 +84,30 @@ export function clearRecoveryMarkerV1(
 /**
  * Reads every marker belonging to the connected wallet and chain.
  *
- * A marker that fails validation, names another wallet or names another chain
- * is DELETED rather than returned. It is a convenience, and a convenience that
- * cannot be trusted is not worth keeping — nor worth showing a user a card
- * about a transaction that is not theirs.
+ * Only this wallet's keys are read. One of them that fails validation, or
+ * whose marker names another wallet or another chain, is DELETED rather than
+ * returned. It is a convenience, and a convenience that cannot be trusted is
+ * not worth keeping — nor worth showing a user a card about a transaction that
+ * is not theirs.
+ *
+ * Another wallet's marker is neither read nor deleted (audit P2 wallet switch,
+ * 2026-11-18). Every key was read once, and a valid marker of wallet A failed
+ * B's check and was deleted, so switching A → B → A left A's submission with
+ * nothing to recover it from.
  */
 export function readRecoveryMarkersV1(
   storage: MarkerStorageV1 | null,
   expected: { walletAddress: string; chainId: number },
 ): SubmissionRecoveryMarkerV1[] {
   if (!storage) return [];
+  // The key names its wallet (submissionRecoveryMarkerKeyV1), so this prefix
+  // is exactly the keys this wallet wrote.
+  const walletPrefix = submissionRecoveryMarkerKeyV1(expected.walletAddress, '');
   const markers: SubmissionRecoveryMarkerV1[] = [];
   const stale: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
-    if (!key || !key.startsWith(SUBMISSION_RECOVERY_MARKER_PREFIX_V1)) continue;
+    if (!key || !key.startsWith(walletPrefix)) continue;
     const raw = storage.getItem(key);
     const marker = parseSubmissionRecoveryMarkerV1(raw, expected);
     if (marker) markers.push(marker);
