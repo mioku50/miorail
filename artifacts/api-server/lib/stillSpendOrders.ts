@@ -17,9 +17,8 @@ import type { LendingPaymentV1 } from './lendingDraft.js';
 // the status read and goes back to its owner only.
 // ---------------------------------------------------------------------------
 
-/** One purchase at most this much, while Bitrefill's refund handling for
- * these invoices is unconfirmed. Gift cards are also how people are scammed. */
-export const STILL_SPEND_CAP_ATOMIC_V1 = 100_000_000n;
+/** One purchase at most this much (@mioagent/still-engine/spend-cap says why and since when). */
+export { STILL_SPEND_CAP_ATOMIC_V1, STILL_SPEND_CAP_TEXT_V1 } from '@mioagent/still-engine/spend-cap';
 
 /** A review must leave this long for the wallet and the block. */
 export const STILL_SPEND_REVIEW_MARGIN_MS_V1 = 120_000;

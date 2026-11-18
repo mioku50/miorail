@@ -25,7 +25,7 @@ const TOP_UP_ORDER = { ...ORDER, productId: 'beeline-kazakhstan', productName: '
 async function install(page: Page, signedIn: boolean, options: { pay?: boolean; usdcAtomic?: string; status?: 'hold' | 'fail' } = {}) {
   const reads: string[] = [], writes: string[] = [], walletMethods: string[] = [], bodies: Record<string, unknown> = {};
   let opened: typeof ORDER = ORDER;
-  const checkout = options.pay ? { checkout: { enabled: true, available: true, capAtomic: '100000000' } } : {};
+  const checkout = options.pay ? { checkout: { enabled: true, available: true, capAtomic: '210000000' } } : {};
   await page.clock.setFixedTime(NOW);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
     body: `export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:${signedIn}, phase:'${signedIn ? 'authenticated' : 'disconnected'}', sessionAuthenticated:${signedIn} }; }` }));
@@ -89,7 +89,7 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean; 
     if (path === '/api/public/still/spend/product') {
       const id = url.searchParams.get('id');
       if (id === 'beeline-kazakhstan') {
-        return route.fulfill({ json: { checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '7', prefixes: ['76', '77'] } }, outcome: 'product', readAt: NOW.toISOString(),
+        return route.fulfill({ json: { checkout: { enabled: true, available: true, capAtomic: '210000000', phone: { callingCode: '7', prefixes: ['76', '77'] } }, outcome: 'product', readAt: NOW.toISOString(),
           product: { id, name: 'Beeline Kazakhstan', country: 'KZ', inStock: true, recipientType: 'phone_number', url: null,
             packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }, { value: '500', faceCurrency: 'KZT', priceUsdc: '1.28' }] } } });
       }

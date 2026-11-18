@@ -235,17 +235,17 @@ test('a product is its USDC packages, and one Bitrefill does not have is a 404, 
   assert.equal(found.status, 200);
   assert.deepEqual(found.body.product.packages, [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }]);
   // Paying from Still is the operator's switch, read on every request and never cached with the catalogue.
-  assert.deepEqual(found.body.checkout, { enabled: false, available: false, capAtomic: '100000000', phone: null });
+  assert.deepEqual(found.body.checkout, { enabled: false, available: false, capAtomic: '210000000', phone: null });
   const before = process.env.STILL_SPEND_PAY_V1;
   process.env.STILL_SPEND_PAY_V1 = 'on';
   t.after(() => { if (before === undefined) delete process.env.STILL_SPEND_PAY_V1; else process.env.STILL_SPEND_PAY_V1 = before; });
   const open = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
-  assert.deepEqual(open.body.checkout, { enabled: true, available: true, capAtomic: '100000000', phone: null });
+  assert.deepEqual(open.body.checkout, { enabled: true, available: true, capAtomic: '210000000', phone: null });
   // A top-up is paid with the number it goes to, written with the calling code of the operator's country.
   answer = { ok: true, value: { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number',
     packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }], url: null } };
   const topUp = await request(server).get('/api/public/still/spend/product').query({ id: 'airtel-india' });
-  assert.deepEqual(topUp.body.checkout, { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91', prefixes: ['91'] } });
+  assert.deepEqual(topUp.body.checkout, { enabled: true, available: true, capAtomic: '210000000', phone: { callingCode: '91', prefixes: ['91'] } });
   // Kazakhstan shares +7 with Russia, so the answer names Kazakhstan's own prefixes.
   answer = { ok: true, value: { id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', country: 'KZ', inStock: true, recipientType: 'phone_number',
     packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }], url: null } };
@@ -254,7 +254,7 @@ test('a product is its USDC packages, and one Bitrefill does not have is a 404, 
   // Where that code is unknown, nothing can be paid, and no number is asked for.
   answer = { ok: true, value: { id: 'unknown-operator', name: 'Unknown', country: null, inStock: true, recipientType: 'phone_number', packages: [], url: null } };
   const unknown = await request(server).get('/api/public/still/spend/product').query({ id: 'unknown-operator' });
-  assert.deepEqual(unknown.body.checkout, { enabled: true, available: false, capAtomic: '100000000', phone: null });
+  assert.deepEqual(unknown.body.checkout, { enabled: true, available: false, capAtomic: '210000000', phone: null });
 });
 
 test('Spend says whether Still pays Bitrefill here before anything is searched, from the switch alone', async (t) => {

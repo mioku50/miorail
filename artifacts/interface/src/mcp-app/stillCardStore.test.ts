@@ -80,8 +80,8 @@ test('a status card is a snapshot: it reads again only when pressed', async (t) 
 test('a refused link is said, the tool’s own refusal is shown in its words, and an unread status is our failure', async () => {
   const { fake } = host(['not_opened'], { refuseLink: true });
   const store = createStillCardStoreV1(fake);
-  fake.ontoolresult!({ isError: true, content: [{ type: 'text', text: 'spend_over_cap: One purchase is at most 100 USDC for now. Nothing was opened.' }] });
-  assert.equal(store.get().refusal, 'One purchase is at most 100 USDC for now. Nothing was opened.');
+  fake.ontoolresult!({ isError: true, content: [{ type: 'text', text: 'spend_over_cap: One purchase is at most 210 USDC for now. Nothing was opened.' }] });
+  assert.equal(store.get().refusal, 'One purchase is at most 210 USDC for now. Nothing was opened.');
   fake.ontoolresult!({ structuredContent: LOAN });
   await tick();
   await store.openReview();

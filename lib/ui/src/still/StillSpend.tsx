@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { formatCents } from '@mioagent/still-engine/format';
+import { STILL_SPEND_CAP_TEXT_V1 } from '@mioagent/still-engine/spend-cap';
 import { STILL_SUBSCRIPTIONS_V1 } from '@mioagent/still-engine/subscriptions';
 
 import { composerLinksV1 } from '../console/composerLinks';
@@ -117,9 +118,9 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
         {model.pay ? (
-          <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, or the USDC already in your wallet does, with no loan. Your own wallet approves either. Up to 100 USDC a purchase.</span>
+          <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, or the USDC already in your wallet does, with no loan. Your own wallet approves either. Up to {STILL_SPEND_CAP_TEXT_V1} a purchase.</span>
         ) : model.payAfterSignIn ? (
-          <span>Sign in with your wallet to pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it. Up to 100 USDC a purchase.</span>
+          <span>Sign in with your wallet to pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it. Up to {STILL_SPEND_CAP_TEXT_V1} a purchase.</span>
         ) : model.payState === 'checking' ? (
           <span role="status">Checking whether paying with Still is open here. The prices below are <strong>Bitrefill</strong>’s own, in USDC.</span>
         ) : model.payState === 'unknown' ? (

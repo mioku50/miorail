@@ -132,7 +132,7 @@ test('the instructions and the spend search tell an assistant how a subscription
 
 // Bitrefill's answers below are synthetic, in the guest client's own shapes.
 const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM Japan', country: 'JP', inStock: true, recipientType: 'mixed', url: null,
-  packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00' }] };
+  packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '220.00' }] };
 const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
   packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
 
@@ -176,9 +176,9 @@ test('what a loan could pay for is the Spend page’s own catalogue read, and on
   assert.equal(product.outcome, 'product');
   assert.deepEqual((product.product as { packages: unknown[] }).packages, [
     { value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80', withinCap: true },
-    { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00', withinCap: false },
+    { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '220.00', withinCap: false },
   ]);
-  assert.deepEqual(product.checkout, { enabled: true, available: true, capUsdc: '100', phone: null });
+  assert.deepEqual(product.checkout, { enabled: true, available: true, capUsdc: '210', phone: null });
   const topUp = structured(await client.callTool({ name: 'still_spend_product', arguments: { productId: TOP_UP.id } }));
   assert.deepEqual((topUp.checkout as { phone: unknown }).phone, { callingCode: '91', prefixes: ['91'] });
 });

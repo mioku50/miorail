@@ -6,7 +6,7 @@ import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { issueLendingDraftV1, type LendingOriginV1 } from '../../lib/lendingDraft.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
-import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
+import { STILL_SPEND_CAP_TEXT_V1, STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
 import { openSpendOrderV1, stillSpendRuntimeV1, type SpendOrderOpenedV1 } from '../stillSpend.js';
 import { SPEND_ID_V1 } from '../stillPublic.js';
 
@@ -200,7 +200,7 @@ const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
   spend_phone_needed: 'A phone top-up needs the number it goes to, from the user, in international format. Nothing was opened.',
   spend_phone_invalid: 'The number does not start with the calling code of this top-up’s country (still_spend_product lists it), so it was not sent to Bitrefill. Nothing was opened.',
   spend_package_not_offered: 'Bitrefill does not offer this package at a price now. Read still_spend_product again and give a package value exactly as listed; nothing was opened.',
-  spend_over_cap: 'One purchase is at most 100 USDC for now. Nothing was opened.',
+  spend_over_cap: `One purchase is at most ${STILL_SPEND_CAP_TEXT_V1} for now. Nothing was opened.`,
   bitrefill_invoice_price_changed: 'Bitrefill’s invoice asked a different amount than the price it quoted a moment before, so Still did not keep it. Nothing was paid; read the product again.',
   spend_payee_refused: 'Bitrefill asked to be paid to this wallet itself, so Still did not keep the invoice. Nothing was paid.',
 };

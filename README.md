@@ -33,7 +33,7 @@ Still server ── reads Base at one block, prepares and reviews; holds no key 
 - **Home** reads the wallet at one Base block and says, in dollars, how much it could borrow and how safe its loans are. A read that failed is called unread, never shown as zero.
 - **Get money** (`/borrow`) takes the collateral and the amount you choose, prepares the exact calls, simulates them, and enforces Still's limit on the server before your wallet opens.
 - **Repay** (`/repay`) pays an exact amount or all of it, and can take the collateral back in the same review.
-- **Spend** (`/spend`) shows what a loan could pay for at Bitrefill (eSIMs, phone top-ups, gift cards), priced in USDC, and pays one invoice of up to 100 USDC: with a loan in the same transaction, or from USDC already in the wallet.
+- **Spend** (`/spend`) shows what a loan could pay for at Bitrefill (eSIMs, phone top-ups, gift cards), priced in USDC, and pays one invoice of up to 210 USDC: with a loan in the same transaction, or from USDC already in the wallet.
 - **Agent** (`/agent`) answers questions about your own wallet. A what-if ("what if NVDA falls 30%?") is the engine's arithmetic, not a model's guess. It never signs or sends.
 - **Alerts:** a connected Telegram chat is told when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
 

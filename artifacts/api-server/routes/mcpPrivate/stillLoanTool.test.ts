@@ -120,7 +120,7 @@ const PAY_TO = '0x3333333333333333333333333333333333333333';
 const INVOICE = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
 const EMAIL = 'someone@example.com';
 const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM Japan', country: 'JP', inStock: true, recipientType: 'mixed', url: null,
-  packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00' }] };
+  packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '220.00' }] };
 const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
   packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
 const APPLE_CARD: SpendProductV1 = { id: 'itunes-germany', name: 'iTunes Germany', country: 'DE', inStock: true, recipientType: 'none', url: null,

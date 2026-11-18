@@ -36,7 +36,7 @@ const INVOICE = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
 const NOW = new Date('2026-11-01T12:00:00Z'), SECRET = 'spend-route-fixture-secret-never-production';
 const STOCK = STOCKS[0]!.token.toLowerCase();
 const ESIM: SpendProductV1 = { id: 'bitrefill-esim-germany', name: 'Bitrefill eSIM Germany', country: 'DE', inStock: true, recipientType: 'mixed', url: null,
-  packages: [{ value: '10GB, 30 Days', faceCurrency: 'USD', priceUsdc: '13.25' }, { value: 'Unlimited', faceCurrency: 'USD', priceUsdc: '140.00' }] };
+  packages: [{ value: '10GB, 30 Days', faceCurrency: 'USD', priceUsdc: '13.25' }, { value: 'Unlimited', faceCurrency: 'USD', priceUsdc: '240.00' }] };
 
 const originals = { spend: { ...stillSpendRuntimeV1 }, borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 }, publicStill: { ...publicStillRuntimeV1 } };
 let orders: SpendOrderStoreV1, loans: MemoryLoanExecutionStoreV1, wallets: MemorySpendWalletStoreV1, enabled: boolean, walletRuns: number;

@@ -75,7 +75,7 @@ describe('a review that pays the invoice from the wallet’s USDC', () => {
       const run = await prepareSpendWalletPaymentV1({ walletAddress: WALLET, payment: { ...PAYMENT, payTo }, now: NOW }, { chain: chain().chain, readUsdc: held('9000000') });
       assert.equal(run.state === 'refused' && run.refusal, 'spend_payee_refused', payTo);
     }
-    for (const assets of ['0', '100000001', '1.5']) {
+    for (const assets of ['0', '210000001', '1.5']) {
       const run = await prepareSpendWalletPaymentV1({ walletAddress: WALLET, payment: { ...PAYMENT, assets }, now: NOW }, { chain: chain().chain, readUsdc: held('900000000') });
       assert.equal(run.state === 'refused' && run.refusal, 'spend_payment_question_mismatch', assets);
     }

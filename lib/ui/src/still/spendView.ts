@@ -1,3 +1,4 @@
+import { STILL_SPEND_CAP_TEXT_V1 } from '@mioagent/still-engine/spend-cap';
 import { spendDeliveryWireV1, type SpendDeliveryWireV1 } from '../console/lendingReviewView';
 import type { StillIconNameV1 } from './icons';
 
@@ -152,7 +153,7 @@ export interface SpendProductViewV1 {
   needs: string | null;
   /** A top-up paid from Still asks for the number, starting with one of these prefixes; null for anything else. */
   phone: SpendPhoneRuleV1 | null;
-  /** The most one purchase may cost when paid from Still, "100 USDC"; null when it cannot be paid here. */
+  /** The most one purchase may cost when paid from Still, "210 USDC"; null when it cannot be paid here. */
   cap: string | null;
 }
 
@@ -272,7 +273,7 @@ export function spendOrderErrorV1(message: string): string {
   const code = message.split(':')[0]!.trim();
   switch (code) {
     case 'spend_pay_off': return 'Paying from Still is not switched on yet.';
-    case 'spend_over_cap': return 'One purchase paid from Still can cost at most 100 USDC.';
+    case 'spend_over_cap': return `One purchase paid from Still can cost at most ${STILL_SPEND_CAP_TEXT_V1}.`;
     case 'spend_product_prepayment': return 'Bitrefill sells this only after steps such as the player’s game ID, which it does not offer to Still, so Still cannot pay for it. Nothing was opened.';
     case 'spend_product_not_buyable': return 'This product needs details Still does not send, such as an account or a username.';
     case 'spend_phone_needed': return 'Write the phone number to top up.';
