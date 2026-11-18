@@ -2340,7 +2340,11 @@ export function MiniConsole() {
             ? rwaOfficial.error
               ? "The official corpus could not be read on this server. Nothing here is a statement about the assets."
               : null
-            : "Route intelligence is off on this server, so the official corpus is not being read.",
+            // Signed out, `/status` answers 401 and every flag reads false: that says nothing of the switch (audit P3,
+            // 2026-11-18). Only a status the server gave can say it is off.
+            : status.isSuccess
+              ? "Route intelligence is off on this server, so the official corpus is not being read."
+              : "Sign in with your wallet to read the official corpus here: this server's switches are read for a signed-in session.",
           lookalikes: rwaLookalikes.data ? lookalikeFeedViewV1(rwaLookalikes.data, now) : null,
           lookalikesLoading: rwaLookalikes.isPending && routeIntelligenceOn,
           lookalikesError: rwaLookalikes.error
