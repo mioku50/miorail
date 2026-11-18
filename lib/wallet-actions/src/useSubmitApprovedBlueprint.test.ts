@@ -173,9 +173,10 @@ test('button disabled reasons: wallet, chain, and review expiry are honest', () 
 test('the button prints the wallet’s answer where the eye is, not only in its title', () => {
   const source = readFileSync(path.join(here, 'BlueprintSubmitButton.tsx'), 'utf8');
   // The blocker before anything is approved, then the failure on surfaces that
-  // print nothing else: the swap review said only "Failed — retry" on 2026-10-31.
+  // print nothing else: the swap review said only "Failed — retry" on 2026-10-31,
+  // and a refusal at approve only "Blocked by Safety Kernel" until 2026-11-18.
   assert.match(source, /\{walletBlocker && address && \(status === 'idle' \|\| status === 'cancelled' \|\| status === 'failed'\) \? \(\s*<p className="[^"]*sign-reason[^"]*" role="status">\{walletBlocker\}<\/p>/);
-  assert.match(source, /failureNote && \(status === 'failed' \|\| status === 'cancelled' \|\| status === 'expired' \|\| status === 'submitted_unknown'\) && error && error !== 'Cancelled in wallet' \? \(\s*<p className="[^"]*sign-reason[^"]*" role="alert">\{error\}<\/p>/);
+  assert.match(source, /failureNote && \(status === 'failed' \|\| status === 'cancelled' \|\| status === 'blocked' \|\| status === 'expired' \|\| status === 'submitted_unknown'\) && error && error !== 'Cancelled in wallet' \? \(\s*<p className="[^"]*sign-reason[^"]*" role="alert">\{error\}<\/p>/);
   const consoleSource = readFileSync(path.join(here, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'), 'utf8');
   assert.equal(consoleSource.match(/<BlueprintSubmitButton[\s\S]*?\/>/g)?.filter((block) => /\bfailureNote\b/.test(block)).length, 2);
 });

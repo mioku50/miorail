@@ -16,6 +16,7 @@ import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
 import type { ContractSecuritySummaryV1 } from '@mioagent/route-card';
 import type {
+  AssetRefV1,
   ExecutionCallV1,
   HashV1,
   RouteIntentV1,
@@ -78,6 +79,30 @@ export interface RunSafetyKernelInput {
   /** The swap's guaranteed minimum output — required when a gift is declared,
    * because it is the only amount a gift may send. */
   swapMinimumOutputAtomic?: string | null;
+  /**
+   * The wallet's balance of the asset this batch spends, read just before the
+   * kernel runs, for every swap whether or not it was simulated.
+   *
+   * 2026-11-18: a 150 USDC swap to PAXG was signed from a wallet holding
+   * 125.74 USDC. The KyberSwap route was not simulated, so nothing read the
+   * balance; the approve landed and the swap reverted with
+   * `TRANSFER_FROM_FAILED`, at the person's gas. The only balance read lived
+   * inside the simulation, after a revert.
+   *
+   * A balance that was not read (`heldAtomic: null`, or no fact at all) is not
+   * an empty one, so it never blocks: the check says it was not made.
+   */
+  spendBalance?: SpendBalanceFactV1 | null;
+}
+
+/** What a swap spends, and what the wallet held of it when read. */
+export interface SpendBalanceFactV1 {
+  /** The asset the batch spends: the intent's input. */
+  asset: AssetRefV1;
+  /** What the batch spends of it, in atomic units (`swapSpendV1`). */
+  spentAtomic: string;
+  /** What the wallet holds of it, read now. Null: the read did not come back. */
+  heldAtomic: string | null;
 }
 
 export interface RunSafetyKernelOutput {
@@ -160,6 +185,111 @@ export function swapTokenSecurityAddressesV1(intent: RouteIntentV1): `0x${string
     addresses.push(address as `0x${string}`);
   }
   return addresses;
+}
+
+const ATOMIC_V1 = /^[0-9]+$/;
+
+/**
+ * What a swap takes from the wallet: the intent's input asset and amount.
+ *
+ * The amount is the intent's own, which every approval
+ * (`input_amount_matches_intent`) and each provider guard hold the calls to;
+ * "all" and "half" reach the composer already as an exact amount, read from
+ * the wallet when the swap was written. Native ETH leaves the wallet as call
+ * value rather than through an allowance, so for it the ETH the batch sends is
+ * counted as well, and the larger of the two is what the wallet must hold. Gas
+ * is not counted: the batch does not name it, and a sponsored one costs the
+ * wallet none.
+ */
+export function swapSpendV1(
+  intent: RouteIntentV1,
+  calls: readonly ExecutionCallV1[],
+): { asset: AssetRefV1; amountAtomic: string } | null {
+  const asset = intent.fromAsset;
+  if (!asset || !ATOMIC_V1.test(intent.amount.amountAtomic)) return null;
+  let spent = BigInt(intent.amount.amountAtomic);
+  if (asset.kind === 'native') {
+    const sent = calls.reduce(
+      (total, call) => total + (ATOMIC_V1.test(call.valueWei) ? BigInt(call.valueWei) : 0n),
+      0n,
+    );
+    if (sent > spent) spent = sent;
+  }
+  return { asset, amountAtomic: spent.toString() };
+}
+
+/**
+ * An amount in whole tokens, ROUNDED DOWN to `places` decimals, so a balance is
+ * never said to be larger than it is. Below one token two significant digits
+ * stay, because 0.004 ETH is not an empty wallet. With `places` equal to the
+ * token's decimals it is the exact amount.
+ */
+function tokenAmountDownV1(atomic: bigint, decimals: number, places: number): string {
+  const digits = atomic.toString().padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals);
+  const lead = whole === '0' ? fraction.search(/[1-9]/) : -1;
+  const shown = fraction.slice(0, Math.min(decimals, Math.max(places, lead + 2))).replace(/0+$/, '');
+  return shown ? `${whole}.${shown}` : whole;
+}
+
+/**
+ * The balance check (`spendBalance` above): passed when the wallet holds at
+ * least what the batch spends; failed, in the wallet's own numbers, when it
+ * holds less; skipped, and saying so, when the balance was not read.
+ *
+ * Held to what the batch itself spends as well as to what the fact says, so a
+ * fact can only make the check stricter; and a balance of another asset says
+ * nothing about this one, so it counts as not read.
+ */
+function spendBalanceCheckV1(
+  intent: RouteIntentV1,
+  calls: readonly ExecutionCallV1[],
+  fact: SpendBalanceFactV1 | null,
+): SafetyKernelCheckV1 {
+  const description = 'Your wallet holds at least the amount this swap spends';
+  const spend = swapSpendV1(intent, calls);
+  if (!spend) {
+    return check(
+      'wallet_balance_covers_input',
+      description,
+      'skipped',
+      'This swap names no asset it spends, so no balance was read or checked.',
+    );
+  }
+  const { asset } = spend;
+  let spentAtomic = BigInt(spend.amountAtomic);
+  if (fact && ATOMIC_V1.test(fact.spentAtomic) && BigInt(fact.spentAtomic) > spentAtomic) {
+    spentAtomic = BigInt(fact.spentAtomic);
+  }
+  const spent = tokenAmountDownV1(spentAtomic, asset.decimals, asset.decimals);
+  const heldAtomic =
+    fact &&
+    fact.asset.assetId === asset.assetId &&
+    fact.heldAtomic !== null &&
+    ATOMIC_V1.test(fact.heldAtomic)
+      ? BigInt(fact.heldAtomic)
+      : null;
+  if (heldAtomic === null) {
+    return check(
+      'wallet_balance_covers_input',
+      description,
+      'skipped',
+      `This wallet’s ${asset.symbol} balance could not be read just now, so it was not checked. An unread balance is not an empty one; this swap spends ${spent} ${asset.symbol}, and it fails onchain if the wallet holds less.`,
+    );
+  }
+  if (heldAtomic < spentAtomic) {
+    // As many places as the amount it is compared with, and at least two.
+    const places = Math.max(2, spent.includes('.') ? spent.length - spent.indexOf('.') - 1 : 0);
+    const held = tokenAmountDownV1(heldAtomic, asset.decimals, places);
+    return check(
+      'wallet_balance_covers_input',
+      description,
+      'failed',
+      `This wallet holds ${held} ${asset.symbol}; this swap spends ${spent} ${asset.symbol}.`,
+    );
+  }
+  return check('wallet_balance_covers_input', description, 'passed', null);
 }
 
 function evaluateContractSecurityV1(input: {
@@ -391,6 +521,10 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       approvalAmountsMatch ? null : 'An approval amount does not exactly match the stored intent input amount',
     ),
   );
+
+  // Every swap, simulated or not: the only balance read used to live inside
+  // the simulation, after a revert (see `spendBalance`).
+  checks.push(spendBalanceCheckV1(input.intent, input.calls, input.spendBalance ?? null));
 
   checks.push(
     check(
@@ -642,11 +776,15 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
 
   const failed = checks.filter((entry) => entry.status === 'failed');
   const verdict: SafetyKernelResultV1['verdict'] = failed.length === 0 ? 'allowed' : 'blocked';
+  // The schema caps the reason at 500 characters, and the balance check can
+  // now fail beside the longest of the others (a simulation that found no
+  // funds). A refusal must stay a refusal, never become a parse error.
+  const reason = failed.map((entry) => `${entry.id}: ${entry.detail}`).join('; ');
   const result = SafetyKernelResultV1Schema.parse({
     schemaVersion: 'safety-kernel-result/v1',
     verdict,
     checks,
-    blockedReason: verdict === 'blocked' ? failed.map((entry) => `${entry.id}: ${entry.detail}`).join('; ') : null,
+    blockedReason: verdict === 'blocked' ? (reason.length > 500 ? `${reason.slice(0, 499)}…` : reason) : null,
   });
   return { result, contractSecurity };
 }

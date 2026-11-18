@@ -21,6 +21,7 @@ import { PERMIT2_ADDRESS } from '@mioagent/security/uniswapGuard';
 import { decodeFunctionData, erc20Abi, maxUint256 } from 'viem';
 import {
   aerodromeKernelInputV1,
+  readSpendBalanceFactV1,
   storedGiftKernelInputV1,
   simulationRequirementV1,
   TransactionComposerBindingError,
@@ -29,6 +30,7 @@ import {
 import { runSafetyKernel, swapTokenSecurityAddressesV1 } from './safetyKernel.js';
 import type {
   ContractSecurityLookup,
+  SpendBalanceLookup,
   SwapBuildProviderId,
   SwapProviderContractPinLookup,
 } from './types.js';
@@ -48,6 +50,10 @@ export interface BlueprintApprovalDependencies {
   repository: RouteStorageRepository;
   contractSecurity: ContractSecurityLookup;
   providerContractPin?: SwapProviderContractPinLookup;
+  /** The wallet's balance of what the stored batch spends, read again here:
+   * the last read before the wallet is handed the calls. Absent or null, the
+   * kernel's balance check says it was not made. */
+  readSpendBalance?: SpendBalanceLookup | null;
 }
 
 export interface ApproveExecutionBlueprintInput {
@@ -369,10 +375,19 @@ export async function approveExecutionBlueprintV1(
     // asking a provider about bytes it has already been asked about.
     const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
     const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
+    // Unlike the simulation, the balance is read again: the calls are the ones
+    // stored, the wallet is the one now. 2026-11-18: an approve of exactly 150
+    // USDC landed from a wallet holding 125.74, and the swap after it reverted.
+    const spendBalanceRead = readSpendBalanceFactV1(deps.readSpendBalance, {
+      intent,
+      calls: blueprint.calls,
+      walletAddress: input.walletAddress,
+    });
     const contractSecurityResults = await deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,
     });
+    const spendBalance = await spendBalanceRead;
     const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
       ? 'goplus'
       : (contractSecurityResults[0]?.provider ?? 'none');
@@ -413,6 +428,7 @@ export async function approveExecutionBlueprintV1(
       hydrexUpstreamRouter,
       ...aerodromeKernelInputV1(providerId, candidate, blueprint),
       ...storedGiftKernelInputV1(blueprint),
+      spendBalance,
     });
 
     if (safety.verdict === 'blocked') {

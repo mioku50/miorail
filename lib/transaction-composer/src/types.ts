@@ -2,6 +2,7 @@ import {
   ExecutionBlueprintV1Schema,
   SafetyKernelResultV1Schema,
   SimulationStateV1Schema,
+  type AssetRefV1,
   type ExecutionBlueprintV1,
   type ExecutionCallV1,
   type HashV1,
@@ -197,6 +198,18 @@ export interface SwapSimulationRequestV1 {
 /** Injected so this package never imports @mioagent/paid-intelligence. */
 export type SwapSimulationLookup = (input: SwapSimulationRequestV1) => Promise<SimulationStateV1>;
 
+/**
+ * What the wallet holds of one asset, read now: `balanceOf` for an ERC-20, the
+ * ETH balance for native ETH. Null when the read did not come back, which is
+ * never a zero balance. Injected so this package makes no chain read of its
+ * own; the API's reader (artifacts/api-server/lib/spendBalance.ts) has exactly
+ * this shape.
+ */
+export type SpendBalanceLookup = (input: {
+  asset: AssetRefV1;
+  walletAddress: `0x${string}`;
+}) => Promise<bigint | null>;
+
 export interface TransactionComposerDependencies {
   repository: RouteStorageRepository;
   buildAdapters: SwapBuildAdapter[];
@@ -208,6 +221,13 @@ export interface TransactionComposerDependencies {
    * preparation is BLOCKED rather than quietly signed unsimulated.
    */
   simulate?: SwapSimulationLookup;
+  /**
+   * The wallet's balance of what the batch spends, read before the Safety
+   * Kernel runs, for every swap whether or not it is simulated. Absent or
+   * null, nothing is read and the kernel's balance check says it was not made;
+   * it never blocks for that.
+   */
+  readSpendBalance?: SpendBalanceLookup | null;
   /**
    * T67B.1: which providers may be prepared at all. Defaults to the two
    * partner-built ones; the API layer adds Aerodrome and o1 only under their

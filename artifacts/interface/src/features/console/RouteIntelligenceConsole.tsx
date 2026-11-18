@@ -1559,6 +1559,8 @@ export function RouteIntelligenceConsole() {
             prepared?.review.safety.checks.map((check) => ({
               label: check.description,
               passed: check.status === 'passed',
+              // A check the kernel could not make says why, in its words.
+              detail: check.status === 'passed' ? null : check.detail,
             })) ?? []
           }
           honesty={

@@ -9,6 +9,7 @@ import {
   type EvidenceRecordV1,
   type EvidenceSetV1,
   type ExecutionBlueprintV1,
+  type ExecutionCallV1,
   type RouteCandidateV1,
   type RouteIntentV1,
   type SafetyKernelResultV1,
@@ -25,13 +26,20 @@ import {
   simulationWasExecutedV1,
   type SimulationOutcomeV1,
 } from './simulationOutcome.js';
-import { runSafetyKernel, swapTokenSecurityAddressesV1, type RunSafetyKernelInput } from './safetyKernel.js';
+import {
+  runSafetyKernel,
+  swapSpendV1,
+  swapTokenSecurityAddressesV1,
+  type RunSafetyKernelInput,
+  type SpendBalanceFactV1,
+} from './safetyKernel.js';
 import {
   blockedResultV1,
   preparedResultV1,
   refreshRequiredResultV1,
   unsupportedResultV1,
   type RefreshReasonV1,
+  type SpendBalanceLookup,
   type SwapBuildProviderId,
   type TransactionComposer,
   type TransactionComposerDependencies,
@@ -371,6 +379,40 @@ export function storedGiftKernelInputV1(blueprint: ExecutionBlueprintV1): {
 }
 
 /**
+ * The wallet's balance of what these calls spend, read now, as the fact the
+ * Safety Kernel checks. Prepare, replay and approve each read it again: a
+ * balance is a fact about the moment it was read.
+ *
+ * Never throws and never invents a zero. No reader, a read that fails and a
+ * read that answers nothing all leave `heldAtomic` null, which the kernel
+ * reports as not checked rather than as an empty wallet.
+ */
+export async function readSpendBalanceFactV1(
+  read: SpendBalanceLookup | null | undefined,
+  input: {
+    intent: RouteIntentV1;
+    calls: readonly ExecutionCallV1[];
+    walletAddress: `0x${string}`;
+  },
+): Promise<SpendBalanceFactV1 | null> {
+  const spend = swapSpendV1(input.intent, input.calls);
+  if (!spend) return null;
+  let held: bigint | null = null;
+  if (read) {
+    try {
+      held = await read({ asset: spend.asset, walletAddress: input.walletAddress });
+    } catch {
+      held = null;
+    }
+  }
+  return {
+    asset: spend.asset,
+    spentAtomic: spend.amountAtomic,
+    heldAtomic: typeof held === 'bigint' && held >= 0n ? held.toString() : null,
+  };
+}
+
+/**
  * T59: standalone extraction of the composer's idempotent-replay review path
  * (previously a private method) so a separate, paid endpoint (transaction
  * simulation) can re-derive the SAME honest review projection over an
@@ -383,7 +425,10 @@ export function storedGiftKernelInputV1(blueprint: ExecutionBlueprintV1): {
  * function existed.
  */
 export async function reviewStoredBlueprintV1(
-  deps: Pick<TransactionComposerDependencies, 'contractSecurity' | 'providerContractPin'>,
+  deps: Pick<
+    TransactionComposerDependencies,
+    'contractSecurity' | 'providerContractPin' | 'readSpendBalance'
+  >,
   input: Pick<TransactionComposerPrepareInput, 'routeRunId' | 'walletAddress'>,
   intent: RouteIntentV1,
   selected: RouteCandidateV1,
@@ -404,10 +449,19 @@ export async function reviewStoredBlueprintV1(
   // result for the same immutable bytes.
   const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
   const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
+  // The balance is read again now, unlike the simulation: the stored calls do
+  // not change, the wallet does. Read beside the token-security lookup; it
+  // never rejects.
+  const spendBalanceRead = readSpendBalanceFactV1(deps.readSpendBalance, {
+    intent,
+    calls: blueprint.calls,
+    walletAddress: input.walletAddress,
+  });
   const contractSecurityResults = await deps.contractSecurity({
     chainId: intent.chainId,
     addresses: contractSecurityAddresses,
   });
+  const spendBalance = await spendBalanceRead;
   const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
     ? 'goplus'
     : (contractSecurityResults[0]?.provider ?? 'none');
@@ -446,6 +500,7 @@ export async function reviewStoredBlueprintV1(
     hydrexUpstreamRouter,
     ...aerodromeKernelInputV1(providerId, selected, blueprint),
     ...storedGiftKernelInputV1(blueprint),
+    spendBalance,
   });
 
   if (safety.verdict === 'blocked') {
@@ -767,10 +822,19 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     // --- Safety Kernel ----------------------------------------------------------
     const simulation = simulationRequirementV1(providerId, intent, simulationState);
     const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
+    // For every swap, simulated or not (2026-11-18: an unsimulated KyberSwap
+    // batch spending 150 USDC was signed from a wallet holding 125.74). Read
+    // beside the token-security lookup; it never rejects.
+    const spendBalanceRead = readSpendBalanceFactV1(this.deps.readSpendBalance, {
+      intent,
+      calls,
+      walletAddress: input.walletAddress,
+    });
     const contractSecurityResults = await this.deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,
     });
+    const spendBalance = await spendBalanceRead;
     const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
       ? 'goplus'
       : (contractSecurityResults[0]?.provider ?? 'none');
@@ -804,6 +868,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       balancer: buildResult.balancer,
       gift,
       swapMinimumOutputAtomic: buildResult.minimumOutput.amountAtomic,
+      spendBalance,
     });
 
     if (safety.verdict === 'blocked') {

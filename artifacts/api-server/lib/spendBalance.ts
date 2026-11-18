@@ -11,11 +11,18 @@ import { BASE_PUBLIC_RPC_URL_V1 } from './baseRpcSwapSimulation.js';
 // because the wallet was empty. Hydrex, on the same empty wallet, reverts with
 // USDC's own "transfer amount exceeds balance", which the text check already
 // caught. A router names its own failure, not the cause, so the cause is read
-// from the chain: one `balanceOf` (or `eth_getBalance` for ETH), and only
-// after a revert.
+// from the chain: one `balanceOf` (or `eth_getBalance` for ETH), after a
+// revert.
+//
+// 2026-11-18: a route nobody simulated never reached that read. "Swap 150 USDC
+// to PAXG" went to a wallet holding 125.74 USDC on an unsimulated KyberSwap
+// batch; the approve landed and the swap reverted. So the same reader now also
+// feeds the Safety Kernel's balance check, at prepare and again at approve,
+// for every swap.
 //
 // A read that does not come back is `null`, never a zero balance. The revert
-// then stays a revert, because we could not show that the wallet was short.
+// then stays a revert, and the kernel's check says it was not made, because
+// we could not show that the wallet was short.
 // ---------------------------------------------------------------------------
 
 export type SpendBalanceReaderV1 = (input: {

@@ -13,6 +13,7 @@ import {
 import { B20ControlSection, b20ControlSummaryV1, type B20CardLikeV1, type B20WatchLikeV1 } from '../src/console/B20Panels';
 import { ActivityProofCard, ActivityRunsCard, activeSessionTagV1, mergeActivityRunsV1, type ActivityRunRowV1 } from '../src/console/ActivityPanels';
 import { routeProofViewV1 } from '../src/console/consoleState';
+import { swapPrepareNoticeV1 } from '../src/console/consoleFlow';
 import { proofOutputDifferenceV1 } from '../src/console/proofFigures';
 import { reviewBalanceViewV1, reviewCallRowsV1 } from '../src/console/giftView';
 
@@ -231,6 +232,46 @@ describe('the review says what the swap moves', () => {
     });
     assert.equal(approval!.title, 'Allow KyberSwap to spend exactly 7 USDC');
     assert.equal(approval!.detail, `spender ${ROUTER} · token ${USDC} · exact amount, no unlimited approval`);
+  });
+});
+
+// 2026-11-18: "Swap 150 USDC to PAXG" reached a wallet holding 125.74 USDC, and
+// nothing on the review compared the two. The Safety Kernel now does, for every
+// swap, and the review shows that check like every other one.
+describe('the review shows the balance check in the kernel’s words', () => {
+  const LABEL = 'Your wallet holds at least the amount this swap spends';
+
+  test('a refused prepare says what the wallet holds and what the swap spends, above everything', () => {
+    const notice = swapPrepareNoticeV1({
+      outcome: 'blocked',
+      safety: { blockedReason: 'wallet_balance_covers_input: This wallet holds 125.74 USDC; this swap spends 150 USDC.' },
+    });
+    assert.equal(notice?.title, 'The Safety Kernel refused this transaction');
+    const html = renderToStaticMarkup(<ReviewScreen {...review({ notice, signSlot: undefined })} />);
+    assert.match(html, /<div class="note warn" role="alert"[^>]*><b>The Safety Kernel refused this transaction<\/b>/);
+    assert.ok(html.includes('This wallet holds 125.74 USDC; this swap spends 150 USDC.'));
+    assert.match(html, /nothing to sign/);
+  });
+
+  test('a balance it could not read is listed as not confirmed, with why; a passed check only by what it checked', () => {
+    const unread =
+      'This wallet’s USDC balance could not be read just now, so it was not checked. An unread balance is not an empty one; this swap spends 150 USDC, and it fails onchain if the wallet holds less.';
+    const html = renderToStaticMarkup(
+      <ReviewScreen
+        {...review({
+          checks: [
+            { label: 'Swap call recipient equals the authenticated wallet', passed: true, detail: null },
+            { label: LABEL, passed: false, detail: unread },
+          ],
+        })}
+      />,
+    );
+    assert.ok(html.includes('<span class="tick">✓</span><span>Swap call recipient equals the authenticated wallet</span>'));
+    assert.ok(html.includes(`<span class="tick na">·</span><span>${LABEL} — not confirmed. ${unread}</span>`));
+    assert.doesNotMatch(html, /all clear/);
+    // A passed balance check reads like every other passed check.
+    const passed = renderToStaticMarkup(<ReviewScreen {...review({ checks: [{ label: LABEL, passed: true, detail: null }] })} />);
+    assert.ok(passed.includes(`<span class="tick">✓</span><span>${LABEL}</span>`));
   });
 });
 

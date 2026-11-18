@@ -20,6 +20,7 @@ import {
   ETH_BASE,
   NOW,
   TENANT,
+  USDC_BASE,
   WALLET,
   WETH_BASE,
   buildScenario,
@@ -31,6 +32,7 @@ import {
   makePathScore,
   passingContractSecurity,
   failingContractSecurity,
+  routerCallDataV1,
   seedRepository,
   stubBuildAdapter,
   stubQuoteAdapter,
@@ -857,4 +859,163 @@ test('GMGN cannot prepare a transaction even if a caller widens the supported pr
   const result = await composer.prepare(prepareInput(scenario));
   assert.equal(result.outcome, 'unsupported');
   assert.match(JSON.stringify(result), /GMGN quote only/);
+});
+
+// ---------------------------------------------------------------------------
+// The wallet's balance of what the swap spends, read at prepare, at replay and
+// again at approve, for every swap (2026-11-18: an unsimulated KyberSwap batch
+// spending 150 USDC was signed from a wallet holding 125.741019; the exact
+// approve landed and the swap reverted with TRANSFER_FROM_FAILED).
+// ---------------------------------------------------------------------------
+
+describe('the wallet’s balance of what the swap spends', () => {
+  const balanceCheck = (checks: readonly { id: string; status: string; detail: string | null }[]) =>
+    checks.find((check) => check.id === 'wallet_balance_covers_input');
+  const SHORT = 'wallet_balance_covers_input: This wallet holds 125.74 USDC; this swap spends 150 USDC.';
+
+  function approveFor(
+    deps: TransactionComposerDependencies,
+    routeRunId: string,
+    blueprint: { id: string; blueprintHash: `0x${string}` },
+  ) {
+    return approveExecutionBlueprintV1(
+      { repository: deps.repository, contractSecurity: deps.contractSecurity, readSpendBalance: deps.readSpendBalance },
+      { tenantId: TENANT, walletAddress: WALLET, routeRunId, blueprintId: blueprint.id, blueprintHash: blueprint.blueprintHash, now: NOW },
+    );
+  }
+
+  test('prepare refuses the production numbers on a route nobody simulated, and stores nothing to sign', async () => {
+    const asked: unknown[] = [];
+    const { scenario, deps } = await defaultScenarioDeps({ amountDecimal: '150' }, () => ({
+      readSpendBalance: async (input) => {
+        asked.push(input);
+        return 125_741_019n;
+      },
+    }));
+    const result = await createTransactionComposer(deps).prepare(prepareInput(scenario));
+    assert.equal(result.outcome, 'blocked');
+    if (result.outcome !== 'blocked') return;
+    assert.equal(result.safety.blockedReason, SHORT);
+    // Standard depth on a provider-built route: not simulated, which is how it reached a wallet.
+    assert.equal(result.simulation?.status, 'unavailable');
+    assert.deepEqual(asked, [{ asset: USDC_BASE, walletAddress: WALLET }]);
+    assert.equal((await deps.repository.listBlueprints(scenario.intent.id, TENANT)).length, 0);
+  });
+
+  test('exactly enough prepares, and the review carries the passed check', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ amountDecimal: '150' }, () => ({
+      readSpendBalance: async () => 150_000_000n,
+    }));
+    const result = await createTransactionComposer(deps).prepare(prepareInput(scenario));
+    assert.equal(result.outcome, 'prepared', JSON.stringify(result));
+    if (result.outcome !== 'prepared') return;
+    assert.equal(balanceCheck(result.review.safety.checks)?.status, 'passed');
+  });
+
+  test('a balance that could not be read prepares, and the review says it was not checked', async () => {
+    const unread = [async () => null, async () => Promise.reject(new Error('rpc unreachable')), undefined];
+    for (const readSpendBalance of unread) {
+      const { scenario, deps } = await defaultScenarioDeps({ amountDecimal: '150' }, () => ({ readSpendBalance }));
+      const result = await createTransactionComposer(deps).prepare(prepareInput(scenario));
+      assert.equal(result.outcome, 'prepared', JSON.stringify(result));
+      if (result.outcome !== 'prepared') return;
+      assert.equal(result.review.safety.verdict, 'allowed');
+      const check = balanceCheck(result.review.safety.checks);
+      assert.equal(check?.status, 'skipped');
+      assert.match(check?.detail ?? '', /USDC balance could not be read just now/);
+    }
+  });
+
+  test('native ETH: the reader is asked for the wallet’s ETH, held against the ETH the batch sends', async () => {
+    const asked: string[] = [];
+    let held = 50_000_000_000_000_000n;
+    const { scenario, deps } = await defaultScenarioDeps(
+      { fromAsset: ETH_BASE, toAsset: USDC_BASE, amountDecimal: '0.1' },
+      () => ({
+        buildAdapters: [
+          stubBuildAdapter('uniswap', (input) => ({
+            outcome: 'built',
+            provider: 'uniswap',
+            routerAddress: ROUTER,
+            // A native input: no approval, the amount sent as the router call's value.
+            calls: [
+              {
+                to: ROUTER,
+                value: input.intent.amount.amountAtomic,
+                data: routerCallDataV1({ amountAtomic: input.intent.amount.amountAtomic, from: ETH_BASE, to: USDC_BASE }),
+              },
+            ],
+            quoteExpiry: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
+            requestId: input.requestId,
+            requestHash: `0x${'a'.repeat(64)}`,
+            responseHash: `0x${'b'.repeat(64)}`,
+            ...buildSideOutputs(input.intent, BUILD_EXPECTED_ATOMIC),
+          })),
+        ],
+        readSpendBalance: async (input) => {
+          asked.push(input.asset.kind);
+          return held;
+        },
+      }),
+    );
+    const composer = createTransactionComposer(deps);
+    const short = await composer.prepare(prepareInput(scenario));
+    assert.equal(short.outcome, 'blocked');
+    if (short.outcome !== 'blocked') return;
+    assert.equal(short.safety.blockedReason, 'wallet_balance_covers_input: This wallet holds 0.05 ETH; this swap spends 0.1 ETH.');
+    assert.deepEqual(asked, ['native']);
+
+    held = 100_000_000_000_000_000n;
+    const exact = await composer.prepare(prepareInput(scenario, { requestId: 'prepare-req-native-exact' }));
+    assert.equal(exact.outcome, 'prepared', JSON.stringify(exact));
+    if (exact.outcome !== 'prepared') return;
+    assert.equal(balanceCheck(exact.review.safety.checks)?.status, 'passed');
+  });
+
+  test('replay and approve read it again: enough at prepare and short by approve is refused before any call is handed out', async () => {
+    let held = 150_000_000n;
+    const { scenario, deps } = await defaultScenarioDeps({ amountDecimal: '150' }, () => ({
+      readSpendBalance: async () => held,
+    }));
+    const composer = createTransactionComposer(deps);
+    const prepared = await composer.prepare(prepareInput(scenario));
+    assert.equal(prepared.outcome, 'prepared', JSON.stringify(prepared));
+    if (prepared.outcome !== 'prepared') return;
+
+    held = 125_741_019n;
+    // The same request again replays the stored calls, against the balance now.
+    const replay = await composer.prepare(prepareInput(scenario));
+    assert.equal(replay.outcome, 'blocked');
+    if (replay.outcome === 'blocked') assert.equal(replay.safety.blockedReason, SHORT);
+
+    const refused = await approveFor(deps, scenario.intent.id, prepared.blueprint);
+    assert.equal(refused.outcome, 'blocked');
+    if (refused.outcome !== 'blocked') return;
+    assert.equal(refused.reason, SHORT);
+    assert.equal(balanceCheck(refused.safety.checks)?.status, 'failed');
+    const [stored] = await deps.repository.listBlueprints(scenario.intent.id, TENANT);
+    assert.equal(stored!.blueprint.status, 'ready_for_review');
+    assert.equal(stored!.blueprint.approvedCallsHash, null);
+
+    // Topped up to exactly the amount: approved, with the calls as they were reviewed.
+    held = 150_000_000n;
+    const approved = await approveFor(deps, scenario.intent.id, prepared.blueprint);
+    assert.equal(approved.outcome, 'approved', JSON.stringify(approved));
+    if (approved.outcome === 'approved') assert.equal(approved.payload.calls.length, prepared.blueprint.calls.length);
+  });
+
+  test('approve does not refuse a balance it could not read', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ amountDecimal: '150' }, () => ({
+      readSpendBalance: async () => 150_000_000n,
+    }));
+    const prepared = await createTransactionComposer(deps).prepare(prepareInput(scenario));
+    assert.equal(prepared.outcome, 'prepared');
+    if (prepared.outcome !== 'prepared') return;
+    const approved = await approveFor(
+      { ...deps, readSpendBalance: async () => { throw new Error('rpc unreachable'); } },
+      scenario.intent.id,
+      prepared.blueprint,
+    );
+    assert.equal(approved.outcome, 'approved', JSON.stringify(approved));
+  });
 });

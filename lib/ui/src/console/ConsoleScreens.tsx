@@ -671,6 +671,10 @@ export interface BalanceChangeRowV1 {
 export interface PreflightCheckV1 {
   label: string;
   passed: boolean;
+  /** The kernel's own words for a check that did not pass, such as a balance
+   * that could not be read (2026-11-18). "Not confirmed" alone did not say
+   * which fact was missing. */
+  detail?: string | null;
 }
 
 export interface LimitFieldV1 {
@@ -882,6 +886,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
                 <span>
                   {check.label}
                   {!check.passed && ' — not confirmed'}
+                  {!check.passed && check.detail ? `. ${check.detail}` : null}
                 </span>
               </div>
             ))}

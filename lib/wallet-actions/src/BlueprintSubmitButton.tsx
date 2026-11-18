@@ -179,10 +179,13 @@ export function BlueprintSubmitButton({
       )}
       {/* What the wallet said about itself, before anything was approved. A
           disabled button with no reason is a screen that does not say what
-          can be done. */}
+          can be done. So is a Safety Kernel refusal at approve: since
+          2026-11-18 it is printed here, because "Blocked by Safety Kernel"
+          kept its reason (a wallet that no longer held what the swap spends)
+          in a hover title. */}
       {walletBlocker && address && (status === 'idle' || status === 'cancelled' || status === 'failed') ? (
         <p className="mt-2 text-xs note warn sign-reason" role="status">{walletBlocker}</p>
-      ) : failureNote && (status === 'failed' || status === 'cancelled' || status === 'expired' || status === 'submitted_unknown') && error && error !== 'Cancelled in wallet' ? (
+      ) : failureNote && (status === 'failed' || status === 'cancelled' || status === 'blocked' || status === 'expired' || status === 'submitted_unknown') && error && error !== 'Cancelled in wallet' ? (
         <p className="mt-2 text-xs note warn sign-reason" role="alert">{error}</p>
       ) : deliveryNotice && address && ((status === 'idle' && !disabledReason) || step) ? (
         // Before the first press, and while the steps run: this wallet is

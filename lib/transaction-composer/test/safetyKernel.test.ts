@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import { encodeFunctionData, erc20Abi } from 'viem';
 import type { AssetRefV1, ExecutionCallV1 } from '@mioagent/route-domain';
-import { runSafetyKernel, swapTokenSecurityAddressesV1, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
+import {
+  runSafetyKernel,
+  swapSpendV1,
+  swapTokenSecurityAddressesV1,
+  tokenSecurityRefusalV1,
+  type SpendBalanceFactV1,
+} from '../src/safetyKernel.js';
 import { classifySwapCallV1 } from '../src/blueprint.js';
 import { narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
-import { ETH_BASE, NOW, USDC_BASE, WALLET, makeIntent, routerCallDataV1 } from './fixtures.js';
+import { STANDARD_UNSIMULATED_DETAIL_V1 } from '../src/coordinator.js';
+import { SIMULATION_OUTCOME_COPY_V1 } from '../src/simulationOutcome.js';
+import { ETH_BASE, KYBER_ROUTER, NOW, USDC_BASE, WALLET, WETH_BASE, makeIntent, routerCallDataV1 } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
 
@@ -290,5 +298,171 @@ test('a Uniswap batch with a Permit2 approval passes the whole kernel once narro
   });
   const after = runSafetyKernel(baseArgs({ intent, quoteExpiry, calls: classify(narrowed) })).result;
   assert.equal(after.verdict, 'allowed', after.blockedReason ?? '');
+});
+
+// ---------------------------------------------------------------------------
+// The wallet's balance of what the swap spends, for every swap.
+//
+// 2026-11-18, production: "Swap 150 USDC to PAXG" was prepared and signed from
+// a wallet holding 125.741019 USDC. KyberSwap's route was not simulated, and
+// the only balance read lived inside the simulation, so nothing compared the
+// two. The wallet sent the batch as two transactions: the exact approve landed,
+// the swap reverted with TRANSFER_FROM_FAILED, and the person paid for both.
+// ---------------------------------------------------------------------------
+
+describe('the wallet holds what the swap spends', () => {
+  const PAXG: AssetRefV1 = {
+    assetId: 'eip155:8453/erc20:0xe904aea5e1b110c9174728fa2effc8aed19e98ef',
+    chainId: 8453,
+    kind: 'erc20',
+    address: '0xe904aea5e1b110c9174728fa2effc8aed19e98ef',
+    symbol: 'PAXG',
+    decimals: 18,
+  };
+  const balanceOf = (result: ReturnType<typeof runSafetyKernel>['result']) =>
+    result.checks.find((entry) => entry.id === 'wallet_balance_covers_input');
+
+  /** The production batch: an exact approve to KyberSwap's router, then the router call, unsimulated. */
+  function repro(spendBalance?: SpendBalanceFactV1 | null) {
+    const intent = makeIntent({ toAsset: PAXG, amountDecimal: '150' });
+    assert.equal(intent.amount.amountAtomic, '150000000');
+    return runSafetyKernel(
+      baseArgs({
+        provider: 'kyberswap',
+        routerAddress: KYBER_ROUTER,
+        intent,
+        calls: [
+          { ...approvalCall(150_000_000n, KYBER_ROUTER) },
+          {
+            ...swapCall(1, intent),
+            to: KYBER_ROUTER,
+            data: routerCallDataV1({ router: KYBER_ROUTER, amountAtomic: '150000000', from: USDC_BASE, to: PAXG }),
+          },
+        ],
+        contractSecurityResults: [USDC_BASE, PAXG].map((asset) => ({
+          address: asset.address!,
+          provider: 'goplus' as const,
+          status: 'ok' as const,
+          summary: 'clean',
+        })),
+        contractSecurityAddresses: [USDC_BASE.address as `0x${string}`, PAXG.address as `0x${string}`],
+        simulationAcceptable: true,
+        simulationDetail: STANDARD_UNSIMULATED_DETAIL_V1,
+        ...(spendBalance === undefined ? {} : { spendBalance }),
+      }),
+    ).result;
+  }
+
+  test('the production numbers: 125.741019 USDC held, 150 USDC spent — refused, in the wallet’s own numbers', () => {
+    const result = repro({ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: '125741019' });
+    assert.equal(result.verdict, 'blocked');
+    assert.equal(balanceOf(result)?.status, 'failed');
+    // Rounded DOWN: never a balance larger than the wallet's.
+    assert.equal(balanceOf(result)?.detail, 'This wallet holds 125.74 USDC; this swap spends 150 USDC.');
+    // The only refusal: every other check passed this batch, which is how it reached a wallet.
+    assert.equal(
+      result.blockedReason,
+      'wallet_balance_covers_input: This wallet holds 125.74 USDC; this swap spends 150 USDC.',
+    );
+    assert.equal(result.checks.find((entry) => entry.id === 'provider_guard_kyberswap')?.status, 'passed');
+  });
+
+  test('exactly the amount the swap spends is enough', () => {
+    const result = repro({ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: '150000000' });
+    assert.equal(result.verdict, 'allowed', result.blockedReason ?? '');
+    assert.equal(balanceOf(result)?.status, 'passed');
+    assert.equal(balanceOf(result)?.detail, null);
+    assert.equal(repro({ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: '200000000' }).verdict, 'allowed');
+  });
+
+  test('one unit short is short, and the held amount never rounds up to what is spent', () => {
+    const result = repro({ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: '149999999' });
+    assert.equal(result.verdict, 'blocked');
+    assert.equal(balanceOf(result)?.detail, 'This wallet holds 149.99 USDC; this swap spends 150 USDC.');
+    assert.equal(
+      balanceOf(repro({ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: '0' }))?.detail,
+      'This wallet holds 0 USDC; this swap spends 150 USDC.',
+    );
+  });
+
+  test('a balance that could not be read is not an empty one: said so, and never a refusal', () => {
+    for (const unread of [{ asset: USDC_BASE, spentAtomic: '150000000', heldAtomic: null }, null, undefined]) {
+      const result = repro(unread);
+      assert.equal(result.verdict, 'allowed', result.blockedReason ?? '');
+      const entry = balanceOf(result);
+      assert.equal(entry?.status, 'skipped');
+      assert.match(entry?.detail ?? '', /USDC balance could not be read just now, so it was not checked/);
+      assert.match(entry?.detail ?? '', /this swap spends 150 USDC/);
+    }
+  });
+
+  test('a fact about another asset, or about less than the batch spends, cannot pass a short wallet', () => {
+    // Another asset's balance says nothing about USDC: not read, not a pass.
+    const other = repro({ asset: WETH_BASE, spentAtomic: '150000000', heldAtomic: '999000000000000000000' });
+    assert.equal(balanceOf(other)?.status, 'skipped');
+    // Held to what the batch itself spends, whatever the fact says it spends.
+    const smaller = repro({ asset: USDC_BASE, spentAtomic: '1', heldAtomic: '125741019' });
+    assert.equal(smaller.verdict, 'blocked');
+    assert.equal(balanceOf(smaller)?.detail, 'This wallet holds 125.74 USDC; this swap spends 150 USDC.');
+  });
+
+  test('native ETH: the wallet’s ETH against the ETH the batch sends', () => {
+    const intent = makeIntent({ fromAsset: ETH_BASE, toAsset: USDC_BASE, amountDecimal: '0.1' });
+    const amount = intent.amount.amountAtomic;
+    assert.equal(amount, '100000000000000000');
+    const calls = [{ ...swapCall(0, intent), valueWei: amount }];
+    const run = (heldAtomic: string | null) =>
+      runSafetyKernel(baseArgs({ intent, calls, spendBalance: { asset: ETH_BASE, spentAtomic: amount, heldAtomic } }))
+        .result;
+
+    const short = run('50000000000000000');
+    assert.equal(short.verdict, 'blocked');
+    assert.equal(
+      short.blockedReason,
+      'wallet_balance_covers_input: This wallet holds 0.05 ETH; this swap spends 0.1 ETH.',
+    );
+    // Below one token a balance keeps two significant digits, rather than reading as nothing.
+    assert.equal(balanceOf(run('4321000000000000'))?.detail, 'This wallet holds 0.0043 ETH; this swap spends 0.1 ETH.');
+
+    const exact = run(amount);
+    assert.equal(exact.verdict, 'allowed', exact.blockedReason ?? '');
+    assert.equal(balanceOf(exact)?.status, 'passed');
+    assert.equal(balanceOf(run(null))?.status, 'skipped');
+  });
+
+  test('beside every other refusal at once, the reason is cut to fit, never a parse error', () => {
+    const { result } = runSafetyKernel(
+      baseArgs({
+        chainId: 1,
+        walletAddress: '0x2222222222222222222222222222222222222222',
+        quoteExpiry: new Date(NOW.getTime() - 1_000).toISOString(),
+        contractSecurityResults: [],
+        simulationAcceptable: false,
+        simulationDetail: SIMULATION_OUTCOME_COPY_V1.insufficient_funds.detail,
+        spendBalance: { asset: USDC_BASE, spentAtomic: '100000000', heldAtomic: '125741' },
+      }),
+    );
+    assert.equal(result.verdict, 'blocked');
+    const whole = result.checks
+      .filter((entry) => entry.status === 'failed')
+      .map((entry) => `${entry.id}: ${entry.detail}`)
+      .join('; ');
+    assert.ok(whole.length > 500, 'the uncut reason is longer than the schema allows');
+    assert.equal(result.blockedReason?.length, 500);
+    assert.ok(result.blockedReason?.endsWith('…'));
+    assert.ok(result.blockedReason?.includes('wallet_balance_covers_input: This wallet holds 0.12 USDC; this swap spends 100 USDC.'));
+  });
+
+  test('what a swap spends: the intent’s input, and for native ETH what the batch sends when that is more', () => {
+    const usdc = makeIntent({ amountDecimal: '150' });
+    assert.deepEqual(swapSpendV1(usdc, [approvalCall(150_000_000n), swapCall(1, usdc)]), {
+      asset: USDC_BASE,
+      amountAtomic: '150000000',
+    });
+    const eth = makeIntent({ fromAsset: ETH_BASE, toAsset: USDC_BASE, amountDecimal: '0.1' });
+    const sending = (valueWei: string) => [{ ...swapCall(0, eth), valueWei }];
+    assert.equal(swapSpendV1(eth, sending('100000000000000000'))?.amountAtomic, '100000000000000000');
+    assert.equal(swapSpendV1(eth, sending('200000000000000000'))?.amountAtomic, '200000000000000000');
+  });
 });
 

@@ -264,6 +264,7 @@ import {
   usdcAssetRefV1,
 } from '../lib/paidIntelligenceConfig.js';
 import { simulateSwapCallsV1 } from '../lib/swapSimulation.js';
+import { createSpendBalanceReaderFromEnvV1 } from '../lib/spendBalance.js';
 import { createIntelligenceBudgetCharger } from '../lib/intelligenceBudgetCharger.js';
 import { stillEntryGateV1, stillRegionRuntimeV1, type StillEntryGateResultV1 } from '../lib/stillRegion.js';
 
@@ -1039,6 +1040,10 @@ export const swapPrepareRouteRuntime = {
       contractSecurity: async ({ chainId, addresses }) =>
         (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
       providerContractPin: providerContractPinVerifiedV1,
+      // What the wallet holds of what it spends, read for EVERY route before
+      // the Safety Kernel runs (2026-11-18: an unsimulated KyberSwap batch
+      // spending 150 USDC was signed from a wallet holding 125.74).
+      readSpendBalance: createSpendBalanceReaderFromEnvV1(process.env),
     });
     return composer.prepare(input);
   },
@@ -1426,6 +1431,8 @@ export const swapBlueprintRouteRuntime = {
           contractSecurity: async ({ chainId, addresses }) =>
             (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
           providerContractPin: providerContractPinVerifiedV1,
+          // Read again here, the last read before the wallet is handed the calls.
+          readSpendBalance: createSpendBalanceReaderFromEnvV1(process.env),
         },
         send: {
           readBalance: async ({ tokenAddress, walletAddress }) => {
@@ -2135,7 +2142,11 @@ async function buildSimulateReview(
   if (!selected) throw new Error('paid_simulation_review_candidate_not_found');
 
   const result = await reviewStoredBlueprintV1(
-    { contractSecurity: simulateRouteRuntime.contractSecurity },
+    {
+      contractSecurity: simulateRouteRuntime.contractSecurity,
+      // The same balance check as prepare and approve, read now.
+      readSpendBalance: createSpendBalanceReaderFromEnvV1(process.env),
+    },
     { routeRunId, walletAddress },
     run.intent,
     selected,

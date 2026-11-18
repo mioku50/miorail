@@ -1445,12 +1445,13 @@ export async function miorailGetStockBaseMcpActionV1(
       simulationStatus: prepared.simulation?.status ?? null,
       simulationErrorCode: prepared.simulation?.errorCode ?? null,
     });
-    throw stockActionExecutionRefusalV1(
-      simulationOutcome === 'insufficient_funds'
-        && failedChecks?.length === 1 && failedChecks[0] === 'simulation_evidence'
-        ? 'stock_action_insufficient_funds'
-        : 'stock_action_blocked',
-    );
+    // Funds alone: the kernel's balance check, read for every swap since
+    // 2026-11-18, or a simulation that failed for want of funds, and no other
+    // check. A short wallet now fails the first whether or not it was simulated.
+    const fundsOnly = failedChecks !== null && failedChecks.length > 0 && failedChecks.every((id) =>
+      id === 'wallet_balance_covers_input'
+      || (id === 'simulation_evidence' && simulationOutcome === 'insufficient_funds'));
+    throw stockActionExecutionRefusalV1(fundsOnly ? 'stock_action_insufficient_funds' : 'stock_action_blocked');
   }
 
   // -------------------------------------------------------------------------

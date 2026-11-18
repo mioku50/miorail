@@ -691,6 +691,34 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     }
   });
 
+  test('the kernel’s own balance check is a funds refusal too, simulated or not (2026-11-18)', async () => {
+    for (const [simulation, checks] of [
+      [{ status: 'unavailable', errorCode: 'no_simulation_provider' }, [{ id: 'wallet_balance_covers_input', status: 'failed' }]],
+      [{ status: 'failed', errorCode: 'insufficient_funds' },
+        [{ id: 'wallet_balance_covers_input', status: 'failed' }, { id: 'simulation_evidence', status: 'failed' }]],
+    ] as const) {
+      let approved = false;
+      executionStub({
+        planAndPrepare: async () => ({ outcome: 'blocked', safety: { checks }, simulation }) as never,
+        approve: async () => { approved = true; throw new Error('must not approve'); },
+      });
+      await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY,
+        { clearance: clearanceFor(), requestId: 'short-wallet' }), error => {
+        assert.ok(refusedWith('stock_action_insufficient_funds')(error));
+        assert.doesNotMatch(String(error), /wallet_balance_covers_input|simulation_evidence|https?:/);
+        return true;
+      });
+      assert.equal(approved, false);
+    }
+    // Beside a check that is not about funds, the refusal stays the generic one.
+    executionStub({ planAndPrepare: async () => ({ outcome: 'blocked',
+      safety: { checks: [{ id: 'wallet_balance_covers_input', status: 'failed' }, { id: 'contract_token_security', status: 'failed' }] },
+      simulation: { status: 'unavailable', errorCode: 'no_simulation_provider' },
+    }) as never });
+    await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY,
+      { clearance: clearanceFor(), requestId: 'short-and-other' }), refusedWith('stock_action_blocked'));
+  });
+
   test('other kernel blocks never become a balance explanation', async () => {
     for (const [errorCode, checks] of [
       ['reverted', [{ id: 'simulation_evidence', status: 'failed' }]],

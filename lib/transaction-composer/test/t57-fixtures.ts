@@ -13,9 +13,9 @@ export interface SeededBlueprint {
 }
 
 export async function seededBlueprint(
-  overrides: { createdAt?: Date; quoteExpiry?: string } = {},
+  overrides: { createdAt?: Date; quoteExpiry?: string; amountDecimal?: string } = {},
 ): Promise<SeededBlueprint> {
-  const scenario = buildScenario();
+  const scenario = buildScenario({ amountDecimal: overrides.amountDecimal });
   const repository = await seedRepository(scenario);
   const calls = defaultBuiltCalls({ amountAtomic: scenario.intent.amount.amountAtomic, from: scenario.intent.fromAsset!, to: scenario.intent.toAsset! }).map((call, index) =>
     classifySwapCallV1({

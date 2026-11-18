@@ -132,6 +132,39 @@ test('approve: a Safety Kernel block at re-validation leaves the blueprint unapp
   assert.equal(await seeded.repository.getProofProjection(routeProofIdV1(seeded.blueprint.id), TENANT), null);
 });
 
+// 2026-11-18: the re-run just before signing read no balance, so an approve of
+// exactly 150 USDC was handed to a wallet holding 125.741019 USDC; the approve
+// landed and the swap after it reverted.
+test('approve: a wallet short of what the stored batch spends is refused, and nothing is approved', async () => {
+  const seeded = await seededBlueprint({ amountDecimal: '150' });
+  const asked: unknown[] = [];
+  const deps = {
+    repository: seeded.repository,
+    contractSecurity: passingContractSecurity(),
+    readSpendBalance: async (input: unknown) => {
+      asked.push(input);
+      return 125_741_019n;
+    },
+  };
+  const result = await approveExecutionBlueprintV1(deps, approveInput(seeded));
+  assert.equal(result.outcome, 'blocked');
+  if (result.outcome !== 'blocked') return;
+  assert.equal(result.reason, 'wallet_balance_covers_input: This wallet holds 125.74 USDC; this swap spends 150 USDC.');
+  assert.deepEqual(asked, [{ asset: seeded.scenario.intent.fromAsset, walletAddress: WALLET }]);
+  const [stored] = await seeded.repository.listBlueprints(seeded.scenario.intent.id, TENANT);
+  assert.equal(stored!.blueprint.status, 'ready_for_review');
+  assert.equal(await seeded.repository.getProofProjection(routeProofIdV1(seeded.blueprint.id), TENANT), null);
+});
+
+test('approve: exactly what the batch spends is enough, and an unread balance never refuses', async () => {
+  for (const readSpendBalance of [async () => 150_000_000n, async () => null]) {
+    const seeded = await seededBlueprint({ amountDecimal: '150' });
+    const deps = { repository: seeded.repository, contractSecurity: passingContractSecurity(), readSpendBalance };
+    const result = await approveExecutionBlueprintV1(deps, approveInput(seeded));
+    assert.equal(result.outcome, 'approved', JSON.stringify(result));
+  }
+});
+
 test('approve: the persisted approved blueprint remains schema-valid on read-back', async () => {
   const seeded = await seededBlueprint();
   const deps = { repository: seeded.repository, contractSecurity: passingContractSecurity() };

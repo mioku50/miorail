@@ -179,6 +179,10 @@ const PARITY_V1: Record<string, { enforcedBy: string[] | null; why: string }> = 
     enforcedBy: null,
     why: 'A B20 entry carries no gift: its stored call schema admits only an approval and a swap (index 0–1), so a transfer to anyone else cannot even be expressed, and the one swap must pay the authenticated wallet (recipient_is_authenticated_wallet).',
   },
+  wallet_balance_covers_input: {
+    enforcedBy: null,
+    why: 'The generic path reads the wallet’s balance because a provider-built route may reach a wallet unsimulated (2026-11-18). A B20 entry never does: verifyEntrySimulationV1 runs the exact calls from this wallet before any is returned, refuses a batch whose calls revert, which is what a wallet short of USDC produces, and refuses when no simulator answers.',
+  },
 };
 
 describe('the two kernels enforce the same invariants', () => {
