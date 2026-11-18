@@ -37,6 +37,9 @@ describe('subscriptions Still can pay with a card', () => {
     const guide = stillSubscriptionGuideV1();
     assert.match(guide, /service's own card first \(Discord Nitro, Netflix, Disney\+, Xbox and Game Pass, PlayStation, Nintendo, Twitch, Crunchyroll\)/);
     assert.match(guide, /same country as the person’s store account/);
+    // A store's balance pays what that store bills, never a plan the service bills on its own website (audit P3, 2026-11-18).
+    assert.match(guide, /A store’s balance pays only what that store bills: a plan bought on the service’s own website is billed by the service, and a store card does not pay it\./);
+    assert.doesNotMatch(guide, /sold only inside its app/);
     assert.match(guide, /does not renew by itself/);
     assert.match(guide, /Never suggest another country’s card or a VPN\./);
   });

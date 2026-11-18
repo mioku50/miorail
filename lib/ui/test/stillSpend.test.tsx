@@ -279,7 +279,9 @@ describe('the Spend page', () => {
     for (const name of ['Discord Nitro', 'Netflix', 'Disney\\+', 'Xbox and Game Pass', 'PlayStation', 'Nintendo', 'Twitch', 'Crunchyroll', 'Apple \\(iPhone apps\\)', 'Google Play \\(Android apps\\)']) {
       assert.match(open, new RegExp(`<strong>${name}</strong>`), name);
     }
-    assert.match(open, /subscriptions bought inside iPhone apps, such as X Premium, ChatGPT Plus or Claude Pro/);
+    // A store's balance pays what that store bills, never a plan bought on the service's own website (audit P3, 2026-11-18).
+    assert.match(open, /it pays what Apple bills, such as X Premium, ChatGPT Plus or Claude Pro bought inside their iPhone apps, not a plan bought on their websites/);
+    assert.match(open, /A\s+store card does not pay a plan bought on the service’s website\./);
     const none = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, subscriptions: subscriptions({ chosen: 'disney' }), products: [], selected: null, product: null })} />);
     assert.match(none, /aria-pressed="true"><span><strong>Disney\+<\/strong>/);
     assert.match(none, /Bitrefill lists no Disney\+ card\s+for Germany now\./);
