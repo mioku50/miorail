@@ -73,6 +73,9 @@ export interface StillLoanAlertV1 {
   debtAtomic: string | null;
   /** The last borrow rate a reading said, a year, in basis points; null before one did. */
   rateBps: number | null;
+  /** When a reading last said the rate: it is the rate now only when this is `readAt`. A reading that could not
+   * read it keeps the one before and moves `readAt` alone (audit P3, 2026-11-18). */
+  rateReadAt: string | null;
   /** The interest this loan gathered while Still read it, in USDC base units. */
   interestAtomic: string;
   /** The part of it estimated from a rate, across a borrow or a repayment. */
@@ -411,8 +414,8 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
           walletAddress: input.walletAddress, market: line.market, venue: line.venue, state: line.state, marginBps: line.marginBps,
           episode: line.state === 'calm' ? 0 : 1, createdAt: at, readAt: at, readBlock: input.block,
           told: { base_app: null, telegram: null },
-          debtAtomic: line.debtAtomic ?? null, rateBps: line.rateBps ?? null, interestAtomic: '0', estimatedAtomic: '0',
-          holds, holdEpisode: appeared ? 1 : 0,
+          debtAtomic: line.debtAtomic ?? null, rateBps: line.rateBps ?? null, rateReadAt: line.rateBps != null ? at : null,
+          interestAtomic: '0', estimatedAtomic: '0', holds, holdEpisode: appeared ? 1 : 0,
           stateSince: at, ...stillLoanRateAfterV1(null, line.rateBps ?? null, at),
         });
         continue;
@@ -425,6 +428,7 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
         stateSince: line.state === row.state ? row.stateSince : at,
         venue: line.venue, state: line.state, marginBps: line.marginBps, readAt: at, readBlock: input.block,
         debtAtomic: line.debtAtomic ?? row.debtAtomic, rateBps: line.rateBps ?? row.rateBps,
+        rateReadAt: line.rateBps != null ? at : row.rateReadAt,
         interestAtomic: (BigInt(row.interestAtomic) + step.interest).toString(),
         estimatedAtomic: (BigInt(row.estimatedAtomic) + step.estimated).toString(),
         holds, holdEpisode: row.holdEpisode + (appeared ? 1 : 0),
@@ -572,6 +576,7 @@ function loanOfRowV1(row: Record<string, unknown>): StillLoanAlertV1 {
     told: { base_app: int(row.told_base_app), telegram: int(row.told_telegram) },
     debtAtomic: text(row.debt_atomic),
     rateBps: int(row.rate_bps),
+    rateReadAt: row.rate_read_at == null ? null : at(row.rate_read_at),
     interestAtomic: text(row.interest_atomic) ?? '0',
     estimatedAtomic: text(row.estimated_atomic) ?? '0',
     holds: Array.isArray(row.holds) ? row.holds.map(String).sort() : [],
@@ -664,11 +669,12 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
         await sql`
           INSERT INTO still_loan_alerts AS a
             (wallet_address, market, venue, state, margin_bps, episode, created_at, read_at, read_block,
-             debt_atomic, rate_bps, interest_atomic, estimated_atomic, holds, hold_episode,
+             debt_atomic, rate_bps, rate_read_at, interest_atomic, estimated_atomic, holds, hold_episode,
              state_since, rate_told_bps, rate_told_at, rate_high_since, rate_episode)
           VALUES (${input.walletAddress}, ${line.market}, ${line.venue}, ${line.state}, ${line.marginBps},
                   ${line.state === 'calm' ? 0 : 1}, ${at}::timestamptz, ${at}::timestamptz, ${input.block}::bigint,
-                  ${line.debtAtomic ?? null}::numeric, ${line.rateBps ?? null}::integer, 0, 0, ${holds}::text[], ${appeared ? 1 : 0},
+                  ${line.debtAtomic ?? null}::numeric, ${line.rateBps ?? null}::integer, ${line.rateBps != null ? at : null}::timestamptz,
+                  0, 0, ${holds}::text[], ${appeared ? 1 : 0},
                   ${stateSince}::timestamptz, ${rate.rateToldBps}::integer, ${rate.rateToldAt}::timestamptz,
                   ${rate.rateHighSince}::timestamptz, ${rate.rateEpisode}::int)
           ON CONFLICT (wallet_address, market) DO UPDATE
@@ -682,6 +688,7 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
                  read_block = EXCLUDED.read_block,
                  debt_atomic = COALESCE(EXCLUDED.debt_atomic, a.debt_atomic),
                  rate_bps = COALESCE(EXCLUDED.rate_bps, a.rate_bps),
+                 rate_read_at = CASE WHEN EXCLUDED.rate_bps IS NULL THEN a.rate_read_at ELSE EXCLUDED.read_at END,
                  interest_atomic = a.interest_atomic + ${step.interest.toString()}::numeric,
                  estimated_atomic = a.estimated_atomic + ${step.estimated.toString()}::numeric,
                  holds = EXCLUDED.holds,

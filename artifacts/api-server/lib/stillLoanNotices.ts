@@ -279,6 +279,8 @@ export function stillLoanRecoveredNoticeV1(loan: StillLoanAlertV1): StillLoanNot
 export function stillLoanRateNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTextV1 | null {
   const debt = atomicOfV1(loan.debtAtomic);
   if (loan.rateBps === null || loan.rateToldBps === null || loan.rateToldAt === null || debt === null || debt === 0n) return null;
+  // "Now" only for a rate the latest reading said itself: one it could not read is the rate of before (audit P3, 2026-11-18).
+  if (loan.rateReadAt === null || Date.parse(loan.rateReadAt) !== Date.parse(loan.readAt)) return null;
   const label = stillLoanLabelV1(loan.market);
   const now = rateV1(loan.rateBps);
   const head = `${label}: the rate is ${now} a year now, up from ${rateV1(loan.rateToldBps)} on ${dayV1(loan.rateToldAt)}, `

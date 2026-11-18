@@ -274,9 +274,13 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       // A jump starts a stretch; a reading with no rate, or one still high, keeps when it began.
       await read(10, '300', rated(1_240));
       await read(15, '400', aave('calm', 5_000));
+      [loan] = await alerts.loansOf(WALLET);
+      // The reading with no rate keeps the rate before it, and says when that one was read (audit P3, 2026-11-18).
+      assert.deepEqual([loan!.rateBps, loan!.readAt, loan!.rateReadAt], [1_240, later(15).toISOString(), later(10).toISOString()]);
       await read(20, '500', rated(1_300));
       [loan] = await alerts.loansOf(WALLET);
       assert.deepEqual([loan!.rateBps, loan!.rateToldBps, loan!.rateHighSince, loan!.rateEpisode], [1_300, 410, later(10).toISOString(), 1]);
+      assert.equal(loan!.rateReadAt, later(20).toISOString());
       const ask = { channel: 'telegram' as const, freshSince: AT };
       assert.deepEqual(await alerts.rateDue({ ...ask, highSince: later(9) }), [], 'not held long enough yet');
       assert.deepEqual(await alerts.rateDue({ ...ask, freshSince: later(21), highSince: later(10) }), [], 'only a fresh reading is told');

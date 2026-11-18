@@ -29,7 +29,7 @@ function loan(over: Partial<StillLoanAlertV1> = {}): StillLoanAlertV1 {
   return {
     walletAddress: WALLET, market: STILL_AAVE_SPOKE_V1, venue: 'aave-v4', state: 'calm', marginBps: 4_812, episode: 0,
     createdAt: '2026-11-10T09:00:00.000Z', readAt: NOW.toISOString(), readBlock: '58000000', told: { base_app: null, telegram: null },
-    debtAtomic: '26410000', rateBps: 366, interestAtomic: '0', estimatedAtomic: '0', holds: [], holdEpisode: 0,
+    debtAtomic: '26410000', rateBps: 366, rateReadAt: NOW.toISOString(), interestAtomic: '0', estimatedAtomic: '0', holds: [], holdEpisode: 0,
     stateSince: '2026-11-10T09:00:00.000Z', rateToldBps: 366, rateToldAt: '2026-11-10T09:00:00.000Z', rateHighSince: null, rateEpisode: 0, ...over,
   };
 }
@@ -210,6 +210,12 @@ describe('a rate that jumped', () => {
     assert.equal(stillLoanRateNoticeV1(jumped({ rateBps: null })), null);
     assert.equal(stillLoanRateNoticeV1(jumped({ rateToldBps: null, rateToldAt: null })), null);
     assert.equal(stillLoanRateNoticeV1(jumped({ debtAtomic: '0' })), null);
+  });
+
+  test('nothing is told as the rate now that the latest reading did not read (audit P3, 2026-11-18)', () => {
+    assert.equal(stillLoanRateNoticeV1(jumped({ rateReadAt: '2026-11-17T09:00:00.000Z' })), null, 'the rate of an earlier reading');
+    assert.equal(stillLoanRateNoticeV1(jumped({ rateReadAt: null })), null, 'no reading said a rate since the column was added');
+    assert.notEqual(stillLoanRateNoticeV1(jumped()), null);
   });
 });
 
