@@ -393,7 +393,7 @@ describe('approve', () => {
   // before the first approve were all approved and signed.
   test('a send over the day’s limit is refused at approve, and one already approved keeps its place', async () => {
     const { repo, result } = await prepared();
-    const full = 'This wallet has sent 5 gifts today, the daily limit. It resets at 00:00 UTC.';
+    const full = 'This wallet has approved 5 sends today, the daily limit. A send counts once it is approved, signed or not. It resets at 00:00 UTC.';
     let reads = 0;
     const refused = await approveGiftSendBlueprintV1(
       { repository: repo, readBalance: async () => { reads += 1; return AMOUNT; }, reviewedStock: async () => true, dailyLimit: async () => full },

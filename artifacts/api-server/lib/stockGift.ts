@@ -26,9 +26,10 @@ export const CANONICAL_BASE_USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda0291
 export const STOCK_GIFT_MIN_USDC_ATOMIC_V1 = 100_000n;
 /** $100 in USDC atomic units. */
 export const STOCK_GIFT_MAX_USDC_ATOMIC_V1 = 100_000_000n;
-/** Approved gifts per wallet per UTC day. */
+/** Approved sends per wallet per UTC day: gifts and sends from holdings. A send counts once it is approved, because
+ * the calls handed to the wallet can still be signed later and the server cannot tell an abandoned one from a late one. */
 export const STOCK_GIFT_DAILY_LIMIT_V1 = 5;
-export const STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 = `This wallet has sent ${STOCK_GIFT_DAILY_LIMIT_V1} gifts today, the daily limit. It resets at 00:00 UTC.`;
+export const STOCK_GIFT_DAILY_LIMIT_MESSAGE_V1 = `This wallet has approved ${STOCK_GIFT_DAILY_LIMIT_V1} sends today, the daily limit. A send counts once it is approved, signed or not. It resets at 00:00 UTC.`;
 
 const sendApprovals = new Map<string, Promise<void>>();
 /**

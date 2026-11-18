@@ -110,6 +110,10 @@ describe('what may be given', () => {
     if (!sixth.ok) {
       assert.equal(sixth.code, 'gift_daily_limit_reached');
       assert.match(sixth.message, /00:00 UTC/);
+      // It counts approvals, so it says approved: a send the wallet never signed was not sent (audit 11-18).
+      assert.match(sixth.message, /has approved 5 sends today/);
+      assert.match(sixth.message, /signed or not/);
+      assert.doesNotMatch(sixth.message, /\bsent\b/);
     }
   });
 });
