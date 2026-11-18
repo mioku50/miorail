@@ -42,5 +42,10 @@ describe('subscriptions Still can pay with a card', () => {
     assert.doesNotMatch(guide, /sold only inside its app/);
     assert.match(guide, /does not renew by itself/);
     assert.match(guide, /Never suggest another country’s card or a VPN\./);
+    // An assistant listed Apple France and Apple USA cards to a person whose country had none (operator's check, 2026-11-18).
+    assert.match(guide, /Search only the country of the person’s own account/);
+    assert.match(guide, /ask which it is when you do not know/);
+    assert.match(guide, /do not list or price other countries’ cards/);
+    assert.match(guide, /do not explain how to move an account to another country/);
   });
 });

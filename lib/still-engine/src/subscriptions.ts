@@ -61,5 +61,8 @@ export function stillSubscriptionGuideV1(): string {
     + 'bills, of the same country as the person’s store account. A store’s balance pays only what that store bills: a plan bought on the service’s '
     + 'own website is billed by the service, and a store card does not pay it. '
     + 'Say that a card tops up a balance and does not renew by itself, that a price inside an app can be above the service’s own web price, '
-    + 'and when no card for the service is listed, say so. Never suggest another country’s card or a VPN.';
+    + 'and when no card for the service is listed, say so. '
+    + 'Search only the country of the person’s own account (for an Apple or Google Play card, their store account), and ask which it is '
+    + 'when you do not know. When that country lists no card, say so and stop there: do not list or price other countries’ cards, and do not '
+    + 'explain how to move an account to another country. Never suggest another country’s card or a VPN.';
 }

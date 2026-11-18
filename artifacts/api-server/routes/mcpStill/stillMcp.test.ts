@@ -122,7 +122,12 @@ test('the instructions and the spend search tell an assistant how a subscription
     assert.match(words, /X Premium, ChatGPT Plus, Claude Pro/);
     assert.match(words, /does not renew by itself/);
     assert.match(words, /Never suggest another country’s card or a VPN\./);
+    assert.match(words, /do not list or price other countries’ cards/);
   }
+  // An assistant read prepayment false as "no prepayment needed" (operator's check, 2026-11-18).
+  const product = tools.find((tool) => tool.name === 'still_spend_product')?.description ?? '';
+  assert.match(product, /prepayment is Bitrefill’s name for those steps, not for paying in advance/);
+  assert.match(product, /every purchase is paid before the card is sent/);
 });
 
 // Bitrefill's answers below are synthetic, in the guest client's own shapes.
