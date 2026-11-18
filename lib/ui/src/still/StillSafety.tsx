@@ -146,7 +146,8 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           {STILL_ELIGIBLE_JURISDICTIONS_V1} Before it prepares one, the server reads which country your connection comes from (by its IP
           address, <a href={STILL_REGION_ATTRIBUTION_V1.url} target="_blank" rel="noopener noreferrer">{STILL_REGION_ATTRIBUTION_V1.text}</a>; where that says
           the United States, the regional registry holding the address, other than ARIN, is asked as a second opinion about the network, never
-          the address, and a network it records elsewhere is not refused),
+          the address, and a network it records elsewhere is not refused; that record says where the network’s holder is, not where a
+          connection comes from, and your confirmation below is what stands for you),
           and it asks you to confirm once for each sign-in: “{STILL_ELIGIBILITY_STATEMENT_V1}” {STILL_US_PERSON_DEFINITION_V1} An IP address cannot tell Crimea and the
           so-called Donetsk and Luhansk People’s Republics apart from the rest of Ukraine, so for those regions the sentence is the check.
           Do not use a VPN or a proxy to get around it.
