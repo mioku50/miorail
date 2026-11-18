@@ -750,6 +750,13 @@
       "when": 1795557600000,
       "tag": "0106_coinbase_only",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1795644000000,
+      "tag": "0107_audit_logs_message_text",
+      "breakpoints": true
     }
   ]
 }
