@@ -125,6 +125,16 @@ describe('lending execution SQL races in an isolated temporary schema', { skip: 
     assert.equal(await store.markPaymentAsked({ owner: other, executionId: loan.executionId, attemptId: loanArmed.attemptId, now: NOW }), null);
     await store.recordSubmission({ owner, executionId: loan.executionId, attemptId: loanArmed.attemptId, outcome: 'rejected', now: NOW });
   });
+  it('lists an owner\'s loans that pay an invoice, opened since a time, oldest first, and no one else\'s', async () => {
+    const owner = { walletAddress: `0x${'5'.repeat(40)}`, tenantId: `eip155:8453:0x${'5'.repeat(40)}` };
+    await sql`INSERT INTO users (id) VALUES (${owner.tenantId}) ON CONFLICT DO NOTHING`;
+    const early = await store.putReady({ owner, draftId: 'db-paid-early', run: loanPayingStepsFixture(), now: new Date(NOW.getTime() - 60_000) });
+    const late = await store.putReady({ owner, draftId: 'db-paid-late', run: loanPayingStepsFixture(), now: NOW });
+    await store.putReady({ owner, draftId: 'db-unpaid', run: loanReadyFixture(), now: NOW });
+    assert.deepEqual((await store.listPaidSince({ owner, since: new Date(NOW.getTime() - 120_000) })).map(row => row.executionId), [early.executionId, late.executionId]);
+    assert.deepEqual((await store.listPaidSince({ owner, since: NOW })).map(row => row.executionId), [late.executionId]);
+    assert.deepEqual(await store.listPaidSince({ owner: OWNER, since: new Date(NOW.getTime() + 1) }), []);
+  });
   it('Aave reviews for different stock reserves share one database lock', async () => {
     const make = async (symbol: string) => { const run = loanReadyFixture(); run.facts.venue = 'aave-v4'; run.facts.marketId = `aave-v4:${symbol}`;
       return store.putReady({ owner: OWNER, draftId: `db-aave-${symbol}`, run, now: NOW }); };

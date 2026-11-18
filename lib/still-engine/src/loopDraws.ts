@@ -52,9 +52,14 @@ export function loopDrawCurrentV1(now: Date, draws: readonly LoopDrawV1[] = LOOP
     .sort((a, b) => Date.parse(a.opensAt) - Date.parse(b.opensAt))[0] ?? null;
 }
 
-/** keccak256 of the list as published: {"drawId":…,"closesAt":…,"labels":[…]}. */
+/** The list as published, the exact text its hash and its time-stamps are of: {"drawId":…,"closesAt":…,"labels":[…]}. */
+export function loopDrawListTextV1(input: { drawId: string; closesAt: string; labels: readonly string[] }): string {
+  return JSON.stringify({ drawId: input.drawId, closesAt: input.closesAt, labels: [...input.labels] });
+}
+
+/** keccak256 of the list as published (loopDrawListTextV1). */
 export function loopDrawListHashV1(input: { drawId: string; closesAt: string; labels: readonly string[] }): Hex {
-  return keccak256(stringToHex(JSON.stringify({ drawId: input.drawId, closesAt: input.closesAt, labels: [...input.labels] })));
+  return keccak256(stringToHex(loopDrawListTextV1(input)));
 }
 
 /** The moment the list was fixed, as written: the next whole second. */

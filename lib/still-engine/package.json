@@ -23,7 +23,8 @@
     "./rpc": "./src/rpc.ts",
     "./loops": "./src/loops.ts",
     "./loop-draws": "./src/loopDraws.ts",
-    "./subscriptions": "./src/subscriptions.ts"
+    "./subscriptions": "./src/subscriptions.ts",
+    "./rfc3161": "./src/rfc3161.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

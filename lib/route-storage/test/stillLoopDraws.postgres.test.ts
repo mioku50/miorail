@@ -31,10 +31,12 @@ function drizzleDir(): string {
 before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
-  await sql.unsafe('DROP TABLE IF EXISTS still_loop_draws, still_loop_free_entries CASCADE');
-  // Applied twice: it must re-run.
-  for (let pass = 0; pass < 2; pass += 1) {
-    await sql.unsafe((await readFile(resolve(drizzleDir(), '0103_still_loop_draws.sql'), 'utf8')).replaceAll('--> statement-breakpoint', ''));
+  await sql.unsafe('DROP TABLE IF EXISTS still_loop_draws, still_loop_free_entries, still_loop_entries CASCADE');
+  // Applied in order, and each twice: they must re-run.
+  for (const file of ['0103_still_loop_draws.sql', '0104_still_loop_draw_entries.sql']) {
+    for (let pass = 0; pass < 2; pass += 1) {
+      await sql.unsafe((await readFile(resolve(drizzleDir(), file), 'utf8')).replaceAll('--> statement-breakpoint', ''));
+    }
   }
 });
 
@@ -48,7 +50,7 @@ if (!throwaway) {
   });
 } else {
   stillLoopDrawsContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE still_loop_draws, still_loop_free_entries');
+    await sql!.unsafe('TRUNCATE still_loop_draws, still_loop_entries');
     const executor: SqlTemplateExecutor = (strings, ...values) =>
       (sql as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>)(strings, ...values);
     return createDatabaseStillLoopDrawRepositoryV1(executor);

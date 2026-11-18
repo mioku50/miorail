@@ -104,14 +104,15 @@ describe('/loops: the draw', () => {
   const OPEN = { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winnerCount: 1, prizeUsdc: '10', state: 'open',
     entries: 4, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [] };
   const DRAWN = { ...OPEN, state: 'drawn', entries: 3, entriesHash: `0x${'1'.repeat(64)}`, lockedAt: '2026-11-28T18:00:31.000Z', blockAt: '2026-11-28T18:05:31.000Z',
-    block: { number: '38912345', hash: `0x${'2'.repeat(64)}`, time: '2026-11-28T18:05:31.000Z' }, winners: [{ no: 2, label: 'Entry K3F9X2', paid: true }] };
+    block: { number: '38912345', hash: `0x${'2'.repeat(64)}`, time: '2026-11-28T18:05:31.000Z' }, winners: [{ no: 2, label: 'Entry K3F9X2', paid: true }],
+    stamps: [{ tsa: 'http://timestamp.digicert.com', genTime: '2026-11-28T18:00:31.700Z' }, { tsa: 'http://timestamp.sectigo.com', genTime: '2026-11-28T18:00:32.100Z' }] };
   const answer = (draws: unknown) => ({ outcome: 'loops', weekStartsAt: '2026-11-16T00:00:00.000Z',
     counts: { total: 0, week: 0, viaAssistant: 0, byBrand: { apple: 0, amazon: 0, google: 0, meta: 0, microsoft: 0 } }, wall: [], draws });
   const render = (draws: unknown, entry?: Parameters<typeof StillLoops>[0]['model']['entry']) =>
     renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(answer(draws)), failed: false, entry }} />);
   const signedOut = { signedIn: false, signInHref: '/signin?next=%2Floops', mine: null, onEnter: never };
   const mine = (patch: Record<string, unknown> = {}) => stillLoopDrawMineViewV1({ outcome: 'mine', team: false,
-    current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null }, entered: [], ...patch });
+    current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null, loop: null }, entered: [], ...patch });
 
   it('reads the draws the server sends, and leaves the page whole when it cannot', () => {
     assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [] }))?.draws?.current?.entries, 4);
@@ -130,11 +131,15 @@ describe('/loops: the draw', () => {
     const html = render({ current: OPEN, past: [] }, signedOut);
     assert.match(html, /The draw · 10 USDC/);
     assert.match(html, /Closes Sat 28 Nov, 18:00 UTC\. 4 entries so far\. One winner, 10 USDC\./);
-    assert.match(html, /Make a Loop.*A Loop whose card arrives before the close enters you by itself/);
+    assert.match(html, /Make a Loop.*A Loop made while the draw is open lets you enter with it, no attestation needed/);
     assert.match(html, /Enter free.*No loan and no purchase: the same chance as a Loop/);
     assert.match(html, /href="\/spend" class="still-btn sec">Spend</);
-    assert.match(html, /href="\/signin\?next=%2Floops" class="still-btn sec">Sign in to enter free</, 'the same button as Spend');
-    assert.match(html, /One entry per person per draw/);
+    assert.match(html, /href="\/signin\?next=%2Floops" class="still-btn sec">Sign in to enter</, 'the same button as Spend');
+    // One rule both ways, and one that can be checked (audit LOOP-2): per wallet, not per person.
+    assert.match(html, /the same step: enter here before the close/);
+    assert.match(html, /One entry per wallet per draw\./);
+    assert.doesNotMatch(html, /per person|one person/);
+    assert.match(html, /public time-stamping authorities sign that it existed then/);
     assert.match(html, /not U\.S\. persons/);
     assert.match(html, /keccak256\(block hash, draw\) mod N \+ 1/);
     assert.match(html, /href="https:\/\/github\.com\/mioku50\/miorail\/blob\/main\/scripts\/verify_loop_draw\.ts"/);
@@ -149,10 +154,22 @@ describe('/loops: the draw', () => {
     assert.match(ask, /<button type="button" class="still-btn sec" disabled="">Enter free<\/button>/, 'pressed only once the rules are accepted');
     const reading = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: undefined });
     assert.match(reading, /Reading your entry…/);
+    assert.match(ask, /Free entry needs Coinbase’s Verified Account attestation on this wallet/);
     const loop = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true,
-      mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: { label: 'Loop #7', kind: 'loop' } } }) });
-    assert.match(loop, /You are in this draw as Loop #7\./);
+      mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: { label: 'Loop #7', kind: 'loop' }, loop: null } }) });
+    assert.match(loop, /You are in this draw as Loop #7\. One entry per wallet/);
     assert.doesNotMatch(loop, /<button[^>]*>Enter free<\/button>/);
+    // A Loop made while open is offered, by the same press and the same confirmations, with no attestation asked.
+    const ready = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true,
+      mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null, loop: { loopNo: 7, ready: true } } }) });
+    assert.match(ready, /I am 18 or older and I accept the rules below/);
+    assert.match(ready, /<button type="button" class="still-btn sec" disabled="">Enter with Loop #7<\/button>/);
+    assert.doesNotMatch(ready, /Free entry needs/);
+    const waiting = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true,
+      mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null, loop: { loopNo: 7, ready: false } } }) });
+    assert.match(waiting, /Loop #7: Bitrefill has not delivered its card yet\. Enter with it once the card arrives, before the close\./);
+    assert.match(waiting, />Enter free<\/button>/);
+    assert.deepEqual(mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: null, loop: { loopNo: 0, ready: true } } })?.current?.loop, null);
     const team = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: mine({ team: true }) });
     assert.match(team, /The Still team does not enter its own draws\./);
     assert.doesNotMatch(team, /<button[^>]*>Enter free<\/button>/);
@@ -161,14 +178,14 @@ describe('/loops: the draw', () => {
   it('says when the next one opens, and what each past draw fixed, picked and paid, with the person’s own part', () => {
     const upcoming = render({ current: { ...OPEN, state: 'upcoming', entries: 0 }, past: [] }, signedOut);
     assert.match(upcoming, /Opens Sat 21 Nov, 00:00 UTC; closes Sat 28 Nov, 18:00 UTC\./);
-    assert.match(upcoming, /Free entry opens with the draw\./);
-    assert.doesNotMatch(upcoming, /Sign in to enter free/);
+    assert.match(upcoming, /Entry opens with the draw\./);
+    assert.doesNotMatch(upcoming, /Sign in to enter/);
     const past = render({ current: { ...OPEN, drawId: '2026-12-03', closesAt: '2026-12-03T18:00:00.000Z' }, past: [DRAWN] },
       { ...signedOut, signedIn: true, mine: mine({ entered: [{ drawId: '2026-11-28', label: 'Entry K3F9X2', won: true, paid: true, prizeUsdc: '10' }] }) });
     assert.match(past, /Draw of Sat 28 Nov · 10 USDC/);
-    assert.match(past, /3 entries · list 0x11111111…111111 · Base block 38912345 · won by Entry K3F9X2 \(paid\)/);
+    assert.match(past, /3 entries · list 0x11111111…111111 · time-stamped by timestamp\.digicert\.com and timestamp\.sectigo\.com · Base block 38912345 · won by Entry K3F9X2 \(paid\)/);
     assert.match(past, /You won as Entry K3F9X2\. 10 USDC was sent to this wallet\./);
-    const nobody = render({ current: null, past: [{ ...DRAWN, entries: 0, entriesHash: `0x${'1'.repeat(64)}`, block: null, blockAt: null, winners: [] }] }, signedOut);
+    const nobody = render({ current: null, past: [{ ...DRAWN, entries: 0, entriesHash: `0x${'1'.repeat(64)}`, block: null, blockAt: null, winners: [], stamps: [] }] }, signedOut);
     assert.match(nobody, /No draw is open now\./);
     assert.match(nobody, /nobody entered, so nobody won/);
     assert.doesNotMatch(past + nobody, /0x[0-9a-f]{40}(?![0-9a-f])/i, 'never a wallet');

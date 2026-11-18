@@ -42,6 +42,8 @@ export interface StillLoopDrawViewV1 {
   block: { number: string; hash: string; time: string } | null;
   /** In the order picked. */
   winners: Array<{ no: number; label: string; paid: boolean }>;
+  /** The public authorities that time-stamped the fixed list, by their own clocks. */
+  stamps: Array<{ tsa: string; genTime: string }>;
 }
 export interface StillLoopsViewV1 {
   weekStartsAt: string;
@@ -96,11 +98,17 @@ function drawOfV1(value: unknown): StillLoopDrawViewV1 | null {
     || !(block === null || (block && typeof block.number === 'string' && /^\d{1,19}$/.test(block.number) && typeof block.hash === 'string'
       && HASH_V1.test(block.hash) && iso(block.time)))
     || !winners || winners.some((w) => w === null)) return null;
+  // An older answer had none: no stamp, then.
+  const stamps = (Array.isArray(d.stamps) ? d.stamps.slice(0, 4) : []).flatMap((raw) => {
+    const t = raw as Record<string, unknown> | null;
+    return t && typeof t.tsa === 'string' && /^https?:\/\/[a-z0-9.-]{1,80}/.test(t.tsa) && iso(t.genTime) ? [{ tsa: t.tsa, genTime: t.genTime }] : [];
+  });
   return {
     drawId: d.drawId, opensAt: d.opensAt, closesAt: d.closesAt, winnerCount: d.winnerCount as number, prizeUsdc: d.prizeUsdc,
     state: d.state as StillLoopDrawViewV1['state'], entries: d.entries, entriesHash: d.entriesHash as string | null, lockedAt: d.lockedAt, blockAt: d.blockAt,
     block: block ? { number: block.number as string, hash: block.hash as string, time: block.time as string } : null,
     winners: winners as StillLoopDrawViewV1['winners'],
+    stamps,
   };
 }
 
@@ -116,7 +124,12 @@ export function stillLoopDrawsViewV1(value: unknown): StillLoopsViewV1['draws'] 
 
 export interface StillLoopDrawMineViewV1 {
   team: boolean;
-  current: { drawId: string; closesAt: string; entry: { label: string; kind: 'loop' | 'free' } | null } | null;
+  current: {
+    drawId: string; closesAt: string;
+    entry: { label: string; kind: 'loop' | 'free' } | null;
+    /** The Loop this wallet may enter with; `ready` false while its card is on its way. */
+    loop: { loopNo: number; ready: boolean } | null;
+  } | null;
   entered: Array<{ drawId: string; label: string; won: boolean; paid: boolean; prizeUsdc: string }>;
 }
 
@@ -138,7 +151,11 @@ export function stillLoopDrawMineViewV1(value: unknown): StillLoopDrawMineViewV1
       entered.push({ drawId: e.drawId, label: e.label, won: e.won, paid: e.paid, prizeUsdc: e.prizeUsdc });
     }
   }
-  return { team: v.team, current: current ? { drawId: current.drawId as string, closesAt: current.closesAt as string, entry: entryOf(current.entry) } : null, entered };
+  const loop = current?.loop as Record<string, unknown> | null | undefined;
+  const loopOf = loop && Number.isSafeInteger(loop.loopNo) && (loop.loopNo as number) >= 1 && typeof loop.ready === 'boolean'
+    ? { loopNo: loop.loopNo as number, ready: loop.ready } : null;
+  return { team: v.team, current: current ? { drawId: current.drawId as string, closesAt: current.closesAt as string, entry: entryOf(current.entry),
+    loop: loopOf } : null, entered };
 }
 
 const WEEKDAYS_V1 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -175,23 +192,35 @@ export interface StillLoopDrawEntryModelV1 {
   signInHref: string;
   /** The session's own entries; undefined while read, null when they could not be. */
   mine: StillLoopDrawMineViewV1 | null | undefined;
-  /** The free entry, the rules accepted. Resolves with the entry's label; rejects with the server's words. */
+  /** The entry, the rules accepted: with the wallet's Loop when it has one ready, otherwise free. Resolves with the
+   * entry's label; rejects with the server's words. */
   onEnter: () => Promise<{ label: string }>;
 }
 
 export const STILL_LOOP_DRAW_VERIFY_URL_V1 = `${MIORAIL_SOURCE_URL_V1}/blob/main/scripts/verify_loop_draw.ts`;
 const COINBASE_VERIFY_URL_V1 = 'https://www.coinbase.com/onchain-verify';
 
-function FreeEntryV1({ draw, model }: { draw: StillLoopDrawViewV1; model: StillLoopDrawEntryModelV1 | undefined }) {
+/** The tsa's own host, as "timestamp.digicert.com". */
+const hostOfV1 = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
+function EnterV1({ draw, model }: { draw: StillLoopDrawViewV1; model: StillLoopDrawEntryModelV1 | undefined }) {
   const [accepted, setAccepted] = useState(false);
   const [state, setState] = useState<{ kind: 'idle' | 'sending' } | { kind: 'done'; label: string } | { kind: 'failed'; words: string }>({ kind: 'idle' });
   if (!model) return null;
-  if (!model.signedIn) return <StillLink href={model.signInHref} className="still-btn sec">Sign in to enter free</StillLink>;
+  if (!model.signedIn) return <StillLink href={model.signInHref} className="still-btn sec">Sign in to enter</StillLink>;
   const mine = model.mine;
   if (mine === undefined) return <p className="still-note" role="status">Reading your entry…</p>;
   if (mine?.team) return <p className="still-note">The Still team does not enter its own draws.</p>;
-  const entry = state.kind === 'done' ? { label: state.label } : mine?.current?.drawId === draw.drawId ? mine.current.entry : null;
-  if (entry) return <p className="still-note" role="status">You are in this draw as {entry.label}. One entry per person: there is nothing more to do.</p>;
+  const current = mine?.current?.drawId === draw.drawId ? mine.current : null;
+  const entry = state.kind === 'done' ? { label: state.label } : current?.entry ?? null;
+  if (entry) return <p className="still-note" role="status">You are in this draw as {entry.label}. One entry per wallet: there is nothing more to do.</p>;
+  const loop = current?.loop ?? null;
   const press = () => {
     setState({ kind: 'sending' });
     model.onEnter().then((answer) => setState({ kind: 'done', label: answer.label }), (error: unknown) => {
@@ -199,15 +228,23 @@ function FreeEntryV1({ draw, model }: { draw: StillLoopDrawViewV1; model: StillL
       setState({ kind: 'failed', words: typeof body?.detail === 'string' && body.detail.length <= 600 ? body.detail : 'The entry could not be made just now. Nothing was entered; try again in a minute.' });
     });
   };
+  const withLoop = loop?.ready === true;
   return (
     <div className="still-loop-enter">
+      {loop && !loop.ready ? (
+        <p className="still-note" role="status">Loop #{loop.loopNo}: Bitrefill has not delivered its card yet. Enter with it once the card arrives, before the close.</p>
+      ) : null}
       <StillEligibilityConfirmSlotV1 />
       <label className="still-note still-loop-name">
         <input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /> I am 18 or older and I accept the rules below
       </label>
       <button type="button" className="still-btn sec" disabled={!accepted || state.kind === 'sending'} onClick={press}>
-        {state.kind === 'sending' ? 'Entering…' : 'Enter free'}
+        {state.kind === 'sending' ? 'Entering…' : withLoop ? `Enter with Loop #${loop!.loopNo}` : 'Enter free'}
       </button>
+      {withLoop ? null : (
+        <p className="still-note">Free entry needs Coinbase’s Verified Account attestation on this wallet
+          (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</p>
+      )}
       {state.kind === 'failed' ? <p className="still-warn" role="status">{state.words}</p> : null}
     </div>
   );
@@ -218,17 +255,20 @@ function DrawRulesV1({ draw }: { draw: StillLoopDrawViewV1 }) {
     <details className="still-note still-loop-rules">
       <summary>Rules</summary>
       <ul>
-        <li>Two ways in, the same chance. A Loop whose card arrives while the draw is open enters its wallet by itself. Or enter free: no loan and no purchase.</li>
-        <li>One entry per person per draw, whichever came first. A free entry needs Coinbase’s Verified Account attestation on the wallet
-          (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>): it keeps one person to one entry.</li>
+        <li>Two ways in, the same chance, and the same step: enter here before the close. A wallet that made a Loop while the draw is open enters
+          with it: Still confirmed its loan after the draw opened, and Bitrefill did not report its card undelivered. Any other wallet enters free,
+          with no loan and no purchase, once it holds Coinbase’s Verified Account attestation
+          (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</li>
+        <li>One entry per wallet per draw.</li>
         <li>Open to people 18 or older who are not U.S. persons, from where Still is offered. The Still team does not enter.</li>
-        <li>The list is fixed 30 seconds after the close and its hash is shown here. {draw.winnerCount === 1 ? 'The winner is' : 'The first winner is'} entry
+        <li>The list is fixed 30 seconds after the close, its hash is shown here, and public time-stamping authorities sign that it existed then.
+          {' '}{draw.winnerCount === 1 ? 'The winner is' : 'The first winner is'} entry
           number keccak256(block hash, draw) mod N + 1, where the block is the first Base block at least five minutes after the list was fixed.
-          {draw.winnerCount === 1 ? '' : ' Each next winner is picked the same way from the entries not yet picked, so nobody wins twice.'} Anybody can check it
-          with <a href={STILL_LOOP_DRAW_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">verify_loop_draw.ts</a>.</li>
+          {draw.winnerCount === 1 ? '' : ' Each next winner is picked the same way from the entries not yet picked, so nobody wins twice.'} Anybody can check it,
+          the time-stamps too, with <a href={STILL_LOOP_DRAW_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">verify_loop_draw.ts</a>.</li>
         <li>{draw.prizeUsdc} USDC is sent on Base to {draw.winnerCount === 1 ? 'the winning wallet' : 'each winning wallet'} within 7 days. Your entry’s name
           is all the list shows: never your wallet.</li>
-        <li>Not sponsored by Coinbase, Base, Bitrefill or any brand on this page.</li>
+        <li>Not sponsored by Coinbase, Base, Bitrefill, DigiCert, Sectigo or any brand on this page.</li>
       </ul>
     </details>
   );
@@ -239,6 +279,7 @@ function PastDrawV1({ draw, mine }: { draw: StillLoopDrawViewV1; mine: StillLoop
   const facts = draw.state === 'closing' ? ['closed; the list is being fixed']
     : draw.entries === 0 ? ['nobody entered, so nobody won']
     : [`${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'}`, draw.entriesHash ? `list ${shortHash(draw.entriesHash)}` : null,
+      draw.stamps.length > 0 ? `time-stamped by ${draw.stamps.map((stamp) => hostOfV1(stamp.tsa)).join(' and ')}` : null,
       draw.block ? `Base block ${draw.block.number}` : draw.blockAt ? `picked by the first Base block from ${stillLoopDrawTimeV1(draw.blockAt)}` : null,
       draw.winners.length > 0 ? `won by ${draw.winners.map((w) => `${w.label}${w.paid ? ' (paid)' : ''}`).join(', ')}` : null];
   return (
@@ -273,7 +314,7 @@ function StillLoopDrawV1({ draws, entry }: { draws: NonNullable<StillLoopsViewV1
             <li className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
               <div style={{ minWidth: 0 }}>
                 <div className="name">Make a Loop</div>
-                <div className="line">A Loop whose card arrives before the close enters you by itself.</div>
+                <div className="line">A Loop made while the draw is open lets you enter with it, no attestation needed.</div>
                 <div className="line"><StillLink href="/spend" className="still-btn sec">Spend</StillLink></div>
               </div>
             </li>
@@ -281,8 +322,13 @@ function StillLoopDrawV1({ draws, entry }: { draws: NonNullable<StillLoopsViewV1
               <div style={{ minWidth: 0 }}>
                 <div className="name">Enter free</div>
                 <div className="line">No loan and no purchase: the same chance as a Loop.</div>
-                {draw.state === 'open' ? <div className="line"><FreeEntryV1 draw={draw} model={entry} /></div>
-                  : <div className="line still-note">Free entry opens with the draw.</div>}
+              </div>
+            </li>
+            <li className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="name">Enter</div>
+                {draw.state === 'open' ? <div className="line"><EnterV1 draw={draw} model={entry} /></div>
+                  : <div className="line still-note">Entry opens with the draw.</div>}
               </div>
             </li>
           </ul>

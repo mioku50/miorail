@@ -241,6 +241,18 @@ function lendingStatusDepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV
   return { store, reader: rwaLendingRuntimeV1.reader(), readBatchHashes: rwaLendingRuntimeV1.readBatchHashes,
     verifyEffectPosition: rwaLendingRuntimeV1.verifyEffectPosition, now: rwaLendingRuntimeV1.now };
 }
+/** This owner's loans that pay a Bitrefill invoice opened since `since`, each still under way read again from Base
+ * as its own page reads it, one after another: what a Loop draw's entry looks for (lib/stillLoopDraws.ts). */
+export async function stillPaidLoansSinceV1(owner: LoanOwnerV1, since: Date): Promise<LoanExecutionV1[]> {
+  const store = await rwaLendingRuntimeV1.store();
+  const out: LoanExecutionV1[] = [];
+  for (const row of await store.listPaidSince({ owner, since })) {
+    const read = row.state === 'submitted' || row.state === 'unknown'
+      ? await refreshLoanExecutionV1({ owner, executionId: row.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null) : null;
+    out.push(read ?? row);
+  }
+  return out;
+}
 /** Reads a loan in steps that stopped on purpose, so what landed is its result now. A failed read leaves
  * it as it was, to be read again. */
 async function settleStoppedStepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>, owner: LoanOwnerV1, executionId: string) {

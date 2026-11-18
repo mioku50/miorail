@@ -18,37 +18,57 @@ const entry = (label: string, walletAddress: string, kind: 'loop' | 'free', ente
 
 export function stillLoopDrawsContractV1(label: string, make: () => Promise<StillLoopDrawRepositoryV1>): void {
   describe(`${label}: Loop draws`, () => {
-    test('take one free entry per wallet per draw, with a code no other entry in it has', async () => {
+    test('take one entry per wallet per draw, of either kind, with a code no other entry in it has', async () => {
       const repo = await make();
       const at = new Date('2026-11-22T09:00:00.000Z');
-      const first = await repo.enterFree({ drawId: DRAW.drawId, walletAddress: WALLET, code: 'K3F9X2', at });
-      assert.deepEqual(first, { outcome: 'entered', entry: { drawId: DRAW.drawId, walletAddress: WALLET, code: 'K3F9X2', enteredAt: at.toISOString() } });
-      const again = await repo.enterFree({ drawId: DRAW.drawId, walletAddress: WALLET, code: 'ZZZZZZ', at: new Date('2026-11-23T09:00:00.000Z') });
-      assert.deepEqual(again, { outcome: 'already', entry: { drawId: DRAW.drawId, walletAddress: WALLET, code: 'K3F9X2', enteredAt: at.toISOString() } });
-      assert.deepEqual(await repo.enterFree({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'K3F9X2', at }), { outcome: 'code_taken' });
-      assert.equal((await repo.enterFree({ drawId: '2026-12-03', walletAddress: WALLET, code: 'K3F9X2', at }))?.outcome, 'entered', 'a draw of its own');
-      assert.equal((await repo.enterFree({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'AB12CD', at: new Date('2026-11-28T17:59:59.000Z') }))?.outcome, 'entered');
-      assert.deepEqual((await repo.freeEntries({ drawId: DRAW.drawId, before: new Date(DRAW.closesAt) })).map((row) => row.code), ['K3F9X2', 'AB12CD']);
-      assert.deepEqual((await repo.freeEntries({ drawId: DRAW.drawId, before: new Date('2026-11-28T17:59:59.000Z') })).map((row) => row.code), ['K3F9X2']);
-      assert.equal((await repo.freeEntry({ drawId: DRAW.drawId, walletAddress: OTHER }))?.code, 'AB12CD');
-      assert.equal(await repo.freeEntry({ drawId: '2026-12-03', walletAddress: OTHER }), null);
-      for (const bad of [{ code: 'k3f9x2' }, { code: 'K3F9XI' }, { code: 'K3F9X' }, { walletAddress: 'nope' }, { drawId: 'next' }]) {
-        await assert.rejects(repo.enterFree({ drawId: DRAW.drawId, walletAddress: WALLET, code: 'QQQQQQ', at, ...bad }), /still_loop_draw_invalid/, JSON.stringify(bad));
+      const free = { drawId: DRAW.drawId, walletAddress: WALLET, code: 'K3F9X2', kind: 'free' as const, loopNo: null, at };
+      const first = await repo.enter(free);
+      const made = { drawId: DRAW.drawId, walletAddress: WALLET, code: 'K3F9X2', kind: 'free', loopNo: null, enteredAt: at.toISOString() };
+      assert.deepEqual(first, { outcome: 'entered', entry: made });
+      const again = await repo.enter({ ...free, code: 'ZZZZZZ', kind: 'loop', loopNo: 4, at: new Date('2026-11-23T09:00:00.000Z') });
+      assert.deepEqual(again, { outcome: 'already', entry: made }, 'one per wallet, whichever way it came');
+      assert.deepEqual(await repo.enter({ ...free, walletAddress: OTHER }), { outcome: 'code_taken' });
+      assert.equal((await repo.enter({ ...free, drawId: '2026-12-03' })).outcome, 'entered', 'a draw of its own');
+      const loop = await repo.enter({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'AB12CD', kind: 'loop', loopNo: 7, at: new Date('2026-11-28T17:59:59.000Z') });
+      assert.deepEqual(loop.outcome === 'entered' ? [loop.entry.kind, loop.entry.loopNo] : null, ['loop', 7]);
+      assert.deepEqual((await repo.entries({ drawId: DRAW.drawId, before: new Date(DRAW.closesAt) })).map((row) => row.code), ['K3F9X2', 'AB12CD']);
+      assert.deepEqual((await repo.entries({ drawId: DRAW.drawId, before: new Date('2026-11-28T17:59:59.000Z') })).map((row) => row.code), ['K3F9X2']);
+      assert.equal((await repo.entryOf({ drawId: DRAW.drawId, walletAddress: OTHER }))?.loopNo, 7);
+      assert.equal(await repo.entryOf({ drawId: '2026-12-03', walletAddress: OTHER }), null);
+      for (const bad of [{ code: 'k3f9x2' }, { code: 'K3F9XI' }, { code: 'K3F9X' }, { walletAddress: 'nope' }, { drawId: 'next' },
+        { kind: 'loop' as const, loopNo: null }, { kind: 'loop' as const, loopNo: 0 }, { kind: 'free' as const, loopNo: 3 }, { kind: 'other' as never }]) {
+        await assert.rejects(repo.enter({ ...free, code: 'QQQQQQ', ...bad }), /still_loop_draw_invalid/, JSON.stringify(bad));
       }
     });
 
-    test('fix the list once, take no free entry after, and draw once and pay each winner once', async () => {
+    test('keep one time-stamp per authority on a fixed list, and none once the winners are picked', async () => {
       const repo = await make();
-      await repo.enterFree({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'AB12CD', at: new Date('2026-11-22T09:00:00.000Z') });
+      const stamp = { tsa: 'http://timestamp.example', genTime: '2026-11-28T18:00:33.250Z', token: 'MIIQ'.repeat(8) };
+      assert.equal(await repo.stamp({ drawId: DRAW.drawId, stamp }), null, 'no list, nothing to stamp');
+      await repo.lock({ ...DRAW, entries: [entry('Entry AB12CD', OTHER, 'free', '2026-11-22T09:00:00.000Z')], entriesHash: HASH, lockedAt: LOCKED });
+      assert.deepEqual((await repo.stamp({ drawId: DRAW.drawId, stamp }))?.stamps, [stamp]);
+      assert.deepEqual((await repo.stamp({ drawId: DRAW.drawId, stamp: { ...stamp, genTime: '2026-11-28T18:01:00.000Z' } }))?.stamps, [stamp], 'once per authority');
+      const second = { ...stamp, tsa: 'https://tsa.example/tsr' };
+      assert.deepEqual((await repo.stamp({ drawId: DRAW.drawId, stamp: second }))?.stamps, [stamp, second]);
+      for (const bad of [{ tsa: 'ftp://x' }, { genTime: 'soon' }, { token: 'not base64!' }, { token: 'QQ==' }]) {
+        await assert.rejects(repo.stamp({ drawId: DRAW.drawId, stamp: { ...stamp, tsa: 'https://other.example', ...bad } }), /still_loop_draw_invalid/, JSON.stringify(bad));
+      }
+      await repo.drawn({ drawId: DRAW.drawId, block: { number: '123', hash: BLOCK, time: '2026-11-28T18:05:31.000Z' }, winnerNos: [1], at: new Date('2026-11-28T18:07:00.000Z') });
+      assert.equal((await repo.stamp({ drawId: DRAW.drawId, stamp: { ...stamp, tsa: 'https://late.example' } }))?.stamps.length, 2, 'too late once picked');
+    });
+
+    test('fix the list once, take no entry after, and draw once and pay each winner once', async () => {
+      const repo = await make();
+      await repo.enter({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'AB12CD', kind: 'free', loopNo: null, at: new Date('2026-11-22T09:00:00.000Z') });
       const entries = [entry('Loop #2', WALLET, 'loop', '2026-11-21T10:00:00.000Z'), entry('Entry AB12CD', OTHER, 'free', '2026-11-22T09:00:00.000Z'),
         entry('Entry QW34ER', `0x${'c'.repeat(40)}`, 'free', '2026-11-23T09:00:00.000Z')];
       const locked = await repo.lock({ ...DRAW, entries, entriesHash: HASH, lockedAt: LOCKED });
       assert.deepEqual(locked, { ...DRAW, entries, entryCount: 3, entriesHash: HASH, lockedAt: LOCKED.toISOString(),
-        blockNumber: null, blockHash: null, blockTime: null, winnerNos: null, drawnAt: null, payouts: [] });
+        blockNumber: null, blockHash: null, blockTime: null, winnerNos: null, drawnAt: null, payouts: [], stamps: [] });
       const raced = await repo.lock({ ...DRAW, entries: entries.slice(0, 1), entriesHash: `0x${'9'.repeat(64)}`, lockedAt: new Date('2026-11-28T18:01:00.000Z') });
       assert.deepEqual(raced, locked, 'the first list stands');
-      assert.deepEqual(await repo.enterFree({ drawId: DRAW.drawId, walletAddress: `0x${'c'.repeat(40)}`, code: 'QQQQQQ', at: LOCKED }), { outcome: 'locked' });
-      assert.equal((await repo.enterFree({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'QQQQQQ', at: LOCKED }))?.outcome, 'already');
+      assert.deepEqual(await repo.enter({ drawId: DRAW.drawId, walletAddress: `0x${'c'.repeat(40)}`, code: 'QQQQQQ', kind: 'free', loopNo: null, at: LOCKED }), { outcome: 'locked' });
+      assert.equal((await repo.enter({ drawId: DRAW.drawId, walletAddress: OTHER, code: 'QQQQQQ', kind: 'free', loopNo: null, at: LOCKED }))?.outcome, 'already');
       assert.equal(await repo.paid({ drawId: DRAW.drawId, no: 1, paidTx: TX, at: LOCKED }), null, 'no prize before a winner');
       const at = new Date('2026-11-28T18:07:00.000Z');
       const block = { number: '123', hash: BLOCK, time: '2026-11-28T18:05:31.000Z' };

@@ -26,6 +26,9 @@ export interface LoanExecutionStoreV1 {
   getByDraft(input: { owner: LoanOwnerV1; draftId: string }): Promise<LoanExecutionV1 | null>;
   /** Every loan of this owner that pays one Bitrefill invoice (Still Spend). */
   listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]>;
+  /** This owner's loans that pay a Bitrefill invoice and were opened since `since`, oldest first, twenty at most: what a
+   * Loop draw's entry looks for (lib/stillLoopDraws.ts). */
+  listPaidSince(input: { owner: LoanOwnerV1; since: Date }): Promise<LoanExecutionV1[]>;
   /** The other attempts holding this execution's market (Aave: its whole spoke). */
   listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
   /** Every attempt of this owner still holding a market, oldest first (audit UI-19: said on Repay and Get money). */
@@ -122,6 +125,11 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
   async listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]> {
     assertOwner(input.owner);
     return [...this.rows.values()].filter(row => sameOwner(row, input.owner) && row.run.facts.payment?.orderId === input.orderId).map(copy);
+  }
+  async listPaidSince(input: { owner: LoanOwnerV1; since: Date }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner);
+    return [...this.rows.values()].filter(row => sameOwner(row, input.owner) && row.run.facts.payment !== undefined
+      && Date.parse(row.createdAt) >= input.since.getTime()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, 20).map(copy);
   }
   async listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
@@ -276,6 +284,12 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
       assertOwner(owner);
       const rows = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
         AND run_json->'facts'->'payment'->>'orderId' = ${orderId}`;
+      return rows.map(rowFromDb);
+    },
+    async listPaidSince({ owner, since }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
+        AND run_json->'facts'->'payment' IS NOT NULL AND created_at >= ${since.toISOString()}::timestamptz ORDER BY created_at LIMIT 20`;
       return rows.map(rowFromDb);
     },
     async listActiveInScope({ owner, executionId }) {

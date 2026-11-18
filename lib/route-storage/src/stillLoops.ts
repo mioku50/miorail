@@ -61,14 +61,6 @@ export interface StillLoopRepositoryV1 {
   /** Loops on the wall, the latest shown first. */
   wall(input: { limit: number }): Promise<StillLoopV1[]>;
   counts(input: { weekSince: Date }): Promise<StillLoopCountsV1>;
-  /** Each wallet's first complete Loop outside the team whose card arrived in [since, before): a draw's Loop entries. */
-  drawEntrants(input: { since: Date; before: Date }): Promise<StillLoopDrawEntrantRowV1[]>;
-}
-
-export interface StillLoopDrawEntrantRowV1 {
-  walletAddress: string;
-  loopNo: number;
-  deliveredAt: string;
 }
 
 const BRANDS_V1 = ['apple', 'amazon', 'google', 'meta', 'microsoft'] as const;
@@ -139,16 +131,6 @@ export class InMemoryStillLoopRepositoryV1 implements StillLoopRepositoryV1 {
       byBrand,
       viaAssistant: complete.filter((row) => row.via !== 'web').length,
     };
-  }
-
-  async drawEntrants(input: { since: Date; before: Date }): Promise<StillLoopDrawEntrantRowV1[]> {
-    const first = new Map<string, StillLoopV1>();
-    const rows = [...this.rows.values()].filter((row) => !row.team && row.deliveredAt !== null
-      && Date.parse(row.deliveredAt) >= input.since.getTime() && Date.parse(row.deliveredAt) < input.before.getTime())
-      .sort((a, b) => Date.parse(a.deliveredAt!) - Date.parse(b.deliveredAt!) || a.loopNo - b.loopNo);
-    for (const row of rows) if (!first.has(row.walletAddress)) first.set(row.walletAddress, row);
-    return [...first.values()].sort((a, b) => a.walletAddress.localeCompare(b.walletAddress))
-      .map((row) => ({ walletAddress: row.walletAddress, loopNo: row.loopNo, deliveredAt: row.deliveredAt! }));
   }
 }
 
@@ -244,14 +226,6 @@ export function createDatabaseStillLoopRepositoryV1(sql: SqlTemplateExecutor): S
         total += Number(row.n); week += Number(row.week); viaAssistant += Number(row.assistant);
       }
       return { total, week, byBrand, viaAssistant };
-    },
-    async drawEntrants(input) {
-      const rows = await sql`
-        SELECT DISTINCT ON (wallet_address) wallet_address, loop_no, delivered_at
-        FROM still_loops
-        WHERE NOT team AND delivered_at >= ${input.since.toISOString()}::timestamptz AND delivered_at < ${input.before.toISOString()}::timestamptz
-        ORDER BY wallet_address, delivered_at, loop_no`;
-      return rows.map((row) => ({ walletAddress: String(row.wallet_address), loopNo: Number(row.loop_no), deliveredAt: isoV1(row.delivered_at)! }));
     },
   };
 }

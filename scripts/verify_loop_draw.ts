@@ -3,23 +3,34 @@
  * published, and Base itself. It trusts neither Still's block nor its winner:
  *
  *   1. the list's hash is keccak256 of {drawId, closesAt, labels}, as published;
- *   2. the block is the first Base block whose timestamp is at least five
+ *   2. each public authority's RFC 3161 time-stamp is of the SHA-256 of that
+ *      same text, granted, and signed before the picking block: the list
+ *      existed before anybody could know the block's hash. With openssl on
+ *      the machine its signature is checked too, against the system's roots;
+ *   3. the block is the first Base block whose timestamp is at least five
  *      minutes after the later of the close and the moment the list was fixed
  *      (the block before it is earlier), and Base gives it the published hash;
- *   3. the first winner is entry keccak256(blockHash ‖ drawId) mod N + 1, and
+ *   4. the first winner is entry keccak256(blockHash ‖ drawId) mod N + 1, and
  *      each next one, the k-th, keccak256(blockHash ‖ drawId/k) mod (entries
  *      left), counted along the entries not yet picked.
  *
  *   pnpm still:verify-loop-draw 2026-11-28
  *   pnpm still:verify-loop-draw 2026-11-28 --api https://miorail.xyz --rpc https://mainnet.base.org
  *
- * Reads only: no key, no wallet, no signature. Exit 0 when every check holds.
+ * Reads only: no key, no wallet, no signature of its own. Exit 0 when every check holds.
  */
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   loopDrawListHashV1,
+  loopDrawListTextV1,
   loopDrawTargetSecondsV1,
   loopDrawWinnersV1,
 } from '../lib/still-engine/src/loopDraws.js';
+import { rfc3161ResponseV1, rfc3161StampsV1 } from '../lib/still-engine/src/rfc3161.js';
 
 interface PublishedListV1 {
   drawId: string;
@@ -31,6 +42,28 @@ interface PublishedListV1 {
   block: { number: string; hash: string; time: string } | null;
   winnerCount: number;
   winnerNos: number[] | null;
+  stamps?: { tsa: string; genTime: string; token: string }[];
+}
+
+const ROOTS_V1 = ['/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt', '/etc/ssl/cert.pem'];
+
+/** openssl's word on a stamp's signature: true, false, or null when openssl or the system's roots are not here. */
+function opensslVerifiesV1(text: string, token: string): boolean | null {
+  const roots = ROOTS_V1.find((path) => existsSync(path));
+  if (!roots) return null;
+  const dir = mkdtempSync(join(tmpdir(), 'loop-draw-'));
+  try {
+    writeFileSync(join(dir, 'list.txt'), text);
+    writeFileSync(join(dir, 'stamp.tsr'), Buffer.from(token, 'base64'));
+    const out = execFileSync('openssl', ['ts', '-verify', '-data', join(dir, 'list.txt'), '-in', join(dir, 'stamp.tsr'), '-CAfile', roots],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return /Verification: OK/.test(out);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return false;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const args = process.argv.slice(2);
@@ -77,6 +110,20 @@ async function main(): Promise<number> {
     return failed === 0 ? 0 : 1;
   }
   const target = loopDrawTargetSecondsV1({ closesAt: list.closesAt, lockedAt: list.lockedAt });
+  const text = loopDrawListTextV1({ drawId, closesAt: list.closesAt, labels: list.labels });
+  const digest = createHash('sha256').update(text, 'utf8').digest();
+  const stamps = list.stamps ?? [];
+  if (stamps.length === 0) console.log('     no time-stamp: when the list was fixed rests on Still\u2019s word alone');
+  for (const stamp of stamps) {
+    const reading = rfc3161ResponseV1(new Uint8Array(Buffer.from(stamp.token, 'base64')));
+    const of = rfc3161StampsV1(reading, digest);
+    check(of && reading.genTime === new Date(stamp.genTime).toISOString(),
+      `${new URL(stamp.tsa).host} stamped the SHA-256 of this list at ${of ? reading.genTime : 'no readable time'}`);
+    if (of) check(Date.parse(reading.genTime) < Number(target) * 1000, `${new URL(stamp.tsa).host}'s stamp is before the picking block was due`);
+    const signed = opensslVerifiesV1(text, stamp.token);
+    if (signed === null) console.log(`     ${new URL(stamp.tsa).host}'s signature not checked: openssl or the system's roots are not on this machine`);
+    else check(signed, `openssl checks ${new URL(stamp.tsa).host}'s signature against the system's roots`);
+  }
   const due = new Date(Number(target) * 1000).toISOString();
   console.log(`     fixed at ${list.lockedAt}; the picking block is the first at or after ${due}`);
   if (list.blockAt !== null) check(list.blockAt === due, `the published time the block is due is ${due}`);

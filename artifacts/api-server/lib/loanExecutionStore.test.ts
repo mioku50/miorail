@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { hashApprovedCallsV1 } from '@mioagent/route-domain';
 import { MemoryLoanExecutionStoreV1, type LoanExecutionStoreV1, type LoanOwnerV1 } from './loanExecutionStore.js';
-import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX } from './loanExecutionTestFixtures.js';
+import { loanPayingStepsFixture, loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX } from './loanExecutionTestFixtures.js';
 
 const otherOwner: LoanOwnerV1 = { walletAddress: OTHER, tenantId: `eip155:8453:${OTHER}` };
 async function ready(store: LoanExecutionStoreV1, draftId = 'fixture-draft-1') { return store.putReady({ owner: OWNER, draftId, run: loanReadyFixture(), now: NOW }); }
@@ -131,5 +131,17 @@ describe('owned lending execution locks', () => {
     const results = await Promise.all([store.recordVerification(input), store.recordVerification(input)]); assert.equal(results.filter(Boolean).length, 1);
     await assert.rejects(store.recordVerification({ ...input, transactionHash: null }), /verification_invalid/);
     await assert.rejects(store.recordVerification({ ...input, proof: null }), /verification_invalid/);
+  });
+});
+
+describe('the loans a Loop draw\'s entry looks for', () => {
+  it('lists an owner\'s loans that pay an invoice, opened since a time, oldest first, and no one else\'s', async () => {
+    const store = new MemoryLoanExecutionStoreV1();
+    const early = await store.putReady({ owner: OWNER, draftId: 'paid-early', run: loanPayingStepsFixture(), now: new Date(NOW.getTime() - 60_000) });
+    const late = await store.putReady({ owner: OWNER, draftId: 'paid-late', run: loanPayingStepsFixture(), now: NOW });
+    await store.putReady({ owner: OWNER, draftId: 'unpaid', run: loanReadyFixture(), now: NOW });
+    await store.putReady({ owner: otherOwner, draftId: 'theirs', run: loanPayingStepsFixture(), now: NOW });
+    assert.deepEqual((await store.listPaidSince({ owner: OWNER, since: new Date(NOW.getTime() - 120_000) })).map(row => row.executionId), [early.executionId, late.executionId]);
+    assert.deepEqual((await store.listPaidSince({ owner: OWNER, since: NOW })).map(row => row.executionId), [late.executionId]);
   });
 });

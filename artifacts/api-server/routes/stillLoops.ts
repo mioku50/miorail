@@ -5,18 +5,23 @@ import { logger } from '@mioagent/utils';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import {
-  enterStillLoopDrawFreeV1,
+  enterStillLoopDrawV1,
   settleStillLoopDrawsV1,
-  stillLoopDrawBeforeFreeV1,
+  stillLoopDrawBeforeEntryV1,
   stillLoopDrawListV1,
   stillLoopDrawMineV1,
   stillLoopDrawRuntimeV1,
   stillLoopDrawsPublicV1,
+  type StillLoopDeliveryWordV1,
+  type StillLoopDrawEnterOutcomeV1,
+  type StillLoopDrawLoansV1,
   type StillLoopDrawPublicV1,
 } from '../lib/stillLoopDraws.js';
 import { COINBASE_VERIFIED_V1 } from '../lib/coinbaseVerified.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
-import { stillLoopPublicV1, stillLoopsRuntimeV1, stillLoopWeekStartV1, stillLoopWireV1, type StillLoopPublicV1 } from '../lib/stillLoops.js';
+import { stillLoopDeliveryOfV1, stillLoopPublicV1, stillLoopsRuntimeV1, stillLoopWeekStartV1, stillLoopWireV1, type StillLoopPublicV1 } from '../lib/stillLoops.js';
+import { stillPaidLoansSinceV1 } from './rwaLending.js';
+import { stillSpendRuntimeV1 } from './stillSpend.js';
 
 // ---------------------------------------------------------------------------
 // Loops in public, and their owner's one choice about them.
@@ -31,8 +36,9 @@ import { stillLoopPublicV1, stillLoopsRuntimeV1, stillLoopWeekStartV1, stillLoop
 //
 // The draws (lib/stillLoopDraws.ts), while STILL_LOOP_DRAW_V1=on as well:
 // GET /api/public/still/loops/draws/:drawId is a fixed list as anybody can
-// check it; GET /api/still/loops/draw is the session's own entries; POST
-// /api/still/loops/draw/enter is the free entry.
+// check it; GET /api/still/loops/draw is the session's own entries and the
+// Loop it may enter with; POST /api/still/loops/draw/enter is the entry, with
+// that Loop or free.
 // ---------------------------------------------------------------------------
 
 export const publicStillLoopsRouter = Router();
@@ -167,15 +173,34 @@ stillLoopsRouter.get('/draw', async (req: Request, res: Response) => {
     return;
   }
   try {
-    res.json({ outcome: 'mine', ...(await stillLoopDrawMineV1(wallet, stillLoopDrawRuntimeV1.now())) });
+    res.json({ outcome: 'mine', ...(await stillLoopDrawMineV1(wallet, stillLoopDrawRuntimeV1.now(), stillLoopDrawLoansRuntimeV1.of(wallet))) });
   } catch (error) {
     logger.warn('Still Loop draw entries not read', { errorName: errorNameV1(error) });
     res.status(503).json({ error: 'unavailable' });
   }
 });
 
+/** What an entry reads of the session wallet's loans: its paid loans, read again from Base as their pages read them,
+ * and Bitrefill's word on a card while Spend still holds the open order. */
+export function stillLoopDrawLoansV1(wallet: string): StillLoopDrawLoansV1 {
+  const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
+  return {
+    paidSince: (since) => stillPaidLoansSinceV1(owner, since),
+    delivery: async (record): Promise<StillLoopDeliveryWordV1> => {
+      const payment = record.run.facts.payment;
+      const order = payment ? stillSpendRuntimeV1.orders.get(owner, payment.orderId) : null;
+      if (!order) return 'forgotten';
+      const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
+      return stillLoopDeliveryOfV1(read.status?.status) ?? 'pending';
+    },
+  };
+}
+
+/** A seam, so a test hands in the loans it means. */
+export const stillLoopDrawLoansRuntimeV1 = { of: (wallet: string): StillLoopDrawLoansV1 => stillLoopDrawLoansV1(wallet) };
+
 const EnterBodyV1 = z.object({ rules: z.literal(true) }).strict();
-const NOT_VERIFIED_DETAIL_V1 = 'A free entry needs Coinbase’s Verified Account attestation on this wallet: it is how a draw stays one person, one entry. '
+const NOT_VERIFIED_DETAIL_V1 = 'Without a Loop made while this draw is open, an entry needs Coinbase’s Verified Account attestation on this wallet. '
   + `Coinbase gives it at ${COINBASE_VERIFIED_V1.url}; then enter again here.`;
 
 stillLoopsRouter.post('/draw/enter', async (req: Request, res: Response) => {
@@ -191,15 +216,15 @@ stillLoopsRouter.post('/draw/enter', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const before = await stillLoopDrawBeforeFreeV1(wallet, stillLoopDrawRuntimeV1.now());
+    const before = await stillLoopDrawBeforeEntryV1(wallet, stillLoopDrawRuntimeV1.now());
     if (before.outcome === 'ask') {
-      // Not offered where Still is not: the same check, and the same confirmation, as a new loan.
+      // Not offered where Still is not: the same check, and the same confirmation, as a new loan, whichever way in.
       const gate = await stillEntryGateV1(req, { kind: 'draw_entry', confirmation: true });
       if (!gate.ok) {
         res.status(403).json({ error: gate.refusal, detail: gate.detail });
         return;
       }
-      const entered = await enterStillLoopDrawFreeV1(wallet, before.draw);
+      const entered = await enterStillLoopDrawV1(wallet, before.draw, stillLoopDrawLoansRuntimeV1.of(wallet));
       sendEnteredV1(res, entered);
       return;
     }
@@ -210,7 +235,7 @@ stillLoopsRouter.post('/draw/enter', async (req: Request, res: Response) => {
   }
 });
 
-function sendEnteredV1(res: Response, outcome: Awaited<ReturnType<typeof enterStillLoopDrawFreeV1>>): void {
+function sendEnteredV1(res: Response, outcome: StillLoopDrawEnterOutcomeV1): void {
   if (outcome.outcome === 'entered' || outcome.outcome === 'already') {
     forgetStillLoopsPublicV1();
     res.json({ outcome: outcome.outcome, drawId: outcome.drawId, closesAt: outcome.closesAt, entry: outcome.entry });
@@ -218,6 +243,9 @@ function sendEnteredV1(res: Response, outcome: Awaited<ReturnType<typeof enterSt
     res.status(409).json({ error: 'draw_not_open', next: outcome.next, detail: outcome.next ? `The next draw opens ${outcome.next.opensAt}.` : 'No draw is open.' });
   } else if (outcome.outcome === 'team') {
     res.status(409).json({ error: 'draw_team', detail: 'The Still team does not enter its own draws.' });
+  } else if (outcome.outcome === 'loop_pending') {
+    res.status(409).json({ error: 'draw_loop_pending', loopNo: outcome.loopNo,
+      detail: `Bitrefill has not delivered the card of Loop #${outcome.loopNo} yet. Enter with it once the card arrives, before the draw closes.` });
   } else {
     res.status(403).json({ error: 'not_verified', detail: NOT_VERIFIED_DETAIL_V1, url: COINBASE_VERIFIED_V1.url });
   }

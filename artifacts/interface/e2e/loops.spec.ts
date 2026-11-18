@@ -57,7 +57,7 @@ const WALLET = `0x${'4'.repeat(40)}`;
 const OPEN = { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winnerCount: 1, prizeUsdc: '10', state: 'open',
   entries: 4, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [] };
 
-async function installSignedIn(page: Page, enter: { status: number; json: unknown }) {
+async function installSignedIn(page: Page, enter: { status: number; json: unknown }, loop: { loopNo: number; ready: boolean } | null = null) {
   const writes: Array<{ path: string; body: string | null }> = [];
   let entered = false;
   await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript',
@@ -71,7 +71,8 @@ async function installSignedIn(page: Page, enter: { status: number; json: unknow
     if (path === '/api/public/still/eligibility') return route.fulfill({ json: { schemaVersion: 'still-eligibility/v1', gate: 'off', region: { state: 'allowed', country: null } } });
     if (path === '/api/still/loops/draw') {
       return route.fulfill({ json: { outcome: 'mine', team: false, entered: [],
-        current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: entered ? { label: 'Entry K3F9X2', kind: 'free' } : null } } });
+        current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z',
+          entry: entered ? (enter.json as { entry: { label: string; kind: string } }).entry : null, loop: entered ? null : loop } } });
     }
     if (path === '/api/still/loops/draw/enter' && request.method() === 'POST') {
       entered = enter.status === 200;
@@ -101,8 +102,21 @@ for (const width of [390, 1280]) {
   });
 }
 
+test('a wallet that made a Loop while open enters with it by the same press (audit LOOP-2)', async ({ page }) => {
+  const { writes } = await installSignedIn(page, { status: 200, json: { outcome: 'entered', drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z',
+    entry: { label: 'Loop #7', kind: 'loop' } } }, { loopNo: 7, ready: true });
+  await page.goto('/loops');
+  const button = page.getByRole('button', { name: 'Enter with Loop #7' });
+  await expect(button).toBeDisabled();
+  await expect(page.getByText('Free entry needs Coinbase’s Verified Account attestation', { exact: false })).toHaveCount(0);
+  await page.getByLabel('I am 18 or older and I accept the rules below').check();
+  await button.click();
+  await expect(page.getByText('You are in this draw as Loop #7.', { exact: false })).toBeVisible();
+  expect(writes).toEqual([{ path: '/api/still/loops/draw/enter', body: '{"rules":true}' }]);
+});
+
 test('a refused free entry says the server’s own words and enters nothing', async ({ page }) => {
-  const detail = 'A free entry needs Coinbase’s Verified Account attestation on this wallet: it is how a draw stays one person, one entry.';
+  const detail = 'Without a Loop made while this draw is open, an entry needs Coinbase’s Verified Account attestation on this wallet.';
   await installSignedIn(page, { status: 403, json: { error: 'not_verified', detail } });
   await page.goto('/loops');
   await page.getByLabel('I am 18 or older and I accept the rules below').check();
