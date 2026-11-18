@@ -470,6 +470,26 @@ describe('what one wallet reads of its own invoice', () => {
     }
   });
 
+  it('answers a settled order’s status whatever the Loop lookup does, and looks nothing up while Loops are off', async () => {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+    let lookups = 0;
+    const originalLoops = { ...stillLoopsRuntimeV1 };
+    try {
+      Object.assign(stillSpendRuntimeV1, { loans: async () => ({ listByPaymentOrder: async () => { lookups += 1; throw new Error('database down'); } }) });
+      invoiceStatus = 'complete';
+      Object.assign(stillLoopsRuntimeV1, { enabled: () => false });
+      Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1() });
+      assert.equal((await read()).body.settled, true);
+      assert.equal(lookups, 0, 'off: nothing looked up');
+      Object.assign(stillLoopsRuntimeV1, { enabled: () => true });
+      Object.assign(stillSpendRuntimeV1, { invoiceReads: createSpendInvoiceReadsV1() });
+      const answered = await read();
+      assert.deepEqual([answered.status, answered.body.settled, lookups], [200, true, 1], 'a failed lookup is not the order’s');
+    } finally {
+      Object.assign(stillLoopsRuntimeV1, originalLoops);
+    }
+  });
+
   it('keeps Bitrefill’s last reading, with the reason, when it cannot be asked again', async () => {
     assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
     invoiceStatus = 'pending';

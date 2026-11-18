@@ -26,7 +26,7 @@ import {
   type SpendOrderOwnerV1,
   type SpendOrderV1,
 } from '../lib/stillSpendOrders.js';
-import { stillLoopDeliveryOfV1, stillLoopOfExecutionV1 } from '../lib/stillLoops.js';
+import { stillLoopDeliveryOfV1, stillLoopOfExecutionV1, stillLoopsRuntimeV1 } from '../lib/stillLoops.js';
 import { stillTeamWalletsV1 } from '../lib/stillTeam.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
@@ -230,11 +230,16 @@ stillSpendRouter.get('/orders/:id', async (req: Request, res: Response) => {
     return;
   }
   const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
-  // Bitrefill's word on the card, kept for the Loop the confirmed loan that paid it made. Read only once it settled.
+  // Bitrefill's word on the card, kept for the Loop the confirmed loan that paid it made. Read only once it settled, only
+  // while Loops are on, and never in the order's way: a failure here is logged, and the order's own status still goes.
   const settled = read.status?.status;
-  if (settled && stillLoopDeliveryOfV1(settled)) {
-    const paid = (await (await stillSpendRuntimeV1.loans()).listByPaymentOrder({ owner, orderId: id })).find((row) => row.state === 'confirmed');
-    if (paid) await stillLoopOfExecutionV1(paid, settled);
+  if (settled && stillLoopDeliveryOfV1(settled) && stillLoopsRuntimeV1.enabled()) {
+    try {
+      const paid = (await (await stillSpendRuntimeV1.loans()).listByPaymentOrder({ owner, orderId: id })).find((row) => row.state === 'confirmed');
+      if (paid) await stillLoopOfExecutionV1(paid, settled);
+    } catch (error) {
+      logger.warn('Still Loop delivery not kept', { errorName: error instanceof Error ? error.name : typeof error });
+    }
   }
   res.json({ order: orderWireV1(order), ...orderStatusWireV1(read) });
 });
