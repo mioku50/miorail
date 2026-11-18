@@ -54,6 +54,18 @@ export class PartnerHostNotAllowlistedError extends Error {
   }
 }
 
+/** A request to an allowlisted host that is refused all the same: it is not
+ * HTTPS, or it is a redirect this transport does not follow. */
+export class PartnerRequestRefusedError extends Error {
+  readonly detail: string;
+
+  constructor(detail: string) {
+    super(`Partner request refused: ${detail}`);
+    this.name = 'PartnerRequestRefusedError';
+    this.detail = detail;
+  }
+}
+
 export interface PartnerFetchOptions {
   /** Bounded request timeout. Defaults to 10s; always applied via AbortSignal.timeout. */
   timeoutMs?: number;
@@ -65,24 +77,105 @@ function isAllowlistedHost(host: string): boolean {
   return (ALLOWED_PARTNER_HOSTS as readonly string[]).includes(host);
 }
 
+// ---------------------------------------------------------------------------
+// One transport policy for both clients in this file (audit P2-6, 2026-11-18).
+//
+// Each checked the URL its caller passed and then let fetch follow redirects by
+// itself, so a redirect from an allowlisted host went wherever it pointed with
+// no check at all. Fetch removes only `Authorization` when a redirect changes
+// origin: OpenSea's `x-api-key` and a plugin's credential header would have
+// travelled on to the new host. So, for both:
+//
+//   * HTTPS only, for the URL a caller passes and for every hop after it;
+//   * redirects are followed here, never by the platform: at most
+//     ALLOWLISTED_MAX_REDIRECTS_V1 of them, each hop checked exactly like the
+//     first URL (its host, and for a plugin its method and path as well);
+//   * a redirect to another origin is refused, so a credential header only ever
+//     reaches the origin it was issued for;
+//   * a caller's own `redirect: 'error'` (or 'manual') is kept as it is.
+//
+// One clock covers the request and every hop it takes.
+// ---------------------------------------------------------------------------
+
+export const ALLOWLISTED_MAX_REDIRECTS_V1 = 3;
+const REDIRECT_STATUSES_V1 = new Set([301, 302, 303, 307, 308]);
+/** What fetch drops with the body when a redirect turns a request into a GET. */
+const REQUEST_BODY_HEADERS_V1 = ['content-encoding', 'content-language', 'content-location', 'content-type'];
+
+interface AllowlistedHopPolicyV1 {
+  /** Throws unless this URL may be asked with this method: the first URL and every hop alike. */
+  check(target: URL, method: string): void;
+  /** The error for a redirect that is not followed. */
+  refuse(detail: string): Error;
+}
+
+async function fetchAllowlistedV1(
+  url: string,
+  init: RequestInit,
+  options: { timeoutMs?: number; fetchImpl?: typeof fetch },
+  policy: AllowlistedHopPolicyV1,
+): Promise<Response> {
+  let target = new URL(url);
+  let method = String(init.method || 'GET').toUpperCase();
+  policy.check(target, method);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 10_000);
+  if (init.redirect === 'error' || init.redirect === 'manual') return fetchImpl(url, { ...init, signal });
+
+  let hop: RequestInit = { ...init, redirect: 'manual', signal };
+  let response = await fetchImpl(url, hop);
+  for (let followed = 0; REDIRECT_STATUSES_V1.has(response.status); followed += 1) {
+    const location = response.headers.get('location');
+    // A redirect that names no destination is an answer, as fetch itself treats it.
+    if (location === null) return response;
+    await response.body?.cancel().catch(() => undefined);
+    if (followed === ALLOWLISTED_MAX_REDIRECTS_V1) throw policy.refuse(`more than ${ALLOWLISTED_MAX_REDIRECTS_V1} redirects`);
+    let next: URL;
+    try {
+      next = new URL(location, target);
+    } catch {
+      throw policy.refuse('a redirect to an unreadable location');
+    }
+    if (next.origin !== target.origin) throw policy.refuse(`a redirect to another origin (${next.origin})`);
+    // As fetch does it: a 303, or a 301 or 302 answering a POST, is asked again as a GET with no body.
+    const asGet = response.status === 303
+      ? method !== 'GET' && method !== 'HEAD'
+      : (response.status === 301 || response.status === 302) && method === 'POST';
+    if (asGet) {
+      method = 'GET';
+      const headers = new Headers(hop.headers);
+      for (const name of REQUEST_BODY_HEADERS_V1) headers.delete(name);
+      hop = { ...hop, method, headers, body: null };
+    }
+    policy.check(next, method);
+    target = next;
+    response = await fetchImpl(target.toString(), hop);
+  }
+  return response;
+}
+
+const partnerHopPolicyV1: AllowlistedHopPolicyV1 = {
+  check(target) {
+    if (!isAllowlistedHost(target.host)) throw new PartnerHostNotAllowlistedError(target.host);
+    if (target.protocol !== 'https:') throw new PartnerRequestRefusedError(`${target.protocol} is not https:`);
+  },
+  refuse: (detail) => new PartnerRequestRefusedError(detail),
+};
+
 /**
  * The only sanctioned way for a partner tool provider to reach an external
  * host. Throws `PartnerHostNotAllowlistedError` before any network call is
- * made if the URL's host is not in `ALLOWED_PARTNER_HOSTS`, and always attaches
- * an `AbortSignal.timeout` so a slow partner endpoint can never hang a request.
+ * made if the URL's host is not in `ALLOWED_PARTNER_HOSTS`, and
+ * `PartnerRequestRefusedError` for a URL that is not HTTPS or a redirect it
+ * does not follow (see above). Always attaches an `AbortSignal.timeout` so a
+ * slow partner endpoint can never hang a request.
  */
 export async function partnerFetch(
   url: string,
   init: RequestInit = {},
   options: PartnerFetchOptions = {},
 ): Promise<Response> {
-  const host = new URL(url).host;
-  if (!isAllowlistedHost(host)) {
-    throw new PartnerHostNotAllowlistedError(host);
-  }
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  return fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  return fetchAllowlistedV1(url, init, options, partnerHopPolicyV1);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +228,7 @@ export interface PluginHttpScope {
 // front of the user in Base Account.
 // ---------------------------------------------------------------------------
 
-export type PluginHttpScopeViolationCode = 'host' | 'method' | 'path';
+export type PluginHttpScopeViolationCode = 'host' | 'method' | 'path' | 'scheme' | 'redirect';
 
 export class PluginHttpScopeError extends Error {
   readonly pluginId: string;
@@ -175,9 +268,10 @@ export interface PluginScopedFetchOptions {
 
 /**
  * The only sanctioned way for `plugin_http_request` to reach an external
- * host. Validates host, method, and path prefix against the plugin's own
- * scope (derived from its manifest) before any network call is made, and
- * always attaches an `AbortSignal.timeout`.
+ * host. Validates host, scheme, method, and path prefix against the plugin's
+ * own scope (derived from its manifest) before any network call is made, and
+ * again for every redirect it follows (see `fetchAllowlistedV1`); always
+ * attaches an `AbortSignal.timeout`.
  */
 export async function pluginScopedFetch(
   scope: PluginHttpScope,
@@ -185,24 +279,27 @@ export async function pluginScopedFetch(
   init: RequestInit = {},
   options: PluginScopedFetchOptions = {},
 ): Promise<Response> {
-  const parsed = new URL(url);
-  if (!scope.hosts.includes(parsed.host)) {
-    throw new PluginHttpScopeError(scope.pluginId, 'host', parsed.host);
-  }
-  const method = String(init.method || 'GET').toUpperCase() as 'GET' | 'POST';
-  // Declared, therefore enforced. An undeclared list is not an empty one: a
-  // scope built from Base's published spec knows the hosts and nothing more,
-  // and refusing every method because none was named would block the plugin
-  // it was written to enable.
-  if (scope.methods && !scope.methods.includes(method)) {
-    throw new PluginHttpScopeError(scope.pluginId, 'method', method);
-  }
-  if (scope.pathPrefixes && !scope.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))) {
-    throw new PluginHttpScopeError(scope.pluginId, 'path', parsed.pathname);
-  }
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  return fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  return fetchAllowlistedV1(url, init, options, {
+    check(target, method) {
+      if (!scope.hosts.includes(target.host)) {
+        throw new PluginHttpScopeError(scope.pluginId, 'host', target.host);
+      }
+      if (target.protocol !== 'https:') {
+        throw new PluginHttpScopeError(scope.pluginId, 'scheme', target.protocol);
+      }
+      // Declared, therefore enforced. An undeclared list is not an empty one: a
+      // scope built from Base's published spec knows the hosts and nothing more,
+      // and refusing every method because none was named would block the plugin
+      // it was written to enable.
+      if (scope.methods && !scope.methods.includes(method as 'GET' | 'POST')) {
+        throw new PluginHttpScopeError(scope.pluginId, 'method', method);
+      }
+      if (scope.pathPrefixes && !scope.pathPrefixes.some((prefix) => target.pathname.startsWith(prefix))) {
+        throw new PluginHttpScopeError(scope.pluginId, 'path', target.pathname);
+      }
+    },
+    refuse: (detail) => new PluginHttpScopeError(scope.pluginId, 'redirect', detail),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import {
   ALLOWED_PARTNER_HOSTS,
+  ALLOWLISTED_MAX_REDIRECTS_V1,
   PartnerHostNotAllowlistedError,
+  PartnerRequestRefusedError,
   partnerFetch,
   pluginScopedFetch,
   PluginHttpScopeError,
@@ -10,6 +12,37 @@ import {
   resolvePluginCredential,
   type PluginHttpScope,
 } from './httpAllowlist.js';
+
+interface SentRequestV1 {
+  url: string;
+  method: string;
+  redirect: RequestRedirect | undefined;
+  headers: Headers;
+  body: unknown;
+}
+
+/** A transport that answers from a script, one answer per request, and keeps
+ * every request it was asked, credential headers included. */
+function scriptedFetch(answers: Array<(url: string) => Response>) {
+  const sent: SentRequestV1[] = [];
+  const fetchImpl = (async (input: unknown, init: RequestInit = {}) => {
+    const url = String(input);
+    sent.push({
+      url,
+      method: String(init.method ?? 'GET').toUpperCase(),
+      redirect: init.redirect,
+      headers: new Headers(init.headers),
+      body: init.body,
+    });
+    const answer = answers[sent.length - 1];
+    if (!answer) throw new Error(`no answer scripted for request ${sent.length}: ${url}`);
+    return answer(url);
+  }) as typeof fetch;
+  return { sent, fetchImpl };
+}
+
+const redirectTo = (location: string, status = 302) => () => new Response(null, { status, headers: { location } });
+const answered = (text: string) => () => new Response(text, { status: 200 });
 
 test('partnerFetch calls through for an allowlisted host and always sets an abort timeout', async () => {
   let capturedUrl: string | undefined;
@@ -236,4 +269,144 @@ test('in mcp mode with no gateway key, UNISWAP_API_KEY is used rather than refus
     if (previousDirect === undefined) delete process.env.UNISWAP_API_KEY;
     else process.env.UNISWAP_API_KEY = previousDirect;
   }
+});
+
+// ---------------------------------------------------------------------------
+// Audit P2-6, 2026-11-18: the host was checked on the first URL only, and fetch
+// followed redirects by itself. Fetch removes only `Authorization` when a
+// redirect changes origin, so OpenSea's `x-api-key` or a plugin's credential
+// header went on to wherever the redirect pointed.
+// ---------------------------------------------------------------------------
+
+test('partnerFetch refuses a 302 to another host, and the credential header is never sent there', async () => {
+  for (const elsewhere of ['https://collector.example.com/steal', 'https://api.venice.ai/api/v1/models']) {
+    // The second is allowlisted too: the key is OpenSea's, and only OpenSea's origin may receive it.
+    const { sent, fetchImpl } = scriptedFetch([redirectTo(elsewhere), answered('should never be asked')]);
+    await assert.rejects(
+      () => partnerFetch('https://api.opensea.io/api/v2/collections/x', { headers: { 'x-api-key': 'opensea-secret' } }, { fetchImpl }),
+      (error: unknown) => error instanceof PartnerRequestRefusedError && /another origin/.test(error.detail),
+    );
+    assert.deepEqual(sent.map((request) => request.url), ['https://api.opensea.io/api/v2/collections/x']);
+    assert.equal(sent.some((request) => new URL(request.url).origin !== 'https://api.opensea.io'), false);
+    // Followed here, never by the platform: fetch itself would have carried the key on.
+    assert.equal(sent[0]!.redirect, 'manual');
+  }
+});
+
+test('partnerFetch follows a same-origin redirect, and checks the new URL again', async () => {
+  const { sent, fetchImpl } = scriptedFetch([redirectTo('/v1/markets/?chain=base', 301), answered('markets')]);
+  const response = await partnerFetch('https://api.moonwell.fi/v1/markets?chain=base', { headers: { accept: 'application/json' } }, { fetchImpl });
+  assert.equal(await response.text(), 'markets');
+  assert.deepEqual(sent.map((request) => request.url), [
+    'https://api.moonwell.fi/v1/markets?chain=base',
+    'https://api.moonwell.fi/v1/markets/?chain=base',
+  ]);
+  assert.equal(sent[1]!.headers.get('accept'), 'application/json');
+
+  // The same host with the scheme changed is another origin: a downgrade is refused.
+  const downgrade = scriptedFetch([redirectTo('http://api.moonwell.fi/v1/markets'), answered('plain text')]);
+  await assert.rejects(
+    () => partnerFetch('https://api.moonwell.fi/v1/markets', {}, { fetchImpl: downgrade.fetchImpl }),
+    PartnerRequestRefusedError,
+  );
+  assert.equal(downgrade.sent.length, 1);
+});
+
+test('a redirect turns a POST into a GET the way fetch does, without its body', async () => {
+  const { sent, fetchImpl } = scriptedFetch([redirectTo('/oauth/mcp/token/next', 303), answered('{}')]);
+  await partnerFetch('https://api.bitrefill.com/oauth/mcp/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: 'grant_type=client_credentials',
+  }, { fetchImpl });
+  assert.deepEqual(sent.map((request) => [request.method, request.body ?? null, request.headers.get('content-type')]), [
+    ['POST', 'grant_type=client_credentials', 'application/x-www-form-urlencoded'],
+    ['GET', null, null],
+  ]);
+  assert.equal(sent[1]!.headers.get('accept'), 'application/json');
+
+  // 307 and 308 ask again exactly: the same method and the same body.
+  const kept = scriptedFetch([redirectTo('/mcp/', 308), answered('{}')]);
+  await partnerFetch('https://api.bitrefill.com/mcp', { method: 'POST', body: '{"jsonrpc":"2.0"}' }, { fetchImpl: kept.fetchImpl });
+  assert.deepEqual(kept.sent.map((request) => [request.method, request.body]), [['POST', '{"jsonrpc":"2.0"}'], ['POST', '{"jsonrpc":"2.0"}']]);
+});
+
+test('partnerFetch and pluginScopedFetch refuse http: before any network call', async () => {
+  const { sent, fetchImpl } = scriptedFetch([answered('never')]);
+  await assert.rejects(
+    () => partnerFetch('http://api.moonwell.fi/v1/markets?chain=base', {}, { fetchImpl }),
+    (error: unknown) => error instanceof PartnerRequestRefusedError && /https/.test(error.detail),
+  );
+  await assert.rejects(
+    () => pluginScopedFetch(uniswapScope, 'http://trade-api.gateway.uniswap.org/v1/quote', { method: 'POST' }, { fetchImpl }),
+    (error: unknown) => error instanceof PluginHttpScopeError && error.code === 'scheme',
+  );
+  assert.equal(sent.length, 0);
+});
+
+test('the redirect limit holds: a chain longer than the limit is refused, not followed', async () => {
+  const chain = Array.from({ length: ALLOWLISTED_MAX_REDIRECTS_V1 + 2 }, (_, index) => redirectTo(`/v1/quote/${index + 1}`));
+  const { sent, fetchImpl } = scriptedFetch(chain);
+  await assert.rejects(
+    () => partnerFetch('https://api.moonwell.fi/v1/quote', {}, { fetchImpl }),
+    (error: unknown) => error instanceof PartnerRequestRefusedError && /more than/.test(error.detail),
+  );
+  // The first request, and one more for each redirect followed; the one past the limit is never asked.
+  assert.equal(sent.length, ALLOWLISTED_MAX_REDIRECTS_V1 + 1);
+
+  const plugin = scriptedFetch(chain);
+  await assert.rejects(
+    () => pluginScopedFetch(uniswapScope, 'https://trade-api.gateway.uniswap.org/v1/quote', {}, { fetchImpl: plugin.fetchImpl }),
+    (error: unknown) => error instanceof PluginHttpScopeError && error.code === 'redirect',
+  );
+  assert.equal(plugin.sent.length, ALLOWLISTED_MAX_REDIRECTS_V1 + 1);
+});
+
+test('a caller’s own redirect: error is kept, and nothing is followed for it', async () => {
+  const { sent, fetchImpl } = scriptedFetch([redirectTo('/graphql/'), answered('never')]);
+  const response = await partnerFetch('https://api.v4.aave.com/graphql', { method: 'POST', redirect: 'error' }, { fetchImpl });
+  assert.equal(response.status, 302);
+  assert.deepEqual(sent.map((request) => [request.url, request.redirect]), [['https://api.v4.aave.com/graphql', 'error']]);
+});
+
+describe('a plugin redirect is checked against the plugin’s whole scope', () => {
+  test('another host is refused even when the scope lists it, and the plugin credential never leaves its origin', async () => {
+    const scope: PluginHttpScope = { pluginId: 'two-hosts', hosts: ['api.one.example', 'api.two.example'] };
+    const { sent, fetchImpl } = scriptedFetch([redirectTo('https://api.two.example/v1/x'), answered('never')]);
+    await assert.rejects(
+      () => pluginScopedFetch(scope, 'https://api.one.example/v1/x', { headers: { 'x-api-key': 'plugin-secret' } }, { fetchImpl }),
+      (error: unknown) => error instanceof PluginHttpScopeError && error.code === 'redirect',
+    );
+    assert.deepEqual(sent.map((request) => [request.url, request.headers.get('x-api-key')]), [['https://api.one.example/v1/x', 'plugin-secret']]);
+  });
+
+  test('a same-origin hop outside the path prefixes is refused before it is asked', async () => {
+    const { sent, fetchImpl } = scriptedFetch([redirectTo('/v1/swap', 307), answered('never')]);
+    await assert.rejects(
+      () => pluginScopedFetch(uniswapScope, 'https://trade-api.gateway.uniswap.org/v1/quote', { method: 'POST' }, { fetchImpl }),
+      (error: unknown) => error instanceof PluginHttpScopeError && error.code === 'path',
+    );
+    assert.equal(sent.length, 1);
+  });
+
+  test('a hop whose method the scope does not allow is refused: a POST-only scope never sends the GET a 302 asks for', async () => {
+    const postOnly: PluginHttpScope = { ...uniswapScope, methods: ['POST'] };
+    const { sent, fetchImpl } = scriptedFetch([redirectTo('/v1/quote/next'), answered('never')]);
+    await assert.rejects(
+      () => pluginScopedFetch(postOnly, 'https://trade-api.gateway.uniswap.org/v1/quote', { method: 'POST', body: '{}' }, { fetchImpl }),
+      (error: unknown) => error instanceof PluginHttpScopeError && error.code === 'method',
+    );
+    assert.equal(sent.length, 1);
+  });
+
+  test('a same-origin hop inside the scope is followed, credential and all', async () => {
+    const { sent, fetchImpl } = scriptedFetch([redirectTo('/v1/quote/v2', 308), answered('{"quote":1}')]);
+    const response = await pluginScopedFetch(uniswapScope, 'https://trade-api.gateway.uniswap.org/v1/quote',
+      { method: 'POST', headers: { 'x-api-key': 'uniswap-secret' }, body: '{}' }, { fetchImpl });
+    assert.equal(await response.text(), '{"quote":1}');
+    assert.deepEqual(sent.map((request) => [request.url, request.method, request.headers.get('x-api-key')]), [
+      ['https://trade-api.gateway.uniswap.org/v1/quote', 'POST', 'uniswap-secret'],
+      ['https://trade-api.gateway.uniswap.org/v1/quote/v2', 'POST', 'uniswap-secret'],
+    ]);
+  });
 });
