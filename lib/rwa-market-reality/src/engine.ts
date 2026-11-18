@@ -695,6 +695,10 @@ export async function assembleMarketRealityIndexV1(
     representationCount: row.representationCount,
     liveRepresentationCount: row.liveRepresentationCount,
     issuerIds: row.issuerIds,
+    // Still part of v1 (re-audit P2-2, 2026-11-18), read off the same issuer
+    // list as before: every row here is Coinbase's and Coinbase's alone.
+    coinbaseIssued: row.issuerIds.includes('coinbase'),
+    multiIssuer: row.issuerIds.length > 1,
   }));
   return MarketRealityIndexV1Schema.parse({
     schemaVersion: 'market-reality-index/v1',
@@ -704,6 +708,10 @@ export async function assembleMarketRealityIndexV1(
     totals: {
       underlyings: scopedRows.length,
       boundRepresentations: scopedRows.reduce((total, row) => total + row.representationCount, 0),
+      multiIssuerUnderlyings: scopedRows.filter((row) => row.issuerIds.length > 1).length,
+      // One corpus now, so the Coinbase count and the whole count are this list.
+      coinbaseUnderlyings: scopedRows.length,
+      allUnderlyings: scopedRows.length,
     },
     observedAt: deps.now().toISOString(),
   });

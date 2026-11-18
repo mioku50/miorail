@@ -398,6 +398,17 @@ export const MarketRealityIndexEntryV1Schema = z
      */
     liveRepresentationCount: z.number().int().min(0),
     issuerIds: z.array(z.enum(['coinbase'])).max(8),
+    // These two flags and three of the totals below were dropped with Backed
+    // and Dinari while the version stayed `market-reality-index/v1`, and a
+    // client that validates v1 strictly refused the whole list (re-audit
+    // P2-2, 2026-11-18). They stay for as long as v1 does, with the values a
+    // Coinbase-only corpus gives them.
+    /** Whether a Coinbase B20 contract represents this security on Base:
+     * always true now, because the index lists nothing else. */
+    coinbaseIssued: z.boolean(),
+    /** Whether more than one issuer carries it: always false now, because
+     * Coinbase is the only issuer covered. */
+    multiIssuer: z.boolean(),
   })
   .strict();
 export type MarketRealityIndexEntryV1 = z.infer<typeof MarketRealityIndexEntryV1Schema>;
@@ -417,6 +428,14 @@ export const MarketRealityIndexV1Schema = z
       .object({
         underlyings: z.number().int().min(0),
         boundRepresentations: z.number().int().min(0),
+        /** Companies carried by more than one issuer: always 0 now. */
+        multiIssuerUnderlyings: z.number().int().min(0),
+        /** The companies a Coinbase B20 contract represents, and the companies
+         * the whole corpus holds: they let a page scoped to Coinbase say what
+         * the wider corpus held. With Coinbase's the only corpus, both equal
+         * `underlyings`. */
+        coinbaseUnderlyings: z.number().int().min(0),
+        allUnderlyings: z.number().int().min(0),
       })
       .strict(),
     observedAt: Timestamp,

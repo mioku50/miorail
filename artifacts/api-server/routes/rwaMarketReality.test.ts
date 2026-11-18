@@ -150,11 +150,16 @@ describe('GET the reviewed-securities chooser', () => {
           representationCount: 1,
           liveRepresentationCount: 1,
           issuerIds: ['coinbase' as const],
+          coinbaseIssued: true,
+          multiIssuer: false,
         },
       ],
       totals: {
         underlyings: 19,
         boundRepresentations: 19,
+        multiIssuerUnderlyings: 0,
+        coinbaseUnderlyings: 19,
+        allUnderlyings: 19,
       },
       observedAt: new Date().toISOString(),
     });
@@ -164,6 +169,9 @@ describe('GET the reviewed-securities chooser', () => {
     assert.deepEqual(response.body.entries[0].issuerIds, ['coinbase']);
     // The headline is corpus-wide, never the page: one entry, nineteen stocks.
     assert.equal(response.body.totals.underlyings, 19);
+    // Still the v1 a released client validates (re-audit P2-2, 2026-11-18).
+    assert.equal(response.body.entries[0].coinbaseIssued, true);
+    assert.equal(response.body.totals.allUnderlyings, 19);
   });
 
   test('the chooser refuses a session the way every other read does', async () => {

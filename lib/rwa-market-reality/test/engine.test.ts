@@ -541,7 +541,13 @@ test('the Stocks index admits only reviewed equities and computes totals over th
   );
   // Every contract of the two equities, and nothing of the bond, the fund or
   // the unreviewed row.
-  assert.deepEqual(result.totals, { underlyings: 2, boundRepresentations: 3 });
+  assert.deepEqual(result.totals, {
+    underlyings: 2,
+    boundRepresentations: 3,
+    multiIssuerUnderlyings: 0,
+    coinbaseUnderlyings: 2,
+    allUnderlyings: 2,
+  });
   assert.deepEqual(
     result.entries.map((entry) => [entry.representationCount, entry.liveRepresentationCount, entry.issuerIds]),
     [
@@ -672,7 +678,17 @@ test('the Stocks index is Coinbase B20 contracts only, and says so', async () =>
   );
   assert.equal(result.scope, 'coinbase_b20');
   assert.deepEqual(result.entries.map((entry) => entry.underlyingKey), ['security:isin:coinbase']);
-  assert.deepEqual(result.totals, { underlyings: 1, boundRepresentations: 1 });
+  assert.deepEqual(
+    result.entries.map((entry) => [entry.coinbaseIssued, entry.multiIssuer]),
+    [[true, false]],
+  );
+  assert.deepEqual(result.totals, {
+    underlyings: 1,
+    boundRepresentations: 1,
+    multiIssuerUnderlyings: 0,
+    coinbaseUnderlyings: 1,
+    allUnderlyings: 1,
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -74,9 +74,12 @@ for (const width of [1440, 390]) {
       displaySymbol: row.symbol.slice(0, -1), assetClass: 'equity',
       identifierScheme: 'isin', identifierValue: row.isin,
       representationCount: 1, liveRepresentationCount: (row.total_supply ?? 0) > 0 ? 1 : 0,
-      issuerIds: ['coinbase'],
+      issuerIds: ['coinbase'], coinbaseIssued: true, multiIssuer: false,
     }));
-    index.totals = { underlyings: 58, boundRepresentations: 58 };
+    index.totals = {
+      underlyings: 58, boundRepresentations: 58,
+      multiIssuerUnderlyings: 0, coinbaseUnderlyings: 58, allUnderlyings: 58,
+    };
     const netflix = tokens.find((row: { symbol: string }) => row.symbol === 'NFLXc');
     const market = fixture('nvda-market');
     const asset = market.representations.find((row: { issuerId: string }) => row.issuerId === 'coinbase');
