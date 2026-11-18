@@ -212,6 +212,15 @@ export async function listDynamicBaseMcpToolsFromClient(
   toggles?: Record<string, boolean>,
   signal?: AbortSignal,
 ): Promise<DynamicBaseMcpTool[]> {
+  return classifyDynamicBaseMcpTools(await listRawDynamicBaseMcpToolsFromClient(client, signal), toggles);
+}
+
+/** The server's own tool list, every page, before any classification or
+ * toggle: what a cache may keep, since the toggles can change under it. */
+export async function listRawDynamicBaseMcpToolsFromClient(
+  client: BaseMcpCallClient,
+  signal?: AbortSignal,
+): Promise<unknown[]> {
   signal?.throwIfAborted();
   const listTools = client.getClient().listTools;
   if (!listTools) return [];
@@ -227,7 +236,7 @@ export async function listDynamicBaseMcpToolsFromClient(
     cursor = typeof response.nextCursor === 'string' && response.nextCursor ? response.nextCursor : undefined;
     if (!cursor) break;
   }
-  return classifyDynamicBaseMcpTools(rawTools, toggles);
+  return rawTools;
 }
 
 export class DynamicBaseMcpToolProvider implements ToolProvider {

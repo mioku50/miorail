@@ -35,6 +35,26 @@ test('a second call within the TTL and same (userId, oauth-token-version) key re
   assert.deepEqual(first.map((t) => t.name), second.map((t) => t.name));
 });
 
+// Audit P3 Wallet MCP catalog, 2026-11-18: the cache kept the list as the
+// toggles of its first read had filtered it, under a key without them, so a
+// group switched on still read as off until the TTL ran out (0, 0, then 1).
+test('a group switched on, then off, under the same OAuth connection shows at once both ways', async () => {
+  const mock = createMockClient('get_balance');
+  const key = dynamicBaseMcpCacheKey('user-1', 'token-v1');
+  const steps: Array<{ enabled: boolean; names: string[] }> = [];
+  for (const [ms, enabled] of [[0, false], [1_000, true], [2_000, false], [3_000, true]] as const) {
+    const tools = await listDynamicBaseMcpToolsCached(mock.client, key, { 'base_mcp:wallet': enabled }, { now: () => ms });
+    steps.push({ enabled, names: tools.map((tool) => tool.name) });
+  }
+  assert.deepEqual(steps, [
+    { enabled: false, names: [] },
+    { enabled: true, names: ['get_balance'] },
+    { enabled: false, names: [] },
+    { enabled: true, names: ['get_balance'] },
+  ]);
+  assert.equal(mock.calls(), 1, 'one listTools call: the inventory is kept, the toggles are read every time');
+});
+
 test('a different oauth-token-version busts the cache immediately (reconnect/refresh invalidates stale inventory)', async () => {
   const mock = createMockClient('get_balance');
   const keyV1 = dynamicBaseMcpCacheKey('user-1', 'token-v1');
