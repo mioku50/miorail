@@ -54,7 +54,11 @@ The terms are versioned and live in [`lib/still-engine/src/policy.ts`](lib/still
 
 ## Who Still is for
 
-Coinbase's tokenized stocks are available only to persons in eligible jurisdictions outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase or a stock buy, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories, and Cuba, Iran, North Korea and Syria, which are under comprehensive US sanctions. Everyone else confirms once per sign-in: "I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People's Republics." An IP address cannot tell those three regions apart from the rest of Ukraine, so for them the sentence is the check. A link an assistant prepares is checked when the person opens it in their own browser.
+Coinbase's tokenized stocks are available only to persons in eligible jurisdictions outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase, a stock buy or a draw entry, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories, and Cuba, Iran, North Korea and Syria, which are under comprehensive US sanctions. An address it cannot place is refused too.
+
+One exception, and what it rests on: when DB-IP places an address in the United States or a territory but a regional internet registry other than ARIN holds its block, Still asks that registry's own record of the network (RDAP). A network the registry records in a country Still is offered in is not refused for its address, and the person confirms as from anywhere else. That record is where the network's holder says it is, which is not proof of where a connection comes from: it is there because DB-IP's data lags blocks that moved from ARIN to another registry (a Frankfurt VPN exit read as American on 2026-11-15). No record, no answer, or a record in a refused place refuses as before, and a sanctioned country is never reopened this way.
+
+Everyone confirms once per sign-in: "I am not a U.S. person, and I am not currently located in the United States, Cuba, Iran, North Korea, Syria, Crimea, or the so-called Donetsk or Luhansk People's Republics." A US citizen abroad is a US person, and no IP address says so. An IP address cannot tell those three regions apart from the rest of Ukraine, so for them the sentence is the check. A link an assistant prepares is checked when the person opens it in their own browser.
 
 What closes a position is never blocked: from anywhere, a wallet can repay its loan, take its collateral back and sell.
 
@@ -109,7 +113,6 @@ Still is built on Miorail, which measures tokenized assets on Base before anyone
 
 - **Stocks** (`/stocks`): one company can be held on Base through several contracts (Coinbase's B20 tokens, Backed bTokens, Dinari dShares), and they do not trade alike. Miorail measures each exact address at one exact size: what a sale into USDC would return now, and its dividends.
 - **Swap AI** (`/routes`): describe a swap in words; Miorail compares the routes it supports, decodes the chosen route's calls against what you approve (routes whose calls Miorail writes itself, or cannot read in full, are simulated too), and your wallet signs it. Afterwards it reconciles what you expected with what landed.
-- **Discover** (`/opportunities`): measurements of new B20 launches. It is not a screener and predicts nothing. [docs/B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md)
 
 One rule runs through all of it: **no data, no score.** A measurement that did not happen is never shown as zero, safe, or a recommendation.
 
