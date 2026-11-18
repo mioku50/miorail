@@ -143,7 +143,15 @@ export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: numbe
   return {
     put(order) {
       prune();
-      rows.set(order.orderId, structuredClone(order));
+      const row = structuredClone(order);
+      rows.set(order.orderId, row);
+      // An idle process forgets it on time too, not only at its next access: the email and a top-up's
+      // number are held for at most half an hour (audit P3 spend email, 2026-11-18). Unref'd, so it never
+      // keeps the process alive; a later row under the same id is not removed by this one's timer.
+      const left = Date.parse(row.createdAt) + ttlMs - now().getTime();
+      setTimeout(() => {
+        if (rows.get(order.orderId) === row) rows.delete(order.orderId);
+      }, Number.isFinite(left) ? Math.min(ttlMs, Math.max(0, left)) : ttlMs).unref();
       const owner = key(order);
       opened.set(owner, [...(opened.get(owner) ?? []), Date.parse(order.createdAt)]);
     },
