@@ -241,7 +241,12 @@ describe('the debt, rate and holds a reading carries', () => {
     const { report } = withAssets([venue({ debtAtomic: '500000000', safety: safety('calm', 5_000) })],
       [stock({ failed: ['NVDA reserve status'] })]);
     const [line] = stillLoanLinesV1(report).lines;
-    assert.deepEqual(line!.holds, { held: [], cleared: ['NVDAc:spoke_halted'] });
+    // The feed's flag is Coinbase's registry, which answered: it is known not held (audit P2-3, 2026-11-18).
+    assert.deepEqual(line!.holds, { held: [], cleared: ['NVDAc:spoke_halted', 'NVDAc:feed_paused'] });
+    const { report: registryDown } = withAssets([venue({ debtAtomic: '500000000', safety: safety('calm', 5_000) })],
+      [stock({ failed: ['NVDA Coinbase registry'] })]);
+    const [held] = stillLoanLinesV1(registryDown).lines;
+    assert.ok(!held!.holds!.cleared.includes('NVDAc:feed_paused'), 'a registry that did not answer clears no feed pause');
   });
 
   test('the pass keeps the holds the tokens said, and a failed token read changes none', async () => {

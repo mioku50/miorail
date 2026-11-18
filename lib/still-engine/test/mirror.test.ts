@@ -443,12 +443,44 @@ describe('a stock whose price the feed stopped refreshing (audit BASE-7)', () =>
     assert.ok(BigInt(stale.headline.availableCents!) < BigInt(fresh.headline.availableCents!));
   });
 
-  it('a day-old price is not stale, and an age that could not be read changes nothing', () => {
+  it('a day-old price is not stale', () => {
     assert.deepEqual(line(run(withPriceAt('NVDAc', THURSDAY - 24n * 3_600n)), 'NVDAc').limits, []);
-    const unread = run(withPriceAt('NVDAc', null));
-    assert.equal(line(unread, 'NVDAc').stillFactorBps, 3500);
-    assert.equal(line(unread, 'NVDAc').priceUpdatedAt, null);
-    assert.deepEqual(line(unread, 'NVDAc').limits, []);
+  });
+
+  // Audit P1, 2026-11-18: an unread time kept the open share, 25% above what the same stale price gets once
+  // its time is known. Unknown, zero and later than the block now count as stale, and say which.
+  it('a price whose time is unread, zero or later than the block counts as a stale one, and says why', () => {
+    const fresh = run(snapshot(EXAMPLE, THURSDAY));
+    const stale = run(withPriceAt('NVDAc', THURSDAY - 48n * 3_600n));
+    for (const [label, seconds] of [['unread', null], ['zero', 0n], ['an hour after the block', THURSDAY + 3_600n]] as const) {
+      const r = run(withPriceAt('NVDAc', seconds));
+      assert.equal(line(r, 'NVDAc').stillFactorBps, 2800, label);
+      assert.deepEqual(line(r, 'NVDAc').limits, ['price_age_unread'], label);
+      assert.equal(line(r, 'NVDAc').priceUpdatedAt, null, `${label}: no time is said for it`);
+      assert.equal(line(r, 'NVDAc').capacityCents, line(stale, 'NVDAc').capacityCents, `${label}: never more than a known stale price`);
+      assert.ok(BigInt(line(r, 'NVDAc').capacityCents!) < BigInt(line(fresh, 'NVDAc').capacityCents!), label);
+      assert.equal(r.headline.complete, fresh.headline.complete, `${label}: a lowered line, not an unread one`);
+      assert.equal(fresh.headline.complete, true);
+    }
+    // Within a minute of the block, a time is the block's own clock running ahead, not an impossible one.
+    assert.deepEqual(line(run(withPriceAt('NVDAc', THURSDAY + 30n)), 'NVDAc').limits, []);
+  });
+
+  // Audit P2-3, 2026-11-18: the registry holds the stock's paused flag, and a failed read of it left no
+  // failure, so the line read as complete and the loan notifier cleared a pause it could not see.
+  it('a Coinbase registry that did not answer is said on the line, and the report is not complete', () => {
+    const s = snapshot(EXAMPLE, THURSDAY);
+    s.coinbase.set('NVDAc', reverted());
+    const r = run(s);
+    assert.ok(line(r, 'NVDAc').failed.includes('NVDAc Coinbase registry'));
+    assert.equal(r.headline.complete, false);
+    assert.deepEqual(line(r, 'AAPLc').failed, [], 'the other stocks were read');
+  });
+
+  it('on a weekend an unread price time changes nothing: the closed-market share applies already', () => {
+    const r = run(withPriceAt('NVDAc', null, SUNDAY));
+    assert.equal(line(r, 'NVDAc').stillFactorBps, 2800);
+    assert.deepEqual(line(r, 'NVDAc').limits, []);
   });
 
   it('on a weekend the closed-market share applies as before, and a quiet feed is not called stale', () => {

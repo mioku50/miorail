@@ -125,6 +125,16 @@ function recordOfV1(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+/**
+ * The loan's rate as its latest reading said it; null when that reading could not read the rate, which then
+ * keeps the one of before. Every notice that says "now" asks this one question (audit P2-5, 2026-11-18: the
+ * rate notice did, while the opening and the week's notes called a rate a week old the rate now).
+ */
+function rateNowBpsV1(loan: StillLoanAlertV1): number | null {
+  if (loan.rateBps === null || loan.rateReadAt === null) return null;
+  return Date.parse(loan.rateReadAt) === Date.parse(loan.readAt) ? loan.rateBps : null;
+}
+
 /** A loan read within the pass, for the rate and margin it has now; anything older says nothing. */
 function freshV1(loan: StillLoanAlertV1 | null | undefined, freshSince: Date): StillLoanAlertV1 | null {
   return loan && Date.parse(loan.readAt) >= freshSince.getTime() ? loan : null;
@@ -156,7 +166,8 @@ export function stillLoanOpenedNoticeV1(input: {
   const head = `Borrowed ${usdcUpV1(borrowed)} USDC on ${venue}${against}${paid !== null && paid > 0n ? ` and paid ${usdcUpV1(paid)} USDC for ${order}` : ''}.`;
 
   const loan = freshV1(input.loan, input.freshSince);
-  const rate = loan?.rateBps != null ? `, at ${rateV1(loan.rateBps)} a year now` : '';
+  const rateNow = loan ? rateNowBpsV1(loan) : null;
+  const rate = rateNow !== null ? `, at ${rateV1(rateNow)} a year now` : '';
   const owes = debt === null ? '' : ` Debt ${usdcUpV1(debt)} USDC${rate}.`;
 
   // The margin the review measured, with the price it named for one collateral; else as read now, else the
@@ -183,7 +194,7 @@ export function stillLoanOpenedNoticeV1(input: {
     title: titleV1('Still loan opened'),
     message,
     targetPath: LOAN_PATH_V1,
-    ...(rate !== '' && loan?.rateBps != null && message.includes(rate) ? { rateBps: loan.rateBps } : {}),
+    ...(rateNow !== null && message.includes(rate) ? { rateBps: rateNow } : {}),
   };
 }
 
@@ -207,14 +218,15 @@ export function stillLoanWeekNoticeV1(due: StillLoanWeekDueV1): StillLoanNoticeT
   const label = stillLoanLabelV1(loan.market);
   const owes = `${label}: debt ${usdcUpV1(debt)} USDC.`;
   const gathered = ` Interest since ${dayV1(due.since)}: ${about}${interestV1(interest)}`;
-  const rate = loan.rateBps !== null ? `, at ${rateV1(loan.rateBps)} a year now` : '';
+  const rateNow = rateNowBpsV1(loan);
+  const rate = rateNow !== null ? `, at ${rateV1(rateNow)} a year now` : '';
   const fall = ` The collateral can fall ${marginV1(loan.marginBps)} before liquidation.`;
   const message = fitV1([`${owes}${gathered}${rate}.${fall}`, `${owes}${gathered}.${fall}`, `${owes}${gathered}.`]);
   return {
     title: titleV1('Still loan: your week'),
     message,
     targetPath: LOAN_PATH_V1,
-    ...(rate !== '' && loan.rateBps !== null && message.includes(rate) ? { rateBps: loan.rateBps } : {}),
+    ...(rateNow !== null && message.includes(rate) ? { rateBps: rateNow } : {}),
   };
 }
 
@@ -278,14 +290,14 @@ export function stillLoanRecoveredNoticeV1(loan: StillLoanAlertV1): StillLoanNot
  * costs at it; null without a rate, a rate heard of, or a debt. */
 export function stillLoanRateNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTextV1 | null {
   const debt = atomicOfV1(loan.debtAtomic);
-  if (loan.rateBps === null || loan.rateToldBps === null || loan.rateToldAt === null || debt === null || debt === 0n) return null;
   // "Now" only for a rate the latest reading said itself: one it could not read is the rate of before (audit P3, 2026-11-18).
-  if (loan.rateReadAt === null || Date.parse(loan.rateReadAt) !== Date.parse(loan.readAt)) return null;
+  const rateNow = rateNowBpsV1(loan);
+  if (rateNow === null || loan.rateToldBps === null || loan.rateToldAt === null || debt === null || debt === 0n) return null;
   const label = stillLoanLabelV1(loan.market);
-  const now = rateV1(loan.rateBps);
+  const now = rateV1(rateNow);
   const head = `${label}: the rate is ${now} a year now, up from ${rateV1(loan.rateToldBps)} on ${dayV1(loan.rateToldAt)}, `
     + 'and has been up for over an hour.';
-  const daily = (debt * BigInt(loan.rateBps)) / (10_000n * 365n);
+  const daily = (debt * BigInt(rateNow)) / (10_000n * 365n);
   const grows = daily < 10_000n ? 'under 0.01 USDC' : `about ${interestV1(daily)}`;
   return {
     title: titleV1(`Still loan: rate ${now}`),
@@ -295,7 +307,7 @@ export function stillLoanRateNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTe
       head,
     ]),
     targetPath: LOAN_PATH_V1,
-    rateBps: loan.rateBps,
+    rateBps: rateNow,
   };
 }
 

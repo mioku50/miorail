@@ -243,12 +243,16 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       });
     } else if (!unread && line.capacityCents !== null && line.capacityCents !== '0') {
       lines.push({ text: `Modelled room · up to ${formatCents(line.capacityCents)} on ${venueNameV1(line.venue)}` });
-    } else if (!unread && line.limits.some((limit) => limit !== 'price_stale')) {
+    } else if (!unread && line.limits.some((limit) => limit !== 'price_stale' && limit !== 'price_age_unread')) {
       lines.push({ text: 'Not counted now: the venue limits it' });
     }
     // Lowered, not closed, and for a reason of its own: said whatever else the row says (audit BASE-7).
     if (!unread && line.limits.includes('price_stale')) {
       lines.push({ text: 'Its reference price has not been refreshed for over a day of open market, so it counts as while the market is closed' });
+    }
+    // Still cannot know such a price is fresh (audit P1, 2026-11-18).
+    if (!unread && line.limits.includes('price_age_unread')) {
+      lines.push({ text: 'When its reference price was last refreshed could not be read, so it counts as while the market is closed' });
     }
     const priceTime = unread ? null : lenderPriceTimeLineV1(line, report.reading.blockTime);
     if (priceTime) lines.push({ text: priceTime });

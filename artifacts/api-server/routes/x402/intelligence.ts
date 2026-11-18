@@ -16,7 +16,7 @@ import {
   type X402ActiveIntelligenceServiceV1,
   type X402IntelligenceServiceV1,
 } from '@mioagent/route-domain';
-import type { CryptoAsset, MirrorInput, StillLoanQuoteReadsV1 } from '@mioagent/still-engine';
+import type { CryptoAsset, MirrorInput, StillLoanQuoteReadsV1, StockAsset } from '@mioagent/still-engine';
 import {
   createX402MiddlewareFromEnv,
   x402ConfigFromEnv,
@@ -27,7 +27,7 @@ import {
 
 import { stillMirrorRuntimeV1 } from '../../lib/stillMirror.js';
 import { morphoCollateralHoldableV1, readMorphoCollateralTransfersV1, type MorphoCollateralTransfersV1 } from '../../lib/morphoCollateralHold.js';
-import { stillLoanHoldClientsV1 } from '../../lib/stillLoanHolds.js';
+import { readStillStockTransfersPausedV1, stillLoanHoldClientsV1 } from '../../lib/stillLoanHolds.js';
 import {
   parseStillQuoteQuestionV1,
   stillLoanQuoteDraftV1,
@@ -65,6 +65,8 @@ interface CreateX402IntelligenceRouterOptionsV1 {
   readStillMarket?: () => Promise<MirrorInput>;
   /** What cbBTC's or PAXG's own contract says at the reading's block (lib/morphoCollateralHold.ts); null when unread. */
   readStillCollateralHold?: (asset: CryptoAsset, blockNumber: bigint) => Promise<MorphoCollateralTransfersV1 | null>;
+  /** Whether a stock's own B20 contract pauses transfers at the reading's block (lib/stillLoanHolds.ts); null when unread. */
+  readStillStockTransfersPaused?: (asset: StockAsset, blockNumber: bigint) => Promise<boolean | null>;
 }
 
 const requestContext = new AsyncLocalStorage<SellerRequestContextV1>();
@@ -439,6 +441,11 @@ function readStillCollateralHoldV1(asset: CryptoAsset, blockNumber: bigint): Pro
   return readMorphoCollateralTransfersV1(stillLoanHoldClientsV1(), asset, '0x0000000000000000000000000000000000000000', blockNumber);
 }
 
+/** A stock's own transfer pause, the one a borrow review refuses on, at the reading's block. */
+function readStillStockTransfersPausedFromChainV1(asset: StockAsset, blockNumber: bigint): Promise<boolean | null> {
+  return readStillStockTransfersPausedV1(stillLoanHoldClientsV1(), asset.token, blockNumber);
+}
+
 export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRouterOptionsV1 = {}) {
   const router = Router();
   const env = options.env ?? process.env;
@@ -446,6 +453,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   const now = options.now ?? (() => new Date());
   const readStillMarket = options.readStillMarket ?? readStillMarketV1;
   const readStillCollateralHold = options.readStillCollateralHold ?? readStillCollateralHoldV1;
+  const readStillStockTransfersPaused = options.readStillStockTransfersPaused ?? readStillStockTransfersPausedFromChainV1;
 
   const featureGate: RequestHandler = (_req, res, next) => {
     if (!sellerEnabledV1(env)) {
@@ -609,6 +617,13 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
         const hold = await readStillCollateralHold(question.asset, reading.snapshot.block.number);
         if (!hold || hold.paused === null || hold.marketFrozen === null) throw new Error('still collateral hold unread');
         reads.collateralHold = hold.paused ? 'paused' : hold.marketFrozen ? 'venue_frozen' : null;
+      }
+      // A stock's own B20 pause, apart from Coinbase's registry flag the reading already holds (audit P2-1,
+      // 2026-11-18): the borrow review refuses on it, so a quote that could not read it is not sold.
+      if (question.asset.kind === 'stock') {
+        const paused = await readStillStockTransfersPaused(question.asset, reading.snapshot.block.number);
+        if (paused === null) throw new Error('still stock transfer pause unread');
+        reads.collateralHold = paused ? 'paused' : null;
       }
       const quote = stillLoanQuoteFromReadingV1(reading, question, reads);
       if (!quote.complete) throw new Error('still quote incomplete');

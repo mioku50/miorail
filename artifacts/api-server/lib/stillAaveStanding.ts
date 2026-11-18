@@ -4,7 +4,7 @@ import { readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-
 import { ADDRESSES, STOCKS, type StockId } from '@mioagent/still-engine/registry';
 import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/abi';
 import { Batch } from '@mioagent/still-engine/rpc';
-import { TERMS, stockPriceStale } from '@mioagent/still-engine/policy';
+import { TERMS, stockPriceAgeV1, stockPriceStale } from '@mioagent/still-engine/policy';
 import { logger } from '@mioagent/utils';
 import { stillRpcUrlsV1 } from './stillMirror.js';
 import type { StillShareLoweredV1 } from './stillLimitComparison.js';
@@ -355,26 +355,33 @@ function need<T>(value: { ok: true; value: T } | { ok: false } | undefined): T {
  * `priceUpdatedAt`: when the stock's reference price was last refreshed. A price not refreshed for over
  * a day of open market counts as while the market is closed, as the Mirror reports it (audit BASE-7).
  * This is what the loan is drawn and checked by, so the Mirror's lower limit was only what the page said
- * until audit N13-4 (2026-11-13): a loan the page showed as past the limit was still ready to sign. An age
- * that could not be read changes nothing, as in the Mirror.
+ * until audit N13-4 (2026-11-13): a loan the page showed as past the limit was still ready to sign.
+ *
+ * `null` is a time that could not be read. It counts as a stale price, and so does a zero or a time later
+ * than the read block (operator, 2026-11-18; audit P1: an unread time kept the open share, 25% above what a
+ * known stale price allows). The block's own clock judges "later", so a server clock behind the chain does
+ * not lower a fresh price.
  */
 export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockAt: Date, now: Date,
-  priceUpdatedAt: Date | null = null): { share: bigint; lowered: StillShareLoweredV1 | null } {
+  priceUpdatedAt: Date | null): { share: bigint; lowered: StillShareLoweredV1 | null } {
   const dates = calendar.ok ? calendar.calendar.dates.get(stock) : undefined;
+  const unread = stockPriceAgeV1(priceUpdatedAt, blockAt) === 'unread';
   let share: bigint = TERMS.shareOfProtocolBps;
   let lowered: StillShareLoweredV1 | null = null;
   for (const when of [now, blockAt]) {
     const closed = weekendWindow(when);
     const earnings = dates === undefined ? null : earningsWindow(when, dates);
     // Inside a closed-market window the feed is quiet by design, and the window's own share applies.
-    const stale = !closed.active && priceUpdatedAt !== null && stockPriceStale(priceUpdatedAt, when);
-    const at = stillShareBps('stock', closed.active || stale, dates === undefined || earnings?.active === true);
+    const stale = !closed.active && !unread && stockPriceStale(priceUpdatedAt!, when);
+    const ageUnread = !closed.active && unread;
+    const at = stillShareBps('stock', closed.active || stale || ageUnread, dates === undefined || earnings?.active === true);
     if (at >= share) continue;
     share = at;
     lowered = closed.active ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
       : earnings?.active ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
         : stale ? { reason: 'price_stale', updatedAt: priceUpdatedAt!.toISOString() }
-          : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };
+          : ageUnread ? { reason: 'price_age_unread' }
+            : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };
   }
   return { share, lowered };
 }

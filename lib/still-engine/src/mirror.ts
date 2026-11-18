@@ -21,7 +21,7 @@ import {
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
 import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
 import type { CalendarRead } from './calendar.js';
-import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceStale, weekendWindow } from './policy.js';
+import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
 import { ADDRESSES, CRYPTO, STOCKS, type AssetId, type CryptoAsset, type StockAsset } from './registry.js';
 import type {
@@ -224,16 +224,24 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     const wallet = walletOf(asset, line);
     const supplied = ledger.need(reserve.supplied, `${asset.id} supplied on Aave`, line.failed);
     if (wallet === 0n && supplied === 0n) continue; // measured: nothing here
-    const updatedAt = reserve.priceUpdatedAt.ok ? reserve.priceUpdatedAt.value : undefined;
+    const readTime = reserve.priceUpdatedAt.ok ? reserve.priceUpdatedAt.value : undefined;
     // A price the feed has not refreshed for over a day of open market is not relied on at the open
-    // rate (audit BASE-7). Inside a closed-market window the feed is quiet by design and the window's
-    // own share applies; an age that could not be read changes nothing, as before.
-    const stale = !weekend && updatedAt !== undefined && stockPriceStale(new Date(Number(updatedAt) * 1000), at);
-    const share = shareOf(asset, line, stale);
+    // rate (audit BASE-7), and neither is one whose time could not be read, or reads zero or later than
+    // the block: Still cannot know that price is fresh (audit P1, 2026-11-18: an unread time kept the open
+    // rate). Inside a closed-market window the feed is quiet by design and the window's own share applies.
+    const age = stockPriceAgeV1(readTime === undefined ? null : new Date(Number(readTime) * 1000), at);
+    const updatedAt = age === 'unread' ? undefined : readTime;
+    const stale = !weekend && age === 'stale';
+    const ageUnread = !weekend && age === 'unread';
+    const share = shareOf(asset, line, stale || ageUnread);
     line.wallet = wallet === undefined ? null : amount(wallet, asset.decimals);
     line.pledged = supplied === undefined ? null : amount(supplied, asset.decimals);
 
+    // Coinbase's registry holds the stock's paused flag. A read that failed is said on the line: until it answers,
+    // nobody knows the stock is not paused, so the line is not complete and a hold it carried is not lifted
+    // (audit P2-3, 2026-11-18: the failure was silent, and the loan notifier cleared a feed pause it could not see).
     const registry = snapshot.coinbase.get(asset.id);
+    ledger.need(registry, `${asset.id} Coinbase registry`, line.failed);
     const multiplier = registry?.ok ? registry.value.multiplier : undefined;
     if (multiplier !== undefined && wallet !== undefined && supplied !== undefined) {
       line.shares = amount(mulDiv(wallet + supplied, multiplier, WAD, 'down'), asset.decimals);
@@ -262,6 +270,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     const blocked = line.limits.length > 0;
     // Said after the blockers: it lowers what the stock counts for, it does not close it.
     if (stale) line.limits.push('price_stale');
+    if (ageUnread) line.limits.push('price_age_unread');
 
     // The wallet's tokens count only up to the room left under Aave's collateral cap. Whatever
     // could not be read counts as nothing, so the line is a floor and says which read failed.
@@ -585,7 +594,7 @@ function headlineOf(computed: Computed, weekdayAvailable: bigint | null): Headli
     const eligible = computed.lines.filter((l) => l.capacityCents !== null && BigInt(l.capacityCents) > 0n);
     if (!anything) reason = 'no_eligible_assets';
     else if (eligible.length > 0) reason = 'limit_in_use';
-    else if (computed.lines.some((l) => l.limits.some((x) => x !== 'supply_cap' && x !== 'price_stale'))) reason = 'paused';
+    else if (computed.lines.some((l) => l.limits.some((x) => x !== 'supply_cap' && x !== 'price_stale' && x !== 'price_age_unread'))) reason = 'paused';
     else reason = 'no_eligible_assets';
   }
   return {

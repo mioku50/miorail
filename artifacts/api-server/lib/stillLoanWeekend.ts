@@ -116,6 +116,10 @@ export function stillWeekendLadderPricesV1(input: {
     const latest = sorted[0]!;
     const earlier = sorted.find((row) => latest.at - row.at >= STILL_WEEKEND_READINGS_APART_MS_V1);
     if (!earlier) continue;
+    // Two readings on opposite sides of the feed's price confirm no move either way: the smaller of them would
+    // be a fall the latest reading contradicts (audit P2-4, 2026-11-18: at 100, then 82 and 125, the owner was
+    // told of an 18% fall while the last price stood 25% above). Such a stock counts at its feed's price.
+    if (Math.sign(latest.ratio - 1) !== Math.sign(earlier.ratio - 1)) continue;
     const nearer = Math.abs(latest.ratio - 1) <= Math.abs(earlier.ratio - 1) ? latest : earlier;
     out.set(token, { ratio: nearer.ratio, at: new Date(nearer.at).toISOString() });
   }

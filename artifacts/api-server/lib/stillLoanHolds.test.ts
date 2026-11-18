@@ -105,7 +105,15 @@ describe('what the Mirror read of the stocks pledged on Aave V4', () => {
     ]));
     assert.deepEqual(read, {
       held: ['NVDAc:reserve_paused', 'NVDAc:feed_paused'],
-      cleared: ['NVDAc:reserve_frozen', 'NVDAc:spoke_halted', 'AAPLc:reserve_paused', 'AAPLc:reserve_frozen'],
+      // AAPLc's cap read failed, not its registry read: the feed is known not held.
+      cleared: ['NVDAc:reserve_frozen', 'NVDAc:spoke_halted', 'AAPLc:reserve_paused', 'AAPLc:reserve_frozen', 'AAPLc:feed_paused'],
     });
+  });
+
+  // Audit P2-3, 2026-11-18: with NVDAc's feed pause on record, one failed registry read cleared it.
+  test('a registry that did not answer neither holds nor clears the feed pause', () => {
+    const read = stillLoanMirrorHoldsV1(report([], [stock('NVDAc', NVDA, '1', { failed: ['NVDA Coinbase registry'] })]));
+    assert.deepEqual(read, { held: [], cleared: ['NVDAc:reserve_paused', 'NVDAc:reserve_frozen', 'NVDAc:spoke_halted'] });
+    assert.ok(!read.cleared.includes('NVDAc:feed_paused'));
   });
 });

@@ -1,12 +1,13 @@
 // Still's own terms. They are stricter than any protocol's and versioned, so a decision keeps the
 // terms it was made under. 2026-10-25: Still's first terms, before it moved into this repo.
 // 2026-10-26: the closed-market window follows the market calendar, holidays included.
+// 2026-11-18: a stock whose price time cannot be read counts as one whose price is stale.
 
 import { nextWeekendStartV1, weekendWindowV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { BPS, WAD, mulDiv } from './math.js';
 
 export const TERMS = {
-  version: '2026-11-11',
+  version: '2026-11-18',
   /** Still lends at half the protocol's collateral factor: a fresh draw starts 50% from liquidation. */
   shareOfProtocolBps: 5_000n,
   /**
@@ -228,6 +229,22 @@ export function openMarketMsSince(since: Date, now: Date, zone: string = TERMS.m
  */
 export function stockPriceStale(updatedAt: Date, now: Date, zone: string = TERMS.marketZone): boolean {
   return openMarketMsSince(updatedAt, now, zone) > TERMS.stockPriceStaleAfterHours * 3_600_000;
+}
+
+/** How far a price's own time may run ahead of the clock it is judged by: the two are read apart. */
+export const STOCK_PRICE_TIME_AHEAD_MS_V1 = 60_000;
+
+/**
+ * What a stock's reference price time says at `now`: refreshed in time, stale, or not something to rely on.
+ *
+ * `unread` covers a time that could not be read, a zero (a feed with no round), and one later than the clock
+ * it is judged by. Still cannot know such a price is fresh, so it counts the stock the way a stale one counts
+ * (operator, 2026-11-18; audit P1: an unread time kept the open-market share, as if the price were fresh).
+ */
+export function stockPriceAgeV1(updatedAt: Date | null, now: Date, zone: string = TERMS.marketZone): 'fresh' | 'stale' | 'unread' {
+  const time = updatedAt?.getTime();
+  if (time === undefined || !Number.isFinite(time) || time <= 0 || time > now.getTime() + STOCK_PRICE_TIME_AHEAD_MS_V1) return 'unread';
+  return stockPriceStale(updatedAt!, now, zone) ? 'stale' : 'fresh';
 }
 
 /** The New York calendar day of an instant, as 'YYYY-MM-DD'. */

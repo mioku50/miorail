@@ -45,8 +45,16 @@ describe('Still Aave bounded same-block standing', () => {
     assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, new Date(wednesday.getTime() + 20 * 60_000), at(24 + 50 / 60)),
       { share: BigInt(4000), lowered: { reason: 'price_stale', updatedAt: at(24 + 50 / 60).toISOString() } });
     assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, wednesday, at(24)), { share: BigInt(5000), lowered: null });
-    // An age that could not be read changes nothing, as in the Mirror.
-    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, wednesday, null), { share: BigInt(5000), lowered: null });
+    // Audit P1, 2026-11-18: an age that could not be read kept the open share. Unread, zero or later than the
+    // block now counts as stale, never above what a known stale price gets.
+    for (const unknown of [null, new Date(0), new Date(wednesday.getTime() + hour)]) {
+      assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, wednesday, unknown), { share: BigInt(4000), lowered: { reason: 'price_age_unread' } });
+    }
+    // A server clock an hour behind the chain does not make a fresh price look impossible: the block judges.
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), wednesday, new Date(wednesday.getTime() - hour), at(1)), { share: BigInt(5000), lowered: null });
+    // On a weekend the window's own share applies whatever the age.
+    assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), new Date('2026-10-24T15:00:00Z'), new Date('2026-10-24T15:00:00Z'), null).lowered,
+      { reason: 'market_closed', until: '2026-10-26T00:00:00.000Z' });
     // Inside a closed-market window the feed is quiet by design: the window is what is said.
     const saturday = new Date('2026-10-24T15:00:00Z');
     assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), saturday, saturday, new Date('2026-10-22T15:00:00Z')).lowered,

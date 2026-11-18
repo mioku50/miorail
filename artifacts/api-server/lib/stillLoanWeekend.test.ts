@@ -31,8 +31,15 @@ describe('a stock\'s price on Base while its feed holds', () => {
     });
     // 14:20 is too close to 14:40 to be a second opinion; 14:00 is, and 14:40 is nearer the feed of the two.
     assert.deepEqual(Object.fromEntries(prices), { [NVDA]: { ratio: 0.96, at: at(14, 40) } }, 'one reading alone never counts');
-    const opposite = stillWeekendLadderPricesV1({ mids: [mid(NVDA, at(14, 40), 1.02), mid(NVDA, at(14, 0), 0.95)], windowStartsAt: OPENS, now: NOW });
-    assert.equal(opposite.get(NVDA)!.ratio, 1.02, 'two readings that disagree say the milder thing');
+    // Audit P2-4, 2026-11-18: readings on opposite sides of the feed confirm no move, so the stock counts at the
+    // feed's price. At 100, 82 then 125 the owner was told of an 18% fall while the last price stood 25% above.
+    for (const [first, last] of [[0.95, 1.02], [0.82, 1.25], [1.1, 0.9], [1, 0.9]] as const) {
+      const opposite = stillWeekendLadderPricesV1({ mids: [mid(NVDA, at(14, 40), last), mid(NVDA, at(14, 0), first)], windowStartsAt: OPENS, now: NOW });
+      assert.equal(opposite.get(NVDA), undefined, `${first} then ${last}`);
+    }
+    // Two that agree still give the milder of them, with its time.
+    const agreeing = stillWeekendLadderPricesV1({ mids: [mid(NVDA, at(14, 40), 0.82), mid(NVDA, at(14, 0), 0.85)], windowStartsAt: OPENS, now: NOW });
+    assert.deepEqual(agreeing.get(NVDA), { ratio: 0.85, at: at(14, 0) });
   });
 
   test('a reading before the window, older than four hours, beside a feed that printed since it opened, or broken, does not count', () => {

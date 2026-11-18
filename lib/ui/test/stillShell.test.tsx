@@ -389,6 +389,17 @@ describe('Assets', () => {
     assert.ok(!rowOf(assetsViewV1({ report: report() }), 'NVIDIA').lines.some((line) => line.text === said));
   });
 
+  it('a stock whose price time could not be read says that, not that its price is old (audit P1, 2026-11-18)', () => {
+    const s = snapshot(EXAMPLE, BigInt(Date.parse('2026-10-22T15:00:00Z') / 1000));
+    const nvda = s.aave!.reserves.find((row) => row.info.role.kind === 'stock' && row.info.role.asset.id === 'NVDAc')!;
+    nvda.priceUpdatedAt = { ok: false, reason: 'reverted' };
+    const unread: MirrorReport = JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: s, calendar: calendar(), subject, assembledAt: new Date('2026-10-22T15:00:01Z') })));
+    const row = assetsViewV1({ report: unread }).rows.find((r) => r.name === 'NVIDIA')!;
+    assert.ok(row.lines.some((line) => line.text === 'When its reference price was last refreshed could not be read, so it counts as while the market is closed'));
+    assert.ok(!row.lines.some((line) => /has not been refreshed for over a day/.test(line.text ?? '')));
+    assert.ok(!row.lines.some((line) => line.text === 'Not counted now: the venue limits it'), 'lowered, not closed');
+  });
+
   it('says what holds up the loan, what is free, and the dividends, as the report and the calendar say', () => {
     const view = assetsViewV1({ report: report(), dividends });
     const nvda = view.rows.find((r) => r.id === 'NVDAc')!;

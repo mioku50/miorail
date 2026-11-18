@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { WAD } from '../src/math.js';
-import { TERMS, earningsWindow, earningsWindowOf, marketDate, openMarketMsSince, safetyFromHealthFactor, stillShareBps, stockPriceStale, weekendWindow } from '../src/policy.js';
+import { TERMS, earningsWindow, earningsWindowOf, marketDate, openMarketMsSince, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, stockPriceStale, weekendWindow } from '../src/policy.js';
 import { assertMatches } from './matches.js';
 
 const at = (iso: string) => new Date(iso);
@@ -163,6 +163,18 @@ describe('a stock price that was not refreshed (audit BASE-7, terms of 2026-11-1
     // A price from after the reading, or at it, has been open for nothing.
     assert.equal(openMarketMsSince(at('2026-10-22T15:00:00Z'), at('2026-10-21T15:00:00Z')), 0);
     assert.equal(openMarketMsSince(at('2026-10-21T15:00:00Z'), at('2026-10-21T15:00:00Z')), 0);
+  });
+
+  // Audit P1, 2026-11-18 (terms of 2026-11-18): a time Still cannot rely on counts as stale, never as fresh.
+  it('says a price time that is unread, zero or later than the clock is unread, apart from fresh and stale', () => {
+    const wednesday = at('2026-10-21T15:00:00Z');
+    assert.equal(stockPriceAgeV1(null, wednesday), 'unread');
+    assert.equal(stockPriceAgeV1(new Date(0), wednesday), 'unread');
+    assert.equal(stockPriceAgeV1(new Date(Number.NaN), wednesday), 'unread');
+    assert.equal(stockPriceAgeV1(at('2026-10-21T15:01:01Z'), wednesday), 'unread', 'over a minute ahead of the clock');
+    assert.equal(stockPriceAgeV1(at('2026-10-21T15:01:00Z'), wednesday), 'fresh', 'a minute ahead: two clocks read apart');
+    assert.equal(stockPriceAgeV1(at('2026-10-20T15:00:00Z'), wednesday), 'fresh');
+    assert.equal(stockPriceAgeV1(at('2026-10-19T15:00:00Z'), wednesday), 'stale');
   });
 
   it('is stale after more than 25 hours of open market, and a quiet weekend is not that', () => {

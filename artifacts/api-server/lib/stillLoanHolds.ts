@@ -62,9 +62,10 @@ export function stillLoanMirrorHoldsV1(report: MirrorReport): StillLoanHoldReadi
     say('reserve_paused', asset.limits.includes('reserve_paused'), status);
     say('reserve_frozen', asset.limits.includes('reserve_frozen'), status);
     say('spoke_halted', asset.limits.includes('spoke_halted'), cap);
-    // The registry read leaves no failure of its own: a line read in full is the only clear "not held".
+    // Not held only when the registry itself answered (audit P2-3, 2026-11-18: a failed registry read left no
+    // failure, and a pause the owner had been told of was cleared while the source was down).
     const feed = asset.limits.includes('issuer_paused');
-    say('feed_paused', feed, feed || asset.failed.length === 0);
+    say('feed_paused', feed, feed || !asset.failed.includes(`${asset.asset} Coinbase registry`));
   }
   return { held, cleared };
 }
@@ -136,6 +137,31 @@ export async function readStillLoanTokenHoldsV1(input: {
     out.set(market, { held, cleared });
   }
   return out;
+}
+
+/**
+ * Whether a stock's own B20 contract pauses transfers, at `blockNumber`: true, false, or null when unread.
+ *
+ * A borrow review refuses a new loan against a stock that cannot move (aaveLendingRunner), so the paid quote
+ * asks it too, at the block its reading came from (audit P2-1, 2026-11-18: the quote read only Coinbase's
+ * registry flag and sold "open" where the review would say no).
+ */
+export async function readStillStockTransfersPausedV1(
+  clients: readonly StillLoanCallClientV1[],
+  token: string,
+  blockNumber: bigint,
+): Promise<boolean | null> {
+  const pause = encodeFunctionData({ abi: HOLD_ABI_V1, functionName: 'isPaused', args: [B20_TRANSFER_FEATURE_V1] });
+  const data = encodeFunctionData({ abi: HOLD_ABI_V1, functionName: 'aggregate3',
+    args: [[{ target: token.toLowerCase() as Address, allowFailure: true, callData: pause }]] });
+  const answer = await firstAnswerV1(clients, data, blockNumber);
+  if (!answer) return null;
+  try {
+    const rows = decodeFunctionResult({ abi: HOLD_ABI_V1, functionName: 'aggregate3', data: answer });
+    return rows.length === 1 ? wordV1(rows[0]!) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The endpoints the Mirror reads, for the same block it read. */

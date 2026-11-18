@@ -89,7 +89,8 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           While the market is open, a stock’s reference price is refreshed at least once a day. If one has gone more than{' '}
           {TERMS.stockPriceStaleAfterHours} hours of open market without a new price, Still does not rely on it at the open rate: it lends at
           most {percentV1(closed)} against that stock until a new price arrives, and Assets says so on that stock’s row. Hours while the
-          market is closed do not count, since no price is due then.
+          market is closed do not count, since no price is due then. The same holds while Still cannot read when the price was last
+          refreshed: it cannot know such a price is fresh.
         </p>
         <p className="still-note">
           The windows change what you can borrow, not a loan you already have: Still never repays or sells for you. Collateral on Morpho

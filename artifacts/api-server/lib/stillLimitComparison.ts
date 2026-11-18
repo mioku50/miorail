@@ -20,7 +20,9 @@ export type StillShareLoweredV1 =
   /** The calendar answered with no date for this stock (SPCXc, listed 2026-11-04): it counts at the earnings share too. */
   | { reason: 'earnings_unlisted' }
   /** The stock's reference price was last refreshed at `updatedAt`, over a day of open market ago: it counts as while Wall Street is closed. */
-  | { reason: 'price_stale'; updatedAt: string };
+  | { reason: 'price_stale'; updatedAt: string }
+  /** When the stock's reference price was last refreshed could not be read (or read zero, or later than the block): it counts as a stale one. */
+  | { reason: 'price_age_unread' };
 
 export interface StillLimitComparisonWireV1 {
   protocol: 'Aave V4' | 'Morpho';

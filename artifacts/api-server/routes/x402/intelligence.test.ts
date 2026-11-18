@@ -72,8 +72,9 @@ function appV1(options: Record<string, unknown> = {}) {
     now: () => new Date('2026-10-21T15:00:02.000Z'),
     middlewareFactory: () => PASS_THROUGH_V1,
     readStillMarket: async () => readingV1(),
-    // cbBTC and PAXG held by nothing, unless a test says otherwise.
+    // cbBTC and PAXG held by nothing, and no stock paused, unless a test says otherwise.
     readStillCollateralHold: async () => ({ paused: false, marketFrozen: false, walletFrozen: false }),
+    readStillStockTransfersPaused: async () => false,
     ...options,
   }));
   return app;
@@ -292,6 +293,37 @@ test('cbBTC and PAXG are asked whether their own contract holds a pledge, at the
   await request(held({ paused: true, marketFrozen: true })).get(QUOTE).query({ asset: 'ETH', amount: '1' }).expect(200);
   await request(held({ paused: true, marketFrozen: true })).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200);
   assert.equal(asked.length, before);
+});
+
+// Audit P2-1, 2026-11-18: the quote read Coinbase's registry flag only, and a borrow review also refuses on the
+// stock's own B20 transfer pause; and an unread Aave rate passed as a complete quote with a null rate.
+test('a stock is asked whether its own B20 contract pauses transfers, at the reading\'s block, and a rate is required', async () => {
+  const asked: string[] = [];
+  const stockApp = (answer: boolean | null, reading = readingV1()) => appV1({
+    readStillMarket: async () => reading,
+    readStillStockTransfersPaused: async (asset: { id: string }, block: bigint) => {
+      asked.push(`${asset.id}@${block}`);
+      return answer;
+    },
+  });
+  const paused = X402StillLoanQuoteV1Schema.parse((await request(stockApp(true)).get(QUOTE).query({ asset: 'NVDAc', amount: '10', borrowUsdc: '100' }).expect(200)).body);
+  assert.deepEqual([paused.limit.newLoans, paused.limit.closedBecause, paused.limit.availableNowCents, paused.atStillLimit],
+    ['closed', ['issuer_paused'], '0', null]);
+  const open = X402StillLoanQuoteV1Schema.parse((await request(stockApp(false)).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(200)).body);
+  assert.equal(open.limit.newLoans, 'open');
+  assert.ok(asked.every((entry) => entry === `NVDAc@${readingV1().snapshot.block.number}`), asked.join());
+  // A pause that could not be read is not read as none: 503, nothing settled.
+  const unread = await request(stockApp(null)).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(503);
+  assert.equal(unread.body.code, 'still_reading_unavailable');
+  // cbBTC is never asked a stock's question.
+  const before = asked.length;
+  await request(stockApp(true)).get(QUOTE).query({ asset: 'cbBTC', amount: '0.01' }).expect(200);
+  assert.equal(asked.length, before);
+  // The rate the catalog promises: unread, the quote is not sold.
+  const noRate = readingV1();
+  noRate.snapshot.aave!.usdcDrawnRateRay = { ok: false, reason: 'reverted' };
+  const rateless = await request(stockApp(false, noRate)).get(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(503);
+  assert.equal(rateless.body.code, 'still_reading_unavailable');
 });
 
 test('a request that asks for nothing is answered with the price, and reads nothing', async () => {

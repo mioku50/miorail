@@ -219,6 +219,9 @@ describe('what Still’s limit is worth, in numbers', () => {
     assert.equal(lowered({ reason: 'price_stale', updatedAt: '2026-11-11T20:00:00.000Z' }),
       'NVDAc counts at 40%, not 50%: the price Aave reads for it was last refreshed Wed 3 PM New York time, over a day of open market ago, so Still counts it as while Wall Street is closed until the price is refreshed.');
     assert.equal(stillBorrowComparisonViewV1({ ...aave, lowered: { reason: 'price_stale', updatedAt: 'yesterday' } }, 'NVDAc'), null, 'a time that cannot be read leaves the comparison out');
+    // Audit P1, 2026-11-18: a price whose time Still could not read counts as stale, and the person is told why.
+    assert.equal(lowered({ reason: 'price_age_unread' }),
+      'NVDAc counts at 40%, not 50%: Still could not read when the price Aave reads for it was last refreshed, so it counts the stock as while Wall Street is closed. Read the limit again later.');
   });
 
   it('prints both limits and both margins where the amount is chosen', () => {

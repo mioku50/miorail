@@ -65,6 +65,15 @@ describe('a loan just opened', () => {
     assert.equal(notice.rateBps, 410, 'the rate it states becomes the one its owner heard of');
   });
 
+  // Audit P2-5, 2026-11-18: a debt read on Nov 22 beside a rate last read on Nov 15 was told as "4.10% a year now".
+  test('a rate the latest reading could not read is not said as the rate now, and the debt still is', () => {
+    const notice = keepsTheRulesV1(stillLoanOpenedNoticeV1({ opened: paxg,
+      loan: loan({ market: PAXG_MARKET, venue: 'morpho', rateBps: 410, rateReadAt: '2026-11-15T09:00:00.000Z' }), freshSince: FRESH }));
+    assert.doesNotMatch(notice.message, /a year now/);
+    assert.match(notice.message, /Debt 46\.81 USDC\./);
+    assert.equal(notice.rateBps, undefined, 'a rate not said is not one its owner heard of');
+  });
+
   test('a stale reading gives no rate; with no stress the margin is the health the review expected', () => {
     const { stress: _stress, ...facts } = paxg.facts;
     const notice = keepsTheRulesV1(stillLoanOpenedNoticeV1({ opened: { ...paxg, facts }, loan: loan({ readAt: '2026-11-17T08:00:00.000Z' }), freshSince: FRESH }));
@@ -111,6 +120,11 @@ describe('the week\'s note', () => {
       + 'The collateral can fall 48% before liquidation.');
     assert.equal(notice.rateBps, 366);
     assert.equal(stillLoanWeekNoticeV1(week({ rateBps: null }))!.rateBps, undefined);
+    // Audit P2-5, 2026-11-18: the rate of an earlier reading is not the rate now; the week's debt is still told.
+    const stale = keepsTheRulesV1(stillLoanWeekNoticeV1(week({ debtAtomic: '1000673000', interestAtomic: '1673000', rateBps: 410, rateReadAt: '2026-11-15T09:00:00.000Z' },
+      { interestBeforeAtomic: '1000000', estimatedBeforeAtomic: '0' })));
+    assert.equal(stale.message, 'Aave V4 · Coinbase Stocks: debt 1,000.68 USDC. Interest since Nov 13: 0.67 USDC. The collateral can fall 48% before liquidation.');
+    assert.equal(stale.rateBps, undefined);
   });
 
   test('"about" when part of it was estimated across a borrow; under a cent is said as such', () => {

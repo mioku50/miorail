@@ -36,9 +36,9 @@ export type StillQuoteClosedReasonV1 = AssetLimit | 'venue_has_no_liquidity' | '
 
 /** What the server read beside the Mirror, at the same block. */
 export interface StillLoanQuoteReadsV1 {
-  /** What cbBTC's or PAXG's own contract says of a new pledge: every transfer paused, or Morpho Blue's address
-   * frozen, the reads a Morpho borrow review refuses on; null when neither holds it. Absent for a collateral no
-   * issuer can hold this way. */
+  /** What the collateral's own contract says of a new pledge, the reads a borrow review refuses on: for cbBTC or
+   * PAXG every transfer paused or Morpho Blue's address frozen, for a stock its B20 transfer pause (audit P2-1,
+   * 2026-11-18); null when nothing holds it. Absent for a collateral no issuer can hold this way. */
   collateralHold?: 'paused' | 'venue_frozen' | null;
 }
 
@@ -221,8 +221,11 @@ export function stillLoanQuoteV1(input: MirrorInput, ask: StillLoanQuoteAskV1, r
   const ours = new Set(report.coverage.failed.filter((failure) => failure.owner === 'us').map((failure) => failure.what));
   // A stock's issuer pause is read from Coinbase's registry; a registry that did not answer left it unread.
   const issuerRead = asset.kind !== 'stock' || held.snapshot.coinbase.get(asset.id)?.ok === true;
+  // The rate is part of what the quote sells (the catalog promises it): one that could not be read leaves the quote
+  // incomplete, never `complete` with a null rate (audit P2-1, 2026-11-18: Aave's drawn rate is read apart from the
+  // venue's failures, so an unread one passed).
   const complete = line !== null && venueLine !== null && venueLine.failed.length === 0 && !line.failed.some((what) => ours.has(what))
-    && issuerRead && pledgeable !== null && stillLimit !== null && available !== null;
+    && issuerRead && pledgeable !== null && stillLimit !== null && available !== null && venueLine.borrowRateBps !== null;
 
   const atStillLimit = available !== null && BigInt(available) > 0n && pledgeable !== null
     ? loanAtV1(held, asset, pledgeable, BigInt(available) * USDC_UNITS_PER_CENT)
