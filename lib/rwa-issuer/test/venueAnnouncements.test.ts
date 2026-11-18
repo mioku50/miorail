@@ -106,13 +106,7 @@ test('a venue that does state the announced use establishes it', () => {
   assert.deepEqual(readings[0]?.unstatedUses, []);
 });
 
-test('an announcement about one issuer never reaches another issuer', () => {
-  for (const issuerId of ['backed', 'dinari'] as const) {
-    assert.deepEqual(
-      venueAnnouncementReadingsV1({ issuerId, tokenAddress: NVDAC, venues: [aave({ state: 'not_listed' })] }),
-      [],
-    );
-  }
+test('an announcement never reaches a token no reviewed issuer stands behind', () => {
   assert.deepEqual(
     venueAnnouncementReadingsV1({ issuerId: null, tokenAddress: NVDAC, venues: [aave({ state: 'not_listed' })] }),
     [],

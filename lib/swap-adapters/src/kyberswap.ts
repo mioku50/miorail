@@ -120,12 +120,12 @@ function reportsNoRoute(value: unknown): boolean {
  *
  * A THIRD thing, and the Phase 10B.7 audit exists because it was being read as
  * one of the other two. Measured 2026-08-27 at the same size, direction and
- * destination, KyberSwap answers the three NVIDIA representations on Base with
- * three different outcomes:
+ * destination, KyberSwap answered three NVIDIA contracts on Base with three
+ * different outcomes:
  *
- *   Coinbase NVDAc   200                        quoted
- *   Backed  bNVDA    400 code 4008  route not found
- *   Backed  wbNVDA   400 code 4011  token not found
+ *   Coinbase NVDAc     200            quoted
+ *   a second contract  400 code 4008  route not found
+ *   a third contract   400 code 4011  token not found
  *
  * 4008 is pathfinding: the router considered the pair and found no way through
  * — the same answer a garbage address gets, and a fact about the market. 4011

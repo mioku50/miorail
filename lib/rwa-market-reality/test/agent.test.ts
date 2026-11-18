@@ -20,7 +20,8 @@ import { assembleMarketRealityV2 } from '../src/engine.js';
 
 const UNDERLYING = 'security:isin:US67066G1040';
 const COINBASE = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const BACKED = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+/** A second Coinbase contract of the same company. */
+const SECOND = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const HASH = `0x${'11'.repeat(32)}` as const;
 const CANDIDATE = `0x${'22'.repeat(32)}` as const;
 const NOW = new Date('2026-08-29T12:00:00.000Z');
@@ -38,32 +39,26 @@ const underlying: UnderlyingAssetV1 = {
   observedAt: '2026-08-29T11:00:00.000Z',
 };
 
-function binding(
-  tokenAddress: string,
-  issuerId: 'coinbase' | 'backed',
-): RepresentationUnderlyingV1 {
+function binding(tokenAddress: string, instrument = 'coinbase:instrument:nvda'): RepresentationUnderlyingV1 {
   return {
     chainId: 8453,
     tokenAddress,
     underlyingKey: UNDERLYING,
-    sourceKind: issuerId === 'coinbase' ? 'coinbase_b20_metadata' : 'backed_assets_api',
-    sourceRef: `${issuerId}:instrument:nvda`,
+    sourceKind: 'coinbase_b20_metadata',
+    sourceRef: 'coinbase:instrument:nvda',
     sourceHash: 'cd'.repeat(32),
-    issuerId,
-    issuerInstrumentKey: `${issuerId}:instrument:nvda`,
+    issuerId: 'coinbase',
+    issuerInstrumentKey: instrument,
     caip10: `eip155:8453:${tokenAddress}`,
-    representationKind: issuerId === 'coinbase' ? 'b20_asset' : 'rebasing_erc20',
-    evidenceStrength:
-      issuerId === 'coinbase'
-        ? 'reviewed_machine_mapping_with_onchain_cross_check'
-        : 'reviewed_machine_address_mapping',
-    observedBlockNumber: issuerId === 'coinbase' ? '50600000' : null,
-    observedBlockHash: issuerId === 'coinbase' ? HASH : null,
+    representationKind: 'b20_asset',
+    evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
+    observedBlockNumber: '50600000',
+    observedBlockHash: HASH,
     observedAt: '2026-08-29T11:00:00.000Z',
   };
 }
 
-const bindings = [binding(COINBASE, 'coinbase'), binding(BACKED, 'backed')];
+const bindings = [binding(COINBASE), binding(SECOND, 'coinbase:instrument:nvda-second')];
 
 function supply(tokenAddress: string, amount: string): RepresentationSupplyRowV1 {
   return {
@@ -152,7 +147,7 @@ function run(
 function deps(bindingRows: RepresentationUnderlyingV1[] = bindings) {
   const runs = new Map([
     [COINBASE, [run(COINBASE)]],
-    [BACKED, [run(BACKED)]],
+    [SECOND, [run(SECOND)]],
   ]);
   return {
     underlyings: {
@@ -170,7 +165,7 @@ function deps(bindingRows: RepresentationUnderlyingV1[] = bindings) {
     },
     ratios: { readRatios: async () => [] },
     supplies: {
-      readSupplies: async () => [supply(COINBASE, '1000000000000000000'), supply(BACKED, '0')],
+      readSupplies: async () => [supply(COINBASE, '1000000000000000000'), supply(SECOND, '0')],
     },
     now: () => NOW,
   } as never;
@@ -191,7 +186,7 @@ describe('Phase 12B.1 agent contracts', () => {
     );
   });
 
-  test('all legitimate issuers remain separate and zero supply stays visible', async () => {
+  test('every reviewed contract stays separate and zero supply stays visible', async () => {
     const result = await getMarketRealityRepresentationsForAgentV1(deps(), {
       underlyingKey: UNDERLYING,
       chain: 'base',
@@ -199,11 +194,11 @@ describe('Phase 12B.1 agent contracts', () => {
     assert.equal(result.selection.status, 'not_selected');
     assert.deepEqual(
       result.representations.map((row) => row.issuerId),
-      ['coinbase', 'backed'],
+      ['coinbase', 'coinbase'],
     );
     assert.deepEqual(
       result.representations.map((row) => row.tokenAddress),
-      [COINBASE, BACKED],
+      [COINBASE, SECOND],
     );
     assert.equal(result.representations[1]?.supply.state, 'zero_supply');
     assert.equal(result.representations[0]?.caip10, `eip155:8453:${COINBASE}`);
@@ -216,12 +211,12 @@ describe('Phase 12B.1 agent contracts', () => {
   });
 
   test('a pre-0059 binding stays visible, with its issuer recovered and its structure not guessed', async () => {
-    // The row keeps its address and its reviewed source; `backed_assets_api`
-    // IS Backed's own source, so the issuer follows from it deterministically.
-    // The structure does not: a non-rebasing wrapper has no ratio row, so
-    // "no evidence" must not become "rebasing".
+    // The row keeps its address and its reviewed source; `coinbase_b20_metadata`
+    // IS Coinbase's own source, so the issuer follows from it deterministically.
+    // The structure does not: with no ratio row there is no evidence of it, so
+    // "no evidence" must not become a guess.
     const incomplete: RepresentationUnderlyingV1 = {
-      ...binding(BACKED, 'backed'),
+      ...binding(SECOND),
       issuerId: null,
       issuerInstrumentKey: null,
       representationKind: null,
@@ -235,11 +230,11 @@ describe('Phase 12B.1 agent contracts', () => {
     );
     assert.equal(result.representationCount, 2);
     assert.equal(result.representations.length, 2);
-    assert.equal(result.representations[1]?.tokenAddress, BACKED);
-    assert.equal(result.representations[1]?.issuerId, 'backed');
+    assert.equal(result.representations[1]?.tokenAddress, SECOND);
+    assert.equal(result.representations[1]?.issuerId, 'coinbase');
     assert.equal(
       result.representations[1]?.issuerInstrumentKey,
-      `backed:base_address:${BACKED}`,
+      `coinbase:base_address:${SECOND}`,
     );
     assert.equal(result.representations[1]?.issuerTypingRecovered, true);
     assert.equal(result.representations[1]?.representationKind, null);
@@ -418,7 +413,7 @@ describe('list_reviewed_stocks', () => {
         observedAt: '2026-08-26T20:00:00.000Z',
       },
       representationCount: 2,
-      issuerIds: ['backed', 'coinbase'],
+      issuerIds: ['coinbase'],
       liveRepresentationCount: 2,
     },
     {
@@ -435,7 +430,7 @@ describe('list_reviewed_stocks', () => {
         observedAt: '2026-08-26T20:00:00.000Z',
       },
       representationCount: 2,
-      issuerIds: ['backed', 'coinbase'],
+      issuerIds: ['coinbase'],
       liveRepresentationCount: 0,
     },
   ];
@@ -524,24 +519,24 @@ describe('list_reviewed_stocks', () => {
         observedAt: '2026-08-26T20:00:00.000Z',
       },
       representationCount: 4,
-      issuerIds: ['backed', 'coinbase', 'dinari'],
+      issuerIds: ['coinbase'],
       liveRepresentationCount: 4,
     },
     {
       underlying: {
-        underlyingKey: 'dinari:stock_id:0196ea6d-b6e6-72e1-90b9-2bb5b3efb0a5',
+        underlyingKey: 'security:isin:US78462F1030',
         canonicalName: 'State Street SPDR S&P 500 ETF Trust',
         displaySymbol: 'SPY',
         assetClass: 'fund_share' as const,
-        identifierScheme: 'dinari_stock_id' as const,
-        identifierValue: '0196ea6d-b6e6-72e1-90b9-2bb5b3efb0a5',
-        sourceKind: 'dinari_stock_api' as const,
-        sourceRef: 'https://api.dinari.com/',
+        identifierScheme: 'isin' as const,
+        identifierValue: 'US78462F1030',
+        sourceKind: 'coinbase_stocks_api' as const,
+        sourceRef: 'https://api.coinbase.com/',
         sourceHash: null,
         observedAt: '2026-08-26T20:00:00.000Z',
       },
       representationCount: 1,
-      issuerIds: ['dinari'],
+      issuerIds: ['coinbase'],
       liveRepresentationCount: 1,
     },
   ];

@@ -29,7 +29,6 @@ import {
   utilityAnswerV1,
   useSectionsV1,
   sourceLabelV1,
-  stockFiltersV1,
   stocksHeadlineV1,
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
@@ -43,8 +42,9 @@ import {
 
 const NOW = '2026-08-26T20:34:19.000Z';
 const COINBASE_NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
-const BACKED_NVDA = '0xa34c5e0abe843e10461e2c9586ea03e55dbcc495';
-const BACKED_WRAPPER = '0x7e8101a1c322d394b3961498c7d40d2dfa94c392';
+/** Two more Coinbase contracts of NVIDIA, as fixtures: every row on the board is Coinbase's (2026-11-18). */
+const SECOND_NVDA = '0xb20000000000000000000078ee7ce2fe4908108d';
+const THIRD_NVDA = '0xb20000000000000000000078ee7ce2fe4908108e';
 
 function representation(
   over: Partial<MarketRealityRepresentationWireV1> = {},
@@ -708,8 +708,8 @@ describe('the five outcomes stay apart', () => {
   });
 
   test('a token the router does not index is OURS, not a market verdict', () => {
-    // Measured 2026-08-27: KyberSwap answers the Backed wrapper with HTTP 400
-    // code 4011 "token not found" — it never looked for a route. That arrived
+    // Measured 2026-08-27: KyberSwap answered a token it did not index with
+    // HTTP 400 code 4011 "token not found" — it never looked for a route. That arrived
     // as `provider_http_error` on 25 consecutive passes, our infrastructure
     // taking the blame for the router's token list.
     const outcome = representationOutcomeV1(
@@ -835,10 +835,10 @@ describe('the five outcomes stay apart', () => {
             lastObservation: LAPSED_OBSERVATION,
           }),
           representation({
-            tokenAddress: BACKED_NVDA,
-            issuerId: 'backed',
-            representationKind: 'rebasing_erc20',
-            issuerInstrumentKey: 'backed:instrument_id:c1077d76',
+            tokenAddress: SECOND_NVDA,
+            issuerId: 'coinbase',
+            representationKind: 'b20_asset',
+            issuerInstrumentKey: 'coinbase:b20_address:second',
             status: 'unavailable',
             liveness: 'live',
             lastObservation: {
@@ -857,10 +857,10 @@ describe('the five outcomes stay apart', () => {
             ],
           }),
           representation({
-            tokenAddress: BACKED_WRAPPER,
-            issuerId: 'backed',
-            representationKind: 'non_rebasing_erc4626_wrapper',
-            issuerInstrumentKey: 'backed:instrument_id:c1077d76',
+            tokenAddress: THIRD_NVDA,
+            issuerId: 'coinbase',
+            representationKind: 'b20_asset',
+            issuerInstrumentKey: 'coinbase:b20_address:third',
             liveness: 'live',
             lastObservation: {
               ...LAPSED_OBSERVATION,
@@ -1149,7 +1149,7 @@ describe('an absent number never renders as a zero', () => {
   });
 
   test('a router that does not carry the token says so, and is not our outage', () => {
-    // Screenshot, 2026-08-30: NVDA's two Backed representations rendered five
+    // Screenshot, 2026-08-30: two of NVDA's representations rendered five
     // dashes and "Miorail's router call did not complete". Both readings were
     // wrong. `provider_unsupported_token` is the router answering that it does
     // not carry the token; `cash_size_anchor_no_route` is the router refusing
@@ -1227,7 +1227,6 @@ describe('an absent number never renders as a zero', () => {
         issuerLine: 'Coinbase',
         issuerIds: ['coinbase'],
         representationCount: 3,
-        multiIssuer: true,
         emptyNote: null,
       },
       now: NOW,
@@ -1364,7 +1363,7 @@ describe('an absent number never renders as a zero', () => {
           representation({
             supply: { ...representation().supply, state: 'zero_supply', totalSupplyAtomic: '0' },
           }),
-          representation({ tokenAddress: BACKED_NVDA, issuerId: 'backed' }),
+          representation({ tokenAddress: SECOND_NVDA }),
         ],
       }),
       choice: null,
@@ -1720,8 +1719,7 @@ describe('an absent number never renders as a zero', () => {
       wire: wire({
         representations: [
           representation({
-            normalization: 'reviewed_token_already_applied',
-            issuerId: 'backed',
+            normalization: 'fresh_ratio_applied',
             liveness: 'live',
             lastObservation: { ...LAPSED_OBSERVATION, open: true },
           }),
@@ -1731,9 +1729,9 @@ describe('an absent number never renders as a zero', () => {
       now: NOW,
     });
     const ratio = view?.representations[0]?.terms.find((row) => row.label === 'Ratio');
-    // Applying a rebasing token's ratio a second time overstates a holding by
-    // the whole ratio. Five Dinari dShares are already away from 1.0.
-    assert.match(ratio?.note ?? '', /already carries the ratio/);
+    // A B20 balance is raw: the multiplier is read and applied once, and
+    // applying it a second time would overstate a holding by the whole ratio.
+    assert.match(ratio?.note ?? '', /applied once/);
   });
 });
 
@@ -1941,7 +1939,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
 });
 
 describe('the chooser', () => {
-  test('says which securities can actually be compared', () => {
+  test('names the issuer and the identifier of each security', () => {
     const index = {
       entries: [
         {
@@ -1951,10 +1949,9 @@ describe('the chooser', () => {
           assetClass: 'equity' as const,
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
-          representationCount: 3,
-          liveRepresentationCount: 2,
-          issuerIds: ['backed', 'coinbase'] as const,
-          multiIssuer: true,
+          representationCount: 1,
+          liveRepresentationCount: 1,
+          issuerIds: ['coinbase'] as const,
         },
         {
           underlyingKey: 'security:isin:US5949724083',
@@ -1965,20 +1962,17 @@ describe('the chooser', () => {
           identifierValue: 'US5949724083',
           representationCount: 2,
           liveRepresentationCount: 0,
-          issuerIds: ['backed'] as const,
-          multiIssuer: false,
+          issuerIds: ['coinbase'] as const,
         },
       ],
-      totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 2 },
+      totals: { underlyings: 19, boundRepresentations: 25 },
       observedAt: NOW,
     };
     const choices = underlyingChoicesV1(index);
-    assert.equal(choices[0]?.issuerLine, 'Backed · Coinbase');
-    assert.equal(choices[0]?.multiIssuer, true);
+    assert.equal(choices[0]?.issuerLine, 'Coinbase');
     assert.equal(choices[0]?.identifier, 'ISIN US67066G1040');
-    // Two representations, one issuer — a structure choice, not a comparison.
     assert.equal(choices[1]?.representationCount, 2);
-    assert.equal(choices[1]?.multiIssuer, false);
+    assert.match(choices[1]?.emptyNote ?? '', /either contract/);
   });
 
   test('a row whose only name is its ticker is titled once, not twice', () => {
@@ -1994,7 +1988,6 @@ describe('the chooser', () => {
           representationCount: 1,
           liveRepresentationCount: 1,
           issuerIds: ['coinbase'] as const,
-          multiIssuer: false,
         },
         {
           underlyingKey: 'security:isin:US67066G1040',
@@ -2003,13 +1996,12 @@ describe('the chooser', () => {
           assetClass: 'equity',
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
-          representationCount: 3,
-          liveRepresentationCount: 3,
-          issuerIds: ['backed', 'coinbase'] as const,
-          multiIssuer: true,
+          representationCount: 1,
+          liveRepresentationCount: 1,
+          issuerIds: ['coinbase'] as const,
         },
       ],
-      totals: { underlyings: 2, boundRepresentations: 4, multiIssuerUnderlyings: 1 },
+      totals: { underlyings: 2, boundRepresentations: 2 },
       observedAt: NOW,
     });
     // Ticker first: this row is one line and it ellipsis, so the company name
@@ -2018,24 +2010,15 @@ describe('the chooser', () => {
     assert.equal(tickerOnly?.title, 'NVDA');
   });
 
-  test('the headline counter is the number of comparable securities', () => {
+  test('the headline counters are Coinbase stocks and the ones with tokens outstanding', () => {
     const counters = underlyingCountersV1({
       entries: [],
-      totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 2 },
+      totals: { underlyings: 19, boundRepresentations: 25 },
       observedAt: NOW,
     });
-    const compare = counters.find((row) => row.label === 'Multi-issuer stocks');
-    assert.equal(compare?.value, '2');
-    assert.equal(compare?.tone, 'neutral');
-  });
-
-  test('nothing to compare is stated, not hidden', () => {
-    const counters = underlyingCountersV1({
-      entries: [],
-      totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 0 },
-      observedAt: NOW,
-    });
-    assert.equal(counters.find((row) => row.label === 'Multi-issuer stocks')?.tone, 'neutral');
+    assert.deepEqual(counters.map((row) => row.label), ['Coinbase stocks', 'With tokens outstanding']);
+    assert.ok(counters.every((row) => row.tone === 'neutral'));
+    assert.ok(!counters.some((row) => /multi-issuer|elsewhere/i.test(`${row.label} ${row.note ?? ''}`)));
   });
 });
 
@@ -2112,12 +2095,11 @@ describe('Phase 11 utility and eligibility map', () => {
       representationCount,
       liveRepresentationCount,
       issuerIds: ['coinbase'] as const,
-      multiIssuer: false,
     });
     const noteFor = (reps: number, live: number) =>
       underlyingChoicesV1({
         entries: [entry(reps, live)],
-        totals: { underlyings: 1, boundRepresentations: reps, multiIssuerUnderlyings: 0 },
+        totals: { underlyings: 1, boundRepresentations: reps },
         observedAt: NOW,
       })[0]?.emptyNote;
 
@@ -2128,44 +2110,6 @@ describe('Phase 11 utility and eligibility map', () => {
     // One live representation is enough for the security to be worth opening.
     assert.equal(noteFor(3, 1), null);
     assert.equal(noteFor(1, 1), null);
-  });
-
-  test('a filter chip exists only when something is behind it', () => {
-    // Dinari has a hundred contracts proven to be dShares and none bound to a
-    // security, and the chip list was a literal of five — so pressing "Dinari"
-    // emptied the page. A filter that can only return nothing reads as a broken
-    // product, not as a gap in coverage.
-    const choice = (issuerIds: readonly ('coinbase' | 'dinari' | 'backed')[], multiIssuer: boolean) => ({
-      underlyingKey: issuerIds.join('-') + String(multiIssuer),
-      title: 'x',
-      ticker: 'X',
-      company: null,
-      identifier: null,
-      issuerLine: 'x',
-      issuerIds,
-      representationCount: issuerIds.length,
-      multiIssuer,
-      emptyNote: null,
-    });
-
-    const both = stockFiltersV1([choice(['coinbase', 'backed'], true), choice(['backed'], false)]);
-    assert.deepEqual(
-      both.map((entry) => entry.id),
-      ['all', 'multi', 'coinbase', 'backed'],
-    );
-    assert.deepEqual(
-      both.map((entry) => entry.count),
-      [2, 1, 1, 2],
-    );
-
-    // One issuer on the board (the Stocks screens show Coinbase's contracts
-    // only): no chips at all, because "All" and "Coinbase" are the same list.
-    const single = stockFiltersV1([choice(['coinbase'], false)]);
-    assert.deepEqual(single, []);
-
-    // Any one issuer alone, or nothing at all, is the same: nothing to choose.
-    assert.deepEqual(stockFiltersV1([choice(['dinari'], false)]), []);
-    assert.deepEqual(stockFiltersV1([]), []);
   });
 
   test('two documents on one edge are named by publisher, never twice by kind', () => {
@@ -2211,10 +2155,9 @@ describe('Phase 11 utility and eligibility map', () => {
           representationCount: 1,
           liveRepresentationCount: 1,
           issuerIds: ['coinbase'],
-          multiIssuer: false,
         },
       ],
-      totals: { underlyings: 1, boundRepresentations: 1, multiIssuerUnderlyings: 0 },
+      totals: { underlyings: 1, boundRepresentations: 1 },
       observedAt: NOW,
     });
     const view = marketRealityViewV1({ wire: wire(), choice: choices[0] ?? null, now: NOW });
@@ -3208,7 +3151,7 @@ describe('Phase 17.2 — NOW is short-lived, LAST MEASURED is not', () => {
 describe('Phase 17.2 — markets first, reviewed-and-empty second', () => {
   const choice = (key: string, emptyNote: string | null) => ({
     underlyingKey: key, title: key, identifier: null, issuerLine: 'Coinbase',
-    issuerIds: ['coinbase'], representationCount: 1, multiIssuer: false, emptyNote,
+    issuerIds: ['coinbase'], representationCount: 1, emptyNote,
   });
 
   test('a security whose supply read came back zero moves below the markets', () => {
@@ -4190,12 +4133,10 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.match(fact?.note ?? '', /venue configuration this reading does not cover/);
   });
 
-  test('an announcement about Coinbase never appears on another issuer', () => {
-    for (const issuerId of ['backed', 'dinari'] as const) {
-      const defi = useSectionsV1({ ...base, issuerId, use: withAave({}) }).find((section) => section.id === 'defi')!;
-      assert.deepEqual(defi.facts, []);
-      assert.doesNotMatch(JSON.stringify(defi.evidence), /announcement/i);
-    }
+  test('an announcement about Coinbase never appears on a contract no reviewed issuer stands behind', () => {
+    const defi = useSectionsV1({ ...base, issuerId: null, use: withAave({}) }).find((section) => section.id === 'defi')!;
+    assert.deepEqual(defi.facts, []);
+    assert.doesNotMatch(JSON.stringify(defi.evidence), /announcement/i);
   });
 
   test('with nothing read on chain, every measured section says so and none says no', () => {
@@ -4208,44 +4149,18 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Which representation a reader meets first.
-//
-// Three issuers put representations of the same securities on Base, and the
-// board treated them as peers. Measured 2026-09-04 at $1,000 SELL: 10 of 13
-// Coinbase representations held a cash route, 2 of 21 Backed, 0 of 96 Dinari.
-// So the first card a reader saw was usually a contract that cannot be priced,
-// on a page whose whole subject is what things cost.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // The answer used to sit a full viewport below the controls that produce it:
 // title, counters, search, chips, thirteen tiles, a collapsed section, tabs,
 // two rails, a question console, a history rail -- and only then the number.
 // The card that fixed that must be a PROJECTION, or the page grows a second
 // place where a verdict can be decided.
 // ---------------------------------------------------------------------------
-describe('which corpus is a switch, not a one-way button', () => {
-  const wire = (scope: string, coinbase = 13, all = 35) =>
-    ({ scope, totals: { coinbaseUnderlyings: coinbase, allUnderlyings: all }, entries: [] }) as never;
-
-  test('the Coinbase board offers no second corpus', () => {
-    // Operator, 2026-10-03: Backed and Dinari beside Coinbase confused people,
-    // so the switch to "All reviewed" is gone from the Stocks screens.
-    const view = stockScopeViewV1(wire('coinbase_b20'))!;
-    assert.deepEqual(view.options, [{ scope: 'coinbase_b20', label: 'Coinbase B20', count: 13 }]);
-    assert.equal(view.other, null);
-    assert.equal(view.selected, 'coinbase_b20');
-  });
-
-  test('the switch lights the corpus actually loaded', () => {
-    assert.equal(stockScopeViewV1(wire('all_representations'))!.selected, 'all_representations');
-  });
-
-  test('with nothing outside Coinbase there is no second corpus to offer', () => {
-    // A switch with one side is not a choice; it is a label pretending to be one.
-    const view = stockScopeViewV1(wire('coinbase_b20', 13, 13))!;
-    assert.deepEqual(view.options.map((o) => o.scope), ['coinbase_b20']);
-    assert.equal(view.other, null);
+describe('the board names its one corpus', () => {
+  test('Coinbase B20, the standard Base documents, and no switch to another', () => {
+    const view = stockScopeViewV1({ entries: [], totals: { underlyings: 13, boundRepresentations: 13 }, observedAt: NOW } as never)!;
+    assert.equal(view.title, 'Coinbase Tokenized Stocks');
+    assert.match(view.body, /standard Base documents/);
+    assert.deepEqual(Object.keys(view).sort(), ['body', 'title']);
   });
 });
 
@@ -4295,33 +4210,10 @@ describe('the answer card decides nothing the board has not already decided', ()
     });
   });
 
-  test('the lead is the documented standard, never the better number', () => {
-    // Backed first in the array, and with the healthier-sounding chip.
-    const headline = stocksHeadlineV1(
-      view([
-        rep({ issuerName: 'Backed', outcomeChip: 'Round trip 0.01%', tokenAddress: '0xbbb0000000000000000000000000000000000001' }),
-        rep(),
-      ]),
-    )!;
-    assert.equal(headline.representation?.issuerName, 'Coinbase');
-    assert.equal(headline.alternativeCount, 2);
-  });
-
-  test('a security with no Coinbase contract leads with nothing rather than a substitute', () => {
-    const headline = stocksHeadlineV1(
-      view([rep({ issuerName: 'Backed' }), rep({ issuerName: 'Dinari' })]),
-    )!;
-    assert.equal(headline.representation, null);
-    // The board is still the answer, and its size is still stated.
-    assert.equal(headline.alternativeCount, 2);
-  });
-
   test('a representation outside the comparison never becomes the headline', () => {
-    const headline = stocksHeadlineV1(
-      view([rep({ inComparison: false }), rep({ issuerName: 'Backed' })]),
-    )!;
+    const headline = stocksHeadlineV1(view([rep({ inComparison: false })]))!;
     assert.equal(headline.representation, null);
-    assert.equal(headline.alternativeCount, 1);
+    assert.equal(headline.alternativeCount, 0);
   });
 
   test('a Coinbase contract with no tokens outstanding says so, not "no representation"', () => {
@@ -4332,7 +4224,6 @@ describe('the answer card decides nothing the board has not already decided', ()
     const headline = stocksHeadlineV1(
       view([
         rep({ inComparison: false, tokenAddress: '0xb200000000000000000000c85a31389d71f3ecfb' }),
-        rep({ issuerName: 'Backed', tokenAddress: '0xbbb0000000000000000000000000000000000001' }),
       ]),
     )!;
     assert.equal(headline.representation, null);
@@ -4343,10 +4234,8 @@ describe('the answer card decides nothing the board has not already decided', ()
     assert.doesNotMatch(headline.primaryAbsence?.sentence ?? '', /No Coinbase representation/);
   });
 
-  test('a security Coinbase never issued still says exactly that', () => {
-    const headline = stocksHeadlineV1(
-      view([rep({ issuerName: 'Backed' }), rep({ issuerName: 'Dinari' })]),
-    )!;
+  test('a security with no Coinbase card on the board says exactly that', () => {
+    const headline = stocksHeadlineV1(view([]))!;
     assert.equal(headline.primaryAbsence?.kind, 'no_primary_representation');
     assert.equal(headline.primaryAbsence?.shortAddress, null);
     assert.match(headline.primaryAbsence?.sentence ?? '', /No Coinbase representation/);
@@ -4375,57 +4264,22 @@ describe('the answer card decides nothing the board has not already decided', ()
   });
 });
 
-describe('the canonical representation is met first, and the others are still there', () => {
+describe('the canonical representation is met first, and nothing is dropped', () => {
   const card = (issuerName: string, tokenAddress: string) =>
     ({ issuerName, tokenAddress }) as unknown as Parameters<typeof partitionByIssuerRoleV1>[0][number];
 
-  test('Coinbase leads and Backed and Dinari follow, with nothing dropped', () => {
+  test('every Coinbase card is primary, in order', () => {
     const { primary, others } = partitionByIssuerRoleV1([
-      card('Backed', '0x7e8101a1c322d394b3961498c7d40d2dfa94c392'),
       card('Coinbase', '0xb20000000000000000000078ee7ce2fe4908108c'),
-      card('Dinari', '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97'),
+      card('Coinbase', '0xb20000000000000000000078ee7ce2fe4908108d'),
     ]);
-    assert.deepEqual(primary.map((row) => row.issuerName), ['Coinbase']);
-    assert.deepEqual(others.map((row) => row.issuerName), ['Backed', 'Dinari']);
-    // The count is the invariant: this is an order, not a filter.
-    assert.equal(primary.length + others.length, 3);
-  });
-
-  test('with no Coinbase card there is nothing to be other than', () => {
-    // A Backed-only security is a board in its own right. Heading its
-    // representations "other" would measure them against a card that is not on
-    // the page.
-    const { primary, others } = partitionByIssuerRoleV1([
-      card('Backed', '0x7e8101a1c322d394b3961498c7d40d2dfa94c392'),
-      card('Dinari', '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97'),
-    ]);
-    assert.deepEqual(primary, []);
+    assert.equal(primary.length, 2);
     assert.deepEqual(others, []);
   });
 });
 
 describe('a scoped list says what it is a slice of', () => {
-  const totals = {
-    underlyings: 13,
-    boundRepresentations: 13,
-    multiIssuerUnderlyings: 0,
-    coinbaseUnderlyings: 13,
-    allUnderlyings: 35,
-  };
-
-  test('the default scope names the standard and nothing beyond it', () => {
-    const scope = stockScopeViewV1({
-      scope: 'coinbase_b20',
-      entries: [],
-      totals,
-      observedAt: NOW,
-    });
-    assert.equal(scope?.title, 'Coinbase Tokenized Stocks');
-    // No "Miorail also tracks 35 companies across Coinbase, Backed and
-    // Dinari": the Stocks screens show Coinbase's contracts only.
-    assert.equal(scope?.aside, null);
-    assert.equal(scope?.other, null);
-  });
+  const totals = { underlyings: 13, boundRepresentations: 13 };
 
   test('every number on the scope band names the unit it counts', () => {
     // The whole defect, as one assertion: `Securities 13`, `Representations 39`
@@ -4458,30 +4312,6 @@ describe('a scoped list says what it is a slice of', () => {
     assert.deepEqual([cut[1]!.value, cut[1]!.note], ['at least 1', 'companies, of the first 2 read here, whose Coinbase contract holds any, as Base was last read']);
   });
 
-  test('the wide scope says why several contracts for one company is the point', () => {
-    const scope = stockScopeViewV1({
-      scope: 'all_representations',
-      entries: [],
-      totals,
-      observedAt: NOW,
-    });
-    assert.match(scope?.title ?? '', /Every reviewed representation/);
-    assert.match(scope?.body ?? '', /not economically identical/);
-    assert.equal(scope?.other?.scope, 'coinbase_b20');
-  });
-
-  test('a wire without the corpus totals claims no scope at all', () => {
-    // Older payloads carry neither count. Inventing "13 of 13" from a page is
-    // exactly the false floor this panel exists to prevent.
-    assert.equal(
-      stockScopeViewV1({
-        entries: [],
-        totals: { underlyings: 13, boundRepresentations: 13, multiIssuerUnderlyings: 0 },
-        observedAt: NOW,
-      }),
-      null,
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -4751,7 +4581,7 @@ describe('four clocks, four times', () => {
           valueAtomic: null,
           decimals: null,
           comparable: false,
-          reason: 'No reviewed backed reference/session configuration is established.',
+          reason: 'No reviewed reference/session configuration is established.',
           referenceUpdatedAt: null,
           observedAt: '2026-08-26T20:26:19.000Z',
         },
@@ -4837,7 +4667,7 @@ describe('four clocks, four times', () => {
     assert.equal(at('multiplier', applied).tone, 'good');
 
     const inToken = clocksV1(
-      representation({ issuerId: 'backed', normalization: 'reviewed_token_already_applied' }),
+      representation({ normalization: 'reviewed_token_already_applied' }),
       NOW,
     );
     // Not an absent value: there is no second reading, so there is no clock,
@@ -4881,14 +4711,10 @@ describe('the issuer restrictions are on the card', () => {
     }
   });
 
-  test('every reviewed issuer has all three, and each says something different', () => {
-    for (const issuer of ['coinbase', 'dinari', 'backed'] as const) {
-      const rows = accessNoticesV1(issuer);
-      assert.equal(rows.length, 3, issuer);
-      assert.equal(new Set(rows.map((row) => row.note)).size, 3, issuer);
-    }
-    // Two issuers do not share a sentence, because they do not share a term.
-    assert.notEqual(accessNoticesV1('coinbase')[0]!.note, accessNoticesV1('backed')[0]!.note);
+  test('the reviewed issuer has all three, and each says something different', () => {
+    const rows = accessNoticesV1('coinbase');
+    assert.equal(rows.length, 3);
+    assert.equal(new Set(rows.map((row) => row.note)).size, 3);
   });
 
   test('the restrictions render without expanding anything, and Terms keeps all six', () => {
@@ -5128,7 +4954,7 @@ describe('trading from the answer card', () => {
           choices: over.ticker ? [{ underlyingKey: wire.question.underlyingKey,
             title: over.ticker, ticker: over.ticker, company: null, identifier: null,
             issuerLine: 'Coinbase', issuerIds: ['coinbase'], representationCount: 1,
-            multiIssuer: false, emptyNote: null }] : [],
+            emptyNote: null }] : [],
           choicesLoading: false,
           choicesError: null,
           counters: [],

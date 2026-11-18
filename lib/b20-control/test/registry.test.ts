@@ -68,7 +68,7 @@ describe('the Coinbase onchain registry', () => {
 
   test('the multiplier is said exactly, never as a float', () => {
     assert.equal(multiplierLabelV1(B20_WAD_V1), '1.0');
-    // A Backed address the registry also answers for, measured the same day.
+    // A multiplier the registry was measured answering with, the same day.
     assert.equal(multiplierLabelV1(1002050000000000000n), '1.00205');
     assert.equal(multiplierLabelV1(2n * B20_WAD_V1), '2.0');
     assert.equal(redemptionRatioIsOneV1(1002050000000000000n), false);

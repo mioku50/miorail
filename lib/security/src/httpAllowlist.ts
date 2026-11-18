@@ -28,12 +28,6 @@ export const ALLOWED_PARTNER_HOSTS = [
   // lib/ai-engine. There is deliberately no configurable Venice base URL:
   // a settable provider host is how a private prompt ends up somewhere else.
   'api.venice.ai',
-  // Phase 17.5: Dinari's Enterprise catalogue, read-only, for the stock rows
-  // that carry the composite FIGI a Base dShare is bound by. Both environments
-  // are listed because the sandbox is the one production access is currently
-  // gated behind, and which one is used is decided by configuration, not here.
-  'api-enterprise.sbt.dinari.com',
-  'api-enterprise.sandbox.dinari.com',
   // Phase 13.8: Euler's public v3 read API, for the one question the chain
   // answers only by walking 415 vault proxies — "is there a vault for this
   // exact asset". Read-only, no key, and the only path requested is
@@ -41,10 +35,6 @@ export const ALLOWED_PARTNER_HOSTS = [
   // one: the same reading was taken from the factory before this host was
   // trusted with it.
   'v3.euler.finance',
-  // The registry that ISSUES composite FIGIs. Every FIGI taken from an issuer
-  // catalogue is put to it before it becomes an underlying key, and the same
-  // answer carries the security type the asset class is read from.
-  'api.openfigi.com',
   // Coinbase's public Tokenized Stocks API, which Base's docs point integrators
   // to: no key, read-only, and the only path requested is /v1/tokenized-stocks.
   // The Stocks list reads each token's name and icon address from it.

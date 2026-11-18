@@ -92,13 +92,10 @@ export class OfficialLookalikeIdentityError extends RouteStorageIntegrityError {
  * `officialAddresses` is the alias corpus: the assets a row may POINT AT,
  * because a reviewed source published a name for them. `reviewedAddresses` is
  * every address a reviewed root vouches for, and it is the set that may never
- * BE a lookalike. The second is a superset of the first, and the gap between
- * them is real:
- *
- *   Dinari's Base dShare declares `symbol() = "AAPL"`, exactly. Its issuer's
- *   own factory vouches for the address. But no reviewed source says which
- *   security it stands for — Dinari's own guide says the ticker is a display
- *   field — so it cannot be an alias target. It can only be excluded.
+ * BE a lookalike. The second is a superset of the first: a contract an issuer
+ * vouches for without any reviewed source saying which security it stands for
+ * cannot be an alias target. It can only be excluded. (Coinbase is the only
+ * reviewed issuer since 2026-11-18, so today the two sets are the same.)
  *
  * Collapsing the two would force a choice between accusing a reviewed
  * contract of impersonation and inventing an underlying identity for it. Both

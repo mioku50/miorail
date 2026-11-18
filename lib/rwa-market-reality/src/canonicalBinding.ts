@@ -43,21 +43,17 @@ import type {
 export const ISSUER_BY_REVIEWED_SOURCE_KIND_V1 = {
   coinbase_b20_metadata: 'coinbase',
   coinbase_stocks_api: 'coinbase',
-  dinari_stock_api: 'dinari',
-  backed_assets_api: 'backed',
-} as const satisfies Record<UnderlyingSourceKindV1, 'coinbase' | 'dinari' | 'backed'>;
+} as const satisfies Record<UnderlyingSourceKindV1, 'coinbase'>;
 
 /** What a stored ratio proves about the structure of the token that has it. */
 export const REPRESENTATION_KIND_BY_RATIO_KIND_V1 = {
   b20_multiplier: 'b20_asset',
-  dinari_balance_per_share: 'rebasing_erc20',
-  backed_evm_multiplier: 'rebasing_erc20',
 } as const;
 
 export type CanonicalReviewedBindingV1 = RepresentationUnderlyingV1 & {
-  issuerId: 'coinbase' | 'dinari' | 'backed';
+  issuerId: 'coinbase';
   issuerInstrumentKey: string;
-  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper' | 'dinari_dshare';
+  representationKind: 'b20_asset';
 };
 
 export type CanonicalBindingResultV1 =

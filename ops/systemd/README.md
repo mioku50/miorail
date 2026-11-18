@@ -35,7 +35,7 @@ what makes Discover's Official Assets tab able to say anything:
 
 | Timer | Every | What a pass costs |
 | --- | --- | --- |
-| `miorail-rwa-official` | 1h | Coinbase Stocks API, two Base publications and Backed API |
+| `miorail-rwa-official` | 1h | Coinbase Stocks API and two Base publications |
 | `miorail-rwa-cash-exit` | 1h, plus Fri 20:01/20:14/20:27 ET | one bounded chain batch plus paced quotes for the reviewed corpus |
 | `miorail-rwa-lookalikes` | 6h | nothing outbound at all — two stored tables |
 | `miorail-rwa-market-tail` | 1h | ~4 `eth_getLogs` for the whole vertical |

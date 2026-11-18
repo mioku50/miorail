@@ -194,8 +194,6 @@ export function evidencePackageV1(tool: EvidenceToolV1, payload: Row, now = new 
       corpus(['/standing', '/answer', '/corpus'], scope);
       rows(row(payload.official).listedIn).forEach((listing, i) => add([`/official/listedIn/${i}`],
         'issuer_mapping', 'public_source', listing.sourceKind, { observedAt: listing.lastSeenAt }, scope));
-      if (payload.issuerRepresentation) add(['/issuerRepresentation'], 'issuer_mapping', 'miorail_store',
-        'issuer_registry', row(payload.issuerRepresentation), scope);
       if (payload.lookalike) add(['/lookalike'], 'recorded_change', 'miorail_store', 'lookalike_corpus', {}, scope);
       break;
     }

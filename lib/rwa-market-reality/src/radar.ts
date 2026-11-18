@@ -70,13 +70,8 @@ const MarketRealityRadarWatchObjectV1Schema = MarketRealityRadarWatchInputObject
   watchId: Hash,
   userId: z.string().min(1).max(200),
   chainId: z.literal(8453),
-  issuerId: z.enum(['coinbase', 'dinari', 'backed']),
-  representationKind: z.enum([
-    'b20_asset',
-    'rebasing_erc20',
-    'non_rebasing_erc4626_wrapper',
-    'dinari_dshare',
-  ]),
+  issuerId: z.enum(['coinbase']),
+  representationKind: z.enum(['b20_asset']),
   createdAt: Timestamp,
   lastEvaluatedAt: Timestamp.nullable(),
   lastComparableAt: Timestamp.nullable(),
@@ -124,7 +119,7 @@ export const MarketRealityRadarPublicWatchV1Schema =
 
 const RadarRatioV1Schema = z
   .object({
-    ratioKind: z.enum(['b20_multiplier', 'dinari_balance_per_share', 'backed_evm_multiplier']),
+    ratioKind: z.enum(['b20_multiplier']),
     application: z.enum(['apply_to_raw_balance', 'already_applied_by_token']),
     rawValue: Digits,
     scale: Digits,
@@ -286,11 +281,7 @@ export const MarketRealityRadarEventV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('representation_ratio_changed'),
     facts: z
       .object({
-        ratioKind: z.enum([
-          'b20_multiplier',
-          'dinari_balance_per_share',
-          'backed_evm_multiplier',
-        ]),
+        ratioKind: z.enum(['b20_multiplier']),
         application: z.enum(['apply_to_raw_balance', 'already_applied_by_token']),
         previousRawValue: Digits,
         previousScale: Digits,

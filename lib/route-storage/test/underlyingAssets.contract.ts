@@ -8,12 +8,14 @@ import type {
 } from '../src/underlyingAssets.js';
 import { isValidIsinV1 } from '../src/underlyingAssets.js';
 
-const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
 const COINBASE_AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
-const COINBASE_AAPL_WRAPPER = '0xb200000000000000000000c2e324d24d7eecd1fc';
-const APPLE = 'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77';
+/** A second Coinbase contract for the same company: the shape a per-issuer tally must count as two. */
+const COINBASE_AAPL_SECOND = '0xb200000000000000000000c2e324d24d7eecd1fc';
+const COINBASE_AMZN = '0xb200000000000000000000d9192b6b456483c2e8';
+const COINBASE_NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+const APPLE = 'security:isin:US0378331005';
 const AMAZON = 'security:isin:US0231351067';
-const BACKED_AMZN = '0xf393d07e6ca9818a601055b4bb3c48a5bb98e701';
+const NVIDIA = 'security:isin:US67066G1040';
 
 /**
  * The contract both repositories are held to.
@@ -31,8 +33,10 @@ export function underlyingAssetContractV1(
     underlyingKey: APPLE,
     assetClass: 'equity' as const,
     canonicalName: 'Apple Inc.',
-    sourceKind: 'dinari_stock_api' as const,
-    sourceRef: 'GET /api/v2/market_data/stocks/ id=7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77',
+    identifierScheme: 'isin' as const,
+    identifierValue: 'US0378331005',
+    sourceKind: 'coinbase_stocks_api' as const,
+    sourceRef: 'GET /v1/tokenized-stocks#0xb200000000000000000000c2e324d24d7eecd1fb',
     observedAt: '2026-08-26T12:00:00.000Z',
   });
 
@@ -47,13 +51,13 @@ export function underlyingAssetContractV1(
   function bindingBase() {
     return {
       chainId: 8453 as const,
-      tokenAddress: DINARI_AAPL,
+      tokenAddress: COINBASE_AAPL,
       underlyingKey: APPLE,
-      sourceKind: 'dinari_stock_api' as const,
-      sourceRef: 'tokens[] eip155:8453',
-      issuerId: 'dinari' as const,
-      issuerInstrumentKey: 'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77',
-      representationKind: 'rebasing_erc20' as const,
+      sourceKind: 'coinbase_stocks_api' as const,
+      sourceRef: 'GET /v1/tokenized-stocks#0xb200000000000000000000c2e324d24d7eecd1fb',
+      issuerId: 'coinbase' as const,
+      issuerInstrumentKey: `coinbase:b20_address:${COINBASE_AAPL}`,
+      representationKind: 'b20_asset' as const,
       observedAt: '2026-08-26T12:00:00.000Z',
     };
   }
@@ -78,20 +82,20 @@ export function underlyingAssetContractV1(
       );
     });
     test('a security with tokens outstanding outranks one with more empty contracts', async () => {
-      // Nine of the thirteen Coinbase tokenized stocks hold exactly zero, so
+      // Nine of the thirteen Coinbase tokenized stocks held exactly zero, so
       // ranking on the number of CONTRACTS put empty securities above live
       // ones. Both twins must agree on the order and on the count, because the
       // chooser reads whichever one is wired.
       const { repository } = await open();
       const declare = (key: string) =>
-        repository.declareUnderlying({ ...underlying(), underlyingKey: key });
+        repository.declareUnderlying({ ...underlying(), underlyingKey: key, identifierScheme: null, identifierValue: null });
       const bind = (key: string, tokenAddress: string) =>
         repository.bindRepresentation({ ...binding(), underlyingKey: key, tokenAddress });
 
-      await declare('security:isin:US0378331005');
-      await declare('security:isin:US67066G1040');
-      await bind('security:isin:US0378331005', DINARI_AAPL);
-      await bind('security:isin:US67066G1040', COINBASE_AAPL);
+      await declare(APPLE);
+      await declare(NVIDIA);
+      await bind(APPLE, COINBASE_AAPL);
+      await bind(NVIDIA, COINBASE_NVDA);
 
       const rows = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
       // With no supply read for either, neither is live and neither ordering
@@ -103,46 +107,35 @@ export function underlyingAssetContractV1(
       }
     });
 
-    test('the per-issuer tally sums to the representation count on both twins', async () => {
+    test('the per-issuer tally counts contracts, and sums to the representation count on both twins', async () => {
       // A scoped total is summed per issuer, so the tally has to agree with the
-      // number it is a breakdown OF. Two contracts from one issuer and one from
-      // another is the shape that catches a `DISTINCT` aggregate standing in
-      // for a count: `issuerIds` would be right and the tally would say one.
+      // number it is a breakdown OF. Two contracts from one issuer is the shape
+      // that catches a `DISTINCT` aggregate standing in for a count: `issuerIds`
+      // would be right and the tally would say one.
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
-      await repository.bindRepresentation({ ...binding(), tokenAddress: DINARI_AAPL });
-      await repository.bindRepresentation({
-        ...binding(),
-        tokenAddress: COINBASE_AAPL,
-        issuerId: 'coinbase',
-        issuerInstrumentKey: 'coinbase:b20:AAPL',
-        representationKind: 'b20_asset',
-      });
-      await repository.bindRepresentation({
-        ...binding(),
-        tokenAddress: COINBASE_AAPL_WRAPPER,
-        issuerId: 'coinbase',
-        issuerInstrumentKey: 'coinbase:b20:AAPLW',
-        representationKind: 'b20_asset',
-      });
+      await repository.bindRepresentation(binding());
+      await repository.bindRepresentation(
+        binding({ tokenAddress: COINBASE_AAPL_SECOND, issuerInstrumentKey: `coinbase:b20_address:${COINBASE_AAPL_SECOND}` }),
+      );
 
       const row = (await repository.listUnderlyings({ chainId: 8453, limit: 50 })).find(
         (candidate) => candidate.underlying.underlyingKey === APPLE,
       );
       assert.ok(row, 'the bound underlying is missing from the index');
-      assert.deepEqual(row.representationCountsByIssuer, { coinbase: 2, dinari: 1 });
+      assert.deepEqual(row.representationCountsByIssuer, { coinbase: 2 });
       assert.equal(
         Object.values(row.representationCountsByIssuer).reduce((total, one) => total + one, 0),
         row.representationCount,
       );
-      assert.deepEqual(row.issuerIds, ['coinbase', 'dinari']);
+      assert.deepEqual(row.issuerIds, ['coinbase']);
     });
 
     test('nothing is bound until a source declared it', async () => {
       const { repository } = await open();
       await assert.rejects(() => repository.bindRepresentation(binding()), /no reviewed source/);
       assert.equal(
-        await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+        await repository.underlyingOf({ chainId: 8453, tokenAddress: COINBASE_AAPL }),
         null,
       );
     });
@@ -176,7 +169,7 @@ export function underlyingAssetContractV1(
           /failed validation on write/,
         );
         assert.equal(
-          await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+          await repository.underlyingOf({ chainId: 8453, tokenAddress: COINBASE_AAPL }),
           null,
           'a refused write leaves no row behind',
         );
@@ -184,8 +177,8 @@ export function underlyingAssetContractV1(
     }
 
     test('the write gate never invents identity from a ticker or a name', async () => {
-      // The underlying is called "Apple Inc." and the source ref names a
-      // Dinari stock id. Neither may stand in for an issuer nobody typed.
+      // The underlying is called "Apple Inc." and the source ref names
+      // Coinbase's API. Neither may stand in for an issuer nobody typed.
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       const noIssuer = { ...binding() } as Record<string, unknown>;
@@ -194,7 +187,9 @@ export function underlyingAssetContractV1(
         () => repository.bindRepresentation(noIssuer as BindRepresentationInputV1),
         /failed validation on write/,
       );
-      for (const invented of ['unknown', 'apple', 'AAPL', '']) {
+      // An issuer Miorail does not cover is refused the same way (Backed and
+      // Dinari were removed on 2026-11-18).
+      for (const invented of ['unknown', 'apple', 'AAPL', '', 'dinari', 'backed']) {
         await assert.rejects(
           () =>
             repository.bindRepresentation({
@@ -211,14 +206,11 @@ export function underlyingAssetContractV1(
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       const written = await repository.bindRepresentation(binding());
-      assert.equal(written.issuerId, 'dinari');
-      assert.equal(written.representationKind, 'rebasing_erc20');
-      const read = await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL });
-      assert.equal(read?.binding.issuerId, 'dinari');
-      assert.equal(
-        read?.binding.issuerInstrumentKey,
-        'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77',
-      );
+      assert.equal(written.issuerId, 'coinbase');
+      assert.equal(written.representationKind, 'b20_asset');
+      const read = await repository.underlyingOf({ chainId: 8453, tokenAddress: COINBASE_AAPL });
+      assert.equal(read?.binding.issuerId, 'coinbase');
+      assert.equal(read?.binding.issuerInstrumentKey, `coinbase:b20_address:${COINBASE_AAPL}`);
     });
 
     test('the empty graph is a legible answer, not a missing one', async () => {
@@ -229,7 +221,6 @@ export function underlyingAssetContractV1(
       assert.deepEqual(await repository.underlyingCounts({ chainId: 8453 }), {
         underlyings: 0,
         boundRepresentations: 0,
-        multiIssuerUnderlyings: 0,
       });
       assert.deepEqual(await repository.listUnderlyings({ chainId: 8453, limit: 50 }), []);
     });
@@ -246,37 +237,31 @@ export function underlyingAssetContractV1(
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       await repository.bindRepresentation(binding());
-      await repository.bindRepresentation(binding({ tokenAddress: COINBASE_AAPL }));
+      await repository.bindRepresentation(binding({ tokenAddress: COINBASE_AAPL_SECOND }));
 
       const found = await repository.representationsOf({ chainId: 8453, underlyingKey: APPLE });
       assert.deepEqual(
         found.map((row) => row.tokenAddress).sort(),
-        [DINARI_AAPL, COINBASE_AAPL].sort(),
-        'two issuers, one security, two independently identified addresses',
+        [COINBASE_AAPL, COINBASE_AAPL_SECOND].sort(),
+        'one security, two independently identified addresses',
       );
       const counts = await repository.underlyingCounts({ chainId: 8453 });
       assert.equal(counts.underlyings, 1);
       assert.equal(counts.boundRepresentations, 2);
     });
 
-    test('the chooser puts the securities Base carries two ways first', async () => {
-      // The whole point of the surface. A one-representation underlying has
-      // nothing to compare and belongs below the ones that do, whatever it is
-      // called alphabetically.
+    test('with no supply read, more contracts sort first, whatever the name', async () => {
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       await repository.declareUnderlying({
         ...underlying(),
         underlyingKey: AMAZON,
         canonicalName: 'Amazon.com, Inc.',
+        identifierValue: 'US0231351067',
       });
-      await repository.bindRepresentation(binding({ issuerId: 'dinari' }));
-      await repository.bindRepresentation(
-        binding({ tokenAddress: COINBASE_AAPL, issuerId: 'coinbase' }),
-      );
-      await repository.bindRepresentation(
-        binding({ tokenAddress: BACKED_AMZN, underlyingKey: AMAZON, issuerId: 'backed' }),
-      );
+      await repository.bindRepresentation(binding());
+      await repository.bindRepresentation(binding({ tokenAddress: COINBASE_AAPL_SECOND }));
+      await repository.bindRepresentation(binding({ tokenAddress: COINBASE_AMZN, underlyingKey: AMAZON }));
 
       const listed = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
       assert.deepEqual(
@@ -285,54 +270,31 @@ export function underlyingAssetContractV1(
         'two representations sorts above one',
       );
       assert.equal(listed[0]?.representationCount, 2);
-      assert.deepEqual(listed[0]?.issuerIds, ['coinbase', 'dinari']);
-      assert.deepEqual(listed[1]?.issuerIds, ['backed']);
-    });
-
-    test('two representations of ONE issuer is not two issuers', async () => {
-      // A rebasing token and its own ERC-4626 wrapper are one issuer's
-      // structure choice. Counting that as a multi-issuer security would
-      // promise a comparison with nothing on the other side of it — and it is
-      // the ordinary shape in production, where Backed ships both for the same
-      // instrument.
-      const { repository } = await open();
-      await repository.declareUnderlying(underlying());
-      await repository.bindRepresentation(binding({ issuerId: 'backed' }));
-      await repository.bindRepresentation(
-        binding({ tokenAddress: BACKED_AMZN, issuerId: 'backed' }),
-      );
-
-      const counts = await repository.underlyingCounts({ chainId: 8453 });
-      assert.equal(counts.boundRepresentations, 2);
-      assert.equal(counts.multiIssuerUnderlyings, 0, 'one issuer, twice, is not a comparison');
-
-      const listed = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
-      assert.equal(listed[0]?.representationCount, 2);
-      assert.deepEqual(listed[0]?.issuerIds, ['backed']);
+      assert.deepEqual(listed[0]?.issuerIds, ['coinbase']);
+      assert.deepEqual(listed[1]?.issuerIds, ['coinbase']);
     });
 
     test('the index names the issuer a write was required to establish', async () => {
-      // This case used to assert that an unattributed binding is counted and
-      // names nobody. A write can no longer produce that state at all, so the
-      // index is now free to report the issuer rather than an empty list. The
-      // read side still tolerates a pre-0059 row -- that path is exercised by
-      // the recovery tests in rwa-market-reality, against the read schema.
+      // A write cannot produce an unattributed binding, so the index reports
+      // the issuer rather than an empty list. The read side still tolerates a
+      // pre-0059 row -- that path is exercised by the recovery tests in
+      // rwa-market-reality, against the read schema.
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       await repository.bindRepresentation(binding());
       const listed = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
       assert.equal(listed[0]?.representationCount, 1);
-      assert.deepEqual(listed[0]?.issuerIds, ['dinari']);
+      assert.deepEqual(listed[0]?.issuerIds, ['coinbase']);
     });
 
     test('a bound representation names the source that bound it', async () => {
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       await repository.bindRepresentation(binding());
-      const found = await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL });
+      const found = await repository.underlyingOf({ chainId: 8453, tokenAddress: COINBASE_AAPL });
       assert.equal(found?.underlying.canonicalName, 'Apple Inc.');
-      assert.equal(found?.binding.sourceKind, 'dinari_stock_api');
-      assert.match(found?.underlying.sourceRef ?? '', /market_data\/stocks/);
+      assert.equal(found?.binding.sourceKind, 'coinbase_stocks_api');
+      assert.match(found?.underlying.sourceRef ?? '', /tokenized-stocks/);
     });
 
     test('a delayed older observation cannot replace the current identity projection', async () => {
@@ -353,7 +315,7 @@ export function underlyingAssetContractV1(
 
       const found = await repository.underlyingOf({
         chainId: 8453,
-        tokenAddress: DINARI_AAPL,
+        tokenAddress: COINBASE_AAPL,
       });
       assert.equal(found?.underlying.canonicalName, 'Apple Inc. reviewed later');
       assert.equal(found?.underlying.observedAt, '2026-08-26T14:00:00.000Z');

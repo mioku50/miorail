@@ -232,9 +232,7 @@ function sourceV1(kind: string | null): string {
     ? 'the Base product page'
     : kind === 'coinbase_stocks_api'
       ? 'the Coinbase Stocks API'
-      : kind === 'backed_assets_api'
-        ? 'the Backed bTokens API'
-        : 'the Base docs';
+      : 'the Base docs';
 }
 
 /** "$10,000" from USDC atomic units. */

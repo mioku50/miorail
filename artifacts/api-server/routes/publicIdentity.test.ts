@@ -22,7 +22,6 @@ function readingV1(over: Record<string, unknown> = {}) {
     standing: 'known_lookalike' as const,
     answer: 'No. It is not AAPLc.',
     official: null,
-    issuerRepresentation: null,
     lookalike: {
       officialAddress: OFFICIAL,
       officialTicker: 'AAPLc',

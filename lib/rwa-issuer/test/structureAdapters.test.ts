@@ -31,12 +31,7 @@ test('every reviewed issuer has every typed structure and eligibility field', ()
   }
 });
 
-test('legacy Base bTokens do not inherit the current xStocks bridge claim', () => {
-  assert.equal(REPRESENTATION_STRUCTURE_ADAPTERS_V1.backed.bridge.status, 'unknown');
-  assert.equal(REPRESENTATION_STRUCTURE_ADAPTERS_V1.backed.bridge.value, null);
-});
-
-test('the custody chain is a reviewed document for Coinbase and an absence elsewhere', () => {
+test('the custody chain is a reviewed document for Coinbase', () => {
   const coinbase = REPRESENTATION_STRUCTURE_ADAPTERS_V1.coinbase;
   assert.equal(coinbase.custody.value, 'regulated_broker_custodian_bankruptcy_remote');
   assert.match(coinbase.custody.note, /Alpaca/);
@@ -52,9 +47,5 @@ test('the custody chain is a reviewed document for Coinbase and an absence elsew
     assert.equal(source.kind, 'reviewed_document');
     assert.match(source.ref, /^https:\/\//);
     assert.ok(Number.isFinite(Date.parse(source.reviewedAt)));
-  }
-  for (const issuerId of ['dinari', 'backed'] as const) {
-    assert.equal(REPRESENTATION_STRUCTURE_ADAPTERS_V1[issuerId].custody.status, 'unknown');
-    assert.equal(REPRESENTATION_STRUCTURE_ADAPTERS_V1[issuerId].supervision.status, 'unknown');
   }
 });

@@ -63,7 +63,7 @@ before(async () => {
       identifier_value, source_kind, source_ref, source_hash, observed_at
     ) VALUES (
       'security:isin:US67066G1040', 'equity', 'NVIDIA', 'NVDA', 'isin',
-      'US67066G1040', 'backed_assets_api', 'fixture', ${'ab'.repeat(32)},
+      'US67066G1040', 'coinbase_b20_metadata', 'fixture', ${'ab'.repeat(32)},
       '2026-08-27T12:00:00.000Z'
     )`;
   await sql`
@@ -72,9 +72,9 @@ before(async () => {
       issuer_id, issuer_instrument_key, caip10, representation_kind, evidence_strength,
       observed_at
     ) VALUES (
-      8453, ${SUPPLY_TOKEN_V1}, 'security:isin:US67066G1040', 'backed_assets_api',
-      'fixture', ${'ab'.repeat(32)}, 'backed', 'backed:instrument:nvda',
-      ${`eip155:8453:${SUPPLY_TOKEN_V1}`}, 'rebasing_erc20',
+      8453, ${SUPPLY_TOKEN_V1}, 'security:isin:US67066G1040', 'coinbase_b20_metadata',
+      'fixture', ${'ab'.repeat(32)}, 'coinbase', ${`coinbase:b20_address:${SUPPLY_TOKEN_V1}`},
+      ${`eip155:8453:${SUPPLY_TOKEN_V1}`}, 'b20_asset',
       'reviewed_machine_address_mapping', '2026-08-27T12:00:00.000Z'
     )`;
 });

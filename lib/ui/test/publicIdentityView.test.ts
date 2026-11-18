@@ -24,7 +24,6 @@ function reading(over: Partial<PublicIdentityReadingV1> = {}): PublicIdentityRea
         { sourceKind: 'base_docs_technical', currentlyListed: true, lastSeenAt: '2026-09-15T00:00:00.000Z' },
       ],
     },
-    issuerRepresentation: null,
     lookalike: null,
     corpus: { lookalikeRows: 160, lookalikesLastScannedAt: '2026-09-16T03:00:00.000Z' },
     caveats: ['Compare ADDRESSES, not symbols.'],
@@ -102,27 +101,6 @@ describe('the public identity verdict', () => {
       view?.facts.find((row) => row.label === 'It declared')?.note ?? '',
       /can be changed on chain/,
     );
-  });
-
-  test('an issuer vouching for an address is not an endorsement of what it represents', () => {
-    const view = publicIdentityViewV1(
-      reading({
-        standing: 'issuer_representation',
-        official: null,
-        answer: 'Dinari vouches for it.',
-        issuerRepresentation: {
-          issuerId: 'dinari',
-          rootKey: 'dinari_factory_v1',
-          observedAt: '2026-09-16T02:00:00.000Z',
-        },
-      }),
-    );
-    assert.equal(view?.tone, 'neutral');
-    assert.equal(
-      view?.facts.find((row) => row.label === 'What it represents')?.value,
-      'not established',
-    );
-    assert.equal(view?.compareWith, null);
   });
 
   test('a delisted asset is not demoted to a warning', () => {

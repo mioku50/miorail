@@ -16,7 +16,6 @@ import { describeErrorV1 } from '@mioagent/utils';
 import { client, closeDb } from '@mioagent/db';
 import { lookalikeMatchV1, type OfficialIdentityForMatchV1 } from '@mioagent/rwa-lookalike';
 import {
-  createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialLookalikeRepository,
   createDatabaseRwaSignalRepository,
@@ -43,7 +42,6 @@ async function main(): Promise<void> {
   const official = createDatabaseOfficialAssetRepository(client);
   const lookalikes = createDatabaseOfficialLookalikeRepository(client);
   const signals = createDatabaseRwaSignalRepository(client);
-  const issuers = createDatabaseIssuerRepresentationRepository(client);
 
   const assets = await listedOfficialAssetsV1(official);
   if (assets.length === 0) {
@@ -57,15 +55,6 @@ async function main(): Promise<void> {
     displayName: asset.listings.map((listing) => listing.displayName).find((name) => name) ?? null,
   }));
   const corpus = officials.map((asset) => asset.tokenAddress);
-  // Every address a reviewed root vouches for, beyond the alias corpus. These
-  // may never BE a lookalike and may never be POINTED AT as one: Dinari's Base
-  // dShare declares `symbol() = "AAPL"` exactly, which is Miorail's own
-  // `underlying` alias for AAPLc, and nothing reviewed says which security it
-  // stands for. So it is excluded without being adopted.
-  const reviewedRepresentations = (
-    await issuers.establishedRepresentations({ chainId: CHAIN_ID_V1, limit: 1_000 })
-  ).map((row) => row.tokenAddress);
-  const reviewedAddresses = [...new Set([...corpus, ...reviewedRepresentations])];
 
   const launches = (await client`
     SELECT token_address, symbol, name, detected_at
@@ -73,8 +62,7 @@ async function main(): Promise<void> {
      WHERE chain_id = ${CHAIN_ID_V1} AND canonical = true`) as unknown as LaunchRowV1[];
 
   console.log(
-    `${officials.length} official asset(s) and ${reviewedRepresentations.length} other reviewed ` +
-      `representation(s) against ${launches.length} indexed launch(es)\n`,
+    `${officials.length} official asset(s) against ${launches.length} indexed launch(es)\n`,
   );
 
   const observedAt = new Date().toISOString();
@@ -87,7 +75,6 @@ async function main(): Promise<void> {
         name: launch.name ?? '',
       },
       officials,
-      reviewedRepresentations,
     });
     if (!match) continue;
     rows.push({
@@ -144,7 +131,7 @@ async function main(): Promise<void> {
   const outcome = await lookalikes.recordLookalikes({
     chainId: CHAIN_ID_V1,
     officialAddresses: corpus,
-    reviewedAddresses,
+    reviewedAddresses: corpus,
     rows,
   });
   console.log(

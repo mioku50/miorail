@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   CAPABILITY_VERDICTS_V1,
+  ISSUER_CAPABILITY_PROFILES_V1,
   REPRESENTATION_CAPABILITIES_V1,
   capabilityVerdictV1,
   issuerCapabilitiesV1,
@@ -60,9 +61,9 @@ describe('capability verdicts', () => {
   });
 
   test('a documented off-chain process is not an absent one', () => {
-    // Dinari pays dividends in USD+ to registered accounts. Probing a selector
-    // for that would return `absent`, which reads as "this issuer does not do
-    // dividends" — false, and the opposite of what the issuer documents.
+    // Coinbase's primary redemption runs through authorized participants.
+    // Probing a selector for it would return `absent`, which reads as "this
+    // issuer has no redemption" — false, and the opposite of what it documents.
     assert.equal(
       capabilityVerdictV1({ documented: 'documented', callable: 'off_chain' }),
       'documented_off_chain',
@@ -86,7 +87,7 @@ describe('capability verdicts', () => {
 
 describe('issuer profiles', () => {
   test('every issuer answers for every capability', () => {
-    for (const issuer of ['coinbase', 'dinari', 'backed'] as const) {
+    for (const issuer of ['coinbase'] as const) {
       const states = issuerCapabilitiesV1(issuer);
       assert.deepEqual(
         states.map((state) => state.capability),
@@ -94,28 +95,6 @@ describe('issuer profiles', () => {
         'a missing row would read as a capability nobody thought about',
       );
     }
-  });
-
-  test("Dinari's pause is supported, because the deployment answers it", () => {
-    // The correction that mattered. The published release ABI declares no
-    // `paused()`; the deployed Base dShares return false for it. Reading only
-    // the document would have called this unavailable forever.
-    const pause = issuerCapabilitiesV1('dinari').find(
-      (state) => state.capability === 'pause_state',
-    );
-    assert.equal(pause?.verdict, 'supported');
-    assert.match(pause?.probe ?? '', /0x5c975abb/);
-  });
-
-  test("Dinari's bridge is never not_applicable", () => {
-    // The other correction. The token is itself a LayerZero V2 OFT and returns
-    // the canonical EndpointV2, so storing `not_applicable` would have been
-    // false about a live transport.
-    const bridge = issuerCapabilitiesV1('dinari').find((state) => state.capability === 'bridge');
-    assert.notEqual(bridge?.verdict, 'not_applicable');
-    assert.equal(bridge?.verdict, 'supported');
-    // And it still does not claim to know the destinations.
-    assert.match(bridge?.note ?? '', /peers\(uint32\) reverts/);
   });
 
   test('the active B20 ratio is callable while advance state remains off chain', () => {
@@ -126,35 +105,23 @@ describe('issuer profiles', () => {
     assert.match(actions?.note ?? '', /offchain registry/);
   });
 
-  test('a distribution reaches every B20 holder and only a registered dShare holder', () => {
-    // The sharpest difference between the two issuers, and the reason the exit
-    // families are separate. A B20 dividend is a multiplier change visible to
-    // anybody holding the token; a dShare dividend needs an account.
+  test('a distribution reaches every B20 holder as a multiplier change', () => {
     const coinbase = issuerCapabilitiesV1('coinbase').find(
       (state) => state.capability === 'distributions',
     );
-    const dinari = issuerCapabilitiesV1('dinari').find(
-      (state) => state.capability === 'distributions',
-    );
     assert.equal(coinbase?.verdict, 'supported');
-    assert.equal(dinari?.verdict, 'documented_off_chain');
-    assert.match(dinari?.note ?? '', /never registered does not receive them/);
+    assert.match(coinbase?.note ?? '', /no registration and no account/);
   });
 
-  test('holding a dShare is not the same permission as redeeming one', () => {
-    const eligibility = issuerCapabilitiesV1('dinari').find(
-      (state) => state.capability === 'eligibility',
-    );
-    assert.equal(eligibility?.verdict, 'documented_off_chain');
-    assert.match(eligibility?.note ?? '', /blacklist/);
-  });
-
-  test('one issuer never inherits the other issuer’s ratio convention', () => {
+  test('the B20 ratio is read, never assumed', () => {
     const coinbase = issuerCapabilitiesV1('coinbase').find((state) => state.capability === 'ratio');
-    const dinari = issuerCapabilitiesV1('dinari').find((state) => state.capability === 'ratio');
     assert.match(coinbase?.probe ?? '', /multiplier\(\)/);
-    assert.match(dinari?.probe ?? '', /balancePerShare\(\)/);
-    assert.match(dinari?.note ?? '', /double-count/);
+    assert.match(coinbase?.note ?? '', /the scale is read, never assumed/);
+  });
+
+  test('Coinbase is the only reviewed issuer', () => {
+    // Backed and Dinari were removed on 2026-11-18, code and data.
+    assert.deepEqual(Object.keys(ISSUER_CAPABILITY_PROFILES_V1), ['coinbase']);
   });
 });
 
@@ -182,6 +149,5 @@ describe('exit families', () => {
     assert.equal(market.evidence, 'measured_round_trip');
     assert.equal(market.observableByUs, true);
     assert.deepEqual(ISSUER_EXIT_FAMILIES_V1.coinbase, ['secondary_market_cash']);
-    assert.ok(ISSUER_EXIT_FAMILIES_V1.dinari.includes('issuer_redemption'));
   });
 });

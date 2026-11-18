@@ -49,7 +49,6 @@ describe('the list reads like a list of stocks', () => {
       issuerLine: 'Coinbase',
       issuerIds: ['coinbase'],
       representationCount: 1,
-      multiIssuer: false,
       emptyNote: null,
     });
     const quotes = stockQuoteViewsByKeyV1({
@@ -299,7 +298,7 @@ describe('what else you can do with the token', () => {
 describe("a thin market's price is not shown as the stock's", () => {
   const choice = (key: string, ticker: string, company: string | null): UnderlyingChoiceViewV1 => ({
     underlyingKey: key, title: ticker, ticker, company, identifier: null, issuerLine: 'Coinbase',
-    issuerIds: ['coinbase'], representationCount: 1, multiIssuer: false, emptyNote: null,
+    issuerIds: ['coinbase'], representationCount: 1, emptyNote: null,
   });
   const row = (overrides: Record<string, unknown>) => ({
     underlyingKey: NVDA, tokenAddress: NVDAC, tokenSymbol: 'PFEc', companyName: 'Pfizer Inc',

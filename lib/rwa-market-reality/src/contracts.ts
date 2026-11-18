@@ -218,9 +218,9 @@ export const MarketRealitySupplyV1Schema = z
 export const MarketRealityRepresentationV2Schema = z
   .object({
     tokenAddress: Address,
-    issuerId: z.enum(['coinbase', 'dinari', 'backed']),
+    issuerId: z.enum(['coinbase']),
     issuerInstrumentKey: z.string().min(1).max(200),
-    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare']),
+    representationKind: z.enum(['b20_asset']),
     supply: MarketRealitySupplyV1Schema,
     status: z.enum(['full', 'unavailable', 'not_measured', 'measurement_failed']),
     routePolicyKey: Hash.nullable(),
@@ -397,19 +397,7 @@ export const MarketRealityIndexEntryV1Schema = z
      * zero — a representation nobody has read is not counted as live.
      */
     liveRepresentationCount: z.number().int().min(0),
-    issuerIds: z.array(z.enum(['coinbase', 'dinari', 'backed'])).max(8),
-    /**
-     * Whether a Coinbase B20 contract represents this security on Base.
-     *
-     * The one issuer distinction the consumer surface leads with, and it is a
-     * fact about the corpus rather than a preference: B20 is the standard Base
-     * documents, and it is the only one of the three whose representations
-     * mostly price. Measured 2026-09-04 at $1,000 SELL: 10 of 13 Coinbase
-     * representations hold a cash route, 2 of 21 Backed, and 0 of 96 Dinari.
-     */
-    coinbaseIssued: z.boolean(),
-    /** True when more than one ISSUER carries it — the comparable case. */
-    multiIssuer: z.boolean(),
+    issuerIds: z.array(z.enum(['coinbase'])).max(8),
   })
   .strict();
 export type MarketRealityIndexEntryV1 = z.infer<typeof MarketRealityIndexEntryV1Schema>;
@@ -418,30 +406,17 @@ export const MarketRealityIndexV1Schema = z
   .object({
     schemaVersion: z.literal('market-reality-index/v1'),
     chainId: z.literal(8453),
-    /**
-     * Which corpus this page is a slice of.
-     *
-     * `coinbase_b20` is the default because it is the question Base's own
-     * documentation answers and the one a reader can act on. `all_representations`
-     * is the same corpus unfiltered — nothing is removed from the evidence
-     * store by the default, only from the first screen.
-     */
-    scope: z.enum(['coinbase_b20', 'all_representations']),
-    /** Every reviewed underlying in `scope`, most-represented first. */
+    /** Which corpus this page is: Coinbase's B20 contracts, the standard Base
+     * documents for tokenized stocks and the only issuer Miorail covers. */
+    scope: z.literal('coinbase_b20'),
+    /** Every reviewed underlying in `scope`, live markets first. */
     entries: z.array(MarketRealityIndexEntryV1Schema).max(500),
-    /** Corpus-wide, never the page: a count beside a filter is a claim about
-     * the corpus, and this surface pages. */
+    /** Corpus-wide, never the page: a count beside a list is a claim about the
+     * corpus, and this surface pages. */
     totals: z
       .object({
         underlyings: z.number().int().min(0),
         boundRepresentations: z.number().int().min(0),
-        multiIssuerUnderlyings: z.number().int().min(0),
-        /** Corpus-wide, whatever the scope: how many securities a Coinbase B20
-         * contract represents, and how many the whole reviewed corpus holds.
-         * Both are always reported so a scoped page can name what it is not
-         * showing instead of leaving the reader to discover it. */
-        coinbaseUnderlyings: z.number().int().min(0),
-        allUnderlyings: z.number().int().min(0),
       })
       .strict(),
     observedAt: Timestamp,
@@ -449,7 +424,7 @@ export const MarketRealityIndexV1Schema = z
   .strict();
 export type MarketRealityIndexV1 = z.infer<typeof MarketRealityIndexV1Schema>;
 
-export const MARKET_REALITY_INDEX_SCOPES_V1 = ['coinbase_b20', 'all_representations'] as const;
+export const MARKET_REALITY_INDEX_SCOPES_V1 = ['coinbase_b20'] as const;
 export type MarketRealityIndexScopeV1 = (typeof MARKET_REALITY_INDEX_SCOPES_V1)[number];
 
 // ---------------------------------------------------------------------------
@@ -486,10 +461,8 @@ export type MarketRealityHistoryPointV1 = z.infer<typeof MarketRealityHistoryPoi
 export const MarketRealityHistorySeriesV1Schema = z
   .object({
     tokenAddress: Address,
-    issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable(),
-    representationKind: z
-      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
-      .nullable(),
+    issuerId: z.enum(['coinbase']).nullable(),
+    representationKind: z.enum(['b20_asset']).nullable(),
     /** Oldest first. */
     points: z.array(MarketRealityHistoryPointV1Schema).max(500),
     pointCount: z.number().int().min(0),

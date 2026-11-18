@@ -13,7 +13,7 @@ function reading(address: string): PublicIdentityReadingV1 {
     schemaVersion: 'address-identity/v1', chainId: 8453, tokenAddress: address,
     standing: lookalike ? 'known_lookalike' : 'unknown_to_miorail',
     answer: lookalike ? 'No. It is not AAPLc.' : 'Miorail has nothing on file.',
-    official: null, issuerRepresentation: null,
+    official: null,
     lookalike: lookalike ? {
       officialAddress: OFFICIAL, officialTicker: 'AAPLc', matchKind: 'symbol_exact',
       matchedAlias: 'published_ticker', matchedValue: 'AAPLc', declaredSymbol: 'AAPLc',

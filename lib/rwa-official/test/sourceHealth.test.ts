@@ -32,7 +32,7 @@ describe('a reviewed source that stopped answering', () => {
       now: NOW,
       checks: [
         {
-          sourceKind: 'backed_assets_api',
+          sourceKind: 'coinbase_stocks_api',
           status: 'unreachable',
           detail: 'fetch failed',
           lastSuccessAt: ONE_HOUR_AGO,
@@ -47,7 +47,7 @@ describe('a reviewed source that stopped answering', () => {
       now: NOW,
       checks: [
         {
-          sourceKind: 'backed_assets_api',
+          sourceKind: 'coinbase_stocks_api',
           status: 'unreachable',
           detail: 'fetch failed',
           lastSuccessAt: THREE_DAYS_AGO,

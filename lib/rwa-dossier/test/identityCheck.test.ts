@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import type {
-  IssuerRepresentationRepositoryV1,
   OfficialAssetRepositoryV1,
   OfficialLookalikeRepositoryV1,
 } from '@mioagent/route-storage';
@@ -14,7 +13,6 @@ import {
 
 const OFFICIAL = '0xb200000000000000000000c2e324d24d7eecd1fb';
 const IMPOSTOR = '0x1111111111111111111111111111111111111111';
-const DSHARE = '0x41f7000000000000000000000000000000006348';
 const NOWHERE = '0x2222222222222222222222222222222222222222';
 const NOW = new Date('2026-09-16T08:00:00.000Z');
 
@@ -37,7 +35,6 @@ function listing(over: Partial<Record<string, unknown>> = {}) {
 function depsV1(input: {
   identities?: Record<string, unknown>;
   lookalike?: unknown;
-  membership?: unknown[];
   lookalikeTotal?: number;
 }): AddressIdentityCheckDepsV1 & { lookalikeAsked: string[] } {
   const lookalikeAsked: string[] = [];
@@ -60,9 +57,6 @@ function depsV1(input: {
         return (input.lookalike ?? null) as never;
       },
     } as unknown as OfficialLookalikeRepositoryV1,
-    issuers: {
-      membershipFor: async () => (input.membership ?? []) as never,
-    } as unknown as IssuerRepresentationRepositoryV1,
   };
 }
 
@@ -78,23 +72,6 @@ const LOOKALIKE_ROW_V1 = {
   launchedAt: '2026-08-30T00:00:00.000Z',
   firstFlaggedAt: '2026-08-31T00:00:00.000Z',
   lastSeenAt: '2026-09-16T03:00:00.000Z',
-};
-
-const VOUCHED_V1 = {
-  chainId: 8453 as const,
-  tokenAddress: DSHARE,
-  issuerId: 'dinari',
-  rootKey: 'dinari_factory_v1',
-  rootAddress: '0x3333333333333333333333333333333333333333',
-  membership: 'established',
-  blockNumber: '50500000',
-  blockHash: `0x${'11'.repeat(32)}`,
-  evidenceHash: `0x${'22'.repeat(32)}`,
-  firstSeenAt: '2026-08-20T00:00:00.000Z',
-  lastCheckedAt: '2026-09-16T02:00:00.000Z',
-  lastChangedAt: null,
-  reads: 9,
-  changes: 0,
 };
 
 describe('is this the real one', () => {
@@ -170,28 +147,6 @@ describe('is this the real one', () => {
     assert.deepEqual(deps.lookalikeAsked, []);
   });
 
-  test('an issuer vouching for an address is not the same claim as what it represents', async () => {
-    const result = await assembleAddressIdentityCheckV1(
-      depsV1({ membership: [VOUCHED_V1] }),
-      { chainId: 8453, tokenAddress: DSHARE },
-    );
-    assert.equal(result.standing, 'issuer_representation');
-    assert.equal(result.issuerRepresentation?.issuerId, 'dinari');
-    assert.equal(result.issuerRepresentation?.observedAt, '2026-09-16T02:00:00.000Z');
-    assert.match(result.answer, /not an impostor/);
-    assert.match(result.answer, /will not say which company/);
-    assert.match(result.caveats.join(' '), /Membership is not identity/);
-  });
-
-  test('a refuted membership row is the root saying no, and never a vouching', async () => {
-    const result = await assembleAddressIdentityCheckV1(
-      depsV1({ membership: [{ ...VOUCHED_V1, membership: 'refuted', changes: 1, lastChangedAt: '2026-09-10T00:00:00.000Z' }] }),
-      { chainId: 8453, tokenAddress: DSHARE },
-    );
-    assert.equal(result.standing, 'unknown_to_miorail');
-    assert.equal(result.issuerRepresentation, null);
-  });
-
   test('a lookalike names the address to compare, and carries no score', async () => {
     const result = await assembleAddressIdentityCheckV1(
       depsV1({
@@ -239,7 +194,6 @@ describe('is this the real one', () => {
         depsV1({ identities: { [OFFICIAL]: { chainId: 8453, tokenAddress: OFFICIAL, issuer: 'coinbase', listings: [listing()] } } }),
         { chainId: 8453, tokenAddress: OFFICIAL },
       ),
-      await assembleAddressIdentityCheckV1(depsV1({ membership: [VOUCHED_V1] }), { chainId: 8453, tokenAddress: DSHARE }),
       await assembleAddressIdentityCheckV1(depsV1({ lookalike: LOOKALIKE_ROW_V1 }), { chainId: 8453, tokenAddress: IMPOSTOR }),
       await assembleAddressIdentityCheckV1(depsV1({}), { chainId: 8453, tokenAddress: NOWHERE }),
     ];

@@ -33,7 +33,7 @@ test('API-only stocks enter the consumer index by exact address and checked ISIN
     { limit: 500, scope: 'coinbase_b20' },
   );
   assert.equal(index.entries.length, 58);
-  assert.ok(index.entries.find((row) => row.displaySymbol === 'NFLX')!.coinbaseIssued);
+  assert.deepEqual(index.entries.find((row) => row.displaySymbol === 'NFLX')!.issuerIds, ['coinbase']);
   await bindCoinbaseStocksApiV1(input);
   assert.equal((await underlyings.listUnderlyings({ chainId: 8453, limit: 500 })).length, 58);
 });

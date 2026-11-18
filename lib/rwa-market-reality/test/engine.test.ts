@@ -23,29 +23,44 @@ const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const UNDERLYING = 'security:isin:US67066G1040';
 
-function binding(
-  address: string,
-  instrument: string,
-  issuer: 'backed' | 'coinbase' = 'backed',
-): RepresentationUnderlyingV1 {
+function binding(address: string, instrument: string): RepresentationUnderlyingV1 {
   return {
     chainId: 8453,
     tokenAddress: address,
     underlyingKey: UNDERLYING,
-    sourceKind: issuer === 'backed' ? 'backed_assets_api' : 'coinbase_b20_metadata',
-    sourceRef: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+    sourceKind: 'coinbase_b20_metadata',
+    sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base',
     sourceHash: 'ab'.repeat(32),
-    issuerId: issuer,
+    issuerId: 'coinbase',
     issuerInstrumentKey: instrument,
     caip10: `eip155:8453:${address}`,
-    representationKind: issuer === 'backed' ? 'rebasing_erc20' : 'b20_asset',
-    evidenceStrength:
-      issuer === 'backed'
-        ? 'reviewed_machine_address_mapping'
-        : 'reviewed_machine_mapping_with_onchain_cross_check',
+    representationKind: 'b20_asset',
+    evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
     observedBlockNumber: null,
     observedBlockHash: null,
     observedAt: '2026-08-26T12:00:00.000Z',
+  };
+}
+
+/** A B20 multiplier read a minute before the test's "now": fresh, so a quote normalizes. */
+function freshRatio(address: string): RepresentationRatioRowV1 {
+  return {
+    chainId: 8453,
+    tokenAddress: address,
+    ratioKind: 'b20_multiplier',
+    application: 'apply_to_raw_balance',
+    rawValue: '1000000000000000000',
+    scale: '1000000000000000000',
+    scaleSource: 'read_from_contract',
+    blockNumber: '50000000',
+    blockHash: H,
+    evidenceHash: H,
+    observedAt: '2026-08-26T12:00:00.000Z',
+    lastCheckedAt: '2026-08-26T12:00:00.000Z',
+    lastChangedAt: null,
+    reads: 1,
+    changes: 0,
+    createdAt: '2026-08-26T12:00:00.000Z',
   };
 }
 
@@ -73,7 +88,7 @@ function run(
         runId: H,
         chainId: 8453,
         tokenAddress: address,
-        tokenSymbol: 'bNVDA',
+        tokenSymbol: 'NVDAc',
         tokenDecimals: 18,
         scope: 'public_ladder',
         tenantId: null,
@@ -122,8 +137,8 @@ function deps(
   } = {},
 ) {
   const bindings = options.bindings ?? [
-    binding(A, 'backed:instrument_id:a'),
-    binding(B, 'backed:instrument_id:b'),
+    binding(A, 'coinbase:b20_address:a'),
+    binding(B, 'coinbase:b20_address:b'),
   ];
   return {
     underlyings: {
@@ -134,7 +149,7 @@ function deps(
         runs[tokenAddress] ?? null,
     } as unknown as OfficialCashExitRepositoryV1,
     ratios: {
-      readRatios: async () => options.ratios ?? [],
+      readRatios: async () => options.ratios ?? bindings.map((row) => freshRatio(row.tokenAddress)),
     } as unknown as RepresentationRatioRepositoryV1,
     supplies: {
       readSupplies: async () =>
@@ -211,7 +226,7 @@ test('a previously quoted but closed question is typed expired, never a current 
   expired.observations[0]!.expiresAt = '2026-08-26T12:00:30.000Z';
   expired.observations[0]!.buyQuote!.expiresAt = '2026-08-26T12:00:30.000Z';
   const result = await assembleMarketRealityV2(
-    deps({ [A]: expired }, { bindings: [binding(A, 'coinbase:instrument_id:a', 'coinbase')] }),
+    deps({ [A]: expired }, { bindings: [binding(A, 'coinbase:instrument_id:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   const representation = result.representations[0]!;
@@ -281,7 +296,7 @@ test('a supply read failure remains unknown and keeps coverage incomplete', asyn
 });
 
 test('cash-size anchor no-route is BUY no-route but SELL unsized for the same exact row', async () => {
-  const options = { bindings: [binding(B, 'backed:instrument_id:b')] };
+  const options = { bindings: [binding(B, 'coinbase:b20_address:b')] };
   const buy = await assembleMarketRealityV2(
     deps({ [B]: run(B, '0', 'cash_size_anchor_no_route') }, options),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
@@ -303,7 +318,7 @@ test('an expired SELL sizing miss keeps unsized as the basis blocker', async () 
   const closed = run(B, '0', 'cash_size_anchor_no_route');
   closed.observations[0]!.expiresAt = '2026-08-26T12:00:30.000Z';
   const result = await assembleMarketRealityV2(
-    deps({ [B]: closed }, { bindings: [binding(B, 'backed:instrument_id:b')] }),
+    deps({ [B]: closed }, { bindings: [binding(B, 'coinbase:b20_address:b')] }),
     { underlyingKey: UNDERLYING, direction: 'sell', requestedCashAtomic: '100000000' },
   );
   assert.equal(result.representations[0]?.lastObservation?.status, 'unsized');
@@ -334,8 +349,8 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
       { [A]: run(A, '500000000000000000'), [B]: run(B, '400000000000000000') },
       {
         bindings: [
-          binding(A, 'coinbase:asset:a', 'coinbase'),
-          binding(B, 'coinbase:asset:b', 'coinbase'),
+          binding(A, 'coinbase:asset:a'),
+          binding(B, 'coinbase:asset:b'),
         ],
         ratios: [ratio(A), ratio(B)],
       },
@@ -348,7 +363,7 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
 });
 
 test('an API-only Coinbase listing can be quoted without inventing a reference price', async () => {
-  const row = { ...binding(A, 'coinbase:b20_address:a', 'coinbase'), sourceKind: 'coinbase_stocks_api' as const };
+  const row = { ...binding(A, 'coinbase:b20_address:a'), sourceKind: 'coinbase_stocks_api' as const };
   const ratio: RepresentationRatioRowV1 = {
     chainId: 8453, tokenAddress: A, ratioKind: 'b20_multiplier', application: 'apply_to_raw_balance',
     rawValue: '1000000000000000000', scale: '1000000000000000000', scaleSource: 'read_from_contract',
@@ -378,7 +393,7 @@ test('a background sample is history, never a current quote', async () => {
   lapsed.observations[0]!.expiresAt = '2026-08-26T12:00:20.000Z';
   lapsed.observations[0]!.buyQuote!.expiresAt = '2026-08-26T12:00:20.000Z';
   const result = await assembleMarketRealityV2(
-    deps({ [A]: lapsed }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    deps({ [A]: lapsed }, { bindings: [binding(A, 'coinbase:b20_address:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   const row = result.representations[0]!;
@@ -395,7 +410,7 @@ test('open evidence is live, and its observation is marked open', async () => {
   const result = await assembleMarketRealityV2(
     deps(
       { [A]: run(A, '500000000000000000') },
-      { bindings: [binding(A, 'backed:instrument_id:a')] },
+      { bindings: [binding(A, 'coinbase:b20_address:a')] },
     ),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
@@ -407,7 +422,7 @@ test('open evidence is live, and its observation is marked open', async () => {
 
 test('a representation nobody ever measured has no observation to show', async () => {
   const result = await assembleMarketRealityV2(
-    deps({}, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    deps({}, { bindings: [binding(A, 'coinbase:b20_address:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   const row = result.representations[0]!;
@@ -433,24 +448,7 @@ function legacyRowV1(address: string): RepresentationUnderlyingV1 {
   };
 }
 
-const legacyRatioV1 = (address: string): RepresentationRatioRowV1 => ({
-  chainId: 8453,
-  tokenAddress: address,
-  ratioKind: 'backed_evm_multiplier',
-  application: 'already_applied_by_token',
-  rawValue: '1000000000000000000',
-  scale: '1000000000000000000',
-  scaleSource: 'reviewed_constant',
-  blockNumber: '49900000',
-  blockHash: H,
-  evidenceHash: H,
-  observedAt: '2026-08-25T00:00:00.000Z',
-  lastCheckedAt: '2026-08-25T00:00:00.000Z',
-  lastChangedAt: null,
-  reads: 1,
-  changes: 0,
-  createdAt: '2026-08-25T00:00:00.000Z',
-});
+const legacyRatioV1 = (address: string): RepresentationRatioRowV1 => freshRatio(address);
 
 test('a pre-0059 row is recovered from its exact address, and v2 stays strict', async () => {
   const result = await assembleMarketRealityV2(
@@ -461,18 +459,18 @@ test('a pre-0059 row is recovered from its exact address, and v2 stays strict', 
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   const row = result.representations[0]!;
-  // `backed_assets_api` IS Backed's own reviewed source, so the issuer follows
-  // from the row. Neither `null` nor "unknown" appears anywhere.
-  assert.equal(row.issuerId, 'backed');
-  assert.equal(row.representationKind, 'rebasing_erc20');
-  assert.equal(row.issuerInstrumentKey, `backed:base_address:${A}`);
+  // `coinbase_b20_metadata` IS Coinbase's own reviewed source, so the issuer
+  // follows from the row. Neither `null` nor "unknown" appears anywhere.
+  assert.equal(row.issuerId, 'coinbase');
+  assert.equal(row.representationKind, 'b20_asset');
   assert.equal(result.universe.reviewedRepresentationCount, 1);
 });
 
 test('an unestablished structure leaves the comparison instead of being guessed', async () => {
-  // A non-rebasing ERC-4626 wrapper has no ratio row. "No evidence" must not
-  // become "rebasing", so the address is not placed in the strict array -- and
-  // the count of reviewed rows still reports it, so nothing vanishes quietly.
+  // A legacy row with no ratio row has no evidence of its structure. "No
+  // evidence" must not become a guess, so the address is not placed in the
+  // strict array -- and the count of reviewed rows still reports it, so
+  // nothing vanishes quietly.
   const result = await assembleMarketRealityV2(
     deps({ [A]: run(A, '500000000000000000') }, { bindings: [legacyRowV1(A)], ratios: [] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
@@ -487,10 +485,10 @@ test('an unestablished structure leaves the comparison instead of being guessed'
 
 test('a complete binding is never rewritten by the recovery', async () => {
   const result = await assembleMarketRealityV2(
-    deps({ [A]: run(A, '500000000000000000') }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    deps({ [A]: run(A, '500000000000000000') }, { bindings: [binding(A, 'coinbase:b20_address:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
-  assert.equal(result.representations[0]?.issuerInstrumentKey, 'backed:instrument_id:a');
+  assert.equal(result.representations[0]?.issuerInstrumentKey, 'coinbase:b20_address:a');
 });
 
 test('the Stocks index admits only reviewed equities and computes totals over that universe', async () => {
@@ -498,7 +496,6 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     underlyingKey: string,
     assetClass: 'equity' | 'fund_share' | 'other' | 'unknown',
     representationCount: number,
-    issuerIds: string[],
     live = representationCount,
   ) => ({
     underlying: {
@@ -508,33 +505,23 @@ test('the Stocks index admits only reviewed equities and computes totals over th
       displaySymbol: null,
       identifierScheme: null,
       identifierValue: null,
-      sourceKind: 'backed_assets_api' as const,
-      sourceRef: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+      sourceKind: 'coinbase_stocks_api' as const,
+      sourceRef: 'https://api.coinbase.com/v1/tokenized-stocks',
       sourceHash: 'ab'.repeat(32),
       observedAt: '2026-09-01T12:00:00.000Z',
     },
     representationCount,
     liveRepresentationCount: live,
-    issuerIds,
-    // Every contract past the first belongs to the FIRST issuer named, so the
-    // scoped Coinbase total is not simply the row count and the assertion below
-    // is testing arithmetic rather than a coincidence.
-    representationCountsByIssuer: Object.fromEntries(
-      issuerIds.map((issuerId, index) => [
-        issuerId,
-        index === 0 ? representationCount - (issuerIds.length - 1) : 1,
-      ]),
-    ),
-    liveRepresentationCountsByIssuer: Object.fromEntries(
-      issuerIds.map((issuerId, index) => [issuerId, index === 0 ? live - (issuerIds.length - 1) : 1]),
-    ),
+    issuerIds: ['coinbase'],
+    representationCountsByIssuer: { coinbase: representationCount },
+    liveRepresentationCountsByIssuer: { coinbase: live },
   });
   const rows = [
-    underlying('backed:instrument:equity', 'equity', 3, ['backed', 'coinbase']),
-    underlying('backed:instrument:bond', 'other', 1, ['backed']),
-    underlying('backed:instrument:unreviewed', 'unknown', 1, ['backed']),
-    underlying('backed:instrument:fund', 'fund_share', 1, ['backed']),
-    underlying('backed:instrument:equity-2', 'equity', 1, ['coinbase']),
+    underlying('security:isin:equity', 'equity', 2, 1),
+    underlying('security:isin:bond', 'other', 1),
+    underlying('security:isin:unreviewed', 'unknown', 1),
+    underlying('security:isin:fund', 'fund_share', 1),
+    underlying('security:isin:equity-2', 'equity', 1),
   ];
   const result = await assembleMarketRealityIndexV1(
     {
@@ -552,97 +539,21 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     result.entries.map((entry) => entry.assetClass),
     ['equity', 'equity'],
   );
-  // `boundRepresentations` is 2, not 4. The default scope is Coinbase, and the
-  // four contracts across these two equities include two Backed ones. The band
-  // above the grid read `Securities 13` beside `Representations 39` because
-  // this number counted every contract bound to a Coinbase-covered company —
-  // two units under two labels, and no way to tell which was which.
-  // No company is multi-issuer in the Coinbase scope: each is its Coinbase
-  // contract alone (operator, 2026-10-03).
-  assert.deepEqual(result.totals, {
-    underlyings: 2,
-    boundRepresentations: 2,
-    multiIssuerUnderlyings: 0,
-    coinbaseUnderlyings: 2,
-    allUnderlyings: 2,
-  });
-  // The wider scope is unchanged: there, every contract counts, because every
-  // contract is on the page.
-  const wide = await assembleMarketRealityIndexV1(
-    {
-      underlyings: {
-        listUnderlyings: async () => rows,
-        underlyingCounts: async () => {
-          throw new Error('generic security totals must not leak into Stocks');
-        },
-      } as unknown as UnderlyingAssetRepositoryV1,
-      now: () => new Date('2026-09-01T12:00:00.000Z'),
-    },
-    { limit: 50, scope: 'all_representations' },
-  );
-  assert.equal(wide.totals.boundRepresentations, 4);
-  // Coinbase's own contracts, so the surface orders and labels on them. The
-  // wide scope still carries every issuer's.
+  // Every contract of the two equities, and nothing of the bond, the fund or
+  // the unreviewed row.
+  assert.deepEqual(result.totals, { underlyings: 2, boundRepresentations: 3 });
   assert.deepEqual(
     result.entries.map((entry) => [entry.representationCount, entry.liveRepresentationCount, entry.issuerIds]),
     [
+      [2, 1, ['coinbase']],
       [1, 1, ['coinbase']],
-      [1, 1, ['coinbase']],
-    ],
-  );
-  assert.deepEqual(
-    wide.entries.map((entry) => entry.liveRepresentationCount),
-    [3, 1],
-  );
-});
-
-test('in the Coinbase scope a company is as live as its Coinbase contract', async () => {
-  // COIN on production: COINc held nothing while Backed's bCOIN had supply,
-  // and the Coinbase-only board listed COIN as a live market.
-  const row = (key: string, live: Record<string, number>) => ({
-    underlying: {
-      underlyingKey: key,
-      assetClass: 'equity' as const,
-      canonicalName: key,
-      displaySymbol: null,
-      identifierScheme: null,
-      identifierValue: null,
-      sourceKind: 'coinbase_b20_metadata' as const,
-      sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base',
-      sourceHash: 'cd'.repeat(32),
-      observedAt: '2026-09-01T12:00:00.000Z',
-    },
-    representationCount: 2,
-    liveRepresentationCount: Object.values(live).reduce((a, b) => a + b, 0),
-    issuerIds: ['backed', 'coinbase'],
-    representationCountsByIssuer: { backed: 1, coinbase: 1 },
-    liveRepresentationCountsByIssuer: live,
-  });
-  const result = await assembleMarketRealityIndexV1(
-    {
-      underlyings: {
-        listUnderlyings: async () => [row('security:isin:coin', { backed: 1 }), row('security:isin:nvda', { backed: 1, coinbase: 1 })],
-        underlyingCounts: async () => {
-          throw new Error('generic security totals must not leak into Stocks');
-        },
-      } as unknown as UnderlyingAssetRepositoryV1,
-      now: () => new Date('2026-09-01T12:00:00.000Z'),
-    },
-    { limit: 50 },
-  );
-  assert.deepEqual(
-    result.entries.map((entry) => [entry.underlyingKey, entry.liveRepresentationCount, entry.multiIssuer]),
-    [
-      ['security:isin:nvda', 1, false],
-      ['security:isin:coin', 0, false],
     ],
   );
 });
 
 test('the Coinbase board keeps a company only while a Coinbase contract of it is listed', async () => {
   // COINc exists but no source lists it (Base dropped it 2026-09-10, the API
-  // never had it), while Backed's bCOIN is listed: the board said 128 stocks
-  // where Coinbase lists 127.
+  // never had it): the board said 128 stocks where Coinbase lists 127.
   const row = (key: string) => ({
     underlying: {
       underlyingKey: key, assetClass: 'equity' as const, canonicalName: key, displaySymbol: null,
@@ -650,13 +561,12 @@ test('the Coinbase board keeps a company only while a Coinbase contract of it is
       sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base', sourceHash: 'cd'.repeat(32),
       observedAt: '2026-09-01T12:00:00.000Z',
     },
-    representationCount: 2, liveRepresentationCount: 1, issuerIds: ['backed', 'coinbase'],
-    representationCountsByIssuer: { backed: 1, coinbase: 1 }, liveRepresentationCountsByIssuer: { backed: 1 },
+    representationCount: 1, liveRepresentationCount: 0, issuerIds: ['coinbase'],
+    representationCountsByIssuer: { coinbase: 1 }, liveRepresentationCountsByIssuer: {},
   });
   const bindings: Record<string, { tokenAddress: string; issuerId: string; sourceKind: string }[]> = {
     'security:isin:coin': [
       { tokenAddress: '0xb200000000000000000000000000000000000c01', issuerId: 'coinbase', sourceKind: 'coinbase_b20_metadata' },
-      { tokenAddress: '0x00000000000000000000000000000000000bc01', issuerId: 'backed', sourceKind: 'backed_assets_api' },
     ],
     'security:isin:nvda': [
       { tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c', issuerId: 'coinbase', sourceKind: 'coinbase_stocks_api' },
@@ -667,7 +577,7 @@ test('the Coinbase board keeps a company only while a Coinbase contract of it is
     representationsOf: async (input: { underlyingKey: string }) => bindings[input.underlyingKey] ?? [],
   } as unknown as UnderlyingAssetRepositoryV1;
   const now = () => new Date('2026-10-10T12:00:00.000Z');
-  const listed = new Set(['0xb20000000000000000000078ee7ce2fe4908108c', '0x00000000000000000000000000000000000bc01']);
+  const listed = new Set(['0xb20000000000000000000078ee7ce2fe4908108c']);
   const board = await assembleMarketRealityIndexV1({ underlyings, now, currentOfficialAddresses: async () => listed }, { limit: 50 });
   assert.deepEqual(board.entries.map((entry) => entry.underlyingKey), ['security:isin:nvda']);
   assert.equal(board.totals.underlyings, 1);
@@ -726,15 +636,10 @@ test('a security with tokens outstanding is not ranked below an empty contract',
   );
 });
 
-test('the Stocks index opens on the standard Base documents, and can widen', async () => {
-  // Three issuers represent the same securities on Base and they are not three
-  // versions of one thing. Measured 2026-09-04 at $1,000 SELL: 10 of 13
-  // Coinbase representations held a cash route, 2 of 21 Backed, 0 of 96 Dinari
-  // — so 74% of the corpus was filling the first screen of a pricing product
-  // with contracts that cannot be priced.
-  //
-  // Nothing is removed from the evidence store. The wide scope returns exactly
-  // what this endpoint returned before.
+test('the Stocks index is Coinbase B20 contracts only, and says so', async () => {
+  // Backed and Dinari were removed on 2026-11-18, code and data. A row that
+  // names no Coinbase contract (a pre-0059 binding with no issuer typing) does
+  // not reach the board.
   const row = (key: string, issuerIds: string[]) => ({
     underlying: {
       underlyingKey: key,
@@ -748,59 +653,26 @@ test('the Stocks index opens on the standard Base documents, and can widen', asy
       sourceHash: 'ef'.repeat(32),
       observedAt: '2026-09-01T12:00:00.000Z',
     },
-    representationCount: issuerIds.length,
-    liveRepresentationCount: issuerIds.length,
+    representationCount: 1,
+    liveRepresentationCount: 1,
     issuerIds,
-    // One contract per issuer here, so the scoped total is the count of rows
-    // that name Coinbase. The fake carries the field because the repository
-    // does: a scoped count summed from a shape production does not return is a
-    // test that cannot fail.
-    representationCountsByIssuer: Object.fromEntries(
-      issuerIds.map((issuerId) => [issuerId, 1]),
-    ),
+    representationCountsByIssuer: Object.fromEntries(issuerIds.map((issuerId) => [issuerId, 1])),
   });
-  const rows = [
-    row('security:isin:both', ['coinbase', 'backed']),
-    row('security:isin:coinbase', ['coinbase']),
-    row('security:isin:dinari-only', ['dinari']),
-    row('security:isin:backed-only', ['backed']),
-  ];
-  const deps = {
-    underlyings: {
-      listUnderlyings: async () => rows,
-      underlyingCounts: async () => {
-        throw new Error('generic security totals must not leak into Stocks');
-      },
-    } as unknown as UnderlyingAssetRepositoryV1,
-    now: () => new Date('2026-09-01T12:00:00.000Z'),
-  };
-
-  const scoped = await assembleMarketRealityIndexV1(deps, { limit: 50 });
-  assert.equal(scoped.scope, 'coinbase_b20', 'the default scope is the documented standard');
-  assert.deepEqual(
-    scoped.entries.map((entry) => entry.underlyingKey),
-    ['security:isin:both', 'security:isin:coinbase'],
+  const result = await assembleMarketRealityIndexV1(
+    {
+      underlyings: {
+        listUnderlyings: async () => [row('security:isin:coinbase', ['coinbase']), row('security:isin:untyped', [])],
+        underlyingCounts: async () => {
+          throw new Error('generic security totals must not leak into Stocks');
+        },
+      } as unknown as UnderlyingAssetRepositoryV1,
+      now: () => new Date('2026-09-01T12:00:00.000Z'),
+    },
+    { limit: 50 },
   );
-  assert.deepEqual(
-    scoped.entries.map((entry) => entry.coinbaseIssued),
-    [true, true],
-  );
-  // The three counters above the grid describe the PAGE...
-  assert.equal(scoped.totals.underlyings, 2);
-  // ...and the corpus counts describe what the other scope holds, so the filter
-  // can name what it is not showing instead of hiding it.
-  assert.equal(scoped.totals.coinbaseUnderlyings, 2);
-  assert.equal(scoped.totals.allUnderlyings, 4);
-
-  const wide = await assembleMarketRealityIndexV1(deps, { limit: 50, scope: 'all_representations' });
-  assert.equal(wide.scope, 'all_representations');
-  assert.equal(wide.entries.length, 4, 'nothing was removed from the corpus');
-  assert.deepEqual(
-    wide.entries.map((entry) => entry.coinbaseIssued),
-    [true, true, false, false],
-  );
-  assert.equal(wide.totals.underlyings, 4);
-  assert.equal(wide.totals.coinbaseUnderlyings, 2);
+  assert.equal(result.scope, 'coinbase_b20');
+  assert.deepEqual(result.entries.map((entry) => entry.underlyingKey), ['security:isin:coinbase']);
+  assert.deepEqual(result.totals, { underlyings: 1, boundRepresentations: 1 });
 });
 
 // ---------------------------------------------------------------------------

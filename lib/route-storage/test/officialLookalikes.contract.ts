@@ -11,10 +11,10 @@ const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
 const IMPOSTOR = '0xb200000000000000000000dead0000000000ad01';
 const SECOND = '0xb200000000000000000000beef0000000000be02';
 const CORPUS = [AAPL, NVDA];
-/** The measured Dinari Apple dShare on Base. A real address, because the
- * finding it stands for was real: its own issuer's factory vouches for it and
- * Miorail had it filed as an impostor. */
-const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
+/** A contract a reviewed root vouches for without any reviewed source naming
+ * the security it stands for: it may never BE a lookalike, nor be an alias
+ * target. */
+const VOUCHED = '0xb200000000000000000000cafe0000000000ca03';
 
 function rowFixtureV1(overrides: Partial<OfficialLookalikeRowV1> = {}): OfficialLookalikeRowV1 {
   return {
@@ -69,34 +69,30 @@ export function officialLookalikeContractV1(
       assert.notEqual(stored?.tokenAddress, stored?.officialAddress);
     });
 
-    test("another issuer's reviewed contract leaves the list, and the rest stay", async () => {
+    test("a reviewed root's contract leaves the list, and the rest stay", async () => {
       // Constraint from Phase 9B: once a reviewed root vouches for an address,
       // the sentence "this is not the official contract and is dressed as if it
       // were" is false about it, so the row goes rather than being annotated.
-      //
-      // DINARI_AAPL is the measured Dinari Apple dShare. It declares
-      // `symbol() = "AAPL"`, which is exactly Miorail's `underlying` alias for
-      // AAPLc — so it really was on this list, on the strongest match kind.
       const { repository } = await open();
       const first = await repository.recordLookalikes({
         chainId: 8453,
         officialAddresses: CORPUS,
         rows: [
           rowFixtureV1(),
-          rowFixtureV1({ tokenAddress: DINARI_AAPL, matchedValue: 'AAPL', launchSymbol: 'AAPL' }),
+          rowFixtureV1({ tokenAddress: VOUCHED, matchedValue: 'AAPL', launchSymbol: 'AAPL' }),
         ],
       });
-      assert.deepEqual(first.flagged.sort(), [DINARI_AAPL, IMPOSTOR].sort());
+      assert.deepEqual(first.flagged.sort(), [VOUCHED, IMPOSTOR].sort());
 
       const after = await repository.recordLookalikes({
         chainId: 8453,
         officialAddresses: CORPUS,
-        reviewedAddresses: [...CORPUS, DINARI_AAPL],
+        reviewedAddresses: [...CORPUS, VOUCHED],
         rows: [rowFixtureV1()],
       });
-      assert.deepEqual(after.withdrawn, [DINARI_AAPL], 'the reviewed contract is withdrawn');
+      assert.deepEqual(after.withdrawn, [VOUCHED], 'the reviewed contract is withdrawn');
       assert.equal(
-        await repository.lookalikeFor({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+        await repository.lookalikeFor({ chainId: 8453, tokenAddress: VOUCHED }),
         null,
         'and it is gone, not downgraded',
       );
@@ -113,8 +109,8 @@ export function officialLookalikeContractV1(
         repository.recordLookalikes({
           chainId: 8453,
           officialAddresses: CORPUS,
-          reviewedAddresses: [...CORPUS, DINARI_AAPL],
-          rows: [rowFixtureV1({ tokenAddress: DINARI_AAPL })],
+          reviewedAddresses: [...CORPUS, VOUCHED],
+          rows: [rowFixtureV1({ tokenAddress: VOUCHED })],
         }),
         /reviewed representation of a named issuer/,
       );

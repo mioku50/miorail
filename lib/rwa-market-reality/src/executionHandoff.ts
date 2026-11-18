@@ -15,10 +15,10 @@ import {
 // Three properties it exists to hold:
 //
 //   * The selector is an exact Base address. A ticker names a security, and a
-//     security has several representations on Base with different structures
-//     and different markets. `NVDA` cannot choose between the Coinbase B20
-//     asset, the Backed rebasing token and the Backed wrapper, so it must never
-//     be handed to anything that resolves assets. Nothing here accepts one.
+//     security can have several contracts on Base with different structures
+//     and different markets. `NVDA` cannot choose between them, so it must
+//     never be handed to anything that resolves assets. Nothing here accepts
+//     one.
 //
 //   * A handoff is an intent to LOOK. It carries no calldata, no approval, no
 //     transaction and no signer request, and it says so in literals the schema
@@ -85,9 +85,9 @@ export const StockExecutionHandoffV1Schema = z
       .string()
       .regex(/^[a-z0-9_]+:[a-z0-9_]+:.+$/)
       .max(200),
-    issuerId: z.enum(['coinbase', 'dinari', 'backed']),
+    issuerId: z.enum(['coinbase']),
     issuerInstrumentKey: z.string().min(1).max(200),
-    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare']),
+    representationKind: z.enum(['b20_asset']),
     direction: z.enum(['buy', 'sell']),
     requestedCashAtomic: Digits,
     cashAddress: z.literal(HANDOFF_CASH_ADDRESS_V1),

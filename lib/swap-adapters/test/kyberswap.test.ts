@@ -142,8 +142,8 @@ test('KyberSwap 400 "token not found" is coverage, not a market verdict', async 
   // destination as the other two NVIDIA representations:
   //
   //   Coinbase NVDAc  200                       quoted
-  //   Backed  bNVDA   400 code 4008  route not found
-  //   Backed  wbNVDA  400 code 4011  token not found
+  //   a second contract  400 code 4008  route not found
+  //   a third contract   400 code 4011  token not found
   //
   // 4008 is pathfinding — the same answer a garbage address gets, and a fact
   // about the market. 4011 is the router's token list: it never looked. Read

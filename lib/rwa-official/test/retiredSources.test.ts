@@ -23,7 +23,7 @@ function asset(tokenAddress: string, listings: OfficialAssetListingV1[]): Offici
 
 test('the docs page Base emptied is retired, and nothing else is', () => {
   assert.equal(officialSourceRetiredV1('base_docs_technical'), true);
-  for (const kind of ['base_product_list', 'coinbase_stocks_api', 'backed_assets_api']) {
+  for (const kind of ['base_product_list', 'coinbase_stocks_api']) {
     assert.equal(officialSourceRetiredV1(kind), false, kind);
   }
   // Retired, not deleted: the frozen rows still name where they came from.

@@ -44,7 +44,7 @@ export interface AddressDossierWireV1 {
       ticker: string;
       displayName: string | null;
       issuer: string;
-      listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api')[];
+      listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'coinbase_stocks_api')[];
       sourceDiscrepancy: boolean;
       referenceFeedAddress: string | null;
     } | null;
@@ -181,11 +181,10 @@ const STANDING_COPY_V1: Readonly<
 };
 
 const SOURCE_LABEL_V1: Readonly<
-  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api', string>
+  Record<'base_docs_technical' | 'base_product_list' | 'coinbase_stocks_api', string>
 > = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
-  backed_assets_api: 'Backed bTokens API',
   coinbase_stocks_api: 'Coinbase Stocks API',
 };
 
@@ -439,8 +438,8 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
       status: wire.controls.status,
       // Why the read came back empty is the whole content of this line when it
       // did. Every control field here is a B20 field — pause, transfer policy,
-      // roles — and a Backed bToken or a Dinari dShare does not implement them
-      // and never claimed to. Reading "No control field could be read" over a
+      // roles — and a contract of another standard does not implement them and
+      // never claimed to. Reading "No control field could be read" over a
       // non-B20 contract states a gap in Miorail where there is a difference of
       // standard, and a reader takes it as "we know nothing about this token".
       note:

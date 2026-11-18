@@ -44,7 +44,7 @@ export type DossierEvidenceRefV1 = z.infer<typeof DossierEvidenceRefV1Schema>;
 
 export const OfficialDossierListingV1Schema = z
   .object({
-    sourceKind: z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api', 'coinbase_stocks_api']),
+    sourceKind: z.enum(['base_docs_technical', 'base_product_list', 'coinbase_stocks_api']),
     sourceUrl: z.string().url().startsWith('https://'),
     ticker: z.string().min(1).max(16),
     displayName: z.string().min(1).max(120).nullable(),
@@ -70,7 +70,7 @@ export const OfficialDossierIdentityV1Schema = z
       .object({
         status: z.enum(['supported_by_reviewed_source', 'not_established']),
         underlyingKey: z.string().min(1).max(200).nullable(),
-        identifierScheme: z.enum(['isin', 'dinari_stock_id', 'composite_figi']).nullable(),
+        identifierScheme: z.enum(['isin']).nullable(),
         identifierValue: z.string().min(1).max(120).nullable(),
         symbol: z.string().min(1).max(24).nullable(),
         name: z.string().min(1).max(120).nullable(),

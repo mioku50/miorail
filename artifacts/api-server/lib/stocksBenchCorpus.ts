@@ -24,8 +24,10 @@ const NOW = '2026-08-29T18:00:00.000Z';
 export const STOCKS_BENCH_NOW_V1 = new Date(NOW);
 
 const COINBASE_NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
-const BACKED_NVDA = '0xa34c5e0abe843e10461e2c9586ea03e55dbcc495';
-const BACKED_WRAPPER = '0x7e8101a1c322d394b3961498c7d40d2dfa94c392';
+/** A second Coinbase contract of NVIDIA, and a third that holds nothing: fixtures, so one security can carry
+ * several exact addresses in mixed states. */
+const SECOND_NVDA = '0xb20000000000000000000078ee7ce2fe4908108d';
+const EMPTY_NVDA = '0xb20000000000000000000078ee7ce2fe4908108e';
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const REFERENCE_FEED = '0x1c2c7a4b1f3d6e5a8b9c0d1e2f30415263748596';
 const UNDERLYING = 'security:isin:US67066G1040';
@@ -401,17 +403,17 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
   },
   {
     id: 'C',
-    name: 'Backed has supply and no reviewed route',
-    question: 'Can I exit the Backed representation of NVDA for 1,000 USDC?',
+    name: 'A second contract has supply and no reviewed route',
+    question: 'Can I exit the second NVDA contract for 1,000 USDC?',
     reality: response({
       ...INCOMPLETE_COVERAGE,
       question: SELL_QUESTION,
       representations: [
         representation({
-          tokenAddress: BACKED_NVDA,
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:instrument:bNVDA',
-          representationKind: 'rebasing_erc20',
+          tokenAddress: SECOND_NVDA,
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:b20_address:second',
+          representationKind: 'b20_asset',
           status: 'unavailable',
           liveness: 'live',
           reference: referenceUnknown('issuer_reference_not_reviewed'),
@@ -463,8 +465,8 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
   },
   {
     id: 'E',
-    name: 'Zero-supply wrapper',
-    question: 'What about the wrapped Backed NVDA token?',
+    name: 'Zero-supply contract',
+    question: 'What about the empty NVDA contract?',
     reality: response({
       ...INCOMPLETE_COVERAGE,
       universe: {
@@ -475,10 +477,10 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
       },
       representations: [
         representation({
-          tokenAddress: BACKED_WRAPPER,
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:instrument:wbNVDA',
-          representationKind: 'non_rebasing_erc4626_wrapper',
+          tokenAddress: EMPTY_NVDA,
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:b20_address:empty',
+          representationKind: 'b20_asset',
           supply: supply('zero_supply'),
           basis: basisWithheld(
             'zero_supply',
@@ -491,28 +493,25 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
   },
   {
     id: 'F',
-    name: 'Backed priced, reference unknown',
-    question: 'Is the Backed representation of NVDA trading above or below its reference?',
+    name: 'Priced, reference unknown',
+    question: 'Is the second NVDA contract trading above or below its reference?',
     reality: response({
       numericComparisonCoverage: {
         policy: 'fresh_numeric_quotes_same_exact_question_and_normalization',
         eligibleRepresentationCount: 1,
         pricedRepresentationCount: 1,
         status: 'incomplete',
-        reason: 'No reviewed reference is established for the Backed issuer, so no basis can be published.',
+        reason: 'No reviewed reference is established for this contract, so no basis can be published.',
       },
       representations: [
         pricedRepresentation({
-          tokenAddress: BACKED_NVDA,
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:instrument:bNVDA',
-          representationKind: 'rebasing_erc20',
+          tokenAddress: SECOND_NVDA,
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:b20_address:second',
+          representationKind: 'b20_asset',
           premiumDiscountBps: null,
-          reference: referenceUnknown('issuer_reference_not_reviewed'),
-          basis: basisWithheld(
-            'unreviewed_issuer_reference',
-            'No reviewed reference source is established for this issuer.',
-          ),
+          reference: referenceUnknown('reference_adapter_not_configured'),
+          basis: basisWithheld('reference_unknown', 'No reviewed reference is established for this representation.'),
         }),
       ],
     }),
@@ -647,10 +646,10 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
           sources: [quotedSource('kyberswap', '5604000000000000000', '1000000000', 'sell')],
         }),
         representation({
-          tokenAddress: BACKED_NVDA,
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:instrument:bNVDA',
-          representationKind: 'rebasing_erc20',
+          tokenAddress: SECOND_NVDA,
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:b20_address:second',
+          representationKind: 'b20_asset',
           status: 'unavailable',
           liveness: 'live',
           basis: basisWithheld('no_route', 'No reviewed router returned a route at this exact size.'),
@@ -666,10 +665,10 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
           }),
         }),
         representation({
-          tokenAddress: BACKED_WRAPPER,
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:instrument:wbNVDA',
-          representationKind: 'non_rebasing_erc4626_wrapper',
+          tokenAddress: EMPTY_NVDA,
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:b20_address:empty',
+          representationKind: 'b20_asset',
           supply: supply('zero_supply'),
           basis: basisWithheld(
             'zero_supply',
@@ -684,8 +683,8 @@ export const STOCKS_BENCH_CORPUS_V1: readonly StocksBenchCaseV1[] = [
 
 export const STOCKS_BENCH_ADDRESSES_V1 = {
   COINBASE_NVDA,
-  BACKED_NVDA,
-  BACKED_WRAPPER,
+  SECOND_NVDA,
+  EMPTY_NVDA,
   USDC,
   UNDERLYING,
 } as const;

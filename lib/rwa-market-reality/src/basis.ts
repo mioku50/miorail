@@ -5,7 +5,7 @@ import {
 } from '@mioagent/route-storage';
 
 export interface MarketRealityBasisInputV1 {
-  issuerId: 'coinbase' | 'dinari' | 'backed' | null;
+  issuerId: 'coinbase' | null;
   marketStatus: 'quoted' | 'no_route' | 'unsized' | 'measurement_failed';
   quoteObservedAt: string;
   quoteExpiresAt: string;

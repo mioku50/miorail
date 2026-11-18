@@ -136,10 +136,9 @@ function decodeDecimalsV1(raw: string): number | null {
 /**
  * `symbol()`.
  *
- * Read for every representation the registry does not name, because two Dinari
- * addresses can stand for the SAME security -- the dShare and its wrapped form
- * -- and only the token's own symbol tells them apart. The underlying's display
- * symbol would put "ADBE" on both.
+ * Read for every representation the registry does not name, because two
+ * addresses can stand for the SAME security and only the token's own symbol
+ * tells them apart. The underlying's display symbol would put one name on both.
  */
 const SYMBOL_SELECTOR_V1 = '0x95d89b41';
 

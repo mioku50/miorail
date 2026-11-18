@@ -22,7 +22,7 @@ export interface MarketRealityEvidenceCaptureDepsV1 {
   now: () => Date;
   reference: (input: {
     tokenAddress: string;
-    issuerId: 'coinbase' | 'dinari' | 'backed';
+    issuerId: 'coinbase';
     now: Date;
   }) => Promise<MarketRealityReferenceStateV1>;
 }

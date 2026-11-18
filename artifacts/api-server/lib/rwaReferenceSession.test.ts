@@ -50,29 +50,6 @@ test('a Base provider failure stays unknown rather than becoming a market state'
   assert.equal(result.valueAtomic, null);
 });
 
-test('another issuer never borrows Coinbase reference configuration', async () => {
-  let configurationReads = 0;
-  let chainReads = 0;
-  const official = {
-    officialIdentity: async () => {
-      configurationReads += 1;
-      return identity();
-    },
-  } as unknown as OfficialAssetRepositoryV1;
-  const reader = {
-    readBlockAnchor: async () => {
-      chainReads += 1;
-      return { ok: false, reason: 'rpc_failure' };
-    },
-  } as unknown as B20ReaderV1;
-  const adapter = createReviewedMarketRealityReferenceAdapterV1({ official, reader });
-  const result = await adapter({ tokenAddress: TOKEN_B, issuerId: 'backed', now: NOW });
-  assert.equal(result.session, 'unknown');
-  assert.equal(result.reasonCode, 'issuer_reference_not_reviewed');
-  assert.equal(configurationReads, 0);
-  assert.equal(chainReads, 0);
-});
-
 test('a reviewed row for representation A cannot be returned for representation B', async () => {
   let chainReads = 0;
   const official = {

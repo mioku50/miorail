@@ -16,15 +16,15 @@ const binding = (tokenAddress: string, issuerId: string | null, sourceKind: stri
   issuerId,
 });
 
-test('the Stocks screens assemble Coinbase’s representation and no other issuer’s', async () => {
-  // Operator, 2026-10-03: Backed and Dinari beside Coinbase confused people.
+test('the Stocks screens assemble Coinbase’s representations and nothing else', async () => {
+  // Coinbase is the only issuer Miorail covers (2026-11-18). A row that is not
+  // Coinbase's, however it arrived, does not reach the page.
   const base = {
     representationsOf: async () => [
       binding('0xb20000000000000000000078ee7ce2fe4908108c', 'coinbase', 'coinbase_stocks_api'),
       // A binding written before issuer typing existed is Coinbase's by its source.
       binding('0xb200000000000000000000000000000000000001', null, 'coinbase_b20_metadata'),
-      binding('0xa34c5e0000000000000000000000000000c495', 'backed', 'backed_assets_api'),
-      binding('0x92ecf60000000000000000000000000000001b97', 'dinari', 'dinari_stock_api'),
+      binding('0x9999990000000000000000000000000000009999', 'unreviewed', 'unreviewed_source'),
     ],
     underlyingOf: async () => null,
   } as unknown as UnderlyingAssetRepositoryV1;

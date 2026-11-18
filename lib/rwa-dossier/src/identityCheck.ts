@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   citedListingsV1,
   isOfficialV1,
-  type IssuerRepresentationRepositoryV1,
   type OfficialAssetIdentityV1,
   type OfficialAssetRepositoryV1,
   type OfficialLookalikeRepositoryV1,
@@ -36,12 +35,8 @@ import {
 //     addresses did not. No score, no severity, no "scam" — the stored rows
 //     carry none and this surface invents none.
 //
-//   * An address a reviewed root vouches for can never be reported as an
-//     impostor, and it is checked HERE as well as in the store. Dinari's Base
-//     dShare declares `symbol() = "AAPL"` exactly; it is legitimate, and no
-//     reviewed source says which security it stands for. Both halves have to
-//     be sayable at once, which is why `issuer_representation` is its own
-//     standing rather than a softened "official".
+//   * An official address can never be reported as an impostor, and it is
+//     checked HERE as well as in the store.
 // ---------------------------------------------------------------------------
 
 const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
@@ -52,9 +47,6 @@ export const ADDRESS_IDENTITY_STANDINGS_V1 = [
   /** A reviewed source listed it once and no longer does. An event, not a
    * demotion to impostor: the address is the same contract it always was. */
   'delisted_official',
-  /** An issuer's own root vouches for the address, and no reviewed source
-   * publishes which security it represents. */
-  'issuer_representation',
   /** A stored resemblance to an official asset's name. */
   'known_lookalike',
   /** Nothing on file. About Miorail, never about the token. */
@@ -101,14 +93,6 @@ export const AddressIdentityCheckOutputV1Schema = z
               .strict(),
           )
           .max(8),
-      })
-      .strict()
-      .nullable(),
-    issuerRepresentation: z
-      .object({
-        issuerId: z.string().min(1).max(40),
-        rootKey: z.string().min(1).max(120),
-        observedAt: z.string().datetime(),
       })
       .strict()
       .nullable(),
@@ -180,10 +164,6 @@ function officialViewV1(identity: OfficialAssetIdentityV1) {
 export interface AddressIdentityCheckDepsV1 {
   official: OfficialAssetRepositoryV1;
   lookalikes: OfficialLookalikeRepositoryV1;
-  /** Optional: without it, an issuer's own representation reads as unknown
-   * rather than being mislabelled. A missing registry is a smaller error than
-   * an invented standing. */
-  issuers?: IssuerRepresentationRepositoryV1 | null;
   now: () => Date;
 }
 
@@ -191,9 +171,9 @@ export interface AddressIdentityCheckDepsV1 {
  * One address, one standing, one sentence.
  *
  * The order of the branches is the whole safety argument. Identity outranks
- * resemblance: an official contract and an issuer's own contract are decided
- * before any stored string match is consulted, so the strongest possible match
- * can never outrank the address itself. The store enforces the same rule on
+ * resemblance: an official contract is decided before any stored string match
+ * is consulted, so the strongest possible match can never outrank the address
+ * itself. The store enforces the same rule on
  * the write side; it is repeated here because the two sets are assembled by
  * different code paths and a disagreement between them must resolve to the
  * safe answer rather than to whichever ran last.
@@ -229,43 +209,9 @@ export async function assembleAddressIdentityCheckV1(
         ? `Yes. ${tokenAddress} is ${official.ticker}, issued by ${official.issuer}, and ${official.listedIn.filter((row) => row.currentlyListed).length} reviewed source(s) still list this exact address.`
         : `${tokenAddress} is ${official.ticker} from ${official.issuer}, and no reviewed source lists it any more. It is the same contract it always was; what changed is the source, and that is an event rather than a verdict on the token.`,
       official,
-      issuerRepresentation: null,
       lookalike: null,
       corpus,
       caveats: [OFFICIAL_CAVEAT_V1, ...STANDING_CAVEATS_V1],
-      generatedAt,
-    });
-  }
-
-  const membership = deps.issuers
-    ? await deps.issuers.membershipFor({ chainId: input.chainId, tokenAddresses: [tokenAddress] })
-    : [];
-  // `established`, never merely present: a row whose newest read REFUTED
-  // membership is the root saying no, and reading any row as a vouching would
-  // turn a refusal into an endorsement.
-  const vouched =
-    membership.find(
-      (row) => row.tokenAddress === tokenAddress && row.membership === 'established',
-    ) ?? null;
-  if (vouched) {
-    return AddressIdentityCheckOutputV1Schema.parse({
-      schemaVersion: 'address-identity/v1',
-      chainId: input.chainId,
-      tokenAddress,
-      standing: 'issuer_representation',
-      answer: `${tokenAddress} is vouched for by ${vouched.issuerId}’s own registry, so it is not an impostor. No reviewed source publishes which security it stands for, so Miorail will not say which company it represents — those are two different questions and only the first is answered here.`,
-      official: null,
-      issuerRepresentation: {
-        issuerId: vouched.issuerId,
-        rootKey: vouched.rootKey,
-        observedAt: vouched.lastCheckedAt,
-      },
-      lookalike: null,
-      corpus,
-      caveats: [
-        'An issuer vouching for an address establishes who deployed it, not what it represents. Membership is not identity.',
-        ...STANDING_CAVEATS_V1,
-      ],
       generatedAt,
     });
   }
@@ -287,7 +233,6 @@ export async function assembleAddressIdentityCheckV1(
       standing: 'known_lookalike',
       answer: `No. ${tokenAddress} is not ${officialTicker ?? lookalike.officialAddress}. It declared ${lookalike.launchSymbol ? `"${lookalike.launchSymbol}"` : 'a name'} and that string matches ${officialTicker ?? 'an official asset'}, whose contract is ${lookalike.officialAddress}. Two strings matched and two addresses did not — which is a resemblance, not a finding of fraud.`,
       official: null,
-      issuerRepresentation: null,
       lookalike: {
         officialAddress: lookalike.officialAddress,
         officialTicker,
@@ -309,9 +254,8 @@ export async function assembleAddressIdentityCheckV1(
     chainId: input.chainId,
     tokenAddress,
     standing: 'unknown_to_miorail',
-    answer: `Miorail has nothing on file for ${tokenAddress}. It is not in the reviewed official corpus, no reviewed issuer root vouches for it, and it is not among the ${corpus.lookalikeRows} contracts recorded as wearing an official asset’s name. That is a statement about this corpus and not about the token.`,
+    answer: `Miorail has nothing on file for ${tokenAddress}. It is not in the reviewed official corpus, and it is not among the ${corpus.lookalikeRows} contracts recorded as wearing an official asset’s name. That is a statement about this corpus and not about the token.`,
     official: null,
-    issuerRepresentation: null,
     lookalike: null,
     corpus,
     caveats: [UNKNOWN_CAVEAT_V1, ...STANDING_CAVEATS_V1],

@@ -9,10 +9,10 @@ import type { ReviewedIssuerIdV1 } from './issuers.js';
 // round trip, and it is what the cash-exit ladder does.
 //
 // The other one is redemption: hand the token back to the issuer and receive
-// value through the issuer's own rails. Dinari's is the clear case — orders,
-// accounts, KYC, USD+ — and it is not a route, has no venue, no slippage and
-// no size ladder. It also has an eligibility test that has nothing to do with
-// the chain: whether the holder has an account at all.
+// value through the issuer's own rails. Coinbase's is an authorized-participant
+// process — accounts and KYC — and it is not a route, has no venue, no slippage
+// and no size ladder. It also has an eligibility test that has nothing to do
+// with the chain: whether the holder is an authorized participant at all.
 //
 // The reason these are declared before either is implemented is that the two
 // answer the same consumer question — "can I get out?" — with evidence that
@@ -80,8 +80,6 @@ export const ISSUER_EXIT_FAMILIES_V1: Readonly<
   Record<ReviewedIssuerIdV1, readonly ExitFamilyV1[]>
 > = {
   coinbase: ['secondary_market_cash'],
-  dinari: ['secondary_market_cash', 'issuer_redemption'],
-  backed: ['secondary_market_cash', 'issuer_redemption'],
 };
 
 export class ExitFamilyMismatchError extends Error {

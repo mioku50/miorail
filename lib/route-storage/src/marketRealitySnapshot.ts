@@ -298,7 +298,7 @@ const SnapshotSupplyV1Schema = z
 
 const SnapshotRatioV1Schema = z
   .object({
-    ratioKind: z.enum(['b20_multiplier', 'dinari_balance_per_share', 'backed_evm_multiplier']),
+    ratioKind: z.enum(['b20_multiplier']),
     application: z.enum(['apply_to_raw_balance', 'already_applied_by_token']),
     rawValue: Digits,
     scale: Digits,
@@ -319,11 +319,9 @@ export const MarketRealityEvidenceSnapshotContractV1Schema = z
     observationHash: Hash,
     chainId: z.literal(8453),
     tokenAddress: Address,
-    issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable(),
+    issuerId: z.enum(['coinbase']).nullable(),
     issuerInstrumentKey: z.string().min(1).max(200).nullable(),
-    representationKind: z
-      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
-      .nullable(),
+    representationKind: z.enum(['b20_asset']).nullable(),
     direction: z.enum(['buy', 'sell']),
     requestedCashAtomic: Digits.nullable(),
     requestedTokenAtomic: Digits.nullable(),

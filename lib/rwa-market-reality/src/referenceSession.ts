@@ -78,7 +78,7 @@ export interface ReviewedReferenceCalendarV1 {
 export interface ReviewedReferenceConfigurationV1 {
   chainId: 8453;
   tokenAddress: string;
-  issuerId: 'coinbase' | 'dinari' | 'backed';
+  issuerId: 'coinbase';
   referenceAddress: string;
   referenceSource: string;
   calendar: ReviewedReferenceCalendarV1 | null;
@@ -88,7 +88,7 @@ export interface ReviewedReferenceConfigurationV1 {
 export interface ReviewedReferenceObservationV1 {
   chainId: 8453;
   tokenAddress: string;
-  issuerId: 'coinbase' | 'dinari' | 'backed';
+  issuerId: 'coinbase';
   referenceAddress: string;
   status: 'fresh' | 'stale' | 'corporate_action_hold';
   valueAtomic: string;

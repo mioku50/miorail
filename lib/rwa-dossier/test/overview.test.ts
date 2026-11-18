@@ -322,7 +322,7 @@ describe('the overview counts the whole list and pages the cards', () => {
 
   async function depsV1(count: number) {
     const official = createMemoryOfficialAssetRepository();
-    const ok = (sourceKind: 'coinbase_stocks_api' | 'base_product_list' | 'base_docs_technical' | 'backed_assets_api', at: string) => ({
+    const ok = (sourceKind: 'coinbase_stocks_api' | 'base_product_list' | 'base_docs_technical', at: string) => ({
       sourceKind,
       sourceUrl: 'https://example.com/source',
       observedAt: at,
@@ -348,20 +348,6 @@ describe('the overview counts the whole list and pages the cards', () => {
     await official.recordSnapshot({
       snapshot: ok('base_product_list', '2026-10-13T11:00:00.000Z'),
       assets: [asset(0, 'base_product_list')],
-    });
-    await official.recordSnapshot({
-      snapshot: ok('backed_assets_api', '2026-10-13T11:00:00.000Z'),
-      assets: [
-        {
-          chainId: 8453,
-          tokenAddress: '0x' + '7'.repeat(40),
-          sourceKind: 'backed_assets_api',
-          ticker: 'bTEST',
-          displayName: 'Backed Test',
-          issuer: 'Backed',
-          referenceFeedAddress: null,
-        },
-      ],
     });
     // The retired source: read once, then its last check failed, then retired.
     await official.recordSnapshot({
@@ -413,18 +399,17 @@ describe('the overview counts the whole list and pages the cards', () => {
     // 64" while Coinbase alone listed 135; the other 71 had no card at all.
     const { deps } = await depsV1(70);
     const first = await assembleOfficialAssetsOverviewV1(deps);
-    // 70 Coinbase assets and one Backed one.
-    assert.equal(first.counts.officialIssuance, 71);
-    assert.equal(first.counts.notMeasured, 71);
-    assert.deepEqual(first.page, { offset: 0, limit: 64, total: 71 });
+    assert.equal(first.counts.officialIssuance, 70);
+    assert.equal(first.counts.notMeasured, 70);
+    assert.deepEqual(first.page, { offset: 0, limit: 64, total: 70 });
     assert.equal(first.assets.length, 64);
 
     const second = await assembleOfficialAssetsOverviewV1(deps, { offset: 64 });
     assert.deepEqual(second.counts, first.counts);
-    assert.deepEqual(second.page, { offset: 64, limit: 64, total: 71 });
-    assert.equal(second.assets.length, 7);
+    assert.deepEqual(second.page, { offset: 64, limit: 64, total: 70 });
+    assert.equal(second.assets.length, 6);
     const seen = new Set([...first.assets, ...second.assets].map((asset) => asset.tokenAddress));
-    assert.equal(seen.size, 71);
+    assert.equal(seen.size, 70);
   });
 
   test('source limitations are counted across every page while outages keep their own count', async () => {
@@ -437,13 +422,13 @@ describe('the overview counts the whole list and pages the cards', () => {
     };
     const first = await assembleOfficialAssetsOverviewV1(deps);
     const second = await assembleOfficialAssetsOverviewV1(deps, { offset: 64 });
-    assert.equal(first.counts.officialIssuance, 71);
+    assert.equal(first.counts.officialIssuance, 70);
     assert.equal(first.counts.sourceNotCovered, 30);
     assert.equal(first.counts.sourcePriceUnavailable, 30);
-    assert.equal(first.counts.measurementFailed, 11);
+    assert.equal(first.counts.measurementFailed, 10);
     assert.equal(first.counts.noEntryRouteAtMeasuredSizes, 0);
     assert.deepEqual(second.counts, first.counts);
-    assert.equal(second.assets.length, 7);
+    assert.equal(second.assets.length, 6);
   });
 
   test('the price feed is read live only for the cards on the page', async () => {

@@ -304,22 +304,11 @@ export function createDatabaseUnderlyingAssetRepository(
         SELECT
           (SELECT count(*)::int FROM underlying_asset) AS underlyings,
           (SELECT count(*)::int FROM representation_underlying
-            WHERE chain_id = ${input.chainId}) AS bound,
-          -- Distinct ISSUERS per underlying, never binding count: a rebasing
-          -- token and its own wrapper are one issuer's structure choice, and
-          -- counting them as two would promise a comparison with nothing on
-          -- the other side of it.
-          (SELECT count(*)::int FROM (
-             SELECT underlying_key
-               FROM representation_underlying
-              WHERE chain_id = ${input.chainId} AND issuer_id IS NOT NULL
-              GROUP BY underlying_key
-             HAVING count(DISTINCT issuer_id) > 1) AS multi) AS multi_issuer
+            WHERE chain_id = ${input.chainId}) AS bound
       `) as Record<string, unknown>[];
       return {
         underlyings: Number(rows[0]?.underlyings ?? 0),
         boundRepresentations: Number(rows[0]?.bound ?? 0),
-        multiIssuerUnderlyings: Number(rows[0]?.multi_issuer ?? 0),
       };
     },
   };

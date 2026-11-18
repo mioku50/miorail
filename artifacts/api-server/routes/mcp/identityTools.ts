@@ -6,7 +6,6 @@ import {
   type AddressIdentityCheckOutputV1,
 } from '@mioagent/rwa-dossier/identity-check';
 import {
-  createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialLookalikeRepository,
 } from '@mioagent/route-storage';
@@ -38,7 +37,6 @@ export const identityCheckRuntime = {
   deps: () => ({
     official: createDatabaseOfficialAssetRepository(client),
     lookalikes: createDatabaseOfficialLookalikeRepository(client),
-    issuers: createDatabaseIssuerRepresentationRepository(client),
     now: () => new Date(),
   }),
 };

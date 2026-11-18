@@ -10,15 +10,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US67066G1040",
-      "representationCount": 5,
-      "liveRepresentationCount": 4,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "backed",
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US19260Q1076",
@@ -27,15 +23,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US19260Q1076",
-      "representationCount": 5,
-      "liveRepresentationCount": 3,
+      "representationCount": 1,
+      "liveRepresentationCount": 0,
       "issuerIds": [
-        "backed",
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US88160R1014",
@@ -44,15 +36,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US88160R1014",
-      "representationCount": 5,
-      "liveRepresentationCount": 3,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "backed",
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US0231351067",
@@ -61,14 +49,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US0231351067",
-      "representationCount": 3,
-      "liveRepresentationCount": 3,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US0378331005",
@@ -77,14 +62,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US0378331005",
-      "representationCount": 3,
-      "liveRepresentationCount": 3,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US5949724083",
@@ -93,14 +75,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US5949724083",
-      "representationCount": 3,
-      "liveRepresentationCount": 3,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "backed",
         "coinbase"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+      ]
     },
     {
       "underlyingKey": "security:isin:US02079K3059",
@@ -109,15 +88,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US02079K3059",
-      "representationCount": 4,
-      "liveRepresentationCount": 2,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "backed",
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US5949181045",
@@ -126,15 +101,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US5949181045",
-      "representationCount": 4,
-      "liveRepresentationCount": 2,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "backed",
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US30303M1027",
@@ -143,14 +114,11 @@
       "assetClass": "equity",
       "identifierScheme": "isin",
       "identifierValue": "US30303M1027",
-      "representationCount": 3,
-      "liveRepresentationCount": 2,
+      "representationCount": 1,
+      "liveRepresentationCount": 1,
       "issuerIds": [
-        "coinbase",
-        "dinari"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": true
+        "coinbase"
+      ]
     },
     {
       "underlyingKey": "security:isin:US80004C2008",
@@ -163,9 +131,7 @@
       "liveRepresentationCount": 1,
       "issuerIds": [
         "coinbase"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": false
+      ]
     },
     {
       "underlyingKey": "security:isin:US84615Q1031",
@@ -178,9 +144,7 @@
       "liveRepresentationCount": 1,
       "issuerIds": [
         "coinbase"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": false
+      ]
     },
     {
       "underlyingKey": "security:isin:US1725731079",
@@ -193,9 +157,7 @@
       "liveRepresentationCount": 0,
       "issuerIds": [
         "coinbase"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": false
+      ]
     },
     {
       "underlyingKey": "security:isin:US4581401001",
@@ -208,17 +170,12 @@
       "liveRepresentationCount": 0,
       "issuerIds": [
         "coinbase"
-      ],
-      "coinbaseIssued": true,
-      "multiIssuer": false
+      ]
     }
   ],
   "totals": {
     "underlyings": 13,
-    "boundRepresentations": 13,
-    "multiIssuerUnderlyings": 9,
-    "coinbaseUnderlyings": 13,
-    "allUnderlyings": 35
+    "boundRepresentations": 13
   },
   "observedAt": "2026-09-05T19:32:50.775Z"
 }

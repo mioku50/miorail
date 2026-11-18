@@ -160,10 +160,9 @@ function parseArgsV1(argv: readonly string[]): ArgsV1 {
 // is established: point it at a block before any of these tokens existed and
 // let it walk forward.
 //
-// The address list is every reviewed representation, not just the B20 ones.
-// The topics are B20's, so a Dinari or Backed contract simply never matches --
-// and an issuer we did not expect emitting one is exactly the thing worth
-// catching rather than filtering out in advance.
+// The address list is every reviewed representation. The topics are B20's,
+// and a reviewed contract we did not expect emitting one is exactly the thing
+// worth catching rather than filtering out in advance.
 // ---------------------------------------------------------------------------
 async function corporateActionStageV1(input: {
   args: ArgsV1;
@@ -339,13 +338,11 @@ async function main(): Promise<void> {
   // The universe is what a reviewed source still lists. A background reader
   // whose universe is a hand-kept array is a budget with no owner.
   //
-  // It was ONE issuer's registry until Phase 13.3 — the same corpus mistake the
-  // cash-exit pass had, in the worker that answers the question the cash-exit
-  // pass cannot. Fifty Dinari dShares hold real supply and KyberSwap answers
-  // `token not found` for a dozen of them, so the aggregator can say nothing
-  // about whether they move. The ledger can: every venue moves the token, so one
-  // `eth_getLogs` over the whole corpus finds the venues by behaviour instead of
-  // asking a router that has never heard of the asset.
+  // The ledger answers the question the cash-exit pass cannot: a router that
+  // answers `token not found` says nothing about whether a token moves, while
+  // every venue moves the token, so one `eth_getLogs` over the whole corpus
+  // finds the venues by behaviour instead of asking a router that has never
+  // heard of the asset.
   //
   // Widening the address list does not widen the block span, so this costs the
   // same one log read per pass it always did.

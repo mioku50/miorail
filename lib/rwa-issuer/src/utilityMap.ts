@@ -255,14 +255,8 @@ function issuerEdgeV1(input: {
   });
 }
 
-function mintNoteV1(issuerId: ReviewedIssuerIdV1): string {
-  if (issuerId === 'coinbase') {
-    return 'Primary mint / issuance is documented as an authenticated authorized-participant process.';
-  }
-  if (issuerId === 'dinari') {
-    return 'Minting is documented as an issuer-account, KYC and jurisdiction-dependent process.';
-  }
-  return 'New legacy bToken issuance is documented as closed; this records the issuer terms, not an available action.';
+function mintNoteV1(_issuerId: ReviewedIssuerIdV1): string {
+  return 'Primary mint / issuance is documented as an authenticated authorized-participant process.';
 }
 
 export function representationUtilityMapV1(input: {

@@ -33,7 +33,6 @@ import {
   REVIEWED_UNIVERSE_LIMIT_V1,
   createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseDividendRecordSupplyRepositoryV1,
-  createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationRatioRepository,
   createDatabaseRepresentationSupplyRepository,
@@ -42,7 +41,6 @@ import {
 import { readB20MultiplierV1 } from '@mioagent/rwa-dossier';
 import { mergeDividendDeclarationsV1 } from '@mioagent/rwa-market-reality/dividend-sources';
 import { DIVIDEND_DECLARATIONS_V1 } from '@mioagent/rwa-market-reality/dividends';
-import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 
 import { recordDividendSuppliesV1 } from './dividendRecordSupply.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -57,7 +55,7 @@ const DEFAULT_GAP_MS_V1 = 1_500;
  * endpoint sees at most this many in flight. One lane needed 7:55-9:46 on
  * 2026-10-06 against the unit's 10 minutes, and from 2026-10-07 the corpus
  * outgrew it: every pass was killed among the multipliers, so the same tail of
- * tokens, every Dinari ratio and the dividend record supply were never read. */
+ * tokens and the dividend record supply were never read. */
 const DEFAULT_LANES_V1 = 3;
 
 function numericArgV1(flag: string, fallback: number): number {
@@ -114,25 +112,15 @@ async function main(): Promise<void> {
   const official = createDatabaseOfficialAssetRepository(client);
   const ratios = createDatabaseRepresentationRatioRepository(client);
   const supplies = createDatabaseRepresentationSupplyRepository(client);
-  const issuers = createDatabaseIssuerRepresentationRepository(client);
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const readers = rpcUrls.map((rpcUrl) => createB20ReaderV1({ rpcUrl }));
 
-  // A reviewed issuer adapter selects its own corpus. Backed is also an
-  // OFFICIAL source now, but calling the B20 multiplier selectors on a Backed
-  // token would turn one issuer's convention into another issuer's evidence.
+  // The B20 multiplier selectors are asked of Coinbase's B20 assets only: a
+  // reviewed adapter selects its own corpus.
   const coinbaseB20 = (await official.officialAssets({
     chainId: CHAIN_ID_V1,
     limit: REVIEWED_UNIVERSE_LIMIT_V1,
   })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
-  // Every issuer gets its OWN adapter. Reading `multiplier()` off a dShare
-  // would be a guess, and a guess of exactly that shape was measured to
-  // contradict another issuer's own published value.
-  const dinari = await issuers.establishedRepresentations({
-    chainId: CHAIN_ID_V1,
-    issuerId: 'dinari',
-    limit: 500,
-  });
   const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
   const reviewedBindings = (
     await Promise.all(
@@ -146,10 +134,9 @@ async function main(): Promise<void> {
   ).flat();
   console.log(
     `${coinbaseB20.length} reviewed Coinbase B20 representation(s), ` +
-      `${dinari.length} established Dinari representation(s), ` +
       `${reviewedBindings.length} reviewed exact-address supply target(s)`,
   );
-  if (coinbaseB20.length === 0 && dinari.length === 0 && reviewedBindings.length === 0) return;
+  if (coinbaseB20.length === 0 && reviewedBindings.length === 0) return;
 
   const anchored = await anchorPatientlyV1(readers);
   if (!anchored.ok) {
@@ -254,38 +241,6 @@ async function main(): Promise<void> {
     console.log(
       `  ${asset.tokenAddress}  ${normalizedV1(value.rawValue, value.scale)}  ${outcome.outcome}`,
     );
-  });
-
-  // Dinari, through its own adapter and its own ratio kind. `balanceOf` has
-  // already applied this value, so the store carries
-  // `already_applied_by_token` and nothing downstream may apply it twice.
-  await pacedV1(dinari, lanes, gapMs, async (representation) => {
-    const value = await readDinariBalancePerShareV1(reader, {
-      tokenAddress: representation.tokenAddress,
-      anchor,
-    });
-    if (value.outcome !== 'read') {
-      if (value.outcome === 'absent') absent += 1;
-      else failed += 1;
-      console.log(`  ${representation.tokenAddress}  ${value.outcome} (${value.reason})`);
-      return;
-    }
-    read += 1;
-    const outcome = await ratios.recordRead({
-      chainId: CHAIN_ID_V1,
-      tokenAddress: value.tokenAddress,
-      ratioKind: 'dinari_balance_per_share',
-      rawValue: value.rawValue,
-      scale: value.scale,
-      blockNumber: value.blockNumber,
-      blockHash: value.blockHash,
-      evidenceHash: value.evidenceHash,
-      observedAt: now.toISOString(),
-      now: now.toISOString(),
-    });
-    if (outcome.outcome === 'changed') changed.push(value.tokenAddress);
-    if (outcome.outcome === 'first_observation') firstSeen.push(value.tokenAddress);
-    console.log(`  ${value.tokenAddress}  ${value.normalized}  ${outcome.outcome}`);
   });
 
   console.log(

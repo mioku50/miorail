@@ -426,14 +426,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const access: StocksReadAccessV1 = input.access ?? 'session';
   const session = access === 'session';
 
-  // The corpus this page opens on.
-  //
-  // `null` means "whatever the server defaults to", which is the documented
-  // Coinbase B20 standard. A reader who widens it is asking a different
-  // question — not filtering this one — so the scope is state here and a cache
-  // key in the hook.
-  // The server's default scope: Coinbase's contracts only. The Stocks screens
-  // show no other issuer (operator, 2026-10-03, "to not confuse people").
+  // Coinbase's contracts only: the one issuer Miorail covers.
   const index = useRwaUnderlyings({ enabled, access });
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const counters = useMemo(() => underlyingCountersV1(index.data ?? null), [index.data]);
@@ -452,22 +445,21 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   );
 
   // The ticker a public address carries, resolved against the chooser this
-  // hook already read. Coinbase first when two securities share a symbol,
-  // because that is the corpus the board opens on.
+  // hook already read.
   const preferredSymbol = input.preferredSymbol?.trim().toLowerCase() || null;
   const symbolKey = useMemo(() => {
     if (!preferredSymbol || !index.data) return null;
     const matches = index.data.entries.filter(
       (entry) => entry.displaySymbol?.toLowerCase() === preferredSymbol,
     );
-    return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
+    return matches[0]?.underlyingKey ?? null;
   }, [preferredSymbol, index.data]);
   const symbolNotHeld = preferredSymbol && index.data && !symbolKey ? preferredSymbol : null;
   const keyOfSymbol = (symbol: string): string | null => {
     const matches = (index.data?.entries ?? []).filter(
       (entry) => entry.displaySymbol?.toLowerCase() === symbol.toLowerCase(),
     );
-    return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
+    return matches[0]?.underlyingKey ?? null;
   };
 
   const selectedKey = question.underlyingKey ?? (preferredSymbol ? symbolKey : defaultKey);
@@ -600,12 +592,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // Discover has rendered all along. FIVE fixed hooks rather than a loop,
   // because a hook cannot be called conditionally.
   //
-  // Three was the reviewed maximum while the corpus was Coinbase, Backed and
-  // Backed's wrapper. Binding Dinari's dShares took it to five — NVDA now has
-  // Coinbase, Backed, Backed's wrapper, Dinari and Dinari's `.dw` variant — and
-  // three underlyings sit at five, two at four. A sixth still shows no ladder
-  // rather than a wrong one, which is the same honest fallback; the real fix is
-  // one query over the address list, and this is not it.
+  // Five is more contracts than any one company has on the board. A sixth
+  // would show no ladder rather than a wrong one, which is the honest
+  // fallback; the real fix is one query over the address list, and this is
+  // not it.
   const representationAddresses = useMemo(
     () => (reality.data?.representations ?? []).map((row) => row.tokenAddress),
     [reality.data],
@@ -658,13 +648,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       };
     }
     return built;
-    // All five. The hooks went from three to five when Dinari was bound and
-    // this list did not, so a ladder arriving fourth or fifth was read only if
-    // something else re-ran the memo. For a session that is the one-second
-    // tick of an open quote; a visitor has none, and on production,
-    // 2026-09-23, NVDA's Coinbase card — the fourth of its five
-    // representations — showed no round trip at all while its ladder sat in
-    // the cache.
+    // All five. Once the hooks outnumbered this list, so a ladder arriving
+    // fourth or fifth was read only if something else re-ran the memo, and on
+    // production, 2026-09-23, a Coinbase card showed no round trip at all while
+    // its ladder sat in the cache.
   }, [
     dossierA.data,
     dossierB.data,
@@ -849,8 +836,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // Phase 17.4 — Use & access reads the chain, and only when the tab is open.
   //
   // Five fixed hooks rather than a loop, for the same reason the ladders are:
-  // a hook cannot be called conditionally, and five is the measured maximum for
-  // one security since Dinari's dShares were bound. A sixth shows the documented
+  // a hook cannot be called conditionally. A sixth would show the documented
   // sections with its onchain answers missing, which the card says out loud
   // rather than rendering as negative.
   // -------------------------------------------------------------------------

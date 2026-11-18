@@ -162,9 +162,9 @@ test('exact reference identity mismatch withholds basis', () => {
   assert.equal(basis.premiumDiscountBps, null);
 });
 
-test('Backed cannot borrow Coinbase reference evidence', () => {
+test('a contract no reviewed issuer stands behind cannot borrow Coinbase reference evidence', () => {
   assert.equal(
-    evaluateMarketRealityBasisV1(input({ issuerId: 'backed' })).reasonCode,
+    evaluateMarketRealityBasisV1(input({ issuerId: null })).reasonCode,
     'unreviewed_issuer_reference',
   );
 });

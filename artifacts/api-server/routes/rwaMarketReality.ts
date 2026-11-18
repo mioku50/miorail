@@ -721,13 +721,11 @@ export async function readMarketRealityIndexV1(input: {
 }
 
 /**
- * The Stocks screens show Coinbase's representation and no other issuer's.
- *
- * Operator, 2026-10-03: Backed and Dinari beside Coinbase confused people.
- * Narrowing the bindings here, before anything is assembled, keeps the page's
- * counts, verdict and Ask Miorail in step with what it shows; hiding cards in
- * the browser would leave "3 of 4 measured" over one card. Connected
- * assistants read through the MCP tools, which keep every reviewed issuer.
+ * The Stocks screens show Coinbase's representations only, the one issuer
+ * Miorail covers (Backed and Dinari were removed on 2026-11-18). A binding
+ * whose issuer cannot be read as Coinbase's is dropped here, before anything is
+ * assembled, so the page's counts, verdict and Ask Miorail stay in step with
+ * what it shows.
  */
 export function coinbaseOnlyUnderlyingsV1(
   repository: UnderlyingAssetRepositoryV1,

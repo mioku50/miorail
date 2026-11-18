@@ -13,19 +13,15 @@ import { RouteStorageIntegrityError } from './types.js';
 //
 // WHY A TICKER CANNOT BE THE KEY
 //
-//   * Dinari's Base dShare declares `symbol() = "AAPL"`, and `setSymbol` is an
-//     admin call on the deployed contract.
-//   * Dinari's own integration guide: "Key off `stock_id`, never the ticker
-//     symbol. Treat `symbol` as a display field you refresh from the API."
-//     A rebrand changes the ticker, the name and sometimes the CUSIP, and
-//     leaves the uuid alone.
+//   * B20 metadata is mutable: a token's symbol and name are admin-settable,
+//     and a rebrand changes the ticker and the name while the ISIN stays.
 //   * Base's issuance guide keys assets by `AAPLc` and feeds by "Coinbase
 //     AAPL". Both are tickers. Neither is a stable identifier for Apple.
 //   * 61.7% of the launch corpus shares a symbol with something else.
 //
-// So `underlyingKey` is namespaced by the source that issued it —
-// `dinari:stock_id:<uuid>` — and the store refuses a bare word. A key with no
-// issuing source is a guess with a colon in it.
+// So `underlyingKey` is namespaced by the identifier that issued it —
+// `security:isin:<ISIN>` — and the store refuses a bare word. A key with no
+// issuing identifier is a guess with a colon in it.
 //
 // WHAT ABSENCE MEANS
 //
@@ -41,8 +37,6 @@ const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-by
 /** The reviewed sources that may issue an underlying key. Adding one is a
  * review decision about what counts as identity, not a config value. */
 export const UNDERLYING_SOURCE_KINDS_V1 = [
-  'dinari_stock_api',
-  'backed_assets_api',
   'coinbase_b20_metadata',
   'coinbase_stocks_api',
 ] as const;
@@ -55,11 +49,7 @@ export type UnderlyingAssetClassV1 = (typeof UNDERLYING_ASSET_CLASSES_V1)[number
  * key by being written in the right place. */
 export const UNDERLYING_KEY_SHAPE_V1 = /^[a-z0-9_]+:[a-z0-9_]+:.+$/;
 
-export const UNDERLYING_IDENTIFIER_SCHEMES_V1 = [
-  'isin',
-  'dinari_stock_id',
-  'composite_figi',
-] as const;
+export const UNDERLYING_IDENTIFIER_SCHEMES_V1 = ['isin'] as const;
 
 /** ISO 6166 check-digit validation. A syntactically plausible twelve-byte
  * string is not enough to become canonical identity: issuer metadata is
@@ -90,16 +80,9 @@ export const UNDERLYING_EVIDENCE_STRENGTHS_V1 = [
   'reviewed_machine_address_mapping',
   'reviewed_machine_mapping_with_onchain_cross_check',
 ] as const;
-export const UNDERLYING_REPRESENTATION_KINDS_V1 = [
-  'b20_asset',
-  'rebasing_erc20',
-  // Phase 17.5. A Dinari dShare is none of the other three: it does not rebase,
-  // it is not an ERC-4626 wrapper, and it is not a B20. Adding a kind is a
-  // review decision about what exists, which is why it is spelled out here
-  // rather than approximated by the nearest existing value.
-  'dinari_dshare',
-  'non_rebasing_erc4626_wrapper',
-] as const;
+/** Coinbase's B20 asset is the one representation Miorail covers. Adding a kind
+ * is a review decision about what exists, not a config value. */
+export const UNDERLYING_REPRESENTATION_KINDS_V1 = ['b20_asset'] as const;
 
 export const UnderlyingAssetV1Schema = z
   .object({
@@ -156,7 +139,7 @@ const RepresentationUnderlyingObjectV1Schema = z
       .regex(/^[0-9a-f]{64}$/)
       .nullable()
       .optional(),
-    issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable().optional(),
+    issuerId: z.enum(['coinbase']).nullable().optional(),
     issuerInstrumentKey: z.string().min(1).max(200).nullable().optional(),
     caip10: z
       .string()
@@ -226,7 +209,7 @@ export type RepresentationUnderlyingV1 = z.infer<typeof RepresentationUnderlying
  * proved is an absence, and an absence is not a value.
  */
 export const BindRepresentationInputV1Schema = RepresentationUnderlyingObjectV1Schema.extend({
-  issuerId: z.enum(['coinbase', 'dinari', 'backed']),
+  issuerId: z.enum(['coinbase']),
   issuerInstrumentKey: z.string().min(1).max(200),
   representationKind: z.enum(UNDERLYING_REPRESENTATION_KINDS_V1),
 }).superRefine(refineRepresentationUnderlyingV1);
@@ -325,28 +308,19 @@ export interface UnderlyingAssetRepositoryV1 {
    * How many underlyings and bindings exist, over the WHOLE corpus.
    *
    * Zero is a legible answer; a surface may say so rather than showing an empty
-   * group. `multiIssuerUnderlyings` is counted here rather than over a returned
-   * page because it is the headline claim of the Market Reality surface — how
-   * many securities Base carries more than one issuer's way — and a headline
-   * computed from a page silently shrinks when the page does.
+   * group. Counted over the whole corpus rather than a returned page, because a
+   * headline computed from a page silently shrinks when the page does.
    */
   underlyingCounts(input: { chainId: number }): Promise<{
     underlyings: number;
     boundRepresentations: number;
-    multiIssuerUnderlyings: number;
   }>;
 
   /**
    * The reviewed underlyings, bounded, with how many representations each has.
    *
-   * The read a chooser is built from. Ordered by representation count first,
-   * because the whole point of the surface is a security that Base carries
-   * MORE THAN ONE way — a one-representation underlying has nothing to compare
-   * and belongs below the ones that do.
-   *
-   * `issuerIds` is de-duplicated and sorted, and it is deliberately a list
-   * rather than a count: "Coinbase and Backed" and "Backed twice" are two very
-   * different sentences about the same number two.
+   * The read a chooser is built from, ordered so that the securities with
+   * tokens outstanding come first. `issuerIds` is de-duplicated and sorted.
    */
   listUnderlyings(input: {
     chainId: number;
@@ -358,25 +332,12 @@ export interface UnderlyingAssetRepositoryV1 {
 export interface UnderlyingIndexEntryV1 {
   underlying: UnderlyingAssetV1;
   representationCount: number;
-  /**
-   * Of those, the ones with tokens outstanding, keyed by issuer. The Stocks
-   * screens show Coinbase's contract only, and COIN read as a live market
-   * because Backed's bCOIN had supply while COINc had none.
-   */
+  /** Of those, the ones with tokens outstanding, keyed by issuer. */
   liveRepresentationCountsByIssuer?: Record<string, number>;
   /** Distinct issuers behind those representations, sorted. */
   issuerIds: string[];
   /**
    * How many of those representations each issuer published, keyed by issuer.
-   *
-   * `issuerIds` says WHICH issuers and `representationCount` says how many
-   * contracts; neither says how many contracts belong to one of them. A screen
-   * scoped to Coinbase counted 13 securities and 39 representations on the same
-   * band, because the 39 included every Backed and Dinari contract bound to
-   * those same 13 companies — two numbers in two different units, one label
-   * apart. A scoped total has to be summed per issuer, so the per-issuer count
-   * has to exist.
-   *
    * Issuers with no representation are absent rather than zero: this is a
    * tally of what is bound, not a roster.
    */

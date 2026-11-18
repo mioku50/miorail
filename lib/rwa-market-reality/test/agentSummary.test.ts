@@ -331,10 +331,10 @@ describe('a lapsed quote is not an unreached market', () => {
       representations: [
         representation(),
         representation({
-          tokenAddress: '0x7e8101a1c322d394b3961498c7d40d2dfa94c392',
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:base_address:0x7e8101a1c322d394b3961498c7d40d2dfa94c392',
-          representationKind: 'non_rebasing_erc4626_wrapper',
+          tokenAddress: '0xb200000000000000000000000000000000000a01',
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:base_address:0xb200000000000000000000000000000000000a01',
+          representationKind: 'b20_asset',
           lastObservation: {
             source: 'kyberswap',
             status: 'measurement_failed',
@@ -346,10 +346,10 @@ describe('a lapsed quote is not an unreached market', () => {
           },
         }),
         representation({
-          tokenAddress: '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97',
-          issuerId: 'dinari',
-          issuerInstrumentKey: 'dinari:base_address:0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97',
-          representationKind: 'dinari_dshare',
+          tokenAddress: '0xb200000000000000000000000000000000000a02',
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:base_address:0xb200000000000000000000000000000000000a02',
+          representationKind: 'b20_asset',
           lastObservation: {
             source: 'kyberswap',
             status: 'unsized',
@@ -361,10 +361,10 @@ describe('a lapsed quote is not an unreached market', () => {
           },
         }),
         representation({
-          tokenAddress: '0xa34c5e0abe843e10461e2c9586ea03e55dbcc495',
-          issuerId: 'backed',
-          issuerInstrumentKey: 'backed:base_address:0xa34c5e0abe843e10461e2c9586ea03e55dbcc495',
-          representationKind: 'rebasing_erc20',
+          tokenAddress: '0xb200000000000000000000000000000000000a03',
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:base_address:0xb200000000000000000000000000000000000a03',
+          representationKind: 'b20_asset',
           lastObservation: {
             source: 'kyberswap',
             status: 'unsized',
@@ -376,10 +376,10 @@ describe('a lapsed quote is not an unreached market', () => {
           },
         }),
         representation({
-          tokenAddress: '0xf37e92704df29338dd09759f322fd09868dd25cc',
-          issuerId: 'dinari',
-          issuerInstrumentKey: 'dinari:base_address:0xf37e92704df29338dd09759f322fd09868dd25cc',
-          representationKind: 'dinari_dshare',
+          tokenAddress: '0xb200000000000000000000000000000000000a04',
+          issuerId: 'coinbase',
+          issuerInstrumentKey: 'coinbase:base_address:0xb200000000000000000000000000000000000a04',
+          representationKind: 'b20_asset',
           supply: {
             state: 'zero_supply',
             totalSupplyAtomic: '0',
@@ -426,11 +426,11 @@ describe('a lapsed quote is not an unreached market', () => {
   });
 
   test('the issuer is named once per row', () => {
-    // Production read "Dinari Dinari dShare": the issuer label and the
-    // representation kind both carried the issuer's name.
+    // Production once read an issuer's name twice on one row: the issuer label
+    // and the representation kind both carried it.
     const summary = marketRealityAgentSummaryV1(nvda());
     for (const row of summary.representations) {
-      assert.doesNotMatch(row.line, /\b(Dinari|Backed|Coinbase)\b.*\b\1\b/);
+      assert.doesNotMatch(row.line, /\b(Coinbase)\b.*\b\1\b/);
     }
   });
 
@@ -441,7 +441,7 @@ describe('a lapsed quote is not an unreached market', () => {
     );
     assert.match(priced!.line, /last look priced, 4 minutes ago/);
     const zero = summary.representations.find(
-      (row) => row.tokenAddress === '0xf37e92704df29338dd09759f322fd09868dd25cc',
+      (row) => row.tokenAddress === '0xb200000000000000000000000000000000000a04',
     );
     // Zero supply, never measured: the row says the supply state and claims no
     // measurement history it does not have.

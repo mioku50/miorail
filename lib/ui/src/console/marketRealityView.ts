@@ -109,12 +109,8 @@ export const MARKET_REALITY_SIZES_V1 = [
 // compile at the call site rather than rendering blank.
 // ---------------------------------------------------------------------------
 
-export type IssuerIdV1 = 'coinbase' | 'dinari' | 'backed';
-export type RepresentationKindV1 =
-  | 'b20_asset'
-  | 'rebasing_erc20'
-  | 'non_rebasing_erc4626_wrapper'
-  | 'dinari_dshare';
+export type IssuerIdV1 = 'coinbase';
+export type RepresentationKindV1 = 'b20_asset';
 
 export interface MarketRealityIndexEntryWireV1 {
   underlyingKey: string;
@@ -126,18 +122,14 @@ export interface MarketRealityIndexEntryWireV1 {
   representationCount: number;
   liveRepresentationCount: number;
   issuerIds: readonly IssuerIdV1[];
-  multiIssuer: boolean;
 }
 
 export interface MarketRealityIndexWireV1 {
-  scope?: 'coinbase_b20' | 'all_representations';
+  scope?: 'coinbase_b20';
   entries: readonly MarketRealityIndexEntryWireV1[];
   totals: {
     underlyings: number;
     boundRepresentations: number;
-    multiIssuerUnderlyings: number;
-    coinbaseUnderlyings?: number;
-    allUnderlyings?: number;
   };
   observedAt: string;
 }
@@ -323,11 +315,10 @@ export interface UnderlyingChoiceViewV1 {
   company: string | null;
   /** The stable identifier, spelled out — `ISIN US67066G1040`. */
   identifier: string | null;
-  /** "Coinbase · Backed" or "Backed only". */
+  /** The issuer, `Coinbase`, or that none is attributed. */
   issuerLine: string;
   issuerIds: readonly IssuerIdV1[];
   representationCount: number;
-  multiIssuer: boolean;
   /**
    * Said out loud when nothing behind this security has any tokens outstanding.
    *
@@ -606,22 +597,17 @@ export interface MarketRealityViewV1 {
 
 const ISSUER_NAME_V1: Readonly<Record<IssuerIdV1, string>> = {
   coinbase: 'Coinbase',
-  dinari: 'Dinari',
-  backed: 'Backed',
 };
 
 const STRUCTURE_LABEL_V1: Readonly<Record<RepresentationKindV1, string>> = {
   b20_asset: 'B20 asset',
-  rebasing_erc20: 'Rebasing ERC-20',
-  non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
-  dinari_dshare: 'Dinari dShare',
 };
 
 /**
  * The ratio convention, said in words a holder can check their own balance
  * against. This is the single most expensive thing on the page to get wrong:
- * applying a rebasing token's ratio a second time overstates a Netflix holding
- * tenfold, and five Dinari dShares are already away from 1.0.
+ * applying a token's ratio a second time overstates a holding by the whole
+ * ratio.
  */
 const NORMALIZATION_NOTE_V1: Readonly<
   Record<MarketRealityRepresentationWireV1['normalization'], string>
@@ -828,13 +814,13 @@ export function representationOutcomeV1(
 /**
  * The ways route evidence can fail to be a price, kept apart.
  *
- * Phase 10B.7 measured all three NVIDIA representations through the same router
- * at the same size and got three different router-policy answers, of which
- * the product was reporting two:
+ * Phase 10B.7 measured NVIDIA's contracts through the same router at the same
+ * size and got three different router-policy answers, of which the product was
+ * reporting two:
  *
- *   Coinbase NVDAc  200                       -> priced
- *   Backed  bNVDA   400 4008 route not found  -> no route in this router policy
- *   Backed  wbNVDA  400 4011 token not found  -> our router does not index it
+ *   200                       -> priced
+ *   400 4008 route not found  -> no route in this router policy
+ *   400 4011 token not found  -> our router does not index it
  *
  * The third was arriving as `provider_http_error` — our infrastructure taking
  * the blame for the router's token list, on 25 consecutive passes.
@@ -2055,9 +2041,6 @@ const SOURCE_PUBLISHER_BY_HOST_V1: Readonly<Record<string, string>> = {
   'docs.base.org': 'Base standard',
   'www.coinbase.com': 'Coinbase product terms',
   'coinbase.com': 'Coinbase product terms',
-  'docs.dinari.com': 'Dinari documentation',
-  'assets.backed.fi': 'Backed legal documentation',
-  'docs.xstocks.fi': 'Backed machine source',
   'github.com': 'Published source code',
   'docs.chain.link': 'Chainlink documentation',
 };
@@ -3408,7 +3391,6 @@ export function underlyingChoicesV1(
         : entry.issuerIds.map((id) => ISSUER_NAME_V1[id]).join(' · '),
     issuerIds: entry.issuerIds,
     representationCount: entry.representationCount,
-    multiIssuer: entry.multiIssuer,
     emptyNote:
       entry.liveRepresentationCount === 0 && entry.representationCount > 0
         ? entry.representationCount === 1
@@ -3421,26 +3403,6 @@ export function underlyingChoicesV1(
   }));
 }
 
-export interface StockFilterViewV1 {
-  id: 'all' | 'multi' | IssuerIdV1;
-  label: string;
-  /** How many of the reviewed securities this chip would leave on screen. */
-  count: number;
-}
-
-/**
- * The filter chips, derived from the corpus rather than typed out.
- *
- * They used to be a literal list of five, and one of them was Dinari. Dinari
- * has a hundred contracts proven to be dShares and NOT ONE bound to a security
- * — a root proves who deployed an address, never which share it is — so
- * pressing it emptied the page. A filter that can only return nothing is worse
- * than an absent one: it reads as a broken product rather than as a gap in
- * coverage, and it is the first thing a demo finds.
- *
- * `multi` appears only when something is actually held by two issuers, for the
- * same reason.
- */
 /**
  * Markets first, reviewed-but-empty second.
  *
@@ -3467,17 +3429,9 @@ export function partitionChoicesBySupplyV1(
  * The canonical representation first, the alternatives after it.
  *
  * Base documents one tokenized-stock standard on this chain — B20, issued by
- * Coinbase — and the measurements agree that it is also the one that answers:
- * on 2026-09-04 at $1,000 SELL, 10 of 13 Coinbase representations held a cash
- * route against 2 of 21 Backed and 0 of 96 Dinari. A board that presented all
- * three as peers put the reader's first card on a contract that mostly cannot
- * be priced.
- *
- * This is an ORDER and a heading, never a filter and never a ranking. Every
- * representation the comparison holds is still on the page with its own exact
- * address, because the thing this product knows that nothing else does is that
- * one security has several representations and they are not economically the
- * same. That claim needs the alternatives visible; it does not need them first.
+ * Coinbase — and it is the only issuer Miorail covers. This is an ORDER and a
+ * heading, never a filter and never a ranking: every representation the
+ * comparison holds is still on the page with its own exact address.
  */
 export function partitionByIssuerRoleV1(
   representations: readonly RepresentationViewV1[],
@@ -3637,31 +3591,6 @@ export function stocksHeadlineV1(
   };
 }
 
-export function stockFiltersV1(
-  choices: readonly UnderlyingChoiceViewV1[],
-): StockFilterViewV1[] {
-  const perIssuer = new Map<IssuerIdV1, number>();
-  let multi = 0;
-  for (const choice of choices) {
-    if (choice.multiIssuer) multi += 1;
-    for (const issuer of new Set(choice.issuerIds)) {
-      perIssuer.set(issuer, (perIssuer.get(issuer) ?? 0) + 1);
-    }
-  }
-  // One issuer on the board, no chips: "All" beside "Coinbase" would offer a
-  // choice between the same list twice.
-  if (multi === 0 && perIssuer.size <= 1) return [];
-  const filters: StockFilterViewV1[] = [{ id: 'all', label: 'All', count: choices.length }];
-  if (multi > 0) filters.push({ id: 'multi', label: 'Multi-issuer', count: multi });
-  // ISSUER_NAME_V1's own order, so the chips do not reshuffle when the corpus
-  // grows and a reader does not have to re-find the one they use.
-  for (const issuer of Object.keys(ISSUER_NAME_V1) as IssuerIdV1[]) {
-    const count = perIssuer.get(issuer) ?? 0;
-    if (count > 0) filters.push({ id: issuer, label: ISSUER_NAME_V1[issuer], count });
-  }
-  return filters;
-}
-
 /**
  * The headline counters, in units a reader can tell apart.
  *
@@ -3678,147 +3607,52 @@ export function stockFiltersV1(
  */
 export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): FactViewV1[] {
   if (!wire) return [];
-  const coinbaseScope = (wire.scope ?? 'all_representations') === 'coinbase_b20';
-  if (coinbaseScope) {
-    // Coinbase's contracts only (operator, 2026-10-03). Two numbers a reader
-    // can use: how many stocks, and how many of them hold any tokens at all —
-    // the same split the grid below draws.
-    return [
-      // What each number counts, said with it (audit STOCK-1, 2026-11-18): the first is the companies Coinbase's
-      // own list names at its last reading, not every contract Coinbase ever deployed; the second is Miorail's own
-      // reading of Base, which can trail a mint by a pass.
-      {
-        label: 'Coinbase stocks',
-        value: String(wire.totals.underlyings),
-        note: 'companies Coinbase’s list names now',
-        tone: 'neutral',
-      },
-      // Counted on the rows this answer carries: when the index cut them short of the total (it serves 500 at
-      // most), the count is a floor and says so, never a total beside one it cannot add up to.
-      (() => {
-        const live = wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length;
-        const cut = wire.entries.length < wire.totals.underlyings;
-        return {
-          label: 'With tokens outstanding',
-          value: cut ? `at least ${live}` : String(live),
-          note: cut
-            ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, as Base was last read`
-            : 'companies among them whose Coinbase contract holds any, as Base was last read',
-          tone: 'neutral' as const,
-        };
-      })(),
-    ];
-  }
+  // Coinbase's contracts only. Two numbers a reader can use: how many stocks,
+  // and how many of them hold any tokens at all — the same split the grid
+  // below draws.
   return [
+    // What each number counts, said with it (audit STOCK-1, 2026-11-18): the first is the companies Coinbase's
+    // own list names at its last reading, not every contract Coinbase ever deployed; the second is Miorail's own
+    // reading of Base, which can trail a mint by a pass.
     {
-      label: coinbaseScope ? 'Coinbase stocks' : 'Stocks',
+      label: 'Coinbase stocks',
       value: String(wire.totals.underlyings),
-      note: coinbaseScope
-        ? 'companies with a Coinbase B20 contract'
-        : 'companies bound to a Base contract by a reviewed source',
+      note: 'companies Coinbase’s list names now',
       tone: 'neutral',
     },
-    {
-      label: coinbaseScope ? 'B20 contracts' : 'Contracts',
-      value: String(wire.totals.boundRepresentations),
-      note: coinbaseScope
-        ? 'exact addresses on this page, one company each'
-        : 'exact addresses across Coinbase, Backed and Dinari',
-      tone: 'neutral',
-    },
-    {
-      label: coinbaseScope ? 'Also represented elsewhere' : 'Multi-issuer stocks',
-      value: String(wire.totals.multiIssuerUnderlyings),
-      // The only number on the page that says whether a COMPARISON exists at
-      // all. Counted by distinct issuer, so one issuer's token plus its own
-      // wrapper never inflates it.
-      note: coinbaseScope
-        ? 'companies here that also have a Backed or Dinari contract to compare against'
-        : 'companies represented by two or more issuers',
-      tone: 'neutral',
-    },
+    // Counted on the rows this answer carries: when the index cut them short of the total (it serves 500 at
+    // most), the count is a floor and says so, never a total beside one it cannot add up to.
+    (() => {
+      const live = wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length;
+      const cut = wire.entries.length < wire.totals.underlyings;
+      return {
+        label: 'With tokens outstanding',
+        value: cut ? `at least ${live}` : String(live),
+        note: cut
+          ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, as Base was last read`
+          : 'companies among them whose Coinbase contract holds any, as Base was last read',
+        tone: 'neutral' as const,
+      };
+    })(),
   ];
 }
 
-/**
- * What this page is a slice of, said above the grid.
- *
- * A scoped list whose counters move with the scope is honest about the page and
- * silent about the corpus: a reader has no way to tell whether thirteen is the
- * whole world or a thirteen-of-thirty-five view. Both numbers are on the wire,
- * so both are said, and the wider scope is named as a place to go rather than
- * as something withheld.
- */
+/** What this page is, said above the grid: Coinbase's B20 contracts, the
+ * standard Base documents for tokenized stocks and the only issuer Miorail
+ * covers. */
 export interface StockScopeViewV1 {
   title: string;
   body: string;
-  /** The corpus this page is a slice of, said in the same unit the band counts
-   * in. Null when this scope is the whole corpus. */
-  aside: string | null;
-  /** The scope this page is NOT showing, and how big it is. Null when there is
-   * nothing else to show. */
-  other: { scope: 'coinbase_b20' | 'all_representations'; label: string } | null;
-  /**
-   * Both corpora, as a switch rather than a one-way button.
-   *
-   * A reader standing in one corpus could not see the other was a corpus at
-   * all: the only control was "View all issuers", which looks like a link to
-   * somewhere else rather than the other half of a choice. Meanwhile the
-   * issuer chips under the search field -- All, Multi-issuer, Coinbase,
-   * Dinari, Backed -- filter WITHIN whichever corpus is loaded. Two scoping
-   * ideas, drawn identically, meaning different things.
-   */
-  options: readonly {
-    scope: 'coinbase_b20' | 'all_representations';
-    label: string;
-    /** Companies, the same unit the band above counts in. */
-    count: number;
-  }[];
-  selected: 'coinbase_b20' | 'all_representations';
 }
 
 export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockScopeViewV1 | null {
   if (!wire) return null;
-  const scope = wire.scope ?? 'all_representations';
-  const coinbase = wire.totals.coinbaseUnderlyings;
-  const all = wire.totals.allUnderlyings;
-  if (coinbase === undefined || all === undefined) return null;
-  if (scope === 'coinbase_b20') {
-    return {
-      title: 'Coinbase Tokenized Stocks',
-      // The B20 standard named once, because it is what every other Base
-      // surface calls these and a reader arriving from one of them should not
-      // have to work out that this is the same thing.
-      body: 'The standard Base documents for tokenized stocks on this chain.',
-      // The wider corpus, named in the SAME unit as the number above it. The
-      // button used to read `All representations · 35` while the band above it
-      // counted securities — so the one number a reader could compare it
-      // against was in the other unit. It says what pressing it changes: the
-      // set of issuers, not the set of companies.
-      // No other issuer is offered: the Stocks screens show Coinbase's
-      // contracts only (operator, 2026-10-03, "to not confuse people").
-      aside: null,
-      other: null,
-      // Both corpora, always both visible, so a reader can see which one they
-      // are standing in. As a single "View all issuers" button it was a
-      // one-way door with no lit state: the counters said "Coinbase stocks 13"
-      // while the chips below offered All / Multi-issuer / Coinbase / Dinari /
-      // Backed, and the two scoping ideas -- which corpus, and which issuer
-      // within it -- looked identical and meant different things.
-      options: [{ scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase }],
-      selected: 'coinbase_b20',
-    };
-  }
   return {
-    title: 'Every reviewed representation on Base',
-    body: `${all} companies across Coinbase, Backed and Dinari. The same company can be represented by several contracts, and they are not economically identical.`,
-    aside: null,
-    other: { scope: 'coinbase_b20', label: `Coinbase only · ${coinbase}` },
-    options: [
-      { scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase },
-      { scope: 'all_representations', label: 'All reviewed', count: all },
-    ],
-    selected: 'all_representations',
+    title: 'Coinbase Tokenized Stocks',
+    // The B20 standard named once, because it is what every other Base
+    // surface calls these and a reader arriving from one of them should not
+    // have to work out that this is the same thing.
+    body: 'The standard Base documents for tokenized stocks on this chain.',
   };
 }
 

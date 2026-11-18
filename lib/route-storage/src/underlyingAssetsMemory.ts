@@ -135,20 +135,10 @@ export function createMemoryUnderlyingAssetRepository(
     },
 
     async underlyingCounts(input) {
-      const issuersByKey = new Map<string, Set<string>>();
-      for (const row of bindings.values()) {
-        if (row.chainId !== input.chainId || !row.issuerId) continue;
-        const seen = issuersByKey.get(row.underlyingKey) ?? new Set<string>();
-        seen.add(row.issuerId);
-        issuersByKey.set(row.underlyingKey, seen);
-      }
       return {
         underlyings: underlyings.size,
         boundRepresentations: [...bindings.values()].filter((row) => row.chainId === input.chainId)
           .length,
-        // Distinct ISSUERS, never binding count: a rebasing token and its own
-        // wrapper are one issuer's structure choice, not a comparison.
-        multiIssuerUnderlyings: [...issuersByKey.values()].filter((set) => set.size > 1).length,
       };
     },
   };

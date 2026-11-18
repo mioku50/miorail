@@ -54,6 +54,8 @@ before(async () => {
     '0059_underlying_identity_and_backed.sql',
     // listUnderlyings joins supply to tell a live market from an empty one.
     '0060_representation_supply.sql',
+    // Coinbase's API as a source of identity, the one the bindings use now.
+    '0078_coinbase_stocks_api.sql',
   ]) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

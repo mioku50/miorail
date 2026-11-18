@@ -31,7 +31,7 @@ import {
   type StocksNarrationViolationCodeV1,
 } from './stocksNarration.js';
 
-const { COINBASE_NVDA, BACKED_NVDA, BACKED_WRAPPER } = STOCKS_BENCH_ADDRESSES_V1;
+const { COINBASE_NVDA, SECOND_NVDA, EMPTY_NVDA } = STOCKS_BENCH_ADDRESSES_V1;
 
 function caseOf(id: StocksBenchCaseV1['id']): StocksBenchCaseV1 {
   const found = STOCKS_BENCH_CORPUS_V1.find((entry) => entry.id === id);
@@ -97,7 +97,7 @@ describe('the Stocks benchmark corpus', () => {
   });
 
   test('the bundle separates what is established from what is not', () => {
-    // The Backed case has a price and no reference: both facts, on opposite
+    // Case F has a price and no reference: both facts, on opposite
     // sides of the line, and the whole reason the answer contract has two
     // lists rather than one paragraph.
     const bundle = bundleOf('F');
@@ -143,8 +143,8 @@ describe('the Stocks verifier', () => {
     // is ambient and citing it separately is not required.
     narration.established = [
       {
-        claim: `${BACKED_NVDA} priced at 178.4511 USDC per token`,
-        sourceIds: [itemId(bundle, 'route_status', BACKED_NVDA)],
+        claim: `${SECOND_NVDA} priced at 178.4511 USDC per token`,
+        sourceIds: [itemId(bundle, 'route_status', SECOND_NVDA)],
       },
     ];
     narration.sources = narration.established.flatMap((entry) => entry.sourceIds);
@@ -450,12 +450,12 @@ describe('the Stocks verifier', () => {
   });
 
   // --- 8. one representation may not borrow another's evidence ---------------
-  test('Backed may not stand on Coinbase reference evidence', () => {
+  test('one contract may not stand on another contract’s reference evidence', () => {
     const bundle = bundleOf('J');
     const narration = goodNarration(bundle);
     narration.established = [
       {
-        claim: `${BACKED_NVDA} trades 12 bps against its reference`,
+        claim: `${SECOND_NVDA} trades 12 bps against its reference`,
         sourceIds: [itemId(bundle, 'basis', COINBASE_NVDA)],
       },
     ];
@@ -920,9 +920,9 @@ describe('parsing', () => {
 
   test('the wrapper address is a distinct subject from the token it wraps', () => {
     const bundle = bundleOf('J');
-    assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === BACKED_WRAPPER));
-    assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === BACKED_NVDA));
-    assert.notEqual(BACKED_WRAPPER, BACKED_NVDA);
+    assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === EMPTY_NVDA));
+    assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === SECOND_NVDA));
+    assert.notEqual(EMPTY_NVDA, SECOND_NVDA);
   });
 });
 

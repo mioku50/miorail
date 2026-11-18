@@ -117,7 +117,7 @@ export const MarketRealityAgentChangesInputV1Schema = z
 
 const ReviewedIdentityEvidenceV1Schema = z
   .object({
-    sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
+    sourceKind: z.enum(['coinbase_b20_metadata', 'coinbase_stocks_api']),
     sourceRef: z.string().min(1).max(300),
     sourceHash: z
       .string()
@@ -175,9 +175,9 @@ export const MarketRealityAgentRepresentationsOutputV1Schema = z
         canonicalName: z.string().min(1).max(200),
         displaySymbol: z.string().min(1).max(40).nullable(),
         assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']),
-        identifierScheme: z.enum(['isin', 'dinari_stock_id', 'composite_figi']).nullable(),
+        identifierScheme: z.enum(['isin']).nullable(),
         identifierValue: z.string().min(1).max(120).nullable(),
-        sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
+        sourceKind: z.enum(['coinbase_b20_metadata', 'coinbase_stocks_api']),
         sourceRef: z.string().min(1).max(300),
         sourceHash: z
           .string()
@@ -201,14 +201,12 @@ export const MarketRealityAgentRepresentationsOutputV1Schema = z
           caip10: z.string().regex(/^eip155:8453:0x[0-9a-f]{40}$/),
           // Recovered from the exact address when the stored row predates
           // migration 0059, so this is never `null` and never "unknown".
-          issuerId: z.enum(['coinbase', 'dinari', 'backed']),
+          issuerId: z.enum(['coinbase']),
           issuerInstrumentKey: z.string().min(1).max(200),
           /** True when the issuer typing was completed from the exact address
            * rather than read from the stored binding. */
           issuerTypingRecovered: z.boolean(),
-          representationKind: z
-            .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
-            .nullable(),
+          representationKind: z.enum(['b20_asset']).nullable(),
           supply: AgentSupplyV1Schema,
           identityEvidence: ReviewedIdentityEvidenceV1Schema,
         })
@@ -472,7 +470,7 @@ export const MarketRealityAgentStocksOutputV1Schema = z
             canonicalName: z.string().min(1).max(200),
             displaySymbol: z.string().min(1).max(40).nullable(),
             assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']),
-            identifierScheme: z.enum(['isin', 'dinari_stock_id', 'composite_figi']).nullable(),
+            identifierScheme: z.enum(['isin']).nullable(),
             identifierValue: z.string().min(1).max(120).nullable(),
             issuerIds: z.array(z.string().min(1).max(60)),
             representationCount: z.number().int().min(0),
@@ -483,7 +481,7 @@ export const MarketRealityAgentStocksOutputV1Schema = z
              * reads an alias hit as issuer-published naming. */
             matchedBy: z.enum(['stored_naming', 'miorail_alias', 'unfiltered']),
             sourceEvidence: z.object({
-              sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
+              sourceKind: z.enum(['coinbase_b20_metadata', 'coinbase_stocks_api']),
               sourceRef: z.string().min(1).max(300),
               sourceHash: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
               observedAt: TimestampV1,

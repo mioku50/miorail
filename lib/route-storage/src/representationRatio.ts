@@ -11,9 +11,7 @@ import { RouteStorageIntegrityError } from './types.js';
 // that is 1.0 everywhere is indistinguishable from a value nobody reads, right
 // up until the day it moves.
 //
-// This is deliberately NOT a B20 table. Three issuers have representations on
-// Base and they do three different things, so the discriminator that matters
-// is not who issued the token but WHO APPLIES THE RATIO:
+// The discriminator that matters is WHO APPLIES THE RATIO:
 //
 //   * `apply_to_raw_balance`      — B20. `balanceOf` is raw; the caller does
 //                                   `raw * multiplier / scale`.
@@ -21,8 +19,9 @@ import { RouteStorageIntegrityError } from './types.js';
 //                                   applied it, and applying it again
 //                                   double-counts every corporate action.
 //
-// One column, and it is the whole difference between two issuers' conventions.
-// A new issuer arrives as a new `ratioKind`, not a new table.
+// Coinbase's B20 is the only representation Miorail reads (2026-11-18). A
+// reviewed adapter of another kind would arrive as a new `ratioKind`, not a
+// new table.
 // ---------------------------------------------------------------------------
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-byte address');
@@ -32,11 +31,7 @@ const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
 
 /** The reviewed adapters. Adding one is a review decision: it means somebody
  * proved which function to call AND which side applies the result. */
-export const RATIO_KINDS_V1 = [
-  'b20_multiplier',
-  'dinari_balance_per_share',
-  'backed_evm_multiplier',
-] as const;
+export const RATIO_KINDS_V1 = ['b20_multiplier'] as const;
 export type RatioKindV1 = (typeof RATIO_KINDS_V1)[number];
 
 export const RATIO_APPLICATIONS_V1 = ['apply_to_raw_balance', 'already_applied_by_token'] as const;
@@ -48,12 +43,6 @@ export const RATIO_APPLICATION_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioApp
   // IB20Asset: "Holder balances are stored [raw]"; `toScaledBalance(raw) =
   // raw * multiplier / WAD_PRECISION`.
   b20_multiplier: 'apply_to_raw_balance',
-  // DShare extends ERC20Rebasing: `balanceOf` already divides by
-  // balance-per-share. Applying it again double-counts every split.
-  dinari_balance_per_share: 'already_applied_by_token',
-  // Backed's published EVM implementation keeps internal shares and returns
-  // the multiplier-adjusted amount from balanceOf().
-  backed_evm_multiplier: 'already_applied_by_token',
 };
 
 /**
@@ -61,22 +50,16 @@ export const RATIO_APPLICATION_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioApp
  *
  * A B20 publishes its own scale — `WAD_PRECISION()` — so the reader READS it,
  * and a deployment that ever changed it would be followed rather than
- * misread. A dShare does not publish one: the divisor is a constant in the
- * issuer's own source ("This amount is assumed to have 18 decimals and is
- * divided by 10**18 when applied" — ERC20Rebasing.sol), so a reviewed adapter
- * DECLARES it.
- *
- * Both end up as the same digits in `scale`. The difference is whether the
- * chain told us or a person did, and a surface that cannot see the difference
- * will eventually claim we measured something we were told.
+ * misread. A contract that published none would need a reviewed adapter to
+ * DECLARE it; the difference is whether the chain told us or a person did, and
+ * a surface that cannot see the difference will eventually claim we measured
+ * something we were told.
  */
 export const RATIO_SCALE_SOURCES_V1 = ['read_from_contract', 'reviewed_constant'] as const;
 export type RatioScaleSourceV1 = (typeof RATIO_SCALE_SOURCES_V1)[number];
 
 export const RATIO_SCALE_SOURCE_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioScaleSourceV1>> = {
   b20_multiplier: 'read_from_contract',
-  dinari_balance_per_share: 'reviewed_constant',
-  backed_evm_multiplier: 'reviewed_constant',
 };
 
 /** The scale a reviewed adapter declares, for the kinds whose contracts do not
@@ -84,8 +67,6 @@ export const RATIO_SCALE_SOURCE_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioSc
  * cannot quietly substitute a constant for a missing read. */
 export const RATIO_DECLARED_SCALE_BY_KIND_V1: Readonly<Record<RatioKindV1, string | null>> = {
   b20_multiplier: null,
-  dinari_balance_per_share: '1000000000000000000',
-  backed_evm_multiplier: '1000000000000000000',
 };
 
 export const RepresentationRatioRowV1Schema = z

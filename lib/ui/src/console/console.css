@@ -1524,10 +1524,6 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-search input { width: 100%; min-width: 0; border: 0; border-radius: var(--r); padding: 10px 12px;
   background: var(--field); color: var(--ink); font: inherit; font-size: var(--fs-body); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .mr-search input:focus { outline: 2px solid var(--accent-line); outline-offset: 1px; }
-.mio-console .mr-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.mio-console .mr-filters button { border: 0; cursor: pointer; background: var(--panel2); color: var(--muted);
-  box-shadow: inset 0 0 0 1px var(--line); font-family: inherit; }
-.mio-console .mr-filters button.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .mr-choices { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 8px;
   max-height: 190px; overflow-y: auto; padding: 1px 2px 3px 1px; scrollbar-width: thin; }
 .mio-console .mr-choice { min-width: 0; width: 100%; display: grid; gap: 3px; justify-items: start; text-align: left;

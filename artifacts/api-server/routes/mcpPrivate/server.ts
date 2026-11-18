@@ -469,7 +469,7 @@ WHAT THIS RETURNS: which representation and which question are about to be revie
 
 Pass the identity fields exactly as Miorail returned them. A ticker cannot select a representation: different issuers publish different contracts for the same company, and Miorail will not guess which one you meant. If any field disagrees with Miorail's reviewed evidence the call is refused rather than corrected.
 
-A representation with zero outstanding supply refuses. It is NOT redirected to its wrapper, its underlying, or another issuer's contract — those are different contracts and a different question.
+A representation with zero outstanding supply refuses. It is NOT redirected to its underlying or to another contract of the same company — those are different contracts and a different question.
 
 This creates nothing executable. There is no path from here to calldata, an approval or a transaction; the user reviews, and only their own wallet can move anything.`,
       inputSchema: {
@@ -482,11 +482,9 @@ This creates nothing executable. There is no path from here to calldata, an appr
           .min(1)
           .max(200)
           .describe('The security this representation claims, e.g. "security:isin:US67066G1040".'),
-        issuerId: z.enum(['coinbase', 'dinari', 'backed']).describe('As Miorail returned it.'),
+        issuerId: z.enum(['coinbase']).describe('As Miorail returned it.'),
         issuerInstrumentKey: z.string().min(1).max(200).describe('As Miorail returned it.'),
-        representationKind: z
-          .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
-          .describe('As Miorail returned it.'),
+        representationKind: z.enum(['b20_asset']).describe('As Miorail returned it.'),
         direction: z.enum(['buy', 'sell']).describe('The exact direction the user asked about.'),
         requestedCashAtomic: POSITION_ARG_V1.describe(
           'The exact cash size in USDC atomic units. A $10,000 question is not a $100 question multiplied.',

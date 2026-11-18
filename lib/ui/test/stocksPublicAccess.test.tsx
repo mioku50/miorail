@@ -42,8 +42,6 @@ function entryV1(underlyingKey: string, displaySymbol: string, canonicalName: st
     representationCount: 1,
     liveRepresentationCount: 1,
     issuerIds: ['coinbase'],
-    multiIssuer: false,
-    coinbaseIssued: true,
   };
 }
 
@@ -56,9 +54,6 @@ function indexV1(entries: ReturnType<typeof entryV1>[], scope = 'coinbase_b20') 
     totals: {
       underlyings: entries.length,
       boundRepresentations: entries.length,
-      multiIssuerUnderlyings: 0,
-      coinbaseUnderlyings: entries.length,
-      allUnderlyings: entries.length,
     },
     observedAt: '2026-09-23T10:00:00.000Z',
   };
@@ -143,7 +138,7 @@ test('a ticker in the address selects that security, not the default one', () =>
 
 test('a ticker that is not a Coinbase stock selects nothing and says so', () => {
   // The board shows Coinbase's contracts only, so there is no wider corpus to
-  // fall back to: a link to a Dinari- or Backed-only ticker opens on nothing.
+  // fall back to: a link to a ticker Coinbase does not issue opens on nothing.
   const { probe } = probeV1(
     (client) =>
       client.setQueryData(['rwa-underlyings', 500, null, 'public'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')])),

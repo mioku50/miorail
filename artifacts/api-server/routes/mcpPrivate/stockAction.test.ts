@@ -66,8 +66,8 @@ const MIXED = CASE('J');
 const ZERO_SUPPLY = CASE('E');
 
 const COINBASE = STOCKS_BENCH_ADDRESSES_V1.COINBASE_NVDA;
-const BACKED = STOCKS_BENCH_ADDRESSES_V1.BACKED_NVDA;
-const WRAPPER = STOCKS_BENCH_ADDRESSES_V1.BACKED_WRAPPER;
+const SECOND = STOCKS_BENCH_ADDRESSES_V1.SECOND_NVDA;
+const EMPTY = STOCKS_BENCH_ADDRESSES_V1.EMPTY_NVDA;
 const UNDERLYING = STOCKS_BENCH_ADDRESSES_V1.UNDERLYING;
 const representationIn = (reality: typeof MIXED, address: string) =>
   reality.representations.find((row) => row.tokenAddress === address)!;
@@ -161,13 +161,13 @@ describe('an issuer stays the issuer it is', () => {
     assert.equal(representation.representationKind, 'b20_asset');
   });
 
-  test('exact Backed prepares as Backed, with its own kind', async () => {
+  test('a second contract of the same company prepares as itself', async () => {
     stub(MIXED);
-    const draft = await miorailPrepareStockActionV1(IDENTITY, argsFor(MIXED, BACKED));
+    const draft = await miorailPrepareStockActionV1(IDENTITY, argsFor(MIXED, SECOND));
     const representation = draft.representation as Record<string, string>;
-    assert.equal(representation.tokenAddress, BACKED);
-    assert.equal(representation.issuerId, 'backed');
-    assert.equal(representation.issuerId, representationIn(MIXED, BACKED).issuerId);
+    assert.equal(representation.tokenAddress, SECOND);
+    assert.equal(representation.issuerInstrumentKey, representationIn(MIXED, SECOND).issuerInstrumentKey);
+    assert.equal(representation.issuerId, representationIn(MIXED, SECOND).issuerId);
   });
 
   test('a stated identity that disagrees with the evidence is refused, not corrected', async () => {
@@ -175,9 +175,7 @@ describe('an issuer stays the issuer it is', () => {
     // Correcting here would be Miorail choosing a different contract than the
     // one the conversation was about.
     for (const wrong of [
-      { issuerId: 'backed' },
-      { representationKind: 'rebasing_erc20' },
-      { issuerInstrumentKey: 'backed:btoken:0xdead' },
+      { issuerInstrumentKey: 'coinbase:b20_address:0xdead' },
       { routePolicyKey: `0x${'aa'.repeat(32)}` },
     ]) {
       await assert.rejects(
@@ -190,17 +188,17 @@ describe('an issuer stays the issuer it is', () => {
 });
 
 describe('zero supply refuses, and redirects nowhere', () => {
-  test('a wrapper with no outstanding supply cannot be prepared', async () => {
+  test('a contract with no outstanding supply cannot be prepared', async () => {
     stub(ZERO_SUPPLY);
     await assert.rejects(
-      () => miorailPrepareStockActionV1(IDENTITY, argsFor(ZERO_SUPPLY, WRAPPER)),
+      () => miorailPrepareStockActionV1(IDENTITY, argsFor(ZERO_SUPPLY, EMPTY)),
       (error: unknown) => {
         assert.equal((error as { code?: string }).code, 'zero_supply_representation');
-        // Never the wrapper's underlying, never another issuer, never the
-        // Coinbase card sitting beside it in the same answer.
+        // Never another contract of the same company, never the card sitting
+        // beside it in the same answer.
         const message = (error as Error).message;
         assert.doesNotMatch(message, new RegExp(COINBASE, 'i'));
-        assert.doesNotMatch(message, new RegExp(BACKED, 'i'));
+        assert.doesNotMatch(message, new RegExp(SECOND, 'i'));
         return true;
       },
     );
@@ -1096,11 +1094,11 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     assert.equal(representation.tokenAddress, COINBASE);
     assert.equal(representation.issuerId, 'coinbase');
     assert.equal(representation.caip10, `eip155:8453:${COINBASE}`);
-    // Coinbase stayed Coinbase: the Backed address in the same answer never
-    // appears anywhere in the executable response.
+    // The chosen contract stayed itself: the other addresses in the same
+    // answer never appear anywhere in the executable response.
     const serialised = JSON.stringify(action);
-    assert.ok(!serialised.includes(BACKED));
-    assert.ok(!serialised.includes(WRAPPER));
+    assert.ok(!serialised.includes(SECOND));
+    assert.ok(!serialised.includes(EMPTY));
     assert.equal(action.approvalRequired, true);
     assert.equal(action.reviewConfirmed, true);
 
@@ -1150,17 +1148,17 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     );
   });
 
-  test('Backed stays Backed, and never becomes its wrapper', async () => {
+  test('a second contract stays itself, and never becomes another', async () => {
     executionStub();
     const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
-      clearance: clearanceFor(BACKED),
+      clearance: clearanceFor(SECOND),
       requestId: 'r1',
     });
     const representation = action.representation as Record<string, string>;
-    assert.equal(representation.tokenAddress, BACKED);
-    assert.equal(representation.issuerId, representationIn(MIXED, BACKED).issuerId);
+    assert.equal(representation.tokenAddress, SECOND);
+    assert.equal(representation.issuerId, representationIn(MIXED, SECOND).issuerId);
     const serialised = JSON.stringify(action);
-    assert.ok(!serialised.includes(WRAPPER));
+    assert.ok(!serialised.includes(EMPTY));
     assert.ok(!serialised.includes(COINBASE));
   });
 

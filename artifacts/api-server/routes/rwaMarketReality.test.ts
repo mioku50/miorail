@@ -147,28 +147,23 @@ describe('GET the reviewed-securities chooser', () => {
           assetClass: 'equity' as const,
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
-          representationCount: 3,
-          liveRepresentationCount: 3,
-          issuerIds: ['backed' as const, 'coinbase' as const],
-          multiIssuer: true,
-          coinbaseIssued: true,
+          representationCount: 1,
+          liveRepresentationCount: 1,
+          issuerIds: ['coinbase' as const],
         },
       ],
       totals: {
         underlyings: 19,
-        boundRepresentations: 25,
-        multiIssuerUnderlyings: 2,
-        coinbaseUnderlyings: 13,
-        allUnderlyings: 35,
+        boundRepresentations: 19,
       },
       observedAt: new Date().toISOString(),
     });
     const response = await request(app()).get('/api/route-intelligence/rwa/underlyings');
     assert.equal(response.status, 200);
     assert.equal(response.body.schemaVersion, 'market-reality-index/v1');
-    assert.equal(response.body.entries[0].multiIssuer, true);
-    // The headline is corpus-wide, never the page: one entry, two comparable.
-    assert.equal(response.body.totals.multiIssuerUnderlyings, 2);
+    assert.deepEqual(response.body.entries[0].issuerIds, ['coinbase']);
+    // The headline is corpus-wide, never the page: one entry, nineteen stocks.
+    assert.equal(response.body.totals.underlyings, 19);
   });
 
   test('the chooser refuses a session the way every other read does', async () => {

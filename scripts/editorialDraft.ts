@@ -69,10 +69,9 @@ const ISO_V1 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const NAME_V1 = /^[A-Za-z0-9][A-Za-z0-9.-]{0,15}$/;
 const SOURCE_LABELS_V1: Record<string, string> = {
   coinbase_stocks_api: "Coinbase's stock list",
-  backed_assets_api: "Backed's bTokens list",
   base_product_list: "Base's stock list",
 };
-const LIST_HOSTS_V1 = new Set(['api.coinbase.com', 'www.coinbase.com', 'api.xstocks.fi', 'brand.base.org', 'base.org', 'www.base.org']);
+const LIST_HOSTS_V1 = new Set(['api.coinbase.com', 'www.coinbase.com', 'brand.base.org', 'base.org', 'www.base.org']);
 const DIVIDEND_HOSTS_V1 = new Set(['www.sec.gov', 'news.microsoft.com', 'www.prnewswire.com']);
 
 function isoV1(value: unknown): value is string {

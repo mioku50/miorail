@@ -78,7 +78,7 @@ export interface OfficialAssetWireV1 {
   ticker: string;
   displayName: string | null;
   issuer: string;
-  listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api')[];
+  listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'coinbase_stocks_api')[];
   sourceDiscrepancy: boolean;
   referenceValue: {
     status: 'fresh' | 'stale' | 'paused' | 'unavailable' | 'invalid';
@@ -134,7 +134,7 @@ export interface OfficialAssetsOverviewWireV1 {
     notMeasured: number;
   };
   sources: readonly {
-    sourceKind: 'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api';
+    sourceKind: 'base_docs_technical' | 'base_product_list' | 'coinbase_stocks_api';
     sourceUrl: string;
     checkedAt: string | null;
     status: 'ok' | 'unreachable' | 'unparsable' | null;
@@ -306,11 +306,10 @@ export function rwaAgeLabelV1(iso: string | null, now: Date): string | null {
 // ---------------------------------------------------------------------------
 
 const SOURCE_LABEL_V1: Readonly<
-  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api', string>
+  Record<'base_docs_technical' | 'base_product_list' | 'coinbase_stocks_api', string>
 > = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
-  backed_assets_api: 'Backed bTokens API',
   coinbase_stocks_api: 'Coinbase Stocks API',
 };
 
@@ -769,10 +768,7 @@ export function officialAssetsViewV1(
     {
       label: 'Official issuance',
       value: String(wire.counts.officialIssuance),
-      // Named for the corpus, not for one issuer in it. The count reached 34
-      // once Backed's bTokens API became a reviewed source — and the right rail
-      // on the same screen listed all three sources beside a sentence that
-      // credited only Coinbase.
+      // Named for the corpus, not for one source in it.
       note: 'Currently listed by a reviewed issuer source',
       tone: 'neutral',
     },
@@ -1242,8 +1238,6 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
           ? 'the Base product page'
           : sourceKind === 'coinbase_stocks_api'
             ? 'the Coinbase Stocks API'
-          : sourceKind === 'backed_assets_api'
-            ? 'the Backed bTokens API'
             : 'the Base docs corpus';
       return card.kind === 'official_source_added_asset'
         ? `${ticker} is now listed by ${source}.`
@@ -1298,11 +1292,9 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
       const ticker = card.subjectTicker ?? 'an asset';
       const wad = text('multiplierWad');
       const ratio = wad === null ? null : rwaMultiplierLabelV1(wad);
-      // What the contract DID, not what it means for the holder. The first two
-      // of these ever recorded were Backed tokens, not Coinbase's — the same
-      // event name on an issuer whose multiplier is a rebase rather than a
-      // redemption ratio. Naming the meaning here would put Coinbase's
-      // semantics on somebody else's token.
+      // What the contract DID, not what it means for the holder: the same
+      // event name can carry a rebase rather than a redemption ratio, and
+      // naming the meaning here would put one convention on another's token.
       return ratio === null
         ? `${ticker} published a new multiplier onchain. The value came in a form this build cannot read, so the card's own multiplier reading is the one to trust.`
         : `${ticker} published a new multiplier of ${ratio}. What a multiplier means is the issuer's: on Coinbase's B20 assets it is how many underlying shares one token redeems for.`;
@@ -1361,8 +1353,7 @@ export function signalFeedViewV1(wire: RwaSignalFeedWireV1, now: Date): SignalFe
           // Only said when it is true. A record that opened later is still a
           // record, and calling it complete would be the claim doing the work.
           // Scoped to Coinbase on purpose: that is the cohort the genesis block
-          // was measured against, and the Backed representations in the same
-          // tracked set are older than it.
+          // was measured against.
           record.sinceFirstStock
             ? ', every block since the first Coinbase tokenized stock existed'
             : ''

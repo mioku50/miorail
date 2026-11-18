@@ -626,39 +626,6 @@ describe('rwa discover view — signals', () => {
     assert.equal(never.corporateRecord, null);
   });
 
-  test('a Backed source transition is never mislabeled as Coinbase evidence', () => {
-    const view = signalFeedViewV1(
-      {
-        observedAt: NOW.toISOString(),
-        watching: [
-          { kind: 'official_source_added_asset', watchingSince: '2026-08-20T10:00:00.000Z' },
-        ],
-        notReported: [],
-        cards: [
-          {
-            signalId: 'backed-1',
-            kind: 'official_source_added_asset',
-            subjectAddress: COIN,
-            subjectTicker: 'bCOIN',
-            officialAddress: null,
-            officialTicker: null,
-            occurredAt: '2026-08-25T11:00:00.000Z',
-            recordedAt: '2026-08-25T11:00:05.000Z',
-            facts: {
-              sourceKind: 'backed_assets_api',
-              sourceUrl: 'https://api.xstocks.fi/api/v1/token?type=btokens',
-              ticker: 'bCOIN',
-              displayName: 'Backed Coinbase Global',
-            },
-          },
-        ],
-      },
-      NOW,
-    );
-    assert.match(view.cards[0]!.detail, /Backed bTokens API/);
-    assert.doesNotMatch(view.cards[0]!.detail, /Base docs corpus/);
-  });
-
   test('an onchain announcement is quoted, and an unreadable one says so', () => {
     const card = (facts: Record<string, unknown>) => ({
       signalId: 'ann-1',
@@ -754,8 +721,8 @@ describe('rwa discover view — signals', () => {
     // Every digit of the WAD. A float loses the last of them, and those are the
     // difference between a share count that reconciles and one that does not.
     assert.match(view.cards[0]!.detail, /new multiplier of 1\.057380318816778075/);
-    // ...and no claim about what it means: the first two of these ever recorded
-    // were Backed tokens, whose multiplier is a rebase, not a redemption ratio.
+    // ...and no claim about what it means: the same event can carry a rebase
+    // rather than a redemption ratio.
     assert.match(view.cards[0]!.detail, /What a multiplier means is the issuer's/);
   });
 

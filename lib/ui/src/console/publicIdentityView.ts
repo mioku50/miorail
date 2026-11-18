@@ -5,18 +5,12 @@ import type { ToneV1 } from './rwaDiscoverView';
 //
 // The whole screen is one verdict and the reader will take the colour before
 // they take the words, so the colour is the claim here rather than decoration.
-// Two of the five standings are the reason this file exists:
+// One of the four standings is the reason this file exists:
 //
 //   `unknown_to_miorail` MUST NOT BE GREEN AND MUST NOT BE RED. Nothing has
 //   been written down here about that address. Green would say safe, red would
 //   say dangerous, and both are claims Miorail has no evidence for. It is the
 //   `off` tone every unestablished reading in this product already wears.
-//
-//   `issuer_representation` is NOT an endorsement of what the token
-//   represents. An issuer's registry vouching for an address establishes who
-//   deployed it and nothing else — Dinari's Base dShare declares symbol
-//   "AAPL" exactly and no reviewed source says which security it stands for.
-//   Neutral, and the sentence says both halves.
 //
 // A lookalike wears `warn`, never `bad`: two strings matched and two addresses
 // did not, and that is a resemblance rather than a finding of fraud.
@@ -29,7 +23,6 @@ export interface PublicIdentityReadingV1 {
   standing:
     | 'reviewed_official'
     | 'delisted_official'
-    | 'issuer_representation'
     | 'known_lookalike'
     | 'unknown_to_miorail';
   answer: string;
@@ -39,7 +32,6 @@ export interface PublicIdentityReadingV1 {
     issuer: string;
     listedIn: readonly { sourceKind: string; currentlyListed: boolean; lastSeenAt: string }[];
   } | null;
-  issuerRepresentation: { issuerId: string; rootKey: string; observedAt: string } | null;
   lookalike: {
     officialAddress: string;
     officialTicker: string | null;
@@ -84,7 +76,6 @@ const VERDICT_V1: Readonly<
   // The source moved, not the contract. A warning would tell the reader the
   // token changed, and it did not.
   delisted_official: { verdict: 'No longer listed', tone: 'neutral' },
-  issuer_representation: { verdict: 'The issuer vouches for it', tone: 'neutral' },
   known_lookalike: { verdict: 'Wearing an official name', tone: 'warn' },
   // Not green, not red. See the header.
   unknown_to_miorail: { verdict: 'Nothing on file here', tone: 'off' },
@@ -141,18 +132,6 @@ export function publicIdentityViewV1(
     });
   }
 
-  if (reading.issuerRepresentation) {
-    facts.push({
-      label: 'Vouched for by',
-      value: reading.issuerRepresentation.issuerId,
-      note: `its own registry (${reading.issuerRepresentation.rootKey}), read ${dayV1(reading.issuerRepresentation.observedAt) ?? 'at an unknown time'}`,
-    });
-    facts.push({
-      label: 'What it represents',
-      value: 'not established',
-      note: 'no reviewed source publishes which security this contract stands for, so Miorail will not name one',
-    });
-  }
 
   if (reading.lookalike) {
     const named = reading.lookalike.officialTicker ?? 'an official asset';

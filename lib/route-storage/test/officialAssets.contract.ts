@@ -22,7 +22,6 @@ const API_URL = 'https://api.coinbase.com/v1/tokenized-stocks';
 const API_SNAPSHOT = { sourceKind: 'coinbase_stocks_api', sourceUrl: API_URL } as const;
 const API_ASSET = { sourceKind: 'coinbase_stocks_api', referenceFeedAddress: null } as const;
 const SPCX = '0xb200000000000000000000000000000000005bc0';
-const BACKED_URL = 'https://api.xstocks.fi/api/v1/token?type=btokens';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -334,25 +333,21 @@ export function officialAssetContractV1(
       );
     });
 
-    test('one source may publish direct and wrapped representations under one display ticker', async () => {
+    test('one source may publish two representations under one display ticker', async () => {
+      // Two exact addresses under one ticker inside ONE source is not a source
+      // discrepancy: only two sources disagreeing about a ticker is.
       const { repository } = await open();
       await repository.recordSnapshot({
         snapshot: snapshotFixtureV1({
-          sourceKind: 'backed_assets_api',
-          sourceUrl: BACKED_URL,
+          sourceKind: 'coinbase_stocks_api',
+          sourceUrl: API_URL,
         }),
         assets: [
+          assetFixtureV1({ sourceKind: 'coinbase_stocks_api', ticker: 'NVDAc', referenceFeedAddress: null }),
           assetFixtureV1({
-            sourceKind: 'backed_assets_api',
-            ticker: 'bNVDA',
-            issuer: 'backed',
-            referenceFeedAddress: null,
-          }),
-          assetFixtureV1({
-            sourceKind: 'backed_assets_api',
+            sourceKind: 'coinbase_stocks_api',
             tokenAddress: LOOKALIKE,
-            ticker: 'bNVDA',
-            issuer: 'backed',
+            ticker: 'NVDAc',
             referenceFeedAddress: null,
           }),
         ],
@@ -363,7 +358,7 @@ export function officialAssetContractV1(
         (
           await repository.officialAssets({
             chainId: 8453,
-            sourceKind: 'backed_assets_api',
+            sourceKind: 'coinbase_stocks_api',
             limit: 10,
           })
         ).map((identity) => identity.tokenAddress),

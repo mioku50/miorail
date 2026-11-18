@@ -161,8 +161,6 @@ test('retired sources, unknown hosts and credential-bearing source links are ref
   }
   const retired = listing(); retired.signal.facts.sourceKind = 'base_docs_technical';
   assert.deepEqual(drafts(snapshot([retired])), []);
-  const backed = listing(); backed.signal.facts.sourceKind = 'backed_assets_api'; backed.signal.facts.sourceUrl = 'https://api.xstocks.fi/api/v1/token?type=btokens';
-  assert.equal(drafts(snapshot([backed])).length, 1);
 });
 
 test('dividend declaration copies issuer amount and dates without claiming a token payment', () => {

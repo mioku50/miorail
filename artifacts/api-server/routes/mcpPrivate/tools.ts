@@ -1069,7 +1069,7 @@ export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
   representation_not_reviewed:
     'That exact address is not one of the reviewed representations for that security at that question. Miorail did not substitute another one.',
   zero_supply_representation:
-    'That representation has no outstanding supply, so there is no position to act on. Miorail will not redirect to its wrapper, its underlying, or another issuer — those are different contracts and a different question.',
+    'That representation has no outstanding supply, so there is no position to act on. Miorail will not redirect to its underlying or to another contract of the same company — those are different contracts and a different question.',
   supply_not_established:
     'Outstanding supply for that representation is not established, so Miorail will not prepare an action against it.',
   route_policy_not_established:

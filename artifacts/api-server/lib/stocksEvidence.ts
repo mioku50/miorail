@@ -24,7 +24,7 @@ import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 //
 // The ID is not decoration. A Stocks answer is about several representations
 // of ONE security at once, and the failure that shape invites is a sentence
-// about Backed built from Coinbase's reference evidence. Reading well, wrong,
+// about one contract built from another's reference evidence. Reading well, wrong,
 // and unfalsifiable without knowing which row each clause came from. So a
 // claim cites the items it stands on, and the verifier checks the citation
 // against the subject rather than against the whole bundle.
@@ -44,8 +44,8 @@ export {
 
 export interface StocksSubjectV1 {
   tokenAddress: string;
-  issuerId: 'coinbase' | 'dinari' | 'backed';
-  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper' | 'dinari_dshare';
+  issuerId: 'coinbase';
+  representationKind: 'b20_asset';
 }
 
 export interface StocksEvidenceBundleV1 {
@@ -436,7 +436,7 @@ function poolItemsV1(
  *
  * `unread` is Miorail's gap and says so; it is never "no dividend". The rows
  * belong to the token when the token is one of this answer's representations,
- * so a claim about Backed cannot cite Coinbase's conversion.
+ * so a claim about one contract cannot cite another's conversion.
  */
 function dividendItemsV1(
   state: BuilderStateV1,

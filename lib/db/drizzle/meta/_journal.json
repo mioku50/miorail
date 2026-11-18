@@ -743,6 +743,13 @@
       "when": 1795471200000,
       "tag": "0105_still_loan_rate_read_at",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1795557600000,
+      "tag": "0106_coinbase_only",
+      "breakpoints": true
     }
   ]
 }

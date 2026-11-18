@@ -1,42 +1,19 @@
 // ---------------------------------------------------------------------------
-// The reviewed issuers, and what "reviewed" means for each of them.
+// The reviewed issuer, and what "reviewed" means for it.
 //
-// Phase 9A measured that Base carries representations from three issuers, not
-// six, and that the issuer chip in Base App proves nothing about them — Tesla
-// is chipped `Backed Assets` although Coinbase also has a Base representation,
-// and Circle is chipped `Backed Assets` although Backed has no CRCL on Base at
-// all. So an issuer is established the same way an asset is: by a root that
-// the issuer itself controls and that names an exact address.
-//
-// The three roots on file are not the same kind of thing, and pretending they
-// were is how one issuer's conventions leak into another's card:
-//
-//   reviewed_document   Coinbase. A document at an https origin lists the
-//                       addresses. Freshness is when we last fetched it; a
-//                       failed fetch stops the clock and demotes nothing.
-//   onchain_predicate   Dinari. A contract the issuer deployed answers a
-//                       membership question about ONE address at a time.
-//                       Freshness is a block; there is no list to fetch and
-//                       nothing to parse.
-//   reviewed_machine_   Backed. The issuer's versioned API binds stable
-//   readable            instrument identifiers and ISINs to exact Base
-//                       addresses. A completed parse is the trust root;
-//                       transport or schema failure withdraws nothing.
-//
-// A predicate root cannot be enumerated, a document root cannot be asked about
-// an address it does not mention, and a machine-readable mapping must not be
-// broadened beyond the exact chain/address rows it publishes. None is better.
-// They are different evidence, and the registry stores which one answered.
+// Miorail covers Coinbase's tokenized stocks on Base and no other issuer's
+// (2026-11-18: Backed's and Dinari's tokens were removed, code and data, as
+// having nothing to do with Coinbase's). An issuer is established the same way
+// an asset is: by a root the issuer itself controls that names an exact
+// address. Coinbase's root is a reviewed document and API at an https origin
+// that lists the addresses. Freshness is when we last fetched it; a failed
+// fetch stops the clock and demotes nothing.
 // ---------------------------------------------------------------------------
 
-export const REVIEWED_ISSUERS_V1 = ['coinbase', 'dinari', 'backed'] as const;
+export const REVIEWED_ISSUERS_V1 = ['coinbase'] as const;
 export type ReviewedIssuerIdV1 = (typeof REVIEWED_ISSUERS_V1)[number];
 
-export const IDENTITY_ROOT_KINDS_V1 = [
-  'reviewed_document',
-  'onchain_predicate',
-  'reviewed_machine_readable',
-] as const;
+export const IDENTITY_ROOT_KINDS_V1 = ['reviewed_document'] as const;
 export type IdentityRootKindV1 = (typeof IDENTITY_ROOT_KINDS_V1)[number];
 
 export interface ReviewedIssuerV1 {
@@ -47,8 +24,8 @@ export interface ReviewedIssuerV1 {
    * What a positive answer from this issuer's root does and does not establish.
    *
    * Carried as prose because it is the sentence a surface must be able to show
-   * beside the claim. Both entries say the same second half on purpose: no
-   * root on file establishes WHICH security a representation stands for.
+   * beside the claim: the root establishes the issuer, not WHICH security a
+   * representation stands for.
    */
   rootEstablishes: string;
 }
@@ -60,19 +37,5 @@ export const REVIEWED_ISSUERS_BY_ID_V1: Readonly<Record<ReviewedIssuerIdV1, Revi
     identityRootKind: 'reviewed_document',
     rootEstablishes:
       'Base publishes this address in its own issuance guide. That establishes the issuer, not the security: the guide keys assets by a mutable ticker.',
-  },
-  dinari: {
-    issuerId: 'dinari',
-    displayName: 'Dinari',
-    identityRootKind: 'onchain_predicate',
-    rootEstablishes:
-      "Dinari's own factory answers isTokenDShare(address) for this exact address. That establishes the issuer, not the security: the token's symbol is admin-settable and Dinari's own guide says to key off stock_id instead.",
-  },
-  backed: {
-    issuerId: 'backed',
-    displayName: 'Backed Assets',
-    identityRootKind: 'reviewed_machine_readable',
-    rootEstablishes:
-      'The issuer public token API maps this exact Base address to a stable issuer instrument UUID and certificate ISIN. Its underlying ISIN is a separate reviewed field; neither display symbol is used as identity.',
   },
 };

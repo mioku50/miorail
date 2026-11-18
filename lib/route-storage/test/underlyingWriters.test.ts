@@ -16,14 +16,8 @@ const repoRoot = path.join(here, '..', '..', '..');
 // representations has to be added here, which is where somebody reads the rule.
 // ---------------------------------------------------------------------------
 const WRITERS_V1 = [
-  // Phase 17.5. Dinari's dShares: the issuer's own address list when it names
-  // the Base contract, and otherwise a symbol join whose BOTH sides are that
-  // same issuer's publications, gated on a composite FIGI the registry that
-  // issues FIGIs agrees with.
   'scripts/coinbaseStockBindings.ts',
-  'scripts/rwa_bind_dinari_representations.ts',
   'scripts/rwa_enrich_underlying_identity.ts',
-  'scripts/rwa_ingest_official.ts',
 ] as const;
 
 const REQUIRED_FIELDS_V1 = ['issuerId', 'issuerInstrumentKey', 'representationKind'] as const;

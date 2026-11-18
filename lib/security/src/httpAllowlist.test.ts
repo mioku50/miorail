@@ -62,17 +62,10 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     'api.bitrefill.com',
     'api.opensea.io',
     'api.venice.ai',
-    // Phase 17.5 — the Dinari Enterprise catalogue (both environments) and the
-    // registry that issues composite FIGIs. Read-only, and the only reason the
-    // sandbox host is listed is that production access is gated behind a
-    // verification form; which one is used is configuration, not this list.
-    'api-enterprise.sbt.dinari.com',
-    'api-enterprise.sandbox.dinari.com',
     // Phase 13.8 — Euler's public v3 read API. The only host added for the
     // third lender Base names, and it is a second opinion on a reading taken
     // from the vault factory first, never the only source for it.
     'v3.euler.finance',
-    'api.openfigi.com',
     // The Stocks list: Coinbase's public Tokenized Stocks API and the icons it
     // links to, both read-only and both on fixed paths.
     'api.coinbase.com',

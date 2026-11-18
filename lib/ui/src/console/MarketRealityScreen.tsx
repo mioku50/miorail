@@ -12,10 +12,8 @@ import {
   STOCK_ISSUER_NOTICE_V1,
   partitionByIssuerRoleV1,
   partitionChoicesBySupplyV1,
-  stockFiltersV1,
   useSectionsV1,
   type FactViewV1,
-  type StockFilterViewV1,
   type StockScopeViewV1,
   type MarketRealityDirectionV1,
   type MarketRealityViewV1,
@@ -306,7 +304,6 @@ export interface MarketRealityScreenModelV1 {
    * older payload that does not carry the corpus totals — the panel is not
    * rendered rather than guessed at. */
   scope?: StockScopeViewV1 | null;
-  onScope?: (scope: 'coinbase_b20' | 'all_representations') => void;
   choices: readonly UnderlyingChoiceViewV1[];
   choicesLoading: boolean;
   /** Why there is no chooser. Never a claim about the corpus. */
@@ -1169,16 +1166,10 @@ function ChoiceButton({
         {quote?.price && stockPriceStaleLabelV1(quote.priceAt, new Date()) ? (
           <span className="pill mr-choice-tag">{stockPriceStaleLabelV1(quote.priceAt, new Date())}</span>
         ) : null}
-        {/* The issuer list is the part that may be shortened; the tag is not.
-            As a bare text node it could not shrink, so "Backed · Coinbase ·
-            Dinari" pushed the badge out of the card and it rendered as
-            "MULTI-" — a clipped word that reads like a bug, on the one chip
-            that carries the page's whole point. */}
         {/* A board of one issuer's contracts names no issuer on every tile. */}
         {choice.issuerIds.length === 1 && choice.issuerIds[0] === 'coinbase' ? null : (
           <span className="mr-choice-issuers">{choice.issuerLine}</span>
         )}
-        {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
         {/* Kept on the row as well as in the section, so a reader who opens one
             anyway does not read an empty contract as a broken product. */}
         {choice.emptyNote ? <span className="pill mr-choice-tag">{choice.emptyNote}</span> : null}
@@ -1204,18 +1195,9 @@ export function Chooser({
   onUnderlying: (underlyingKey: string) => void;
 }) {
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<StockFilterViewV1['id']>('all');
-  // Derived from what is actually bound, never a literal. See `stockFiltersV1`.
-  const filters = useMemo(() => stockFiltersV1(choices), [choices]);
-  // A chip can disappear when the corpus changes under a reader who is standing
-  // on it. Falling back to `all` beats rendering an empty list with no chip lit.
-  const active = filters.some((entry) => entry.id === filter) ? filter : 'all';
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return choices.filter((choice) => {
-      if (active === 'multi' && !choice.multiIssuer) return false;
-      if (active !== 'all' && active !== 'multi' && !choice.issuerIds.includes(active))
-        return false;
       return (
         !query ||
         `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine} ${quotes?.get(choice.underlyingKey)?.companyName ?? ''}`
@@ -1223,7 +1205,7 @@ export function Chooser({
           .includes(query)
       );
     });
-  }, [choices, quotes, active, search]);
+  }, [choices, quotes, search]);
   const partitioned = useMemo(() => partitionChoicesBySupplyV1(visible), [visible]);
   if (error) return <p className="note warn">{error}</p>;
   if (choices.length === 0) {
@@ -1245,21 +1227,6 @@ export function Chooser({
           placeholder="Search stocks, ticker or ISIN"
         />
       </label>
-      {filters.length > 1 ? (
-      <div className="mr-filters" role="group" aria-label="Stock filters">
-        {filters.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className={`pill${active === entry.id ? ' on' : ''}`}
-            aria-pressed={active === entry.id}
-            onClick={() => setFilter(entry.id)}
-          >
-            {entry.label}
-          </button>
-        ))}
-      </div>
-      ) : null}
       <div className="mr-choices" role="listbox" aria-label="Markets with tokens outstanding">
         {partitioned.live.map((choice) => (
           <ChoiceButton
@@ -1986,9 +1953,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   const compared = representations.filter((representation) => representation.inComparison);
   const outside = representations.filter((representation) => !representation.inComparison);
   // Order and heading, not a filter: every compared representation is still
-  // rendered. `others` is empty when there is no Coinbase card to be other
-  // than, so a Backed-only security is a board, not a demotion.
-  const { primary, others } = partitionByIssuerRoleV1(compared);
+  // rendered.
+  const { primary } = partitionByIssuerRoleV1(compared);
   const board = primary.length > 0 ? primary : compared;
   // The answer card replaces the loose Measure button rather than joining it:
   // two controls with one label on one screen is a question about which one
@@ -2061,35 +2027,14 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       {show('mine') && model.telegram ? <TelegramAlertsStrip model={model.telegram} /> : null}
       {show('market') ? (
       <>
-      {/* What this page is, before what it counts. Coinbase B20 is the standard
-          Base documents for tokenized stocks on this chain, and it is the scope
-          a reader lands in; the wider corpus is one press away and is named
-          with its size, so nothing is hidden — only ordered. */}
+      {/* What this page is, before what it counts: Coinbase B20, the standard
+          Base documents for tokenized stocks on this chain. */}
       {model.scope ? (
         <div className="mr-scope" aria-label="Corpus scope">
           <div>
             <h3>{model.scope.title}</h3>
             <p className="lnote">{model.scope.body}</p>
-            {model.scope.aside ? <p className="lnote">{model.scope.aside}</p> : null}
           </div>
-          {/* Which corpus, as a switch. The issuer chips below the search
-              field filter WITHIN it; these choose which "within" means. */}
-          {model.scope.options.length > 1 && model.onScope ? (
-            <div className="mr-scope-switch" role="group" aria-label="Corpus">
-              {model.scope.options.map((option) => (
-                <button
-                  key={option.scope}
-                  type="button"
-                  aria-pressed={option.scope === model.scope!.selected}
-                  className={option.scope === model.scope!.selected ? 'on' : ''}
-                  onClick={() => model.onScope?.(option.scope)}
-                >
-                  {option.label}
-                  <span className="d"> {option.count}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
       ) : null}
 
@@ -2423,48 +2368,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               {actions.onPrepare ? (
                 <p className="mr-issuer-note">{STOCK_ISSUER_NOTICE_V1}</p>
               ) : null}
-              {/* The same security through a different issuer's structure. This
-                  is the comparison the product exists for — kept on the page,
-                  and kept after the representation a reader can act on. */}
-              {others.length > 0 && !model.questionFixed ? (
-                <section className="mr-outside" aria-label="Other representations on Base">
-                  <h4>Other representations of this security on Base</h4>
-                  <p className="lnote">
-                    Backed bTokens and Dinari dShares are separate systems, not B20. Same underlying
-                    company, different structure, supply and market access — which is exactly why
-                    they are measured separately here.
-                  </p>
-                  <div className="mr-compact-list">
-                    {others.map((representation) => (
-                      <CompactRepresentation
-                        key={representation.tokenAddress}
-                        representation={representation}
-                      >
-                        <RepresentationCard
-                          representation={representation}
-                          actions={actions}
-                          surface={model.surface}
-                          direction={model.direction}
-                          watched={
-                            model.watchedTokenAddresses?.includes(representation.tokenAddress) ??
-                            false
-                          }
-                          watching={model.watchingTokenAddress === representation.tokenAddress}
-                          removing={model.removingWatchTokenAddress === representation.tokenAddress}
-                          measuring={model.measuring}
-                          useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
-                          useAccessLoading={model.useAccessLoading === true}
-                          poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
-                          inspectRouteUnavailable={
-                            model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
-                          }
-                        />
-                      </CompactRepresentation>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
               {/* Visible, and out of the comparison. Not a ranking: there is no
                   order here, only membership — a representation with nothing
                   outstanding is not being read against anything. */}

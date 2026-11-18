@@ -181,11 +181,10 @@ describe('a KPI stacks whatever element it is given', () => {
     );
   });
 
-  test('the multi-issuer chip cannot be squeezed out of its own card', () => {
-    // Shipped bug, seen on the Stocks chooser: three issuers on one row pushed
-    // the badge past the card edge and it rendered as "MULTI-". The chip
-    // carries the page's whole point, and a clipped word reads as a broken
-    // product. The issuer list is the part allowed to shorten.
+  test('a tag cannot be squeezed out of its own card', () => {
+    // Shipped bug, seen on the Stocks chooser: a long issuer line pushed the
+    // badge past the card edge and it rendered as a clipped word, which reads
+    // as a broken product. The issuer list is the part allowed to shorten.
     assert.match(css, /\.mio-console \.mr-choice-issuers\s*\{[^}]*min-width:\s*0/);
     assert.match(css, /\.mio-console \.mr-choice-issuers\s*\{[^}]*text-overflow:\s*ellipsis/);
     assert.match(css, /\.mio-console \.mr-choice-tag\s*\{[^}]*flex:\s*none/);

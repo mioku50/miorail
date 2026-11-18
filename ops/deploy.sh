@@ -304,7 +304,7 @@ install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts db-backup region-table route-proofs; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-pools rwa-dividends base-app-notify ops-alerts db-backup region-table route-proofs; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
@@ -314,6 +314,16 @@ for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchl
   install -m 0644 "$unit_source" "/etc/systemd/system/miorail-$stem.service"
   install -m 0644 "$timer_source" "/etc/systemd/system/miorail-$stem.timer"
   RWA_TIMERS+=("miorail-$stem.timer")
+done
+
+# Units the repository no longer carries. A timer left installed would keep
+# firing a script that is gone and fail on every run, so it is stopped,
+# disabled and removed. (2026-11-18: the issuer-membership check went with
+# Dinari.)
+for stem in rwa-issuer; do
+  systemctl disable --now "miorail-$stem.timer" >/dev/null 2>&1 || true
+  systemctl stop "miorail-$stem.service" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/miorail-$stem.service" "/etc/systemd/system/miorail-$stem.timer"
 done
 
 systemctl daemon-reload

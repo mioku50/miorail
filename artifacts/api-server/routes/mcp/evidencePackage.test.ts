@@ -61,7 +61,7 @@ test('a comparison preserves three independent clocks and hashes, including an e
 test('issuer mappings preserve a source hash and source clock without lending them to supply counts', () => {
   const result = pack('list_reviewed_stocks', { stocks: [{ underlyingKey: 'security:isin:US1111111111',
     canonicalName: 'Example', displaySymbol: 'EX', sourceEvidence: {
-      sourceKind: 'backed_assets_api', sourceHash: CONTENT, observedAt: OLDER,
+      sourceKind: 'coinbase_stocks_api', sourceHash: CONTENT, observedAt: OLDER,
     } }], reviewedTotal: 156, reviewedByAssetClass: { equity: 156 }, returned: 1, truncated: true });
   assert.equal(result.claims[0]!.hash, null);
   assert.equal(result.claims[1]!.hash, CONTENT);
@@ -108,10 +108,9 @@ test('venue catalogue and pool readings cannot inherit the controls block or ass
 test('a source listing date and a lookalike first flag are not new wallet or chain checks', () => {
   const result = pack('check_address_identity', { tokenAddress: TOKEN, standing: 'lookalike', answer: 'Example', corpus: {},
     official: { listedIn: [{ sourceKind: 'coinbase_stocks_api', lastSeenAt: OLDER }] },
-    issuerRepresentation: { observedAt: READ }, lookalike: { firstFlaggedAt: OLDER }, generatedAt: NOW.toISOString() });
+    lookalike: { firstFlaggedAt: OLDER }, generatedAt: NOW.toISOString() });
   assert.equal(result.claims[1]!.observedAt, OLDER);
-  assert.equal(result.claims[2]!.observedAt, READ);
-  assert.equal(result.claims[3]!.observedAt, null);
+  assert.equal(result.claims[2]!.observedAt, null);
   assert.equal(result.availability.withHash, 0);
 });
 

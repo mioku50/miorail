@@ -20,7 +20,7 @@ export function createReviewedMarketRealityReferenceAdapterV1(deps: {
   let anchorOnce: ReturnType<B20ReaderV1['readBlockAnchor']> | null = null;
   return async (input: {
     tokenAddress: string;
-    issuerId: 'coinbase' | 'dinari' | 'backed';
+    issuerId: 'coinbase';
     now: Date;
   }): Promise<MarketRealityReferenceStateV1> => {
     const tokenAddress = input.tokenAddress.toLowerCase();

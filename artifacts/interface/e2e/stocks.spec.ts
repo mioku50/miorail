@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
 const NVDA = 'security:isin:US67066G1040';
 const COIN = 'security:isin:US19260Q1076';
+// A second stock with tokens outstanding: COINc holds none, so it sits with the empty ones.
+const TSLA = 'security:isin:US88160R1014';
 const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
 
 /** Exercise real routing, hooks, components and CSS. Authentication alone is
@@ -72,9 +74,9 @@ for (const width of [1440, 390]) {
       displaySymbol: row.symbol.slice(0, -1), assetClass: 'equity',
       identifierScheme: 'isin', identifierValue: row.isin,
       representationCount: 1, liveRepresentationCount: (row.total_supply ?? 0) > 0 ? 1 : 0,
-      issuerIds: ['coinbase'], coinbaseIssued: true, multiIssuer: false,
+      issuerIds: ['coinbase'],
     }));
-    index.totals = { underlyings: 58, boundRepresentations: 58, multiIssuerUnderlyings: 0, coinbaseUnderlyings: 58, allUnderlyings: 58 };
+    index.totals = { underlyings: 58, boundRepresentations: 58 };
     const netflix = tokens.find((row: { symbol: string }) => row.symbol === 'NFLXc');
     const market = fixture('nvda-market');
     const asset = market.representations.find((row: { issuerId: string }) => row.issuerId === 'coinbase');
@@ -112,29 +114,29 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await stubApi(page);
     await page.goto(`/market?key=${encodeURIComponent(NVDA)}`);
     const nvda = page.getByRole('option', { name: /^NVDA / });
-    const coin = page.getByRole('option', { name: /^COIN / });
+    const tsla = page.getByRole('option', { name: /^TSLA / });
     await expect(nvda).toHaveAttribute('aria-selected', 'true');
     const nvdaShare = page.getByRole('group', { name: 'Share NVDA stock card' });
     await expect(nvdaShare.getByRole('link', { name: 'Post on X' })).toBeVisible();
     await expect(nvdaShare.getByRole('link', { name: 'Cast on Farcaster' })).toHaveAttribute('href', /miorail.xyz%2Fstocks%2Fnvda/);
     await expect.poll(() => nvda.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
-    await coin.click();
-    await expect(coin).toHaveAttribute('aria-selected', 'true');
+    await tsla.click();
+    await expect(tsla).toHaveAttribute('aria-selected', 'true');
     await expect(nvda).toHaveAttribute('aria-selected', 'false');
     await expect(nvdaShare).toHaveCount(0);
-    const coinShare = page.getByRole('group', { name: 'Share COIN stock card' });
-    await expect(coinShare.getByRole('link', { name: 'Post on X' })).toHaveAttribute('href', /miorail.xyz%2Fstocks%2Fcoin/);
-    await expect(coinShare.getByRole('link', { name: 'Cast on Farcaster' })).toBeVisible();
-    await expect(page).toHaveURL(new RegExp(encodeURIComponent(COIN)));
-    await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+    const tslaShare = page.getByRole('group', { name: 'Share TSLA stock card' });
+    await expect(tslaShare.getByRole('link', { name: 'Post on X' })).toHaveAttribute('href', /miorail.xyz%2Fstocks%2Ftsla/);
+    await expect(tslaShare.getByRole('link', { name: 'Cast on Farcaster' })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(encodeURIComponent(TSLA)));
+    await expect.poll(() => tsla.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     // Berlin's visual palette is independent of the US market clock. The
     // selected stock survives both local daylight and local night.
     for (const [at, theme] of [['2026-10-26T15:05:00Z', 'light'], ['2026-10-31T20:00:00Z', 'dark']] as const) {
       await page.clock.setFixedTime(new Date(at));
       await page.reload();
-      await expect(coin).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
+      await expect(tsla).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
-      await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+      await expect.poll(() => tsla.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     }
   });
 

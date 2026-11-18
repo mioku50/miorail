@@ -807,8 +807,9 @@ describe('a dividend in shares reaches the people who hold the stock', () => {
   });
 
   test('another issuer, a split, or an unknown previous value is never called a dividend', () => {
-    const backed: NamesOfV1 = () => ({ symbol: 'GOOGL', representation: 'bGOOGL', issuer: 'backed' });
-    assert.doesNotMatch(holderMultiplierNoticeV1(googlMultiplier(), backed, GOOGL_DIVIDEND.from)?.title ?? '', /dividend/);
+    // A contract no reviewed issuer stands behind: its multiplier is never said to be a dividend.
+    const unreviewed: NamesOfV1 = () => ({ symbol: 'GOOGL', representation: 'xGOOGL', issuer: 'unreviewed' });
+    assert.doesNotMatch(holderMultiplierNoticeV1(googlMultiplier(), unreviewed, GOOGL_DIVIDEND.from)?.title ?? '', /dividend/);
     const split = googlMultiplier({ facts: { event: 'multiplier_updated', multiplierWad: '2000000000000000000', payloadState: 'decoded', transactionHash: `0x${'ab'.repeat(32)}`, blockNumber: '1' } });
     assert.equal(holderMultiplierNoticeV1(split, coinbaseNames, GOOGL_DIVIDEND.from)?.message, 'Your GOOGLc now track 2 GOOGL shares each, up from 1.');
     assert.equal(holderMultiplierNoticeV1(googlMultiplier(), coinbaseNames, null)?.message, 'Your GOOGLc now track 1.000377 GOOGL shares each.');

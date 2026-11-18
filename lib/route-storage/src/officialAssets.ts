@@ -40,7 +40,6 @@ const Sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'expected a lowercase sha-256 
 export const OFFICIAL_SOURCE_KINDS_V1 = [
   'base_docs_technical',
   'base_product_list',
-  'backed_assets_api',
   'coinbase_stocks_api',
 ] as const;
 export type OfficialSourceKindV1 = (typeof OFFICIAL_SOURCE_KINDS_V1)[number];
@@ -49,7 +48,6 @@ export type OfficialSourceKindV1 = (typeof OFFICIAL_SOURCE_KINDS_V1)[number];
 export const OFFICIAL_SOURCE_ISSUERS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
   base_docs_technical: 'coinbase',
   base_product_list: 'coinbase',
-  backed_assets_api: 'backed',
   coinbase_stocks_api: 'coinbase',
 };
 
@@ -382,12 +380,10 @@ export function officialSourceDiscrepanciesV1(input: {
     });
   }
 
-  // A presentation ticker may intentionally name more than one exact
-  // representation (for example a Backed rebasing token and its ERC-4626
-  // wrapper). That is not a source discrepancy and must not be collapsed into
-  // one identity. Only report this legacy presentation alarm when two reviewed
-  // sources inside the same issuer root publish different address sets for the
-  // same ticker.
+  // A presentation ticker may name more than one exact representation. That
+  // is not a source discrepancy and must not be collapsed into one identity.
+  // Only report this legacy presentation alarm when two reviewed sources inside
+  // the same issuer root publish different address sets for the same ticker.
   const byTicker = new Map<string, Map<OfficialSourceKindV1, Set<string>>>();
   for (const [tokenAddress, entry] of listedBy) {
     const bySource = byTicker.get(entry.ticker) ?? new Map<OfficialSourceKindV1, Set<string>>();

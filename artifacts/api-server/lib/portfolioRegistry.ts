@@ -31,8 +31,7 @@ export interface PortfolioRegistryMarkV1 {
  *
  * Its published ticker, and for Coinbase the stock's own ticker as well: the
  * token behind "NVDAc" calls itself "NVDA" onchain, so another "NVDA" is the
- * closer copy. Backed's roots are not protected. "bHIGH" and "bCOIN" would
- * make every token called HIGH or COIN a lookalike.
+ * closer copy.
  */
 function protectedNamesV1(asset: OfficialAssetIdentityV1): { name: string; ticker: string }[] {
   const tickers = [...new Set(asset.listings.map((listing) => listing.ticker).filter(Boolean))];

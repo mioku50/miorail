@@ -26,13 +26,13 @@ import {
 //
 //   1. THE ANSWER IS A STRUCTURE, NOT A PARAGRAPH. A Stocks answer separates
 //      what is established from what is not, and a paragraph lets those two
-//      blur into each other under a paraphrase. The reader of a security that
-//      Base carries three ways needs to see the line.
+//      blur into each other under a paraphrase. The reader of a security with
+//      several contracts needs to see the line.
 //
 //   2. A CLAIM CITES THE EVIDENCE IT STANDS ON. The failure this shape invites
-//      is a sentence about Backed's token built from Coinbase's reference
-//      price: fluent, specific, and about two different things at once. With a
-//      citation the check is mechanical — the cited row either belongs to the
+//      is a sentence about one contract built from another contract's
+//      reference price: fluent, specific, and about two different things at
+//      once. With a citation the check is mechanical — the cited row either belongs to the
 //      representation the claim names or it does not.
 //
 // Everything else is the existing verifier, called once on the flattened text:
@@ -173,6 +173,8 @@ const EMPTIED_ANSWER_RULE_V1 = /^the deterministic answer matched \d+ and the na
 /** How an answer attributes a gap to Miorail. */
 const ATTRIBUTION_V1 = /miorail|миорейл/iu;
 
+/** Issuers a narration might name. Coinbase is the only one Miorail covers (2026-11-18); the others are listed
+ * only so that a narration that brings one up, from a model's own memory, is refused rather than published. */
 const KNOWN_ISSUERS_V1 = ['coinbase', 'dinari', 'backed'] as const;
 
 /** Venues a narration could plausibly name. Only used to catch a venue the
@@ -539,7 +541,7 @@ export function verifyStocksNarrationV1(input: {
   }
 
   // ---- invented actors -----------------------------------------------------
-  const bundleIssuers = new Set(bundle.subjects.map((subject) => subject.issuerId));
+  const bundleIssuers = new Set<string>(bundle.subjects.map((subject) => subject.issuerId));
   for (const issuer of KNOWN_ISSUERS_V1) {
     if (bundleIssuers.has(issuer)) continue;
     // "backed by" is ordinary English and not a claim about the issuer.

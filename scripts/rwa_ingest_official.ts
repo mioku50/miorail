@@ -8,8 +8,8 @@
  * because our request did.
  *
  * Records source snapshots, membership transitions and checked issuer ISIN
- * bindings. No signer, no key, no chain write, no RPC. Coinbase and Backed
- * publish public HTTPS sources; Dinari uses its separate onchain adapter.
+ * bindings. No signer, no key, no chain write, no RPC. Coinbase publishes
+ * every source as public HTTPS.
  *
  *   pnpm rwa:ingest-official            # check and record
  *   pnpm rwa:ingest-official --dry      # check and print, write nothing
@@ -37,7 +37,6 @@ import {
   type OfficialSourceCheckV1,
   type OfficialSourceKeyV1,
 } from '@mioagent/rwa-official';
-import { BACKED_BTOKENS_SOURCE_URL_V1, fetchBackedBaseTokensV1 } from '@mioagent/rwa-issuer';
 import { createB20ReaderV1, withCallFailoverV1 } from '@mioagent/b20-control';
 import {
   REVIEWED_UNIVERSE_LIMIT_V1,
@@ -347,111 +346,6 @@ async function main(): Promise<void> {
       }
       process.exitCode = 1;
     }
-  }
-
-  // Backed's Base corpus is deliberately read from the v1 `btokens` API.
-  // The v2 xStocks corpus currently names no Base deployment; treating it as
-  // the replacement would silently withdraw all legacy Base bTokens.
-  const backed = await fetchBackedBaseTokensV1();
-  const backedSnapshot: OfficialSourceSnapshotV1 = backed.ok
-    ? {
-        sourceKind: 'backed_assets_api',
-        sourceUrl: BACKED_BTOKENS_SOURCE_URL_V1,
-        observedAt,
-        status: 'ok',
-        documentHash: backed.documentHash,
-        corpusHash: backed.corpusHash,
-        detail: `reviewed legacy bTokens corpus; ${backed.assets.length} instruments and ${backed.representations.length} exact Base representations`,
-      }
-    : {
-        sourceKind: 'backed_assets_api',
-        sourceUrl: BACKED_BTOKENS_SOURCE_URL_V1,
-        observedAt,
-        status: backed.reason === 'unparsable' ? 'unparsable' : 'unreachable',
-        documentHash: null,
-        corpusHash: null,
-        detail: backed.detail,
-      };
-  const backedAssets: OfficialAssetInputV1[] = backed.ok
-    ? backed.representations.map((row) => ({
-        chainId: CHAIN_ID_V1,
-        tokenAddress: row.tokenAddress,
-        sourceKind: 'backed_assets_api',
-        ticker: row.displaySymbol,
-        displayName:
-          row.representationKind === 'non_rebasing_erc4626_wrapper'
-            ? `${row.displayName} wrapper`
-            : row.displayName,
-        issuer: 'Backed Assets',
-        referenceFeedAddress: null,
-      }))
-    : [];
-  const backedPrevious = await repository.latestSnapshot({
-    sourceKind: 'backed_assets_api',
-    successfulOnly: true,
-  });
-  checks.push({
-    sourceKind: 'backed_assets_api',
-    status: backedSnapshot.status,
-    detail: backedSnapshot.detail,
-    lastSuccessAt: backedPrevious?.observedAt ?? null,
-  });
-  console.log(`\nbacked_assets_api`);
-  console.log(
-    `  ${backedSnapshot.status}${backedSnapshot.detail ? ` — ${backedSnapshot.detail}` : ''}`,
-  );
-  if (dry) {
-    for (const asset of backedAssets)
-      console.log(`    ${asset.ticker.padEnd(8)} ${asset.tokenAddress}`);
-  } else {
-    const outcome = await repository.recordSnapshot({
-      snapshot: backedSnapshot,
-      assets: backedAssets,
-    });
-    console.log(
-      `  membership ${outcome.added.length} added, ${outcome.delisted.length} delisted, ${outcome.stillListed.length} unchanged`,
-    );
-  }
-
-  if (backed.ok && !dry) {
-    const byInstrument = new Map(
-      backed.representations.map((row) => [row.issuerInstrumentId, row]),
-    );
-    for (const row of byInstrument.values()) {
-      await underlyings.declareUnderlying({
-        underlyingKey: row.underlyingKey,
-        assetClass: row.underlyingAssetClass,
-        canonicalName: row.underlyingDisplaySymbol,
-        displaySymbol: row.underlyingDisplaySymbol,
-        identifierScheme: 'isin',
-        identifierValue: row.underlyingIsin,
-        sourceKind: 'backed_assets_api',
-        sourceRef: `${BACKED_BTOKENS_SOURCE_URL_V1}#${row.issuerInstrumentId}`,
-        sourceHash: backed.corpusHash,
-        observedAt,
-      });
-    }
-    for (const row of backed.representations) {
-      await underlyings.bindRepresentation({
-        chainId: CHAIN_ID_V1,
-        tokenAddress: row.tokenAddress,
-        underlyingKey: row.underlyingKey,
-        sourceKind: 'backed_assets_api',
-        sourceRef: `${BACKED_BTOKENS_SOURCE_URL_V1}#${row.issuerInstrumentId}`,
-        sourceHash: backed.corpusHash,
-        issuerId: 'backed',
-        issuerInstrumentKey: row.issuerInstrumentKey,
-        caip10: row.caip10,
-        representationKind: row.representationKind,
-        evidenceStrength: 'reviewed_machine_address_mapping',
-        observedBlockNumber: null,
-        observedBlockHash: null,
-        observedAt,
-      });
-    }
-    console.log(
-      `  underlying identity: ${byInstrument.size} stable instruments, ${backed.representations.length} exact address bindings`,
-    );
   }
 
   // A source Miorail could not read is stored as exactly that and withdraws

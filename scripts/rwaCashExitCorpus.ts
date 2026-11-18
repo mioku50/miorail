@@ -65,10 +65,11 @@ export interface MeasurementTargetV1 {
   /**
    * The ticker an `official_asset_*` signal may name, or null.
    *
-   * Only a member of the reviewed official registry has one. A Dinari dShare
-   * that acquires a cash route has undergone a real transition, but it is not
-   * an OFFICIAL ASSET transition, and recording one under that name would file
-   * a fact about one corpus in the vocabulary of another.
+   * Only a member of the reviewed official registry has one. A reviewed
+   * representation the registry does not list that acquires a cash route has
+   * undergone a real transition, but it is not an OFFICIAL ASSET transition,
+   * and recording one under that name would file a fact about one corpus in
+   * the vocabulary of another.
    */
   signalTicker: string | null;
   origin: 'official_registry' | 'reviewed_representation';

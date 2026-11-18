@@ -16,8 +16,10 @@ import { MarketRealityResponseV2Schema, type MarketRealityResponseV2 } from '../
 const H = `0x${'11'.repeat(32)}`;
 const POLICY = `0x${'22'.repeat(32)}`;
 const COINBASE = '0xb20000000000000000000078ee7ce2fe4908108c';
-const BACKED_DIRECT = '0xa34c5e0abe843e10461e2c9586ea03e55dbcc495';
-const BACKED_WRAPPER = '0x7e8101a1c322d394b3961498c7d40d2dfa94c392';
+/** A second Coinbase contract of the same company, with tokens outstanding. */
+const SECOND = '0xb20000000000000000000078ee7ce2fe4908108d';
+/** A third Coinbase contract of it that holds nothing. */
+const EMPTY = '0xb20000000000000000000078ee7ce2fe4908108e';
 const UNDERLYING = 'security:isin:US67066G1040';
 const NOW = new Date('2026-08-29T12:00:00.000Z');
 
@@ -154,16 +156,12 @@ function response(over: Record<string, unknown> = {}): MarketRealityResponseV2 {
     representations: [
       representation(),
       representation({
-        tokenAddress: BACKED_DIRECT,
-        issuerId: 'backed',
-        issuerInstrumentKey: 'backed:instrument:nvda',
-        representationKind: 'rebasing_erc20',
+        tokenAddress: SECOND,
+        issuerInstrumentKey: 'coinbase:b20_address:second',
       }),
       representation({
-        tokenAddress: BACKED_WRAPPER,
-        issuerId: 'backed',
-        issuerInstrumentKey: 'backed:instrument:wnvda',
-        representationKind: 'non_rebasing_erc4626_wrapper',
+        tokenAddress: EMPTY,
+        issuerInstrumentKey: 'coinbase:b20_address:empty',
         supply: supply('zero_supply'),
       }),
     ],
@@ -287,32 +285,32 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
     }
     // And no name of any kind reaches the planner's sentence.
     const sentence = stockExecutionGoalSentenceV1(ready());
-    assert.doesNotMatch(sentence, /NVDA|nvidia|coinbase|backed/i);
+    assert.doesNotMatch(sentence, /NVDA|nvidia|coinbase/i);
     assert.match(sentence, new RegExp(COINBASE));
   });
 
   // §11.3
-  test('the Coinbase representation is never substituted with Backed', () => {
+  test('the chosen contract is never substituted with another of the same company', () => {
     const handoff = ready();
     assert.equal(handoff.tokenAddress, COINBASE);
-    assert.notEqual(handoff.tokenAddress, BACKED_DIRECT);
+    assert.notEqual(handoff.tokenAddress, SECOND);
     assert.match(stockExecutionGoalSentenceV1(handoff), new RegExp(COINBASE));
-    assert.doesNotMatch(stockExecutionGoalSentenceV1(handoff), new RegExp(BACKED_DIRECT));
+    assert.doesNotMatch(stockExecutionGoalSentenceV1(handoff), new RegExp(SECOND));
   });
 
   // §11.4 and §6
-  test('the direct Backed representation is never substituted with its wrapper', () => {
-    const direct = ready({}, BACKED_DIRECT);
-    assert.equal(direct.tokenAddress, BACKED_DIRECT);
-    assert.equal(direct.representationKind, 'rebasing_erc20');
-    assert.doesNotMatch(stockExecutionGoalSentenceV1(direct), new RegExp(BACKED_WRAPPER));
+  test('a second contract is handed off as itself, never as the first', () => {
+    const second = ready({}, SECOND);
+    assert.equal(second.tokenAddress, SECOND);
+    assert.equal(second.representationKind, 'b20_asset');
+    assert.doesNotMatch(stockExecutionGoalSentenceV1(second), new RegExp(EMPTY));
   });
 
   // §11.5 and §6
-  test('a zero-supply representation refuses instead of redirecting to what it wraps', () => {
+  test('a zero-supply representation refuses instead of redirecting to another contract', () => {
     const result = stockExecutionHandoffV1({
       response: response(),
-      tokenAddress: BACKED_WRAPPER,
+      tokenAddress: EMPTY,
       now: NOW,
     });
     assert.equal(result.status, 'refused');
@@ -320,7 +318,7 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
     assert.equal(result.reason, 'zero_supply_representation');
     // The refusal names the address the reader chose and promises no other.
     assert.match(result.detail, /stays on the address you chose/i);
-    assert.doesNotMatch(result.detail, new RegExp(BACKED_DIRECT));
+    assert.doesNotMatch(result.detail, new RegExp(SECOND));
   });
 
   test('supply that could not be established refuses too, and says so differently', () => {
@@ -675,10 +673,10 @@ describe('the goal for a trade the reader sized', () => {
   });
 
   test('keeps every refusal a prepare gets, and does not trust the card with the floor', () => {
-    // A zero-supply wrapper is not quietly swapped for what it wraps because
-    // the size is the reader's.
-    const wrapper = goal({ tokenAddress: BACKED_WRAPPER, amountAtomic: '10000000' });
-    assert.equal(wrapper.status === 'refused' && wrapper.reason, 'zero_supply_representation');
+    // A zero-supply contract is not quietly swapped for another of the same
+    // company because the size is the reader's.
+    const empty = goal({ tokenAddress: EMPTY, amountAtomic: '10000000' });
+    assert.equal(empty.status === 'refused' && empty.reason, 'zero_supply_representation');
     const stranger = goal({ tokenAddress: '0x9999999999999999999999999999999999999999', direction: 'sell', amountAtomic: '1' });
     assert.equal(stranger.status === 'refused' && stranger.reason, 'representation_not_reviewed');
     const dust = goal({ amountAtomic: '99999' });

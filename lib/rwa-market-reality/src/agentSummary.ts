@@ -45,17 +45,10 @@ export interface MarketRealityAgentSummaryV1 {
 
 const ISSUER_LABEL_V1: Readonly<Record<string, string>> = {
   coinbase: 'Coinbase',
-  backed: 'Backed',
-  dinari: 'Dinari',
 };
 
 const KIND_LABEL_V1: Readonly<Record<string, string>> = {
   b20_asset: 'B20 asset',
-  rebasing_erc20: 'rebasing ERC-20',
-  non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
-  // The issuer is already the first word of the line, so the kind must not
-  // repeat it: "Dinari Dinari dShare" is what the qualified name produced.
-  dinari_dshare: 'dShare',
 };
 
 /**

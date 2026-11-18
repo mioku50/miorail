@@ -12,7 +12,6 @@ import {
 
 const AAPLC = '0xb2000000000000000000009ee8a7ce0fd7aad1fb';
 const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
-const BCOIN = '0xbbcb0356bb9e6b3faa5cbf9e5f36185d53403ac9';
 const COPY = '0x2a970e0000000000000000000000000000008636';
 const OTHER = '0x3333333333333333333333333333333333333333';
 
@@ -20,7 +19,7 @@ function asset(tokenAddress: string, issuer: string, ticker: string): OfficialAs
   return { chainId: 8453, tokenAddress, issuer, listings: [{ ticker }] } as unknown as OfficialAssetIdentityV1;
 }
 
-const REGISTRY = [asset(AAPLC, 'coinbase', 'AAPLc'), asset(NVDAC, 'coinbase', 'NVDAc'), asset(BCOIN, 'backed', 'bCOIN')];
+const REGISTRY = [asset(AAPLC, 'coinbase', 'AAPLc'), asset(NVDAC, 'coinbase', 'NVDAc')];
 
 afterEach(() => {
   clearPortfolioRegistryCacheForTests();
@@ -41,7 +40,7 @@ describe('a wallet’s tokens against the official registry', () => {
     assert.deepEqual(marks.get(COPY), { standing: 'lookalike', ticker: 'AAPLc', officialAddress: AAPLC });
   });
 
-  test('a Coinbase stock’s own ticker is protected, in any case; a Backed root is not', () => {
+  test('a Coinbase stock’s own ticker is protected, in any case', () => {
     const marks = portfolioRegistryMarksV1(
       [
         { symbol: 'nvda', address: COPY },
@@ -50,9 +49,8 @@ describe('a wallet’s tokens against the official registry', () => {
       REGISTRY,
     );
     assert.deepEqual(marks.get(COPY), { standing: 'lookalike', ticker: 'NVDAc', officialAddress: NVDAC });
-    // "bCOIN" protects "bCOIN" only: every token called COIN is not a copy of it.
+    // A ticker the registry does not name protects nothing.
     assert.equal(marks.has(OTHER), false);
-    assert.equal(portfolioRegistryMarksV1([{ symbol: 'bcoin', address: OTHER }], REGISTRY).get(OTHER)?.ticker, 'bCOIN');
   });
 
   test('a token the registry says nothing about carries no mark', () => {

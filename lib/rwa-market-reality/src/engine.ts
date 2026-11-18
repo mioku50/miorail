@@ -25,7 +25,7 @@ import {
   type MarketRealityIndexScopeV1,
   type MarketRealityResponseV2,
 } from './contracts.js';
-import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1, canonicalReviewedBindingV1 } from './canonicalBinding.js';
+import { canonicalReviewedBindingV1 } from './canonicalBinding.js';
 import { unknownMarketRealityReferenceV1 } from './referenceSession.js';
 import { evaluateMarketRealityBasisV1 } from './basis.js';
 
@@ -44,7 +44,7 @@ export interface MarketRealityDepsV1 {
   now: () => Date;
   reference?: (input: {
     tokenAddress: string;
-    issuerId: 'coinbase' | 'dinari' | 'backed';
+    issuerId: 'coinbase';
     now: Date;
   }) => Promise<MarketRealityReferenceStateV1>;
 }
@@ -152,23 +152,13 @@ export interface NormalizedExposureV1 {
  * read, and throwing that away because the quote failed is the same mistake as
  * letting an expired quote erase a measured round trip.
  *
- * Only ratio-normalized representations have one. A wrapper cannot be
- * normalized at all, and a token that already applies its own ratio has no
- * second reading — for both, the honest answer is that there is no clock.
+ * Only a ratio reading has one: with no reading the honest answer is that
+ * there is no clock.
  */
 export function ratioClockV1(
-  binding: RepresentationUnderlyingV1,
+  _binding: RepresentationUnderlyingV1,
   ratio: RepresentationRatioRowV1 | null,
 ): { checkedAt: string | null; expiresAt: string | null } {
-  if (binding.representationKind === 'non_rebasing_erc4626_wrapper') {
-    return { checkedAt: null, expiresAt: null };
-  }
-  if (
-    binding.representationKind === 'rebasing_erc20' &&
-    ['dinari', 'backed'].includes(binding.issuerId ?? '')
-  ) {
-    return { checkedAt: null, expiresAt: null };
-  }
   const checkedMs = ratio ? Date.parse(ratio.lastCheckedAt) : Number.NaN;
   if (!ratio || !Number.isFinite(checkedMs)) return { checkedAt: null, expiresAt: null };
   return {
@@ -184,29 +174,6 @@ export function normalizedExposureV1(input: {
   ratio: RepresentationRatioRowV1 | null;
   nowMs: number;
 }): NormalizedExposureV1 {
-  if (input.binding.representationKind === 'non_rebasing_erc4626_wrapper') {
-    return {
-      atomic: null,
-      decimals: null,
-      normalization: 'not_established',
-      checkedAt: null,
-      expiresAt: null,
-    };
-  }
-  if (
-    input.binding.representationKind === 'rebasing_erc20' &&
-    ['dinari', 'backed'].includes(input.binding.issuerId ?? '')
-  ) {
-    return {
-      atomic: input.tokenAtomic,
-      decimals: input.tokenDecimals,
-      normalization: 'reviewed_token_already_applied',
-      // Nothing to age: the token IS the exposure, so there is no separate
-      // reading that could go stale. A clock here would invent a deadline.
-      checkedAt: null,
-      expiresAt: null,
-    };
-  }
   const checkedMs = input.ratio ? Date.parse(input.ratio.lastCheckedAt) : Number.NaN;
   // Carried even when the ratio is refused, because WHEN we last knew is the
   // useful half of "not established".
@@ -659,24 +626,21 @@ export async function assembleMarketRealityV2(
 }
 
 /**
- * The chooser's read: every reviewed underlying, most-represented first.
+ * The chooser's read: every reviewed company with a Coinbase B20 contract,
+ * live markets first.
  *
  * A projection rather than a query, so both repositories produce the same
- * ordering and the same `multiIssuer` rule. That flag is the one derived value
- * here and it is derived from the ISSUER set, never from the count: a rebasing
- * token and its own wrapper are two representations of one issuer's structure
- * choice, and calling that "two issuers" would promise a comparison that has
- * nothing on the other side of it.
+ * ordering.
  */
 export async function assembleMarketRealityIndexV1(
   deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'> & {
     /**
-     * The addresses a reviewed official source lists right now. In the
-     * Coinbase scope a company stays on the board only while one of its
-     * Coinbase contracts is listed: COIN's contract exists, but Base dropped
-     * it on 2026-09-10 and Coinbase's own API never listed it, and the board
-     * counted 128 stocks where the issuer lists 127. Null, or absent, when the
-     * corpus could not be read: then nothing is dropped.
+     * The addresses a reviewed official source lists right now. A company
+     * stays on the board only while one of its Coinbase contracts is listed:
+     * COIN's contract exists, but Base dropped it on 2026-09-10 and Coinbase's
+     * own API never listed it, and the board counted 128 stocks where the
+     * issuer lists 127. Null, or absent, when the corpus could not be read:
+     * then nothing is dropped.
      */
     currentOfficialAddresses?: () => Promise<ReadonlySet<string> | null>;
   },
@@ -687,27 +651,10 @@ export async function assembleMarketRealityIndexV1(
   // bond/fund row cannot consume a page slot ahead of a later equity. Asset
   // class comes from reviewed identity evidence; labels never select it.
   const reviewedRows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: REVIEWED_UNIVERSE_LIMIT_V1 });
-  const stockRows = reviewedRows.filter((row) => row.underlying.assetClass === 'equity');
-  // The default scope, and why it is not a preference.
-  //
-  // Three issuers put representations of the same securities on Base and they
-  // are not three versions of one thing: B20 is the standard Base documents,
-  // Backed bTokens are Swiss-law tracker certificates that rebase, and Dinari
-  // dShares are a separate system again. Measured at $1,000 SELL on
-  // 2026-09-04, 10 of 13 Coinbase representations hold a cash route, 2 of 21
-  // Backed, and 0 of 96 Dinari — so 74% of the corpus was filling the first
-  // screen with contracts that cannot answer the question the screen asks.
-  //
-  // They are not removed. `all_representations` returns exactly what this
-  // surface returned before, and the multi-issuer comparison — the same
-  // security, different representations, different market reality — is the one
-  // thing here that nothing else shows. It just stops being the opening move.
-  const scope: MarketRealityIndexScopeV1 = input.scope ?? 'coinbase_b20';
-  // In the Coinbase scope each company is its Coinbase contract and nothing
-  // else: the Stocks screens show no other issuer (operator, 2026-10-03, "to
-  // not confuse people"). COIN read as a live market because Backed's bCOIN
-  // had supply while COINc had none; here it is the empty market it is.
-  const listed = scope === 'coinbase_b20' && deps.currentOfficialAddresses
+  const stockRows = reviewedRows.filter(
+    (row) => row.underlying.assetClass === 'equity' && row.issuerIds.includes('coinbase'),
+  );
+  const listed = deps.currentOfficialAddresses
     ? await deps.currentOfficialAddresses().catch(() => null)
     : null;
   const listedKeys = listed === null
@@ -715,40 +662,28 @@ export async function assembleMarketRealityIndexV1(
     : new Set(
         (
           await Promise.all(
-            stockRows
-              .filter((row) => row.issuerIds.includes('coinbase'))
-              .map(async (row) => {
-                const representations = await deps.underlyings.representationsOf({
-                  chainId: 8453,
-                  underlyingKey: row.underlying.underlyingKey,
-                });
-                // Coinbase's own contract: Backed's bCOIN being listed does not
-                // put COIN on a board of Coinbase stocks.
-                return representations.some(
-                  (binding) =>
-                    (binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[binding.sourceKind as keyof typeof ISSUER_BY_REVIEWED_SOURCE_KIND_V1]) === 'coinbase' &&
-                    listed.has(binding.tokenAddress.toLowerCase()),
-                )
-                  ? row.underlying.underlyingKey
-                  : null;
-              }),
+            stockRows.map(async (row) => {
+              const representations = await deps.underlyings.representationsOf({
+                chainId: 8453,
+                underlyingKey: row.underlying.underlyingKey,
+              });
+              return representations.some((binding) => listed.has(binding.tokenAddress.toLowerCase()))
+                ? row.underlying.underlyingKey
+                : null;
+            }),
           )
         ).filter((key): key is string => key !== null),
       );
-  const scopedRows =
-    scope === 'coinbase_b20'
-      ? stockRows
-          .filter((row) => row.issuerIds.includes('coinbase'))
-          .filter((row) => listedKeys === null || listedKeys.has(row.underlying.underlyingKey))
-          .map((row) => ({
-            ...row,
-            representationCount: row.representationCountsByIssuer?.coinbase ?? 0,
-            liveRepresentationCount: row.liveRepresentationCountsByIssuer?.coinbase ?? 0,
-            issuerIds: ['coinbase'],
-          }))
-          // Stable: equal live counts keep the repository's order.
-          .sort((left, right) => right.liveRepresentationCount - left.liveRepresentationCount)
-      : stockRows;
+  const scopedRows = stockRows
+    .filter((row) => listedKeys === null || listedKeys.has(row.underlying.underlyingKey))
+    .map((row) => ({
+      ...row,
+      representationCount: row.representationCountsByIssuer?.coinbase ?? row.representationCount,
+      liveRepresentationCount: row.liveRepresentationCountsByIssuer?.coinbase ?? row.liveRepresentationCount,
+      issuerIds: ['coinbase' as const],
+    }))
+    // Stable: equal live counts keep the repository's order.
+    .sort((left, right) => right.liveRepresentationCount - left.liveRepresentationCount);
   const rows = scopedRows.slice(0, Math.max(1, Math.min(REVIEWED_UNIVERSE_LIMIT_V1, input.limit)));
   const entries = rows.map((row) => ({
     underlyingKey: row.underlying.underlyingKey,
@@ -760,37 +695,15 @@ export async function assembleMarketRealityIndexV1(
     representationCount: row.representationCount,
     liveRepresentationCount: row.liveRepresentationCount,
     issuerIds: row.issuerIds,
-    multiIssuer: row.issuerIds.length > 1,
-    coinbaseIssued: row.issuerIds.includes('coinbase'),
   }));
   return MarketRealityIndexV1Schema.parse({
     schemaVersion: 'market-reality-index/v1',
     chainId: 8453,
-    scope,
+    scope: 'coinbase_b20',
     entries,
     totals: {
-      // Scoped, because these three sit above a scoped grid and a total that
-      // did not move with the filter would describe a different page.
       underlyings: scopedRows.length,
-      // In the Coinbase scope this counts COINBASE contracts, not every
-      // contract bound to a Coinbase-covered company. The band read
-      // "13 securities" beside "39 representations", and the 39 were mostly
-      // Backed and Dinari addresses that the scope had just moved off the page
-      // — two numbers, two units, one heading, and no way for a reader to tell
-      // which was which.
-      boundRepresentations: scopedRows.reduce(
-        (total, row) =>
-          total +
-          (scope === 'coinbase_b20'
-            ? (row.representationCountsByIssuer?.coinbase ?? 0)
-            : row.representationCount),
-        0,
-      ),
-      multiIssuerUnderlyings: scopedRows.filter((row) => row.issuerIds.length > 1).length,
-      // Corpus-wide, always: what the other scope holds, so the filter can say
-      // what it is hiding rather than hide it silently.
-      coinbaseUnderlyings: stockRows.filter((row) => row.issuerIds.includes('coinbase')).length,
-      allUnderlyings: stockRows.length,
+      boundRepresentations: scopedRows.reduce((total, row) => total + row.representationCount, 0),
     },
     observedAt: deps.now().toISOString(),
   });

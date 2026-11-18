@@ -1609,10 +1609,9 @@ export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
 export function useRwaUnderlyings(options?: {
   enabled?: boolean;
   limit?: number;
-  /** Which corpus to page. Omitted means the server's default, which is the
-   * documented Coinbase B20 standard. The scope is part of the cache key: a
-   * scoped page and a wide one are different reads, not a filter over one. */
-  scope?: 'coinbase_b20' | 'all_representations';
+  /** Which corpus to page: Coinbase's B20 contracts, the only one there is.
+   * Omitted means the server's default, which is the same. */
+  scope?: 'coinbase_b20';
   access?: StocksReadAccessV1;
 }) {
   // The server's cap, so the board holds every stock. It asked for 100 while

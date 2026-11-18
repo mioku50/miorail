@@ -82,7 +82,6 @@ const SOURCE_URLS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
   base_docs_technical:
     'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
   base_product_list: 'https://brand.base.org/stocks',
-  backed_assets_api: 'https://api.xstocks.fi/api/v1/token?type=btokens',
   coinbase_stocks_api: 'https://api.coinbase.com/v1/tokenized-stocks',
 };
 

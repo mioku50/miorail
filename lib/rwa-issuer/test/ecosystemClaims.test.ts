@@ -180,7 +180,6 @@ describe('the bindings that are not lending venues', () => {
   test('the issuer of record answers for its own representations only', () => {
     const coinbase = app({ binding: { kind: 'issuer_of_record', issuerId: 'coinbase' } });
     assert.equal(readingFor([coinbase], { issuerId: 'coinbase' }).measured, 'listed');
-    assert.equal(readingFor([coinbase], { issuerId: 'backed' }).measured, 'not_listed');
     assert.equal(readingFor([coinbase], { issuerId: null }).measured, 'unchecked');
   });
 });
@@ -220,8 +219,9 @@ describe('the summary a reader may repeat', () => {
         evidence({
           apps: [
             app({ appId: 'a', appName: 'Alpha', binding: { kind: 'issuer_of_record', issuerId: 'coinbase' } }),
-            app({ appId: 'b', appName: 'Beta', binding: { kind: 'issuer_of_record', issuerId: 'backed' } }),
+            app({ appId: 'b', appName: 'Beta', binding: { kind: 'defi_venue', venueId: 'morpho' } }),
           ],
+          venues: [{ venueId: 'morpho', venueName: 'Morpho', state: 'not_listed' }],
         }),
       ),
     });

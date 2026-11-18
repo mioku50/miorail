@@ -120,7 +120,7 @@ export const stockPagesRuntime = {
         symbol: entry.displaySymbol!,
         companyName: companyDisplayNameV1(entry),
         underlyingKey: entry.underlyingKey,
-        coinbaseIssued: entry.coinbaseIssued,
+        coinbaseIssued: entry.issuerIds.includes('coinbase'),
       }));
   },
   /**

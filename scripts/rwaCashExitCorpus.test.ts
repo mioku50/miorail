@@ -15,8 +15,10 @@ import {
 } from './rwaCashExitCorpus.js';
 
 const NVDAC = '0x1111111111111111111111111111111111111111';
-const NVDA_DSHARE = '0x2222222222222222222222222222222222222222';
-const NVDA_WRAPPED = '0x3333333333333333333333333333333333333333';
+/** Two reviewed representations of one company the registry no longer lists by name. */
+const NVDA_FIRST = '0x2222222222222222222222222222222222222222';
+const NVDA_SECOND = '0x3333333333333333333333333333333333333333';
+const NVIDIA = 'security:isin:US67066G1040';
 const EMPTY_CONTRACT = '0x4444444444444444444444444444444444444444';
 
 function underlyingsV1(input: {
@@ -28,7 +30,6 @@ function underlyingsV1(input: {
       return {
         underlyings: input.total ?? input.rows.length,
         boundRepresentations: input.rows.reduce((sum, row) => sum + row.addresses.length, 0),
-        multiIssuerUnderlyings: 0,
       };
     },
     async listUnderlyings({ limit }) {
@@ -38,16 +39,16 @@ function underlyingsV1(input: {
           assetClass: 'equity' as const,
           canonicalName: row.key,
           displaySymbol: row.key.toUpperCase(),
-          identifierScheme: 'dinari_stock_id' as const,
+          identifierScheme: 'isin' as const,
           identifierValue: row.key,
-          sourceKind: 'dinari_stock_api' as const,
+          sourceKind: 'coinbase_stocks_api' as const,
           sourceRef: 'test',
           observedAt: '2026-09-03T00:00:00.000Z',
         },
         representationCount: row.addresses.length,
-        issuerIds: ['dinari'],
+        issuerIds: ['coinbase'],
         liveRepresentationCount: row.addresses.length,
-        representationCountsByIssuer: { dinari: row.addresses.length },
+        representationCountsByIssuer: { coinbase: row.addresses.length },
       }));
     },
     async representationsOf({ underlyingKey }) {
@@ -56,7 +57,7 @@ function underlyingsV1(input: {
         chainId: 8453 as const,
         tokenAddress: address,
         underlyingKey,
-        sourceKind: 'dinari_stock_api' as const,
+        sourceKind: 'coinbase_stocks_api' as const,
         sourceRef: 'test',
         observedAt: '2026-09-03T00:00:00.000Z',
       }));
@@ -93,21 +94,21 @@ describe('which representations the cash-exit pass measures', () => {
   test('tokens outstanding is the gate, and it is not a quality ranking', async () => {
     const targets = await reviewedRepresentationTargetsV1({
       underlyings: underlyingsV1({
-        rows: [{ key: 'dinari:stock_id:nvda', addresses: [NVDA_DSHARE, NVDA_WRAPPED, EMPTY_CONTRACT] }],
+        rows: [{ key: NVIDIA, addresses: [NVDA_FIRST, NVDA_SECOND, EMPTY_CONTRACT] }],
       }),
       supplies: suppliesV1({
-        [NVDA_DSHARE]: 'positive_supply',
-        [NVDA_WRAPPED]: 'positive_supply',
+        [NVDA_FIRST]: 'positive_supply',
+        [NVDA_SECOND]: 'positive_supply',
         [EMPTY_CONTRACT]: 'zero_supply',
       }),
       limit: 10,
     });
     assert.deepEqual(
       targets.map((target) => target.tokenAddress),
-      [NVDA_DSHARE, NVDA_WRAPPED],
+      [NVDA_FIRST, NVDA_SECOND],
     );
-    // Two addresses, one security. Both are measured, because a wrapped dShare
-    // and a dShare are different markets even where they are the same company.
+    // Two addresses, one security. Both are measured, because two contracts are
+    // two markets even where they are the same company.
     assert.equal(new Set(targets.map((t) => t.tokenAddress)).size, 2);
   });
 
@@ -115,13 +116,13 @@ describe('which representations the cash-exit pass measures', () => {
     // `supply_unknown` is OUR absence. Skipping it would hide the gap behind a
     // card that reads exactly like a contract with no tokens.
     const targets = await reviewedRepresentationTargetsV1({
-      underlyings: underlyingsV1({ rows: [{ key: 'dinari:stock_id:nvda', addresses: [NVDA_DSHARE] }] }),
+      underlyings: underlyingsV1({ rows: [{ key: NVIDIA, addresses: [NVDA_FIRST] }] }),
       supplies: suppliesV1({}),
       limit: 10,
     });
     assert.deepEqual(
       targets.map((target) => target.tokenAddress),
-      [NVDA_DSHARE],
+      [NVDA_FIRST],
     );
   });
 
@@ -130,9 +131,9 @@ describe('which representations the cash-exit pass measures', () => {
       reviewedRepresentationTargetsV1({
         underlyings: underlyingsV1({
           total: 130,
-          rows: [{ key: 'dinari:stock_id:nvda', addresses: [NVDA_DSHARE] }],
+          rows: [{ key: NVIDIA, addresses: [NVDA_FIRST] }],
         }),
-        supplies: suppliesV1({ [NVDA_DSHARE]: 'positive_supply' }),
+        supplies: suppliesV1({ [NVDA_FIRST]: 'positive_supply' }),
         limit: 1,
       }),
       /raise --underlying-limit rather than measuring a silent subset/,
@@ -155,10 +156,11 @@ describe('which representations the cash-exit pass measures', () => {
       },
     ]);
     const merged = mergeTargetsV1(registry, [
-      { tokenAddress: NVDA_DSHARE, symbol: null, signalTicker: null, origin: 'reviewed_representation' },
+      { tokenAddress: NVDA_FIRST, symbol: null, signalTicker: null, origin: 'reviewed_representation' },
     ]);
-    // A Dinari dShare that gains a route has changed, but it has not become an
-    // OFFICIAL ASSET, and nothing here lets it be reported as one.
+    // A reviewed representation the registry does not list that gains a route
+    // has changed, but it has not become an OFFICIAL ASSET, and nothing here
+    // lets it be reported as one.
     assert.deepEqual(
       merged.map((target) => target.signalTicker),
       ['NVDAc', null],
@@ -174,13 +176,13 @@ describe('which representations the cash-exit pass measures', () => {
     ]);
     const merged = mergeTargetsV1(registry, [
       { tokenAddress: NVDAC, symbol: null, signalTicker: null, origin: 'reviewed_representation' },
-      { tokenAddress: NVDA_DSHARE, symbol: null, signalTicker: null, origin: 'reviewed_representation' },
+      { tokenAddress: NVDA_FIRST, symbol: null, signalTicker: null, origin: 'reviewed_representation' },
     ]);
     // Measuring one address twice in a pass writes two runs a minute apart and
     // lets the second be compared against the first as if the market had moved.
     assert.deepEqual(
       merged.map((target) => target.tokenAddress),
-      [NVDAC, NVDA_DSHARE],
+      [NVDAC, NVDA_FIRST],
     );
   });
 });
