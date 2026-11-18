@@ -65,6 +65,13 @@ export function createCachedEarnDataSourceV1(
 
   const entries = new Map<string, CacheEntryV1>();
   const inflight = new Map<string, Promise<EarnObservationResultV1>>();
+  // Last-known-good rescue: shown with its ORIGINAL observation time, so it
+  // reads as stale everywhere downstream. One rule for the failure just
+  // returned and for the failure remembered after it (audit P3 Earn,
+  // 2026-11-18): the remembered one used to answer with the error, so one
+  // snapshot was shown at 31 s, gone at 32 s and back at 37 s.
+  const lastGood = (entry: CacheEntryV1 | undefined, at: number) =>
+    entry?.success && staleServeMs > 0 && at - entry.success.at < staleServeMs ? entry.success.result : null;
 
   return {
     id: inner.id,
@@ -75,7 +82,7 @@ export function createCachedEarnDataSourceV1(
       const at = now();
 
       if (entry?.success && at - entry.success.at < ttlMs) return entry.success.result;
-      if (entry?.failure && at - entry.failure.at < errorTtlMs) return entry.failure.result;
+      if (entry?.failure && at - entry.failure.at < errorTtlMs) return lastGood(entry, at) ?? entry.failure.result;
 
       const pending = inflight.get(key);
       if (pending) return pending;
@@ -89,11 +96,7 @@ export function createCachedEarnDataSourceV1(
           return result;
         }
         entries.set(key, { success: current.success, failure: { at: completedAt, result } });
-        // Last-known-good rescue: shown with its ORIGINAL observation time, so
-        // it reads as stale everywhere downstream.
-        const lastGood = current.success;
-        if (lastGood && staleServeMs > 0 && completedAt - lastGood.at < staleServeMs) return lastGood.result;
-        return result;
+        return lastGood(current, completedAt) ?? result;
       })().finally(() => {
         inflight.delete(key);
       });

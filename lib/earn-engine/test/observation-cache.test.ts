@@ -170,9 +170,11 @@ describe('earn observation cache', () => {
   test('a last-known-good reading is served while the provider is failing, and expires honestly', async () => {
     const upstream = countingSource({ ok: true, observation: observation() });
     let clock = 0;
+    // The error cache stays on (it was 0 here, and so the remembered failure
+    // was never asked; audit P3 Earn, 2026-11-18).
     const cached = createCachedEarnDataSourceV1(upstream.source, {
       ttlMs: 1_000,
-      errorTtlMs: 0,
+      errorTtlMs: 5_000,
       staleServeMs: 60_000,
       now: () => clock,
     });
@@ -189,10 +191,51 @@ describe('earn observation cache', () => {
       assert.equal(rescued.observation.observedAt, '2026-07-25T08:59:50.000Z');
     }
 
+    // The remembered failure answers the same way, without asking the provider.
+    clock = 12_000;
+    const remembered = await cached.observe(input());
+    assert.equal(remembered.ok, true, 'the failure the cache remembers shows the same last-known-good reading');
+    if (remembered.ok) assert.equal(remembered.observation.observedAt, '2026-07-25T08:59:50.000Z');
+    assert.equal(upstream.calls(), 2);
+
     clock = 70_000;
     const surrendered = await cached.observe(input());
     assert.equal(surrendered.ok, false);
     if (!surrendered.ok) assert.equal(surrendered.reason, 'provider_unreachable');
+    // Past staleServeMs the remembered failure is the answer too.
+    clock = 72_000;
+    const stillFailing = await cached.observe(input());
+    assert.equal(stillFailing.ok, false);
+    assert.equal(upstream.calls(), 3);
+  });
+
+  // Audit P3 Earn, 2026-11-18, measured with the defaults: a good reading at
+  // 0 s, then a failing provider. 31 s showed the old reading, 32 s answered
+  // the cached error without asking anyone, 37 s showed the reading again.
+  test('one last-known-good rule whether the failure is fresh or remembered: 0 s, 31 s, 32 s, 37 s', async () => {
+    const upstream = countingSource({ ok: true, observation: observation() });
+    const start = NOW.getTime();
+    let clock = start;
+    const cached = createCachedEarnDataSourceV1(upstream.source, { now: () => clock });
+    const seen: Array<{ seconds: number; providerCalls: number; result: string; observedAt: string | null }> = [];
+    for (const seconds of [0, 31, 32, 37]) {
+      clock = start + seconds * 1000;
+      const result = await cached.observe(input());
+      seen.push({
+        seconds,
+        providerCalls: upstream.calls(),
+        result: result.ok ? 'observation' : result.reason,
+        observedAt: result.ok ? result.observation.observedAt : null,
+      });
+      if (seconds === 0) upstream.setResult({ ok: false, reason: 'provider_timeout' });
+    }
+    const observedAt = '2026-07-25T08:59:50.000Z';
+    assert.deepEqual(seen, [
+      { seconds: 0, providerCalls: 1, result: 'observation', observedAt },
+      { seconds: 31, providerCalls: 2, result: 'observation', observedAt },
+      { seconds: 32, providerCalls: 2, result: 'observation', observedAt },
+      { seconds: 37, providerCalls: 3, result: 'observation', observedAt },
+    ]);
   });
 
   test('staleServeMs=0 surfaces the failure immediately', async () => {
