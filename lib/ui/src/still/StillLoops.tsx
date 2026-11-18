@@ -261,7 +261,8 @@ function DrawRulesV1({ draw }: { draw: StillLoopDrawViewV1 }) {
           (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</li>
         <li>One entry per wallet per draw.</li>
         <li>Open to people 18 or older who are not U.S. persons, from where Still is offered. The Still team does not enter.</li>
-        <li>The list is fixed 30 seconds after the close, its hash is shown here, and public time-stamping authorities sign that it existed then.
+        <li>The list is fixed 30 seconds after the close. Its hash, which also covers the moment it was fixed and the number of winners, is shown
+          here, and public time-stamping authorities sign that it existed then.
           {' '}{draw.winnerCount === 1 ? 'The winner is' : 'The first winner is'} entry
           number keccak256(block hash, draw) mod N + 1, where the block is the first Base block at least five minutes after the list was fixed.
           {draw.winnerCount === 1 ? '' : ' Each next winner is picked the same way from the entries not yet picked, so nobody wins twice.'} Anybody can check it,

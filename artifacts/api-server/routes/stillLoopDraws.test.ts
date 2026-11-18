@@ -199,11 +199,12 @@ describe('the Loop draws', () => {
     const labels = ['Loop #1', 'Entry AB12CD', 'Entry QW34ER'];
     assert.deepEqual(fixed.labels, labels);
     assert.equal(fixed.lockedAt, '2026-11-28T18:00:31.000Z');
-    assert.equal(fixed.entriesHash, loopDrawListHashV1({ drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', labels }));
+    assert.equal(fixed.entriesHash, loopDrawListHashV1({ drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', lockedAt: fixed.lockedAt, winners: 1, labels }));
     assert.equal(fixed.blockAt, '2026-11-28T18:05:31.000Z');
     assert.deepEqual([fixed.block, fixed.winnerNos, fixed.winnerCount], [null, null, 1]);
     // Time-stamped at once by both authorities, over the exact text whose hash is published (audit LOOP-4).
-    const text = JSON.stringify({ drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', labels });
+    // The moment the list was fixed and the number of winners are inside it: they decide the result (audit, 2026-11-18).
+    const text = JSON.stringify({ drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', lockedAt: '2026-11-28T18:00:31.000Z', winners: 1, labels });
     assert.deepEqual(stamped.map((row) => [row.tsa, row.text]), TSAS.map((tsa) => [tsa, text]));
     assert.deepEqual(fixed.stamps, TSAS.map((tsa) => ({ tsa, genTime: '2026-11-28T18:00:30.800Z', token: Buffer.from(`stamp of ${text}`).toString('base64') })));
     assert.deepEqual((await publicLoops()).draws.past[0].stamps, TSAS.map((tsa) => ({ tsa, genTime: '2026-11-28T18:00:30.800Z' })));

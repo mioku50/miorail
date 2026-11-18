@@ -34,12 +34,19 @@ describe('the Loop draws', () => {
   });
 
   it('hash the list as its JSON says it, so anybody can hash it again', () => {
-    const input = { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', labels: ['Loop #3', 'Entry K3F9X2'] };
-    const expected = keccak256(utf8('{"drawId":"2026-11-28","closesAt":"2026-11-28T18:00:00.000Z","labels":["Loop #3","Entry K3F9X2"]}'));
+    const input = { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', lockedAt: '2026-11-28T18:00:31.000Z', winners: 3, labels: ['Loop #3', 'Entry K3F9X2'] };
+    const expected = keccak256(utf8('{"drawId":"2026-11-28","closesAt":"2026-11-28T18:00:00.000Z","lockedAt":"2026-11-28T18:00:31.000Z","winners":3,"labels":["Loop #3","Entry K3F9X2"]}'));
     assert.equal(loopDrawListHashV1(input), expected);
     // Kept as a number, so a change to the arithmetic cannot pass unnoticed.
-    assert.equal(expected, '0xbb43d23209bb927ca3ccb92982bc5672bd96e8d68941c6ec247ac84bcc9c7caa');
+    assert.equal(expected, '0x1d4055eb1b8bf1e4e5d5699f8816d7c74906ee7631b97919c265f0a17b16f500');
     assert.notEqual(loopDrawListHashV1({ ...input, labels: ['Entry K3F9X2', 'Loop #3'] }), expected, 'the order is part of the list');
+    // Audit, 2026-11-18: the moment the list was fixed sets the picking block, and the winners how many are picked.
+    // Both were outside the hash, so a later lockedAt moved the draw to another block with every check passing.
+    assert.notEqual(loopDrawListHashV1({ ...input, lockedAt: '2026-11-28T18:10:31.000Z' }), expected, 'the moment it was fixed is part of it');
+    assert.notEqual(loopDrawListHashV1({ ...input, winners: 2 }), expected, 'and so is the number of winners');
+    assert.equal(loopDrawListHashV1({ ...input, lockedAt: '2026-11-28T21:00:31+03:00' }), expected, 'one moment, however it is written');
+    assert.throws(() => loopDrawListHashV1({ ...input, lockedAt: 'soon' }), /loop_draw_locked_at_invalid/);
+    assert.throws(() => loopDrawListHashV1({ ...input, winners: 0 }), /loop_draw_winners_invalid/);
   });
 
   it('pick an entry from the block hash and the draw, from 1 to N', () => {

@@ -1,4 +1,5 @@
-import type { StillLoopDrawRecordV1 } from '@mioagent/route-storage';
+// The prize arithmetic and its one locked write live with the draws' storage; re-exported for the operator's script.
+export { loopPrizesCoveredV1, recordLoopPrizesV1 } from '@mioagent/route-storage';
 
 // ---------------------------------------------------------------------------
 // What a prize transaction proves, worked out from its receipt
@@ -21,34 +22,4 @@ export function loopPrizeTransfersV1(logs: readonly { address: string; topics: r
     sent.set(to, (sent.get(to) ?? 0n) + BigInt(log.data));
   }
   return sent;
-}
-
-/**
- * The unpaid winners of `draw` this transaction pays: each wallet's USDC from it, less every prize already recorded
- * with this same transaction to that wallet in any draw, must still hold this draw's prize, once per winner.
- */
-export function loopPrizesCoveredV1(input: {
-  tx: string;
-  sent: ReadonlyMap<string, bigint>;
-  prize: bigint;
-  draw: Pick<StillLoopDrawRecordV1, 'drawId' | 'entries'>;
-  unpaid: readonly number[];
-  draws: readonly Pick<StillLoopDrawRecordV1, 'drawId' | 'entries' | 'payouts' | 'prizeAtomic'>[];
-}): number[] {
-  const left = new Map(input.sent);
-  for (const draw of input.draws) {
-    for (const payout of draw.payouts) {
-      if (payout.tx.toLowerCase() !== input.tx.toLowerCase()) continue;
-      const wallet = draw.entries[payout.no - 1]?.walletAddress.toLowerCase();
-      if (wallet) left.set(wallet, (left.get(wallet) ?? 0n) - BigInt(draw.prizeAtomic));
-    }
-  }
-  const covered: number[] = [];
-  for (const no of input.unpaid) {
-    const wallet = input.draw.entries[no - 1]?.walletAddress.toLowerCase();
-    if (!wallet || (left.get(wallet) ?? 0n) < input.prize) continue;
-    left.set(wallet, left.get(wallet)! - input.prize);
-    covered.push(no);
-  }
-  return covered;
 }

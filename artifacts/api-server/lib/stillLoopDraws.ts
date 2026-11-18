@@ -190,10 +190,13 @@ async function settleOnceV1(): Promise<void> {
     let record = await repository.byId(draw.drawId);
     if (!record) {
       const entries = await stillLoopDrawEntriesV1(draw, new Date(draw.closesAt));
+      // The moment and the winners are inside the hash and the stamped text: they decide the result too.
+      const lockedAt = loopDrawLockMomentV1(now);
       record = await repository.lock({
         drawId: draw.drawId, opensAt: draw.opensAt, closesAt: draw.closesAt, prizeAtomic: prizeAtomicV1(draw.prizeUsdc), winnerCount: draw.winners, entries,
-        entriesHash: loopDrawListHashV1({ drawId: draw.drawId, closesAt: draw.closesAt, labels: entries.map((entry) => entry.label) }),
-        lockedAt: loopDrawLockMomentV1(now),
+        entriesHash: loopDrawListHashV1({ drawId: draw.drawId, closesAt: draw.closesAt, lockedAt: lockedAt.toISOString(), winners: draw.winners,
+          labels: entries.map((entry) => entry.label) }),
+        lockedAt,
       });
       logger.info('Still Loop draw list fixed', { drawId: draw.drawId, entries: record.entryCount });
     }
@@ -221,7 +224,8 @@ async function settleOnceV1(): Promise<void> {
 /** Asks each authority not stamped yet for the list's stamp, once per pass; a refusal or a failure waits for the next. */
 async function stampListV1(repository: StillLoopDrawRepositoryV1, record: StillLoopDrawRecordV1): Promise<void> {
   const runtime = stillLoopDrawRuntimeV1;
-  const text = loopDrawListTextV1({ drawId: record.drawId, closesAt: record.closesAt, labels: record.entries.map((entry) => entry.label) });
+  const text = loopDrawListTextV1({ drawId: record.drawId, closesAt: record.closesAt, lockedAt: record.lockedAt, winners: record.winnerCount,
+    labels: record.entries.map((entry) => entry.label) });
   for (const tsa of runtime.tsas()) {
     if (record.stamps.some((stamp) => stamp.tsa === tsa)) continue;
     const stamp = await runtime.stamp(text, tsa).catch(() => null);

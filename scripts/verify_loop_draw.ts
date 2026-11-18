@@ -2,7 +2,8 @@
  * Checks a Still Loop draw from what anybody can read: the list Still
  * published, and Base itself. It trusts neither Still's block nor its winner:
  *
- *   1. the list's hash is keccak256 of {drawId, closesAt, labels}, as published;
+ *   1. the list's hash is keccak256 of {drawId, closesAt, lockedAt, winners, labels}, as published: the moment
+ *      the list was fixed and the number of winners decide the result, so they are inside what is stamped;
  *   2. each public authority's RFC 3161 time-stamp is of the SHA-256 of that
  *      same text, granted, and signed before the picking block: the list
  *      existed before anybody could know the block's hash. With openssl on
@@ -17,7 +18,10 @@
  *   pnpm still:verify-loop-draw 2026-11-28
  *   pnpm still:verify-loop-draw 2026-11-28 --api https://miorail.xyz --rpc https://mainnet.base.org
  *
- * Reads only: no key, no wallet, no signature of its own. Exit 0 when every check holds.
+ * Reads only: no key, no wallet, no signature of its own. Exit 0 when every check holds and at least one
+ * authority's stamp, signature included, proves the list existed before the block was due; exit 3 when every
+ * check that ran holds but that time is not proven (no stamp, or openssl could not check one); exit 1 when a
+ * check fails (audit, 2026-11-18: a missing stamp or an unchecked signature used to exit 0).
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -103,33 +107,47 @@ async function main(): Promise<number> {
     if (!ok) failed += 1;
   };
 
-  const hash = loopDrawListHashV1({ drawId, closesAt: list.closesAt, labels: list.labels });
-  check(hash === list.entriesHash, `the list of ${list.labels.length} hashes to ${hash}`);
+  const committed = { drawId, closesAt: list.closesAt, lockedAt: list.lockedAt, winners: list.winnerCount, labels: list.labels };
+  const hash = loopDrawListHashV1(committed);
+  check(hash === list.entriesHash, `the list of ${list.labels.length}, fixed at ${list.lockedAt} for ${list.winnerCount} winner(s), hashes to ${hash}`);
   if (list.labels.length === 0) {
     check(list.winnerNos === null && list.block === null, 'nobody entered, and nobody won');
     return failed === 0 ? 0 : 1;
   }
   const target = loopDrawTargetSecondsV1({ closesAt: list.closesAt, lockedAt: list.lockedAt });
-  const text = loopDrawListTextV1({ drawId, closesAt: list.closesAt, labels: list.labels });
+  const text = loopDrawListTextV1(committed);
   const digest = createHash('sha256').update(text, 'utf8').digest();
   const stamps = list.stamps ?? [];
+  // Proven only by a stamp that is of this text, before the block was due, and whose signature openssl checked.
+  let timeProven = false;
   if (stamps.length === 0) console.log('     no time-stamp: when the list was fixed rests on Still\u2019s word alone');
   for (const stamp of stamps) {
     const reading = rfc3161ResponseV1(new Uint8Array(Buffer.from(stamp.token, 'base64')));
     const of = rfc3161StampsV1(reading, digest);
-    check(of && reading.genTime === new Date(stamp.genTime).toISOString(),
-      `${new URL(stamp.tsa).host} stamped the SHA-256 of this list at ${of ? reading.genTime : 'no readable time'}`);
-    if (of) check(Date.parse(reading.genTime) < Number(target) * 1000, `${new URL(stamp.tsa).host}'s stamp is before the picking block was due`);
+    const named = of && reading.genTime === new Date(stamp.genTime).toISOString();
+    check(named, `${new URL(stamp.tsa).host} stamped the SHA-256 of this list at ${of ? reading.genTime : 'no readable time'}`);
+    const early = of && Date.parse(reading.genTime) < Number(target) * 1000;
+    if (of) check(early, `${new URL(stamp.tsa).host}'s stamp is before the picking block was due`);
     const signed = opensslVerifiesV1(text, stamp.token);
     if (signed === null) console.log(`     ${new URL(stamp.tsa).host}'s signature not checked: openssl or the system's roots are not on this machine`);
     else check(signed, `openssl checks ${new URL(stamp.tsa).host}'s signature against the system's roots`);
+    if (named && early && signed === true) timeProven = true;
   }
+  // What a run that found no fault but could not prove the time ends with: never the 0 of a full proof.
+  const verdict = (): number => {
+    if (failed > 0) return 1;
+    if (!timeProven) {
+      console.log(`\n${drawId}: no check failed, but the time the list was fixed is not proven: no authority's stamp was checked in full.`);
+      return 3;
+    }
+    return 0;
+  };
   const due = new Date(Number(target) * 1000).toISOString();
   console.log(`     fixed at ${list.lockedAt}; the picking block is the first at or after ${due}`);
   if (list.blockAt !== null) check(list.blockAt === due, `the published time the block is due is ${due}`);
   if (!list.block) {
     console.log('     not drawn yet: the block is read a minute after it is due');
-    return failed === 0 ? 0 : 1;
+    return verdict();
   }
   const block = await blockOf(BigInt(list.block.number));
   const parent = await blockOf(block.number - 1n);
@@ -139,8 +157,9 @@ async function main(): Promise<number> {
   const winners = loopDrawWinnersV1({ blockHash: block.hash as `0x${string}`, drawId, count: list.labels.length, winners: list.winnerCount });
   check(JSON.stringify(winners) === JSON.stringify(list.winnerNos),
     `${winners.length === 1 ? 'the winner is' : `the ${winners.length} winners are`}: ${winners.map((no) => `entry ${no}, ${list.labels[no - 1]}`).join('; ')}`);
-  console.log(failed === 0 ? `\n${drawId}: every check holds.` : `\n${drawId}: ${failed} check(s) failed.`);
-  return failed === 0 ? 0 : 1;
+  if (failed > 0) console.log(`\n${drawId}: ${failed} check(s) failed.`);
+  else if (timeProven) console.log(`\n${drawId}: every check holds.`);
+  return verdict();
 }
 
 main().then((code) => { process.exitCode = code; }, (error: unknown) => {

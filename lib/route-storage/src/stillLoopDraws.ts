@@ -358,3 +358,64 @@ export function createDatabaseStillLoopDrawRepositoryV1(sql: SqlTemplateExecutor
     },
   };
 }
+
+/**
+ * The unpaid winners of `draw` this transaction pays: each wallet's USDC from it, less every prize already recorded
+ * with this same transaction to that wallet in any draw, must still hold this draw's prize, once per winner.
+ */
+export function loopPrizesCoveredV1(input: {
+  tx: string;
+  sent: ReadonlyMap<string, bigint>;
+  prize: bigint;
+  draw: Pick<StillLoopDrawRecordV1, 'drawId' | 'entries'>;
+  unpaid: readonly number[];
+  draws: readonly Pick<StillLoopDrawRecordV1, 'drawId' | 'entries' | 'payouts' | 'prizeAtomic'>[];
+}): number[] {
+  const left = new Map(input.sent);
+  for (const draw of input.draws) {
+    for (const payout of draw.payouts) {
+      if (payout.tx.toLowerCase() !== input.tx.toLowerCase()) continue;
+      const wallet = draw.entries[payout.no - 1]?.walletAddress.toLowerCase();
+      if (wallet) left.set(wallet, (left.get(wallet) ?? 0n) - BigInt(draw.prizeAtomic));
+    }
+  }
+  const covered: number[] = [];
+  for (const no of input.unpaid) {
+    const wallet = input.draw.entries[no - 1]?.walletAddress.toLowerCase();
+    if (!wallet || (left.get(wallet) ?? 0n) < input.prize) continue;
+    left.set(wallet, left.get(wallet)! - input.prize);
+    covered.push(no);
+  }
+  return covered;
+}
+
+/**
+ * Records as paid the winners of `drawId` that `paidTx` pays, and returns which it covered and which it recorded.
+ *
+ * What the transaction already paid, in any draw, is read and the payouts are written in ONE transaction holding a
+ * lock on the transaction's hash: two runs at once, for two draws, could otherwise both read the same transfer as
+ * unpaid and mark two prizes paid with it (audit, 2026-11-18).
+ */
+export async function recordLoopPrizesV1(input: {
+  transaction: <T>(work: (tx: SqlTemplateExecutor) => Promise<T>) => Promise<T>;
+  drawId: string;
+  paidTx: string;
+  sent: ReadonlyMap<string, bigint>;
+  prize: bigint;
+  at: Date;
+}): Promise<{ covered: number[]; recorded: number[] }> {
+  return input.transaction(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`still_loop_prize:${input.paidTx.toLowerCase()}`}, 0))`;
+    const locked = createDatabaseStillLoopDrawRepositoryV1(tx);
+    const current = await locked.byId(input.drawId);
+    if (!current || current.winnerNos === null) return { covered: [], recorded: [] };
+    const unpaid = current.winnerNos.filter((no) => !current.payouts.some((row) => row.no === no));
+    const covered = loopPrizesCoveredV1({ tx: input.paidTx, sent: input.sent, prize: input.prize, draw: current, unpaid, draws: await locked.all() });
+    const recorded: number[] = [];
+    for (const no of covered) {
+      const paid = await locked.paid({ drawId: input.drawId, no, paidTx: input.paidTx, at: input.at });
+      if (paid?.payouts.some((row) => row.no === no && row.tx === input.paidTx)) recorded.push(no);
+    }
+    return { covered, recorded };
+  });
+}

@@ -7,7 +7,10 @@ import { concat, keccak256, stringToHex, type Hex } from 'viem';
 //
 // - A draw is open from `opensAt` until `closesAt`. Its list is fixed after it
 //   closes: one entry per wallet, in the order they came, each by its label.
-// - The list's hash is keccak256 of the JSON {drawId, closesAt, labels}.
+// - The list's hash is keccak256 of the JSON {drawId, closesAt, lockedAt, winners, labels}: everything the
+//   result depends on, so the time-stamps fix the picking block and the number of winners as well as the list
+//   (audit, 2026-11-18: lockedAt sets the block and was outside the stamped text, so a later lockedAt could
+//   have moved the draw to another block with every check still passing).
 // - The block is the first Base block whose timestamp is at least five
 //   minutes after the later of the close and the moment the list was fixed:
 //   the hash is shown before that block exists.
@@ -52,13 +55,27 @@ export function loopDrawCurrentV1(now: Date, draws: readonly LoopDrawV1[] = LOOP
     .sort((a, b) => Date.parse(a.opensAt) - Date.parse(b.opensAt))[0] ?? null;
 }
 
-/** The list as published, the exact text its hash and its time-stamps are of: {"drawId":…,"closesAt":…,"labels":[…]}. */
-export function loopDrawListTextV1(input: { drawId: string; closesAt: string; labels: readonly string[] }): string {
-  return JSON.stringify({ drawId: input.drawId, closesAt: input.closesAt, labels: [...input.labels] });
+/** What a draw's list commits to: the draw, its close, the moment its list was fixed, its winners, and the list. */
+export interface LoopDrawListInputV1 {
+  drawId: string;
+  closesAt: string;
+  /** Any ISO form: the text always says it as `toISOString()` does. */
+  lockedAt: string;
+  winners: number;
+  labels: readonly string[];
+}
+
+/** The list as published, the exact text its hash and its time-stamps are of:
+ * {"drawId":…,"closesAt":…,"lockedAt":…,"winners":…,"labels":[…]}. */
+export function loopDrawListTextV1(input: LoopDrawListInputV1): string {
+  const lockedAt = new Date(input.lockedAt);
+  if (!Number.isFinite(lockedAt.getTime())) throw new Error('loop_draw_locked_at_invalid');
+  if (!Number.isSafeInteger(input.winners) || input.winners < 1 || input.winners > LOOP_DRAW_MAX_WINNERS_V1) throw new Error('loop_draw_winners_invalid');
+  return JSON.stringify({ drawId: input.drawId, closesAt: input.closesAt, lockedAt: lockedAt.toISOString(), winners: input.winners, labels: [...input.labels] });
 }
 
 /** keccak256 of the list as published (loopDrawListTextV1). */
-export function loopDrawListHashV1(input: { drawId: string; closesAt: string; labels: readonly string[] }): Hex {
+export function loopDrawListHashV1(input: LoopDrawListInputV1): Hex {
   return keccak256(stringToHex(loopDrawListTextV1(input)));
 }
 

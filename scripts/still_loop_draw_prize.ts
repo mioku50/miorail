@@ -18,11 +18,11 @@
  * appends to that one draw's payouts and writes nothing else. It signs and
  * sends nothing: the operator sends the prizes from their own wallet.
  */
-import { client, closeDb } from '@mioagent/db';
+import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import { createDatabaseStillLoopDrawRepositoryV1, type SqlTemplateExecutor } from '@mioagent/route-storage';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
-import { loopPrizeTransfersV1, loopPrizesCoveredV1 } from './stillLoopDrawPrize.js';
+import { loopPrizeTransfersV1, recordLoopPrizesV1 } from './stillLoopDrawPrize.js';
 
 const args = process.argv.slice(2);
 const drawId = args.find((arg) => /^\d{4}-\d{2}-\d{2}$/.test(arg));
@@ -92,17 +92,15 @@ async function main(): Promise<number> {
     console.log(`${paidTx} landed in block ${receipt.block}, not after block ${record.blockNumber}, which picked the winners: nothing written.`);
     return 1;
   }
-  // What this transaction already paid, in any draw: each of its transfers is one prize at most.
-  const draws = await repository.all();
-  const covered = loopPrizesCoveredV1({ tx: paidTx, sent: receipt.sent, prize, draw: record, unpaid, draws });
-  if (covered.length === 0) {
+  // What this transaction already paid, in any draw: each of its transfers is one prize at most. Read and written
+  // in one locked transaction, so two runs at once cannot count the same transfer twice (audit, 2026-11-18).
+  const written = await recordLoopPrizesV1({ transaction: withDatabaseTransaction, drawId, paidTx, sent: receipt.sent, prize, at: new Date() });
+  if (written.covered.length === 0) {
     console.log(`${paidTx} sends no unrecorded winner at least ${prize / 1_000_000n} USDC from ${mask(sender!)} that no recorded prize already counts: nothing written.`);
     return 1;
   }
-  const at = new Date();
-  for (const no of covered) {
-    const paid = await repository.paid({ drawId, no, paidTx, at });
-    console.log(paid?.payouts.some((row) => row.no === no && row.tx === paidTx) ? `recorded: entry ${no} paid in ${paidTx}.` : `entry ${no}: not recorded.`);
+  for (const no of written.covered) {
+    console.log(written.recorded.includes(no) ? `recorded: entry ${no} paid in ${paidTx}.` : `entry ${no}: not recorded.`);
   }
   return 0;
 }
