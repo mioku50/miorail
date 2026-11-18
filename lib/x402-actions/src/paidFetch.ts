@@ -337,6 +337,15 @@ export async function runX402PaidFetch<TBody = unknown>({
   const receipt = decodeX402PaymentResponseHeader(paymentResponseHeader);
 
   if (response.status === 503) {
+    // A seller that could not read its own data says so in the body, and settles nothing: that is not the
+    // facilitator's failure, and the buyer was not charged (audit P3, 2026-11-18).
+    const code = await response.clone().json()
+      .then((value: unknown) => (value && typeof value === 'object' && typeof (value as { code?: unknown }).code === 'string'
+        ? (value as { code: string }).code : null))
+      .catch(() => null);
+    if (code !== null && !/facilitator|settle/i.test(code)) {
+      throw new PaidActionError('failed', `The paid endpoint could not answer just now (${code.slice(0, 60)}); nothing was settled`, 503, 'route_unavailable_unsettled');
+    }
     throw new PaidActionError('settlement_failed', 'x402 facilitator unavailable', 503, 'facilitator_settlement_failed');
   }
   if (response.status === 402) {

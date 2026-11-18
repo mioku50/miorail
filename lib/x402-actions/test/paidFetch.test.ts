@@ -138,6 +138,24 @@ test('runX402PaidFetch treats 503 as settlement_failed without crashing', async 
   );
 });
 
+test('a 503 whose body says the seller could not read its data is that, not a settlement failure (audit P3, 2026-11-18)', async () => {
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ error: 'still_reading_unavailable', code: 'still_reading_unavailable' }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  });
+  await assert.rejects(
+    runX402PaidFetch({ route: '/api/x402/smoke-paid', walletClient: wallet(), fetchImpl }),
+    (error: any) => error.state === 'failed' && error.status === 503 && error.reason === 'route_unavailable_unsettled'
+      && /still_reading_unavailable/.test(error.message) && /nothing was settled/.test(error.message),
+  );
+  // A facilitator's own code is still a settlement failure.
+  const facilitator: typeof fetch = async () => new Response(JSON.stringify({ code: 'facilitator_unavailable' }), { status: 503 });
+  await assert.rejects(
+    runX402PaidFetch({ route: '/api/x402/smoke-paid', walletClient: wallet(), fetchImpl: facilitator }),
+    (error: any) => error.state === 'settlement_failed',
+  );
+});
+
 test('decodeX402PaymentResponseHeader returns null for missing or malformed header', () => {
   assert.strictEqual(decodeX402PaymentResponseHeader(null), null);
   assert.strictEqual(decodeX402PaymentResponseHeader('not-base64-json'), null);

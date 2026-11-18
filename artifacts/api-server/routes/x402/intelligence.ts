@@ -279,9 +279,8 @@ async function persistSellerSettlementV1(record: X402SettlementRecord, enabled: 
     });
 }
 
-async function markSellerDeliveryV1(dataHash: string, enabled: boolean): Promise<void> {
+async function markSellerDeliveryV1(dataHash: string, enabled: boolean, context = requestContext.getStore()): Promise<void> {
   if (!enabled) return;
-  const context = requestContext.getStore();
   if (!context) return;
   // Record the delivery on the context FIRST, unconditionally. On the real
   // ordering there is no receipt row yet, and the previous version returned
@@ -630,7 +629,11 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
       return;
     }
     const payload = X402StillLoanQuoteV1Schema.parse({ ...draft, dataHash: hashX402IntelligenceDataV1(draft) });
-    await markSellerDeliveryV1(payload.dataHash, dbEnabled).catch(() => undefined);
+    // Delivered once the answer has left for the buyer, not when it was built (audit P3, 2026-11-18): until the
+    // response finishes the receipt says pending, and a buyer whose connection broke first is not counted as one.
+    // The context is the request's own, taken now: the event fires outside it.
+    const context = requestContext.getStore();
+    res.on('finish', () => { void markSellerDeliveryV1(payload.dataHash, dbEnabled, context).catch(() => undefined); });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Miorail-Data-Hash', payload.dataHash);
     res.json(payload);
