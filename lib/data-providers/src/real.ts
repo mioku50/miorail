@@ -648,6 +648,17 @@ export const MAX_TOKEN_BALANCES_READ_V1 = 120;
  * the old cap of fifteen; batching removes the reason for it. */
 export const TOKEN_METADATA_CONCURRENCY_V1 = 10;
 
+/**
+ * The most `alchemy_getTokenBalances` pages one wallet read follows.
+ *
+ * Alchemy answers `erc20` in pages of at most 100 contracts, zero balances
+ * included, with a `pageKey` while more remain: ten pages is a thousand
+ * contracts the wallet has ever held. A wallet past that is refused rather
+ * than shown in part, because the pages run in contract order and every B20
+ * token sorts last.
+ */
+export const MAX_TOKEN_BALANCE_PAGES_V1 = 10;
+
 export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string, private readonly customRpcUrl?: string) {}
 
@@ -684,19 +695,46 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
       }
     }
 
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'alchemy_getTokenBalances',
-        params: [params.address, 'erc20']
-      })
-    });
-    const data = await this.parseAlchemyResponse<{ result?: { tokenBalances?: Array<{ contractAddress: string; tokenBalance: string }> } }>(res, 'token balances');
-    const rawBalances = data.result?.tokenBalances || [];
-    const nonZero = rawBalances.filter(b => b.tokenBalance && b.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000' && b.tokenBalance !== '0x0' && b.tokenBalance !== '0');
+    // Every page, not the first (re-audit P2 Alchemy portfolio, 2026-11-18).
+    // The reader asked once and ignored `pageKey`, so a first page of zero
+    // balances with the wallet's one held token on the second read as a wallet
+    // holding nothing. A list that cannot be followed to its end (a page that
+    // fails, a key that repeats, more pages than the bound) fails the read
+    // instead of passing part of the wallet off as all of it: the portfolio has
+    // no partial state for balances, and the part left out would be the end of
+    // the contract order, where the B20 tokens are.
+    type BalanceRowV1 = { contractAddress: string; tokenBalance: string };
+    const nonZero: BalanceRowV1[] = [];
+    const followed = new Set<string>();
+    let pageKey: string | null = null;
+    for (let page = 1; ; page += 1) {
+      const res: Response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'alchemy_getTokenBalances',
+          params: pageKey === null ? [params.address, 'erc20'] : [params.address, 'erc20', { pageKey }]
+        })
+      });
+      const data: { result?: { tokenBalances?: BalanceRowV1[]; pageKey?: unknown } } =
+        await this.parseAlchemyResponse(res, 'token balances');
+      const rawBalances = data.result?.tokenBalances || [];
+      nonZero.push(...rawBalances.filter((b: BalanceRowV1) => b.tokenBalance && b.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000' && b.tokenBalance !== '0x0' && b.tokenBalance !== '0'));
+      // Past the bound below nothing more is described, so no further page is asked.
+      if (nonZero.length >= MAX_TOKEN_BALANCES_READ_V1) break;
+      const next: unknown = data.result?.pageKey;
+      if (next === undefined || next === null || next === '') break;
+      if (typeof next !== 'string' || followed.has(next)) {
+        throw new Error('Alchemy token balances repeated or garbled a page key; the wallet was not read to its end');
+      }
+      if (page >= MAX_TOKEN_BALANCE_PAGES_V1) {
+        throw new Error(`Alchemy token balances continue past ${MAX_TOKEN_BALANCE_PAGES_V1} pages; the wallet was not read to its end`);
+      }
+      followed.add(next);
+      pageKey = next;
+    }
 
     // Every non-zero balance, read concurrently.
     //

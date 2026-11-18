@@ -1,7 +1,9 @@
-import { test, describe, mock } from 'node:test';
+import { test, describe, mock, after } from 'node:test';
 import assert from 'node:assert';
 import {
   AlchemyTokenBalancesProvider,
+  MAX_TOKEN_BALANCES_READ_V1,
+  MAX_TOKEN_BALANCE_PAGES_V1,
   RealCoinGeckoProvider,
   CoinGeckoPriceProvider,
   RealDeFiLlamaProvider,
@@ -272,6 +274,115 @@ describe('Real Providers', () => {
         assert.strictEqual(balances.length, 1);
         assert.strictEqual(balances[0].symbol, 'GOOD');
         mock.restoreAll();
+    });
+
+    describe('Alchemy balances are read page by page, to the end', () => {
+        // The re-audit's fixture (P2 Alchemy portfolio, 2026-11-18): the first
+        // page held one zero balance and a pageKey, the second the wallet's only
+        // held token, and the reader asked once and showed an empty wallet.
+        const savedFetch = global.fetch;
+        after(() => {
+            global.fetch = savedFetch;
+        });
+        const OWNER = '0x' + '1'.repeat(40);
+        const HELD = '0x' + '2'.repeat(40);
+        const EMPTY = '0x' + '3'.repeat(40);
+        type PageV1 =
+            | { tokenBalances: Array<{ contractAddress: string; tokenBalance: string }>; pageKey?: string }
+            | 'fails'
+            | 'rate_limited';
+
+        /** A fake Alchemy that answers each page by the key it is asked with
+         * ('first' for none), and records what was asked. */
+        function pagedAlchemy(pages: Record<string, PageV1 | ((key: string) => PageV1)>) {
+            const asked: Array<string | null> = [];
+            let metadataReads = 0;
+            global.fetch = (async (_url: string | URL | Request, options?: RequestInit) => {
+                const body = JSON.parse(String(options?.body || '{}'));
+                if (body.method !== 'alchemy_getTokenBalances') {
+                    metadataReads += 1;
+                    return { ok: true, status: 200, json: async () => ({ result: { symbol: 'HELD', name: 'Held', decimals: 0 } }) } as Response;
+                }
+                const key: string | null = body.params?.[2]?.pageKey ?? null;
+                asked.push(key);
+                const entry = pages[key ?? 'first'] ?? pages['*'];
+                const page = typeof entry === 'function' ? entry(key ?? 'first') : entry;
+                if (page === 'fails') {
+                    return { ok: false, status: 500, statusText: 'Server Error', json: async () => ({}) } as Response;
+                }
+                if (page === 'rate_limited') {
+                    return { ok: false, status: 429, statusText: 'Too Many Requests', json: async () => ({ error: { message: 'rate limited' } }) } as Response;
+                }
+                return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, result: { address: OWNER, ...page } }) } as Response;
+            }) as unknown as typeof fetch;
+            return { asked, metadataReads: () => metadataReads };
+        }
+        const read = () => new AlchemyTokenBalancesProvider('alchemy-key').getTokenBalances({ address: OWNER, chainId: 8453 });
+
+        test('a held token on the second page is found, behind a first page of zeros', async () => {
+            const fake = pagedAlchemy({
+                first: { tokenBalances: [{ contractAddress: EMPTY, tokenBalance: '0x0' }], pageKey: 'second' },
+                second: { tokenBalances: [{ contractAddress: HELD, tokenBalance: '0x05' }] },
+            });
+            const balances = await read();
+            assert.deepStrictEqual(fake.asked, [null, 'second']);
+            assert.deepStrictEqual(balances.map((row) => [row.address, row.balance]), [[HELD, '5']]);
+        });
+
+        test('a page key that repeats stops the read, and fails it rather than loop or guess', async () => {
+            const fake = pagedAlchemy({
+                first: { tokenBalances: [{ contractAddress: HELD, tokenBalance: '0x05' }], pageKey: 'again' },
+                again: { tokenBalances: [{ contractAddress: EMPTY, tokenBalance: '0x0' }], pageKey: 'again' },
+            });
+            await assert.rejects(read, /page key/);
+            assert.deepStrictEqual(fake.asked, [null, 'again']);
+            assert.strictEqual(fake.metadataReads(), 0);
+        });
+
+        test('a second page that fails fails the read, not just its own tokens', async () => {
+            const fake = pagedAlchemy({
+                first: { tokenBalances: [{ contractAddress: HELD, tokenBalance: '0x05' }], pageKey: 'second' },
+                second: 'fails',
+            });
+            await assert.rejects(read, /Alchemy API error/);
+            assert.deepStrictEqual(fake.asked, [null, 'second']);
+            // Nothing of the first page is handed on as though it were the wallet.
+            assert.strictEqual(fake.metadataReads(), 0);
+            // A throttled second page stays a rate limit, so the portfolio's
+            // fallback provider and its rate-limited state still apply.
+            pagedAlchemy({
+                first: { tokenBalances: [{ contractAddress: HELD, tokenBalance: '0x05' }], pageKey: 'second' },
+                second: 'rate_limited',
+            });
+            await assert.rejects(read, (err: unknown) => err instanceof ProviderRateLimitError);
+        });
+
+        test('a wallet that pages past the bound is refused, not shown in part', async () => {
+            const fake = pagedAlchemy({
+                '*': (key) => ({
+                    tokenBalances: [{ contractAddress: EMPTY, tokenBalance: '0x0' }],
+                    pageKey: `${key}+`,
+                }),
+            });
+            await assert.rejects(read, /continue past/);
+            assert.strictEqual(fake.asked.length, MAX_TOKEN_BALANCE_PAGES_V1);
+        });
+
+        test('no page is asked for past the tokens one read describes', async () => {
+            const held = (page: number) =>
+                Array.from({ length: 100 }, (_unused, index) => ({
+                    contractAddress: '0x' + (page * 100 + index + 1).toString(16).padStart(40, '0'),
+                    tokenBalance: '0x01',
+                }));
+            const fake = pagedAlchemy({
+                first: { tokenBalances: held(0), pageKey: 'second' },
+                second: { tokenBalances: held(1), pageKey: 'third' },
+                third: { tokenBalances: held(2) },
+            });
+            const balances = await read();
+            assert.deepStrictEqual(fake.asked, [null, 'second']);
+            assert.strictEqual(balances.length, MAX_TOKEN_BALANCES_READ_V1);
+        });
     });
 
     test('AlchemyTokenBalancesProvider classifies HTTP 429 as rate_limited', async () => {
