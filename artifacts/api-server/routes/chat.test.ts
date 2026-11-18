@@ -2,7 +2,8 @@ import test, { after, before, beforeEach, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
-import { closeDb, db, actions, testTenantId, users } from '@mioagent/db';
+import { randomUUID } from 'node:crypto';
+import { closeDb, db, actions, chats, testTenantId, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
 import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
@@ -495,6 +496,104 @@ describe('Chat API & Recommendation Guardrails', () => {
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
       restoreBuilderCode();
+    }
+  });
+
+  // Audit P2 concurrent messages, 2026-11-18: every request wrote back the
+  // whole history it had read, and so did a reconcile, so two tabs and a
+  // reconcile each erased what the others had added.
+  test('two tabs answered while a reconcile runs: every message survives', async () => {
+    const within = <T>(promise: Promise<T>, what: string) => Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timed out: ${what}`)), 10_000).unref()),
+    ]);
+    // The reconcile is held once it has read the history and worked out its
+    // changes, before it writes them.
+    const repository = new InMemoryAutonomyPolicyRepository();
+    let reconcileHeld!: () => void;
+    let releaseReconcile!: () => void;
+    const held = new Promise<void>((resolve) => { reconcileHeld = resolve; });
+    const released = new Promise<void>((resolve) => { releaseReconcile = resolve; });
+    const getByUser = repository.getByUser.bind(repository);
+    repository.getByUser = async (userId: string, chainId: number) => {
+      reconcileHeld();
+      await released;
+      return getByUser(userId, chainId);
+    };
+    // Each tab reads the history, then waits inside its one tool call until
+    // the other tab has read it too.
+    let arrived = 0;
+    let bothArrived!: () => void;
+    const together = new Promise<void>((resolve) => { bothArrived = resolve; });
+    const balance: ToolDef = {
+      name: 'get_portfolio',
+      description: 'Read Base Account portfolio',
+      inputSchema: { type: 'object', properties: { address: { type: 'string' }, chain: { enum: ['base'] } } },
+    };
+    const provider: ToolProvider = {
+      id: 'base-mcp-dynamic',
+      async listTools() { return [balance]; },
+      findTool(name: string) { return name === balance.name ? balance : undefined; },
+      async callTool() {
+        arrived += 1;
+        if (arrived === 2) bothArrived();
+        await within(together, 'the second tab never read the history');
+        return { content: '{"tokens":[{"symbol":"USDC","balance":"42.5"}]}', isError: false };
+      },
+    };
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalGetRepository = chatRouteRuntime.getAutonomyPolicyRepository;
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => {
+      const aggregator = new ToolAggregator();
+      aggregator.registerProvider(provider);
+      return aggregator;
+    };
+    chatRouteRuntime.getAutonomyPolicyRepository = () => repository;
+
+    await request(app).delete('/api/chat/history');
+    const chatId = randomUUID();
+    const at = new Date().toISOString();
+    await db.insert(chats).values({
+      id: chatId,
+      userId: DB_TEST_USER_ID,
+      messages: [
+        { chatId, messageId: 'seeded-question', role: 'user', content: 'send 0.05 USDC to 0x1111111111111111111111111111111111111111', createdAt: at },
+        // A send whose approval window has lapsed: the reconcile settles it as failed without asking a tool.
+        { chatId, messageId: 'seeded-send', role: 'assistant', content: 'Approve the transfer in Base Account.', createdAt: at,
+          metadata: { directReadKind: 'base_mcp_send', approvalState: 'pending', requestId: 'seeded-request',
+            reservationActionId: 'base-mcp-send:seeded', reservationExpiresAt: '2026-01-01T00:00:00.000Z' } },
+      ],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    try {
+      const reconciling = request(app).post('/api/chat/reconcile').send({}).then((response) => response);
+      await within(held, 'the reconcile never reached its write');
+      const tabs = await Promise.all([1, 2].map(() => request(app).post('/api/chat').send({
+        message: 'check my balance',
+        walletAddress: '0x1234567890123456789012345678901234567890',
+      })));
+      assert.deepEqual(tabs.map((tab) => tab.status), [200, 200]);
+      assert.equal(arrived, 2, 'both tabs read the history before either wrote');
+      releaseReconcile();
+      const reconciled = await reconciling;
+      assert.equal(reconciled.status, 200);
+      assert.equal(reconciled.body.updatedCount, 1);
+
+      const history = (await request(app).get('/api/chat/history')).body.messages as Array<Record<string, any>>;
+      assert.deepEqual(history.slice(0, 2).map((entry) => entry.messageId), ['seeded-question', 'seeded-send']);
+      assert.equal(history[1]!.metadata.approvalState, 'failed', 'the reconcile’s own change is kept');
+      assert.equal(history.length, 6, 'two questions and two replies after the seeded pair');
+      assert.equal(history.filter((entry) => entry.role === 'user' && entry.content === 'check my balance').length, 2);
+      for (const tab of tabs) {
+        assert.ok(history.some((entry) => entry.messageId === tab.body.messageId), 'each tab’s reply survives');
+      }
+      // The reconcile answers with what the history holds, the tabs' messages included.
+      assert.deepEqual(reconciled.body.messages.map((entry: { messageId: string }) => entry.messageId), history.map((entry) => entry.messageId));
+    } finally {
+      releaseReconcile();
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.getAutonomyPolicyRepository = originalGetRepository;
     }
   });
 

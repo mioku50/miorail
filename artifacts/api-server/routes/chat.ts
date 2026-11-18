@@ -7,7 +7,7 @@ import { chatLimitsV1 } from '../middleware/chatLimits.js';
 import { createLlmProvider, createStructuredLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { getAddress } from 'viem';
 import { detectActionIntent } from '../lib/intent.js';
@@ -83,6 +83,59 @@ export const chatRouteRuntime = {
  */
 export function chatAuditDetailsV1(message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
   return { ...details, messageLength: message.length };
+}
+
+// ---------------------------------------------------------------------------
+// One history row per user, written by appending (audit P2 concurrent
+// messages, 2026-11-18). A request used to read the whole array, add its
+// messages in memory and write the whole array back, so two tabs, or a
+// reconcile beside a reply, each overwrote what the other had added. A request
+// now appends its own messages in one statement, and a reconcile rewrites only
+// the messages it read, keeping every message appended after them. Nothing but
+// a reconcile ever changes a stored message, and nothing removes one short of
+// DELETE /history, which removes the row.
+//
+// `::text::jsonb`: postgres-js sends a string under a bare `::jsonb` cast as a
+// JSON string scalar, not as the array it spells.
+// ---------------------------------------------------------------------------
+
+async function appendChatMessagesV1(chatId: string, userId: string, appended: unknown[]): Promise<void> {
+  await db.update(chats)
+    .set({
+      messages: sql`coalesce(${chats.messages}, '[]'::jsonb) || ${JSON.stringify(appended)}::text::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
+}
+
+/** A new chat's first messages, or more of a chat this request read. */
+async function saveChatMessagesV1(input: { chatId: string; userId: string; exists: boolean; messages: unknown[] }): Promise<void> {
+  if (input.exists) return appendChatMessagesV1(input.chatId, input.userId, input.messages);
+  await db.insert(chats).values({
+    id: input.chatId,
+    userId: input.userId,
+    messages: input.messages,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+/** A reconcile's reading of the messages it read, written over those same
+ * messages; whatever was appended since follows them unchanged. The stored
+ * history afterwards, or null when the row is gone. */
+async function rewriteReconciledMessagesV1(chatId: string, userId: string, reconciled: unknown[]): Promise<unknown[] | null> {
+  const [row] = await db.update(chats)
+    .set({
+      messages: sql`${JSON.stringify(reconciled)}::text::jsonb || coalesce((
+        select jsonb_agg(later.value order by later.position)
+        from jsonb_array_elements(coalesce(${chats.messages}, '[]'::jsonb)) with ordinality as later(value, position)
+        where later.position > ${reconciled.length}::int
+      ), '[]'::jsonb)`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(chats.id, chatId), eq(chats.userId, userId)))
+    .returning({ messages: chats.messages });
+  return row && Array.isArray(row.messages) ? row.messages : null;
 }
 
 const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
@@ -170,9 +223,9 @@ chatRouter.post('/reconcile', async (req, res, next) => {
         repository: chatRouteRuntime.getAutonomyPolicyRepository(),
         userId,
       });
-      if (result.changed) {
-        await db.update(chats).set({ messages: result.messages, updatedAt: new Date() }).where(and(eq(chats.id, chat.id), eq(chats.userId, userId)));
-      }
+      // What the history holds once this reconcile is written: a reply another
+      // tab appended meanwhile is part of it, and so of the answer.
+      const stored = result.changed ? await rewriteReconciledMessagesV1(chat.id, userId, result.messages) : null;
       for (const message of result.messages) {
         const actionId = message.metadata?.reservationActionId;
         const state = message.metadata?.approvalState;
@@ -184,7 +237,7 @@ chatRouter.post('/reconcile', async (req, res, next) => {
         });
       }
       return res.json(ChatReconcileResponseSchema.parse({
-        messages: result.messages,
+        messages: stored ?? result.messages,
         polledCount: result.polledCount,
         updatedCount: result.updatedCount,
         autonomy: {
@@ -251,9 +304,12 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
     console.log("TRACE: chats db query done");
 
     let chatId: string = crypto.randomUUID();
+    // Read for context only: this request appends its own messages and never
+    // writes this array back (see appendChatMessagesV1).
     let currentMessages: any[] = [];
+    const chatExists = userChats.length > 0;
 
-    if (userChats.length > 0) {
+    if (chatExists) {
       chatId = userChats[0].id;
       currentMessages = (userChats[0].messages as any[]) || [];
     }
@@ -388,18 +444,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
           ...(pendingAction ? { pendingAction } : {}),
         },
       };
-      currentMessages.push(assistantMsg);
-      if (userChats.length > 0) {
-        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
-      } else {
-        await boundary.wait(() => db.insert(chats).values({
-          id: chatId,
-          userId,
-          messages: currentMessages,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }));
-      }
+      await boundary.wait(() => saveChatMessagesV1({ chatId, userId, exists: chatExists, messages: [userMsg, assistantMsg] }));
       return reply(assistantMsg);
     }
 
@@ -422,12 +467,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
         createdAt: new Date().toISOString(),
         metadata: { readOnly, blocked: true, errorCode: readOnly ? 'mainnet_readonly' : 'transaction_intent_unrecognized' },
       };
-      currentMessages.push(assistantMsg);
-      if (userChats.length > 0) {
-        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
-      } else {
-        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
-      }
+      await boundary.wait(() => saveChatMessagesV1({ chatId, userId, exists: chatExists, messages: [userMsg, assistantMsg] }));
       return reply(assistantMsg);
     }
 
@@ -476,12 +516,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
         role: 'assistant' as const,
         createdAt: new Date().toISOString()
       };
-      currentMessages.push(assistantMsg);
-      if (userChats.length > 0) {
-        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
-      } else {
-        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
-      }
+      await boundary.wait(() => saveChatMessagesV1({ chatId, userId, exists: chatExists, messages: [userMsg, assistantMsg] }));
       return reply(assistantMsg);
     }
 
@@ -799,12 +834,7 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
           toolCalls: toolCallTraces
         }
       };
-      currentMessages.push(assistantMsg);
-      if (userChats.length > 0) {
-        await boundary.wait(() => db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
-      } else {
-        await boundary.wait(() => db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() }));
-      }
+      await boundary.wait(() => saveChatMessagesV1({ chatId, userId, exists: chatExists, messages: [userMsg, assistantMsg] }));
 
       try {
         await boundary.wait(() => ObservabilityService.logAction({
@@ -846,23 +876,9 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
     });
     console.log("TRACE: agent created");
 
-    if (userChats.length > 0) {
-      console.log("TRACE: updating chats db");
-      await boundary.wait(() => db.update(chats)
-        .set({ messages: currentMessages, updatedAt: new Date() })
-        .where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
-      console.log("TRACE: updated chats db");
-    } else {
-      console.log("TRACE: inserting chats db");
-      await boundary.wait(() => db.insert(chats).values({
-        id: chatId,
-        userId,
-        messages: currentMessages,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }));
-      console.log("TRACE: inserted chats db");
-    }
+    console.log("TRACE: saving the user message");
+    await boundary.wait(() => saveChatMessagesV1({ chatId, userId, exists: chatExists, messages: [userMsg] }));
+    console.log("TRACE: saved the user message");
 
     let finalContent = '';
     const toolCallsMap = new Map<string, any>();
@@ -925,11 +941,8 @@ chatRouter.post('/', chatLimitsV1, async (req, res, next) => {
       }
     };
 
-    currentMessages.push(assistantMsg);
-
-    await boundary.wait(() => db.update(chats)
-      .set({ messages: currentMessages, updatedAt: new Date() })
-      .where(and(eq(chats.id, chatId), eq(chats.userId, userId))));
+    // The row exists by now: this request read it or created it with the user's message.
+    await boundary.wait(() => appendChatMessagesV1(chatId, userId, [assistantMsg]));
 
     try {
       await boundary.wait(() => ObservabilityService.logAction({
