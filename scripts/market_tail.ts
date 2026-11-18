@@ -410,7 +410,18 @@ async function main(): Promise<void> {
       break;
     }
 
-    const transfers = assetTransfersFromLogsV1({ logs: logs.value, trackedTokens: tokens });
+    const reading = assetTransfersFromLogsV1({ logs: logs.value, trackedTokens: tokens });
+    if (reading.unreadable > 0) {
+      // The cursor stays where it is, exactly as for a refused read. A tracked
+      // token's Transfer that did not read is a movement nobody stored, and
+      // passing over it would lose it for good: the cursor never rewinds
+      // (re-audit P2 market tail, 2026-11-18).
+      console.log(
+        `pass ${pass + 1}: ${range.fromBlock}-${range.toBlock} — ${reading.unreadable} Transfer log(s) of a tracked token could not be read — cursor held at ${lastBlock}`,
+      );
+      break;
+    }
+    const transfers = reading.transfers;
     // Read by kind rather than as one page. Routers accumulate faster than
     // pools do, and a single bounded read would eventually push the identified
     // venues off the end -- which looks exactly like a market going quiet.

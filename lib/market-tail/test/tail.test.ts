@@ -47,7 +47,8 @@ function transferLogV1(from: string, to: string, index: number, amount = '0x0f42
 
 describe('the ledger', () => {
   test('reads what the chain actually emitted', () => {
-    const transfers = assetTransfersFromLogsV1({ logs: fixture.logs, trackedTokens: [AAPL] });
+    const { transfers, unreadable } = assetTransfersFromLogsV1({ logs: fixture.logs, trackedTokens: [AAPL] });
+    assert.equal(unreadable, 0);
     assert.equal(transfers.length, fixture.logs.length);
     for (const transfer of transfers) {
       assert.equal(transfer.tokenAddress, AAPL);
@@ -61,19 +62,97 @@ describe('the ledger', () => {
 
   test('a token nobody asked about is not folded in', () => {
     const foreign: RawLogV1 = { ...transferLogV1(WALLET, OTHER_WALLET, 0), address: USDC };
-    assert.deepEqual(assetTransfersFromLogsV1({ logs: [foreign], trackedTokens: [AAPL] }), []);
+    // Skipped, not counted: it says itself that it is not ours.
+    assert.deepEqual(assetTransfersFromLogsV1({ logs: [foreign], trackedTokens: [AAPL] }), {
+      transfers: [],
+      unreadable: 0,
+    });
   });
 
-  test('a log with no idempotency key is dropped, not written twice', () => {
+  test('a log with no idempotency key is not written, and not passed over', () => {
     // Without block, transaction and index there is nothing to deduplicate on,
-    // so the row would be re-inserted on every re-read of the range.
+    // so the row would be re-inserted on every re-read of the range. It is
+    // still a movement of a tracked token, so it is counted, never dropped.
     const orphan = { ...transferLogV1(WALLET, OTHER_WALLET, 0), transactionHash: undefined };
-    assert.deepEqual(assetTransfersFromLogsV1({ logs: [orphan], trackedTokens: [AAPL] }), []);
+    assert.deepEqual(assetTransfersFromLogsV1({ logs: [orphan], trackedTokens: [AAPL] }), {
+      transfers: [],
+      unreadable: 1,
+    });
+  });
+});
+
+describe('a tracked Transfer that does not read holds its range', () => {
+  // The re-audit's fixture (2026-11-18): one Transfer, with and without its log
+  // index, through the real source. The source accepted both as a read of one
+  // log; the parser kept the first and returned nothing for the second, and
+  // the tail then recorded the whole range as read. A reading with anything
+  // unreadable in it is one the pass may not record, so the cursor stays.
+  const ASSET = `0x${'ab'.repeat(20)}`;
+  const LOG: RawLogV1 = {
+    address: ASSET,
+    topics: [ERC20_TRANSFER_TOPIC_V1, `0x${'1'.repeat(64)}`, `0x${'2'.repeat(64)}`],
+    data: `0x${(1).toString(16).padStart(64, '0')}`,
+    blockNumber: '0x64',
+    transactionHash: `0x${'3'.repeat(64)}`,
+  };
+  const APPROVAL_TOPIC = '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925';
+
+  async function readThroughTheSource(log: RawLogV1) {
+    const source = createMarketTailSourceV1({
+      rpcUrl: 'https://rpc.example.invalid',
+      callGapMs: 0,
+      fetchImpl: async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: [log] })),
+    });
+    const batch = await source.transferLogs({ tokens: [ASSET], fromBlock: 100, toBlock: 100 });
+    assert.equal(batch.ok, true);
+    return assetTransfersFromLogsV1({ logs: batch.ok ? batch.value : [], trackedTokens: [ASSET] });
+  }
+
+  test('with its log index it is read', async () => {
+    const reading = await readThroughTheSource({ ...LOG, logIndex: '0x1' });
+    assert.equal(reading.unreadable, 0);
+    assert.equal(reading.transfers.length, 1);
+  });
+
+  test('without it, it is counted unreadable instead of disappearing', async () => {
+    assert.deepEqual(await readThroughTheSource(LOG), { transfers: [], unreadable: 1 });
+  });
+
+  test('every part a stored row needs is required', () => {
+    const whole: RawLogV1 = { ...LOG, logIndex: '0x1' };
+    const broken: RawLogV1[] = [
+      { ...whole, blockNumber: undefined },
+      // JSON can carry a null where a quantity belongs.
+      { ...whole, logIndex: null as unknown as string },
+      { ...whole, transactionHash: '0x1234' },
+      // An amount that does not read is not a zero.
+      { ...whole, data: '0x' },
+      // No recipient.
+      { ...whole, topics: whole.topics!.slice(0, 2) },
+      // An answer to a request for the tracked tokens that names no address
+      // cannot be told apart from one of them.
+      { ...whole, address: undefined },
+    ];
+    for (const log of broken) {
+      assert.equal(assetTransfersFromLogsV1({ logs: [log], trackedTokens: [ASSET] }).unreadable, 1, JSON.stringify(log));
+    }
+  });
+
+  test("a log that reads as someone else's is still skipped, not counted", () => {
+    const whole: RawLogV1 = { ...LOG, logIndex: '0x1' };
+    // Another token's Transfer, even one that would not read in full.
+    const foreign: RawLogV1 = { ...LOG, address: USDC };
+    // A tracked token's log that is not a Transfer.
+    const approval: RawLogV1 = { ...whole, topics: [APPROVAL_TOPIC, ...whole.topics!.slice(1)] };
+    assert.deepEqual(assetTransfersFromLogsV1({ logs: [foreign, approval], trackedTokens: [ASSET] }), {
+      transfers: [],
+      unreadable: 0,
+    });
   });
 });
 
 describe('venue discovery', () => {
-  const transfers = assetTransfersFromLogsV1({ logs: fixture.logs, trackedTokens: [AAPL] });
+  const transfers = assetTransfersFromLogsV1({ logs: fixture.logs, trackedTokens: [AAPL] }).transfers;
 
   test('an address on both sides is a candidate, one-way traffic is not', () => {
     const oneWay = [1, 2, 3, 4].map((index) => transferLogV1(WALLET, OTHER_WALLET, index));
@@ -85,7 +164,7 @@ describe('venue discovery', () => {
       transferLogV1(AERODROME_POOL, OTHER_WALLET, 9),
       transferLogV1(AERODROME_POOL, OTHER_WALLET, 10),
     ];
-    const parsed = assetTransfersFromLogsV1({ logs: [...oneWay, ...both], trackedTokens: [AAPL] });
+    const parsed = assetTransfersFromLogsV1({ logs: [...oneWay, ...both], trackedTokens: [AAPL] }).transfers;
     assert.deepEqual(venueCandidatesFromTransfersV1({ transfers: parsed }), [AERODROME_POOL]);
   });
 
@@ -104,7 +183,7 @@ describe('venue discovery', () => {
     const zero = '0x0000000000000000000000000000000000000000';
     const minted = [1, 2, 3].map((index) => transferLogV1(zero, WALLET, index));
     const burned = [4, 5, 6].map((index) => transferLogV1(WALLET, zero, index));
-    const parsed = assetTransfersFromLogsV1({ logs: [...minted, ...burned], trackedTokens: [AAPL] });
+    const parsed = assetTransfersFromLogsV1({ logs: [...minted, ...burned], trackedTokens: [AAPL] }).transfers;
     assert.deepEqual(venueCandidatesFromTransfersV1({ transfers: parsed, minPerSide: 1 }), []);
   });
 
@@ -139,7 +218,7 @@ describe('trade events', () => {
     const parsed = assetTransfersFromLogsV1({
       logs: [transferLogV1(AERODROME_POOL, WALLET, 1)],
       trackedTokens: [AAPL],
-    });
+    }).transfers;
     const [event] = venueTransfersFromLedgerV1({ transfers: parsed, venues: [pool] });
     assert.equal(event.direction, 'out_of_venue');
     assert.equal(event.venueAddress, AERODROME_POOL);
@@ -151,7 +230,7 @@ describe('trade events', () => {
     const parsed = assetTransfersFromLogsV1({
       logs: [transferLogV1(WALLET, OTHER_WALLET, 1)],
       trackedTokens: [AAPL],
-    });
+    }).transfers;
     assert.deepEqual(venueTransfersFromLedgerV1({ transfers: parsed, venues: [pool] }), []);
   });
 
@@ -162,7 +241,7 @@ describe('trade events', () => {
     const parsed = assetTransfersFromLogsV1({
       logs: [transferLogV1(AERODROME_POOL, UNISWAP_V4_SINGLETON_V1, 1)],
       trackedTokens: [AAPL],
-    });
+    }).transfers;
     assert.deepEqual(venueTransfersFromLedgerV1({ transfers: parsed, venues: [pool, singleton] }), []);
   });
 
@@ -171,7 +250,7 @@ describe('trade events', () => {
     const parsed = assetTransfersFromLogsV1({
       logs: [transferLogV1(zero, AERODROME_POOL, 1)],
       trackedTokens: [AAPL],
-    });
+    }).transfers;
     assert.deepEqual(venueTransfersFromLedgerV1({ transfers: parsed, venues: [pool] }), []);
   });
 
@@ -180,7 +259,7 @@ describe('trade events', () => {
     const parsed = assetTransfersFromLogsV1({
       logs: [transferLogV1(AERODROME_POOL, WALLET, 1)],
       trackedTokens: [AAPL],
-    });
+    }).transfers;
     assert.deepEqual(venueTransfersFromLedgerV1({ transfers: parsed, venues: [unasked] }), []);
   });
 });
