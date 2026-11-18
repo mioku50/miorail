@@ -9,6 +9,7 @@ import {
   type NftRouteCardV1,
 } from '@mioagent/route-domain';
 import { RouteStorageConflictError, RouteStorageIntegrityError, type SqlTemplateExecutor } from './types.js';
+import { payloadFromDatabase } from './validation.js';
 import {
   assertNftProofRewriteAllowedV1,
   assertNftTenantV1,
@@ -44,6 +45,10 @@ import {
 // indexes are the guarantee.
 // ---------------------------------------------------------------------------
 
+/** A payload as JSON text under `CAST(… AS jsonb)`. postgres-js, the driver
+ * production runs on, stores that as a JSON string scalar and reads it back as
+ * a string, so every read goes through `payloadFromDatabase`, as the swap
+ * repository's does. Read raw, each NFT row failed its own contract. */
 function jsonb(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -71,7 +76,7 @@ function runFromRow(row: Record<string, unknown>): NftRouteRunRecordV1 {
     status: String(row.status),
     intentHash: String(row.intent_hash),
     idempotencyKey: String(row.idempotency_key),
-    intent: parseNftIntentV1(row.intent_payload as NftPurchaseIntentV1),
+    intent: parseNftIntentV1(payloadFromDatabase(row.intent_payload) as NftPurchaseIntentV1),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
@@ -84,7 +89,7 @@ function blueprintFromRow(row: Record<string, unknown>): NftPurchaseBlueprintRec
     routeCardId: String(row.route_card_id),
     userId: String(row.user_id),
     walletAddress: String(row.wallet_address),
-    blueprint: parseNftBlueprintV1(row.payload as NftPurchaseBlueprintV1),
+    blueprint: parseNftBlueprintV1(payloadFromDatabase(row.payload) as NftPurchaseBlueprintV1),
     submissionBatchId: textOrNull(row.submission_batch_id),
     submittedTransactionHash: textOrNull(row.submitted_transaction_hash),
     submittedAt: isoOrNull(row.submitted_at),
@@ -100,7 +105,7 @@ function proofFromRow(row: Record<string, unknown>): NftProofRecordV1 {
     blueprintId: String(row.blueprint_id),
     userId: String(row.user_id),
     walletAddress: String(row.wallet_address),
-    proof: parseNftProofV1(row.payload as NftPurchaseProofV1),
+    proof: parseNftProofV1(payloadFromDatabase(row.payload) as NftPurchaseProofV1),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
@@ -272,7 +277,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE route_run_id = ${runId} AND user_id = ${userId}
         ORDER BY created_at, id
       `;
-      return rows.map((row) => parseNftCandidateV1(row.payload as NftListingCandidateV1));
+      return rows.map((row) => parseNftCandidateV1(payloadFromDatabase(row.payload) as NftListingCandidateV1));
     },
 
     async getNftCandidate(runId: string, candidateHash: string, userId: string) {
@@ -282,7 +287,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE route_run_id = ${runId} AND user_id = ${userId} AND candidate_hash = ${candidateHash}
         LIMIT 1
       `;
-      return rows[0] ? parseNftCandidateV1(rows[0].payload as NftListingCandidateV1) : null;
+      return rows[0] ? parseNftCandidateV1(payloadFromDatabase(rows[0].payload) as NftListingCandidateV1) : null;
     },
 
     async insertNftEvidence(runId: string, input: NftEvidenceRecordV1) {
@@ -319,7 +324,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE route_run_id = ${runId} AND user_id = ${userId}
         ORDER BY created_at, id
       `;
-      return rows.map((row) => parseNftEvidenceV1(row.payload as NftEvidenceRecordV1));
+      return rows.map((row) => parseNftEvidenceV1(payloadFromDatabase(row.payload) as NftEvidenceRecordV1));
     },
 
     async insertNftRouteCard(runId: string, input: NftRouteCardV1) {
@@ -349,7 +354,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE route_run_id = ${runId} AND user_id = ${userId}
         ORDER BY created_at, id
       `;
-      return rows.map((row) => parseNftRouteCardV1(row.payload as NftRouteCardV1));
+      return rows.map((row) => parseNftRouteCardV1(payloadFromDatabase(row.payload) as NftRouteCardV1));
     },
 
     async getNftRouteCard(runId: string, routeCardHash: string, userId: string) {
@@ -359,7 +364,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE route_run_id = ${runId} AND user_id = ${userId} AND route_card_hash = ${routeCardHash}
         LIMIT 1
       `;
-      return rows[0] ? parseNftRouteCardV1(rows[0].payload as NftRouteCardV1) : null;
+      return rows[0] ? parseNftRouteCardV1(payloadFromDatabase(rows[0].payload) as NftRouteCardV1) : null;
     },
 
     async reserveNftPurchaseBlueprint(
@@ -669,7 +674,7 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         WHERE proof_id = ${proofId} AND user_id = ${userId}
         ORDER BY sequence
       `;
-      return rows.map((row) => parseNftProofEventV1(row.payload as NftProofEventV1));
+      return rows.map((row) => parseNftProofEventV1(payloadFromDatabase(row.payload) as NftProofEventV1));
     },
 
     async listNftHistory(userId: string, limit: number) {
