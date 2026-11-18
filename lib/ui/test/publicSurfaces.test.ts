@@ -240,9 +240,13 @@ test('Stocks is sessionless on web, at an address worth sharing', () => {
     '/market must not be gated: the page chooses the public door itself',
   );
   // "/" is Still's Home since 2026-10-26, and a link that carried a question
-  // there still lands on Stocks, which reads it.
+  // there still lands on Stocks, which reads it; any other query, such as a
+  // campaign's tag, opens Home (audit P3, 2026-11-18: homeQuery.ts decides).
   const home = source('artifacts/interface/src/features/still/StillRoutes.tsx');
-  assert.match(home, /Redirect to=\{`\$\{gate\.showPrivateSurfaces \? '\/market' : '\/stocks'\}\$\{search\}`\}/);
+  assert.match(home, /stillHomeRedirectV1\(window\.location\.search, gate\.showPrivateSurfaces\)/);
+  assert.match(home, /<Redirect to=\{redirect\} replace \/>/);
+  const rule = source('artifacts/interface/src/features/still/homeQuery.ts');
+  assert.match(rule, /\$\{signedIn \? '\/market' : '\/stocks'\}/);
   // Home is unreachable if "/" itself sits behind the gate — which is exactly
   // how the first local render of the Stocks redirect still showed the wall.
   const root = app.slice(app.indexOf('<Route path="/">'));
