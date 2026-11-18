@@ -580,9 +580,11 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal(reconciled.status, 200);
       assert.equal(reconciled.body.updatedCount, 1);
 
-      const history = (await request(app).get('/api/chat/history')).body.messages as Array<Record<string, any>>;
+      const history = (await request(app).get('/api/chat/history')).body.messages as Array<{
+        messageId: string; role: string; content: string; metadata?: { approvalState?: string };
+      }>;
       assert.deepEqual(history.slice(0, 2).map((entry) => entry.messageId), ['seeded-question', 'seeded-send']);
-      assert.equal(history[1]!.metadata.approvalState, 'failed', 'the reconcile’s own change is kept');
+      assert.equal(history[1]!.metadata?.approvalState, 'failed', 'the reconcile’s own change is kept');
       assert.equal(history.length, 6, 'two questions and two replies after the seeded pair');
       assert.equal(history.filter((entry) => entry.role === 'user' && entry.content === 'check my balance').length, 2);
       for (const tab of tabs) {
