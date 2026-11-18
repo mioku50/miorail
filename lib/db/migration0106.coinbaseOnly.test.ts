@@ -51,8 +51,10 @@ before(async () => {
     entries: { tag: string }[];
   };
   const tags = journal.entries.map((entry) => entry.tag);
-  assert.equal(tags.at(-1), '0106_coinbase_only', 'this test proves the newest migration');
-  for (const tag of tags.slice(0, -1)) await apply(tag);
+  const at = tags.indexOf('0106_coinbase_only');
+  assert.ok(at > 0, 'the journal holds the migration this test proves');
+  // Every migration before it, from an empty database; the ones after it are not this test's (0107 came next).
+  for (const tag of tags.slice(0, at)) await apply(tag);
 
   // Coinbase's source and contract.
   const [coinbaseSource] = await sql`

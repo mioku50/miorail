@@ -39,6 +39,9 @@ const ignoredDirectories = new Set([
   // Local production/media work is not project source. Unpacked video skills
   // can contain their own tests for tools this workspace does not install.
   'work', 'brag-output',
+  // Agent worktrees are whole copies of the repository, each at its own commit:
+  // their tests are theirs, and walked from here they ran twice and failed.
+  '.claude',
 ]);
 
 async function testFiles(directory: string): Promise<string[]> {
