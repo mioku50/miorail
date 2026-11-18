@@ -41,7 +41,7 @@ import {
   type NftStorageRepository,
   type SubmissionAttemptRepositoryV1,
 } from '@mioagent/route-storage';
-import { client } from '@mioagent/db';
+import { client, withDatabaseTransaction } from '@mioagent/db';
 import {
   recordAttemptOutcomeV1,
   verifySubmissionAttemptV1,
@@ -67,7 +67,9 @@ export const nftRouteIntelligenceRouter = Router();
 export const nftRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   config: () => resolveNftRouteConfigV1(process.env),
-  repository: (): NftStorageRepository => createDatabaseNftStorageRepository(client),
+  // With a transaction runner: reconciliation writes a proof and its events
+  // together, which a repository without one refuses.
+  repository: (): NftStorageRepository => createDatabaseNftStorageRepository(client, withDatabaseTransaction),
   gateway: () => {
     const config = resolveNftRouteConfigV1(process.env);
     // Production uses only the server-side key. There is no path here that
@@ -742,17 +744,18 @@ nftRouteIntelligenceRouter.post('/nft/proofs/:proofId/reconcile', async (req, re
       res.json(proofResponse(record));
       return;
     }
-    // The proof is stored BEFORE its events: an event is validated against the
-    // proof hash it describes, so the order is not a preference.
-    const stored = await repository.upsertNftProof({
+    // The proof and its events are one write (re-audit P2 NFT proof,
+    // 2026-11-18). As two, a failure between them could store a final proof
+    // with none of its events, and the next reconcile returns early on a final
+    // proof, so they were never written. Inside the write the proof still goes
+    // first: an event is validated against the proof hash it describes.
+    const stored = await repository.upsertNftProofWithEvents({
       routeRunId: record.routeRunId,
       blueprintId: record.blueprintId,
       userId: user.id,
       proof: result.proof,
+      events: result.events,
     });
-    for (const event of result.events) {
-      await repository.appendNftProofEvent(stored.id, user.id, event);
-    }
     res.json(proofResponse(stored));
   } catch (error) {
     failed(res, error, user.address, 'nft_reconcile_failed');

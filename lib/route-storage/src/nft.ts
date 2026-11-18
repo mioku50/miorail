@@ -202,6 +202,11 @@ export interface UpsertNftProofInputV1 {
   proof: NftPurchaseProofV1;
 }
 
+export interface UpsertNftProofWithEventsInputV1 extends UpsertNftProofInputV1 {
+  /** Appended in order, after the proof they describe. */
+  events: readonly NftProofEventV1[];
+}
+
 export interface NftStorageRepository {
   createNftRouteRun(intent: NftPurchaseIntentV1, idempotencyKey: string): Promise<NftRouteRunRecordV1>;
   getNftRouteRun(id: string, userId: string): Promise<NftRouteRunRecordV1 | null>;
@@ -245,6 +250,16 @@ export interface NftStorageRepository {
   recordNftSubmission(input: RecordNftSubmissionInputV1): Promise<NftPurchaseBlueprintRecordV1>;
 
   upsertNftProof(input: UpsertNftProofInputV1): Promise<NftProofRecordV1>;
+  /**
+   * A proof and the events that describe it, as one write: both or neither.
+   *
+   * Written as two, a failure between them could leave a finalized proof with
+   * none of its events, and reconciliation never reopens a finalized proof to
+   * write them (re-audit P2 NFT proof, 2026-11-18). Inside the write the proof
+   * still goes first, because each event is checked against the proof hash it
+   * describes.
+   */
+  upsertNftProofWithEvents(input: UpsertNftProofWithEventsInputV1): Promise<NftProofRecordV1>;
   getNftProof(proofId: string, userId: string): Promise<NftProofRecordV1 | null>;
   getNftProofByBlueprint(blueprintId: string, userId: string): Promise<NftProofRecordV1 | null>;
   /** Proofs that are still asking. This is what reconciliation walks. */

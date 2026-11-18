@@ -29,6 +29,7 @@ import {
   type ReserveNftBlueprintInputV1,
   type ReserveNftBlueprintResultV1,
   type UpsertNftProofInputV1,
+  type UpsertNftProofWithEventsInputV1,
 } from './nft.js';
 
 // ---------------------------------------------------------------------------
@@ -127,7 +128,13 @@ export function createMemoryNftStorageRepository(
     return parseNftBlueprintV1(next);
   }
 
-  return {
+  /** Puts one entry of a map back as it was: absent stays absent. */
+  function restoreEntry<V>(map: Map<string, V>, key: string, value: V | undefined): void {
+    if (value === undefined) map.delete(key);
+    else map.set(key, value);
+  }
+
+  const repository: NftStorageRepository = {
     async createNftRouteRun(input: NftPurchaseIntentV1, idempotencyKey: string) {
       const intent = parseNftIntentV1(input);
       if (idempotencyKey.trim().length === 0) {
@@ -401,6 +408,30 @@ export function createMemoryNftStorageRepository(
       return record;
     },
 
+    async upsertNftProofWithEvents(input: UpsertNftProofWithEventsInputV1) {
+      // All or nothing, as the database's transaction is: whatever this write
+      // touched is put back when any part of it fails.
+      const proofId = input.proof.id;
+      const orderKey = `${input.userId}|${input.proof.orderHash}`;
+      const before = {
+        proof: proofs.get(proofId),
+        byBlueprint: proofsByBlueprint.get(input.blueprintId),
+        byOrder: proofsByOrder.get(orderKey),
+        events: events.get(proofId)?.slice(),
+      };
+      try {
+        const stored = await repository.upsertNftProof(input);
+        for (const event of input.events) await repository.appendNftProofEvent(stored.id, input.userId, event);
+        return stored;
+      } catch (error) {
+        restoreEntry(proofs, proofId, before.proof);
+        restoreEntry(proofsByBlueprint, input.blueprintId, before.byBlueprint);
+        restoreEntry(proofsByOrder, orderKey, before.byOrder);
+        restoreEntry(events, proofId, before.events);
+        throw error;
+      }
+    },
+
     async getNftProof(proofId: string, userId: string) {
       const record = proofs.get(proofId);
       if (!record || record.userId !== userId) return null;
@@ -475,4 +506,5 @@ export function createMemoryNftStorageRepository(
         .slice(0, Math.max(0, limit));
     },
   };
+  return repository;
 }

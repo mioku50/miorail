@@ -7,7 +7,7 @@ import postgres from 'postgres';
 import { buildNftProofEventV1 } from '@mioagent/nft-engine';
 
 import { nftIdempotencyKeyV1 } from '../src/nft.js';
-import { createDatabaseNftStorageRepository } from '../src/nftDatabase.js';
+import { createDatabaseNftStorageRepository, type NftStorageTransactionV1 } from '../src/nftDatabase.js';
 import type { SqlTemplateExecutor } from '../src/types.js';
 import {
   NFT_BUYER,
@@ -144,6 +144,86 @@ if (!throwaway) {
       const event = buildNftProofEventV1({ proof: record.proof, sequence: 0, eventKind: 'submission_recorded', detail: null, now: NFT_NOW });
       await repository.appendNftProofEvent(record.id, NFT_TENANT, event);
       assert.deepEqual((await repository.listNftProofEvents(record.id, NFT_TENANT)).map((row) => row.eventHash), [event.eventHash]);
+    });
+  });
+
+  // A reconciled proof and its events, as one transaction. Reconciliation used
+  // to store the proof and then append its events one by one; a failure
+  // between them left a final proof with no events, and the next reconcile
+  // returns early on a final proof (re-audit P2 NFT proof, 2026-11-18).
+  describe('postgres NFT proof and events, one transaction', () => {
+    // What the API passes: lib/db's withDatabaseTransaction, i.e. sql.begin.
+    const transaction: NftStorageTransactionV1 = async (work) =>
+      (await sql!.begin((inside) => work(asExecutor(inside)))) as unknown as Awaited<ReturnType<typeof work>>;
+    /** The same transaction, with the connection lost on the second event insert. */
+    const losesTheSecondEvent: NftStorageTransactionV1 = async (work) =>
+      (await sql!.begin((inside) => {
+        const executor = asExecutor(inside);
+        let eventInserts = 0;
+        return work((strings, ...values) => {
+          if (strings.join('?').includes('INSERT INTO nft_proof_events') && ++eventInserts === 2) {
+            return Promise.reject(new Error('connection lost'));
+          }
+          return executor(strings, ...values);
+        });
+      })) as unknown as Awaited<ReturnType<typeof work>>;
+
+    async function reconciled() {
+      const purchase = await prepared();
+      const completed = nftProofFixture(purchase.graph.blueprint, 'completed');
+      const event = (sequence: number, eventKind: 'receipt_observed' | 'finalized') =>
+        buildNftProofEventV1({ proof: completed, sequence, eventKind, detail: null, now: NFT_NOW });
+      return {
+        ...purchase,
+        input: {
+          routeRunId: purchase.graph.intent.id,
+          blueprintId: purchase.blueprintId,
+          userId: NFT_TENANT,
+          proof: completed,
+          events: [event(0, 'receipt_observed'), event(1, 'finalized')],
+        },
+      };
+    }
+    const eventRows = async () => Number((await sql!`SELECT count(*)::int AS n FROM nft_proof_events`)[0]!.n);
+
+    test('a failure on the second event write leaves neither the proof update nor any event', async () => {
+      const { repository, record, input } = await reconciled();
+      await assert.rejects(
+        () => createDatabaseNftStorageRepository(asExecutor(sql), losesTheSecondEvent).upsertNftProofWithEvents(input),
+        /connection lost/,
+      );
+      const kept = await repository.getNftProof(record.id, NFT_TENANT);
+      assert.equal(kept!.proof.finalStatus, 'pending');
+      assert.equal(kept!.proof.proofHash, record.proof.proofHash);
+      assert.equal(await eventRows(), 0);
+      // Still open, so reconciliation comes back to it.
+      assert.deepEqual((await repository.listOpenNftProofs(10)).map((row) => row.id), [record.id]);
+    });
+
+    test('a retry writes the proof and both events, once', async () => {
+      const { repository, record, input } = await reconciled();
+      await assert.rejects(
+        () => createDatabaseNftStorageRepository(asExecutor(sql), losesTheSecondEvent).upsertNftProofWithEvents(input),
+        /connection lost/,
+      );
+      const writer = createDatabaseNftStorageRepository(asExecutor(sql), transaction);
+      const stored = await writer.upsertNftProofWithEvents(input);
+      assert.equal(stored.proof.finalStatus, 'completed');
+      // The same write again changes nothing.
+      await writer.upsertNftProofWithEvents(input);
+      assert.deepEqual(
+        (await repository.listNftProofEvents(record.id, NFT_TENANT)).map((row) => row.eventHash),
+        input.events.map((row) => row.eventHash),
+      );
+      assert.equal(await eventRows(), 2);
+      assert.deepEqual(await repository.listOpenNftProofs(10), []);
+    });
+
+    test('a repository without a transaction refuses the write instead of making it as two', async () => {
+      const { repository, record, input } = await reconciled();
+      await assert.rejects(() => repository.upsertNftProofWithEvents(input), /require a transaction/);
+      assert.equal((await repository.getNftProof(record.id, NFT_TENANT))!.proof.finalStatus, 'pending');
+      assert.equal(await eventRows(), 0);
     });
   });
 }

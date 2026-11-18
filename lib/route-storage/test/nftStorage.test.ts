@@ -434,6 +434,67 @@ describe('the event log only grows', () => {
   });
 });
 
+describe('a proof and its events are one write', () => {
+  // Reconciliation used to store the proof and then append its events one by
+  // one. A failure between them left a final proof with no events, and the
+  // next reconcile returns early on a final proof (re-audit P2 NFT proof,
+  // 2026-11-18).
+  const event = (proof: ReturnType<typeof nftProofFixture>, sequence: number, eventKind: 'receipt_observed' | 'finalized') =>
+    buildNftProofEventV1({ proof, sequence, eventKind, detail: null, now: NFT_NOW });
+
+  test('a failure on the second event leaves neither the proof update nor any event, and a retry writes both once', async () => {
+    const { repository, graph, blueprintId } = await prepared();
+    const pending = nftProofFixture(graph.blueprint, 'submitted');
+    const record = await repository.upsertNftProof({ routeRunId: graph.intent.id, blueprintId, userId: NFT_TENANT, proof: pending });
+    const completed = nftProofFixture(graph.blueprint, 'completed');
+    const input = { routeRunId: graph.intent.id, blueprintId, userId: NFT_TENANT, proof: completed };
+
+    // The second event describes the pending proof, not the one being
+    // written, so its append fails after the proof and the first event.
+    await assert.rejects(
+      () =>
+        repository.upsertNftProofWithEvents({
+          ...input,
+          events: [event(completed, 0, 'receipt_observed'), event(pending, 1, 'finalized')],
+        }),
+      RouteStorageIntegrityError,
+    );
+    assert.equal((await repository.getNftProof(record.id, NFT_TENANT))!.proof.finalStatus, 'pending');
+    assert.deepEqual(await repository.listNftProofEvents(record.id, NFT_TENANT), []);
+    // Still open, so reconciliation comes back to it.
+    assert.equal((await repository.listOpenNftProofs(10)).length, 1);
+
+    const events = [event(completed, 0, 'receipt_observed'), event(completed, 1, 'finalized')];
+    const stored = await repository.upsertNftProofWithEvents({ ...input, events });
+    assert.equal(stored.proof.finalStatus, 'completed');
+    // The same write again changes nothing.
+    await repository.upsertNftProofWithEvents({ ...input, events });
+    assert.deepEqual(
+      (await repository.listNftProofEvents(record.id, NFT_TENANT)).map((row) => row.eventHash),
+      events.map((row) => row.eventHash),
+    );
+  });
+
+  test('a first proof whose events fail is not stored at all', async () => {
+    const { repository, graph, blueprintId } = await prepared();
+    const completed = nftProofFixture(graph.blueprint, 'completed');
+    const pending = nftProofFixture(graph.blueprint, 'submitted');
+    await assert.rejects(
+      () =>
+        repository.upsertNftProofWithEvents({
+          routeRunId: graph.intent.id,
+          blueprintId,
+          userId: NFT_TENANT,
+          proof: completed,
+          events: [event(completed, 0, 'receipt_observed'), event(pending, 1, 'finalized')],
+        }),
+      RouteStorageIntegrityError,
+    );
+    assert.equal(await repository.getNftProofByBlueprint(blueprintId, NFT_TENANT), null);
+    assert.equal(await repository.getNftProof(completed.id, NFT_TENANT), null);
+  });
+});
+
 describe('history reports what is known', () => {
   test('an unproven purchase is listed without a final status', async () => {
     const { repository } = await prepared();

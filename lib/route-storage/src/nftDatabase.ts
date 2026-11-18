@@ -31,6 +31,7 @@ import {
   type ReserveNftBlueprintInputV1,
   type ReserveNftBlueprintResultV1,
   type UpsertNftProofInputV1,
+  type UpsertNftProofWithEventsInputV1,
 } from './nft.js';
 
 // ---------------------------------------------------------------------------
@@ -111,7 +112,19 @@ function proofFromRow(row: Record<string, unknown>): NftProofRecordV1 {
   };
 }
 
-export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): NftStorageRepository {
+export type NftStorageTransactionV1 = <T>(
+  work: (transaction: SqlTemplateExecutor) => Promise<T>,
+) => Promise<T>;
+
+/**
+ * `transaction` is what lets a proof and its events be one write
+ * (`upsertNftProofWithEvents`); a repository built without one refuses that
+ * write rather than make it as two. Readers need none.
+ */
+export function createDatabaseNftStorageRepository(
+  sql: SqlTemplateExecutor,
+  transaction?: NftStorageTransactionV1,
+): NftStorageRepository {
   async function requireRun(runId: string, userId: string): Promise<NftRouteRunRecordV1> {
     const rows = await sql`
       SELECT id, user_id, wallet_address, chain_id, status, intent_hash, intent_payload,
@@ -595,6 +608,18 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
         throw new RouteStorageConflictError('This purchase already has a different NFT proof');
       }
       return record;
+    },
+
+    async upsertNftProofWithEvents(input: UpsertNftProofWithEventsInputV1) {
+      if (!transaction) throw new Error('An NFT proof and its events require a transaction.');
+      // One transaction, so a failure anywhere in it leaves the stored proof
+      // and its event log as they were (re-audit P2 NFT proof, 2026-11-18).
+      return transaction(async (inside) => {
+        const repository = createDatabaseNftStorageRepository(inside);
+        const stored = await repository.upsertNftProof(input);
+        for (const event of input.events) await repository.appendNftProofEvent(stored.id, input.userId, event);
+        return stored;
+      });
     },
 
     async getNftProof(proofId: string, userId: string) {

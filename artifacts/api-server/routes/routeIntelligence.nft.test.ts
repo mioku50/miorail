@@ -776,6 +776,41 @@ describe('reconciliation decides what happened', () => {
     assert.equal(after.length, events.length);
   });
 
+  test('a failure between the proof and its events stores neither, and the next reconcile writes both once', async () => {
+    // Stored as separate writes, a failure here left the final proof without
+    // its events, and the next reconcile returned early on the final proof
+    // (re-audit P2 NFT proof, 2026-11-18).
+    const { app, proofId } = await submitted();
+    chainReads = {
+      transaction: {
+        receipt: { status: 'success', transactionHash: TX, blockNumber: 30_000_000n, gasUsed: 210_000n, logs: [transferLog(WALLET)] },
+        actualNativeValueWei: PRICE,
+      },
+      owner: { owner: WALLET, blockNumber: '30000001' },
+    };
+    const before = await repository.listNftProofEvents(proofId, USER.id);
+    const append = repository.appendNftProofEvent;
+    let appended = 0;
+    repository.appendNftProofEvent = async (...args) => {
+      appended += 1;
+      if (appended === 2) throw new Error('storage lost the connection');
+      return append(...args);
+    };
+    const failed = await request(app).post(`/api/route-intelligence/nft/proofs/${proofId}/reconcile`).send({});
+    assert.equal(failed.status, 500);
+    assert.equal((await repository.getNftProof(proofId, USER.id))!.proof.finalStatus, 'pending');
+    assert.deepEqual(await repository.listNftProofEvents(proofId, USER.id), before);
+
+    repository.appendNftProofEvent = append;
+    const retried = await request(app).post(`/api/route-intelligence/nft/proofs/${proofId}/reconcile`).send({});
+    assert.equal(retried.status, 200);
+    assert.equal(retried.body.proof.finalStatus, 'completed');
+    const after = await repository.listNftProofEvents(proofId, USER.id);
+    assert.ok(after.length > before.length);
+    assert.equal(new Set(after.map((event) => event.sequence)).size, after.length);
+    assert.equal(after.every((event, index) => event.sequence === index), true);
+  });
+
   test("another tenant cannot read or reconcile someone else's proof", async () => {
     const { proofId } = await submitted();
     const other = routeApp(OTHER_USER);
