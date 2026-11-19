@@ -68,6 +68,11 @@ export function isPngV1(bytes: Uint8Array): boolean {
   return bytes.length > PNG_SIGNATURE_V1.length && PNG_SIGNATURE_V1.every((byte, index) => bytes[index] === byte);
 }
 
+/** How long a good answer is used by default. Coinbase lists a stock only once it is minted (since
+ * 2026-11-17), and a list read before that showed ANTc, minted at 16:52 UTC on 2026-11-19, with a letter
+ * for an icon for hours: half an hour is one small read of a public list, every half hour. */
+export const COINBASE_STOCK_META_TTL_MS_V1 = 30 * 60_000;
+
 export interface CoinbaseStockMetaCacheOptionsV1 {
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -79,7 +84,7 @@ export interface CoinbaseStockMetaCacheOptionsV1 {
 
 export function createCoinbaseStockMetaCacheV1(options: CoinbaseStockMetaCacheOptionsV1 = {}) {
   const now = options.now ?? Date.now;
-  const ttlMs = options.ttlMs ?? 6 * 3_600_000;
+  const ttlMs = options.ttlMs ?? COINBASE_STOCK_META_TTL_MS_V1;
   const retryMs = options.retryMs ?? 10 * 60_000;
   let good: Map<string, CoinbaseStockMetaV1> = new Map();
   let nextAt = 0;

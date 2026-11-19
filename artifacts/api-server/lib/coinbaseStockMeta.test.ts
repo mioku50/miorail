@@ -99,6 +99,26 @@ test('every page is read, and a page that fails keeps the last full answer', asy
   assert.deepEqual([...(await cache.read()).keys()], [NVDAC, AMZNC], 'page one alone does not replace the list');
 });
 
+// 2026-11-19: ANTc was minted after the list was read, and the board drew a letter for its icon for hours.
+test('a stock Coinbase lists after the last read has its name and icon within half an hour', async () => {
+  const ANTC = '0xb20000000000000000000016e38fd364d271ba28';
+  const anthropic = { contract_address: ANTC, symbol: 'ANTc', name: 'Anthropic, PBC', icon_url: ICON };
+  let clock = 0;
+  let minted = false;
+  const fetchImpl = (async (url: unknown) => {
+    if (String(url).startsWith('https://api.coinbase.com/')) return new Response(JSON.stringify(body(minted ? [nvidia, anthropic] : [nvidia])));
+    return new Response(Buffer.from(PNG), { status: 200 });
+  }) as typeof fetch;
+  const cache = createCoinbaseStockMetaCacheV1({ fetchImpl, now: () => clock });
+  assert.equal(await cache.icon(ANTC), null);
+  minted = true;
+  clock = 29 * 60_000;
+  assert.equal(await cache.icon(ANTC), null, 'the answer read before the mint is still used');
+  clock = 31 * 60_000;
+  assert.deepEqual(await cache.icon(ANTC), PNG);
+  assert.equal((await cache.read()).get(ANTC)?.name, 'Anthropic, PBC');
+});
+
 // Audit BASE-3 (2026-11-14): rows after the 500th were dropped in silence, while Coinbase listed 348 on
 // 2026-11-13 and adds about ten a day: a list longer than one page is the list.
 test('every row of a long list is kept: the 501st stock has its name and icon too', () => {
