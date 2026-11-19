@@ -61,3 +61,17 @@ test('the list is Coinbase’s stocks as the corpus binds them, named by Coinbas
     ],
   );
 });
+
+test('a stock with no market on Base is marked from runs of the last six hours, and a failed read marks none', async () => {
+  const deps = {
+    prices: async () => [],
+    meta: async () => new Map([[NVDAC, { tokenAddress: NVDAC, symbol: 'NVDAc', name: 'NVIDIA Corporation', iconUrl: null }]]),
+    identify: async () => ({ underlyingKey: 'security:isin:US67066G1040' }),
+  };
+  const asked: string[] = [];
+  const marked = await readStockQuotesV1(NOW, { ...deps, noMarket: async (since) => { asked.push(since.toISOString()); return [NVDAC.toUpperCase().replace('0X', '0x')]; } });
+  assert.deepEqual(asked, ['2026-10-03T08:00:00.000Z']);
+  assert.equal(marked.rows[0]!.market, 'none');
+  const failed = await readStockQuotesV1(NOW, { ...deps, noMarket: async () => { throw new Error('db down'); } });
+  assert.equal(failed.rows[0]!.market, undefined);
+});

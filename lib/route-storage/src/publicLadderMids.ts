@@ -65,6 +65,47 @@ export async function readPublicLadderMidsV1(
   }));
 }
 
+/**
+ * Tokens with no market on Base: the newest public run since `since` asked for $100 and every answer at
+ * that size was no route at all, or a router that does not know or price the token; and no pool Miorail
+ * has identified holds the token.
+ *
+ * Neither half is enough alone. A new pool reaches the venue index late: on 2026-11-19 KyberSwap quoted
+ * ANTc, minted that afternoon, while no pool of it was indexed. And a router may not know a token yet that
+ * has a pool. A throttled or failed answer says nothing either way, so one of those in the run leaves the
+ * token out of this list.
+ */
+export async function readPublicLadderNoMarketTokensV1(sql: SqlTemplateExecutor, input: { since: Date }): Promise<string[]> {
+  const rows = (await sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (r.token_address) r.token_address AS token, r.observations
+      FROM official_cash_exit_runs r
+      WHERE r.chain_id = 8453
+        AND r.scope = 'public_ladder'
+        AND r.completed_at >= ${input.since}
+      ORDER BY r.token_address, r.completed_at DESC
+    ),
+    pooled AS (
+      SELECT token0 AS token FROM market_venues WHERE chain_id = 8453 AND kind = 'paired_pool'
+      UNION
+      SELECT token1 FROM market_venues WHERE chain_id = 8453 AND kind = 'paired_pool'
+    )
+    SELECT l.token
+    FROM latest l
+    WHERE EXISTS (
+        SELECT 1 FROM jsonb_array_elements(l.observations) o WHERE o->>'requestedCashAtomic' = '100000000'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(l.observations) o
+        WHERE o->>'requestedCashAtomic' = '100000000'
+          AND (jsonb_typeof(o->'buyQuote') = 'object'
+            OR coalesce(o->>'errorCode', '') NOT IN ('cash_size_anchor_no_route', 'provider_unsupported_token', 'provider_token_unpriced'))
+      )
+      AND NOT EXISTS (SELECT 1 FROM pooled p WHERE p.token = l.token)
+    ORDER BY l.token`) as Array<Record<string, unknown>>;
+  return rows.map((row) => String(row.token).toLowerCase());
+}
+
 export interface PublicLadderPriceRowV1 {
   token: string;
   at: string;

@@ -326,6 +326,26 @@ describe("a thin market's price is not shown as the stock's", () => {
     assert.doesNotMatch(markup, /143/);
   });
 
+  // 2026-11-19: ANETc, BACc and CMGc were minted with no pool on Base, and the tile said "Not priced now".
+  test('no market on Base: the tile and the card say so, before Buy too; without the word the tile still says not priced', () => {
+    const view = viewOf({ priceUsd: null, priceAt: null, change24h: null, changeFromAt: null, market: 'none' });
+    assert.equal(view.price, null);
+    assert.equal(view.depthLabel, 'No market on Base yet');
+    assert.match(view.depthNote!, /no pool on Base holds it/);
+    assert.match(view.buyWarning!, /a buy here finds no route/);
+    const markup = renderToStaticMarkup(
+      <Chooser choices={[choice(NVDA, 'ANET', 'Arista Networks')]} quotes={new Map([[NVDA, view]])} selectedKey={null}
+        loading={false} error={null} onUnderlying={() => undefined} />,
+    );
+    assert.match(markup, /<span class="mr-choice-px thin">No market on Base yet<\/span>/);
+    const unpriced = viewOf({ priceUsd: null, priceAt: null, change24h: null, changeFromAt: null });
+    const plain = renderToStaticMarkup(
+      <Chooser choices={[choice(NVDA, 'ANET', 'Arista Networks')]} quotes={new Map([[NVDA, unpriced]])} selectedKey={null}
+        loading={false} error={null} onUnderlying={() => undefined} />,
+    );
+    assert.match(plain, /Not priced now/);
+  });
+
   test('thin by one leg: the sentence names the leg that moved', () => {
     const view = viewOf({ depth: { state: 'thin', roundTripLossBps: 1941, buyMoveBps: 2408, sellMoveBps: 0, measuredAt: '2026-10-10T11:02:00Z' } });
     assert.equal(view.price, null);

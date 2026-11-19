@@ -1,5 +1,6 @@
 import { client } from '@mioagent/db';
 import {
+  readPublicLadderNoMarketTokensV1,
   readPublicLadderPricesOfTokenV1,
   readPublicLadderPricesV1,
   type PublicLadderPriceRowV1,
@@ -33,7 +34,13 @@ export interface StockQuotesReadDepsV1 {
   /** The security a Coinbase representation stands for, or null for any other
    * address — another issuer's, or one the corpus does not bind. */
   identify: (tokenAddress: string) => Promise<{ underlyingKey: string } | null>;
+  /** Tokens nobody makes a market in on Base yet, from runs since `since`. A failed read names none: the list
+   * says "not priced now" rather than calling a market absent on a guess. */
+  noMarket?: (since: Date) => Promise<readonly string[]>;
 }
+
+/** How far back the newest run may be for "no market" to stand: the ladder runs hourly. */
+export const STOCK_NO_MARKET_WINDOW_MS_V1 = 6 * 3_600_000;
 
 /** Where a token's icon is served from, on our own origin. */
 export function stockIconPathV1(tokenAddress: string): string {
@@ -41,9 +48,10 @@ export function stockIconPathV1(tokenAddress: string): string {
 }
 
 export async function readStockQuotesV1(now: Date, deps: StockQuotesReadDepsV1): Promise<StockQuotesResponseV1> {
-  const [prices, meta] = await Promise.all([
+  const [prices, meta, noMarket] = await Promise.all([
     deps.prices(new Date(now.getTime() - 26 * 3_600_000), now),
     deps.meta(),
+    (deps.noMarket?.(new Date(now.getTime() - STOCK_NO_MARKET_WINDOW_MS_V1)) ?? Promise.resolve([])).catch(() => [] as readonly string[]),
   ]);
   const tokens = [...new Set([...meta.keys(), ...prices.map((row) => row.token.toLowerCase())])].sort();
   const stocks: StockQuoteStockV1[] = [];
@@ -59,7 +67,12 @@ export async function readStockQuotesV1(now: Date, deps: StockQuotesReadDepsV1):
       iconPath: row?.iconUrl ? stockIconPathV1(tokenAddress) : null,
     });
   }
-  return stockQuotesV1({ now, prices, stocks });
+  return stockQuotesV1({ now, prices, stocks, noMarket: new Set(noMarket.map((token) => token.toLowerCase())) });
+}
+
+/** Tokens with no market on Base, over the production database. */
+export function databaseStockNoMarketV1(since: Date): Promise<string[]> {
+  return readPublicLadderNoMarketTokensV1(client, { since });
 }
 
 /** The shared read, over the production database. */

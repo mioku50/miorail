@@ -31,13 +31,17 @@ export interface StockQuoteViewV1 {
   /** When the price was taken, for the line that says what it is. */
   priceAt: string | null;
   /** "Thin market" or "Depth not measured" where a price was measured and is
-   * not shown as the stock's; null otherwise. */
+   * not shown as the stock's; "No market on Base yet" where nothing could be
+   * priced because no pool holds the token; null otherwise. */
   depthLabel: string | null;
   /** The sentence the card says in the price's place. */
   depthNote: string | null;
   /** Said above Buy while the market is thin or unmeasured. */
   buyWarning: string | null;
 }
+
+/** A stock nobody makes a market in on Base yet, on its tile and its card. */
+export const STOCK_NO_MARKET_LABEL_V1 = 'No market on Base yet';
 
 /** `$1,722.70`, `$234.31`, `$0.4421`: cents for a dollar and up, four
  * decimals below one, because a 30-cent stock rounded to cents loses its move. */
@@ -73,6 +77,18 @@ export function stockQuoteViewsByKeyV1(
     // more, else the one leg that moved that far on its own.
     const roundTripThin = (depth.roundTripLossBps ?? 0) >= 2_000;
     const buyThin = (depth.buyMoveBps ?? 0) >= (depth.sellMoveBps ?? 0);
+    // Nothing to price at all, and the server says why: nobody makes a market in it on Base yet. Said
+    // so, because "not priced now" read as our failure (2026-11-19, ANETc, BACc, CMGc after their mint).
+    if (row.priceUsd === null && row.market === 'none') {
+      views.set(row.underlyingKey, {
+        tokenAddress: row.tokenAddress, iconPath: row.iconPath, companyName: row.companyName, tokenSymbol: row.tokenSymbol,
+        priceUsd: null, price: null, change: null, priceAt: null,
+        depthLabel: STOCK_NO_MARKET_LABEL_V1,
+        depthNote: 'No market on Base yet: Coinbase has issued this token, but no pool on Base holds it, and a $100 trade found no route. So there is no price on Base to show.',
+        buyWarning: 'No market on Base yet: no pool holds this token, so a buy here finds no route.',
+      });
+      continue;
+    }
     const how = roundTripThin || depth.roundTripLossBps === null
       ? `a $1,000 buy and sell here loses ${percent(depth.roundTripLossBps) ?? 'a fifth or more'}`
       : buyThin

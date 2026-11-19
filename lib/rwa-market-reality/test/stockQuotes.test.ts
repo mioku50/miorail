@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { stockQuotesV1, type StockQuoteStockV1 } from '../src/stockQuotes.js';
+import { StockQuotesResponseV1Schema, stockQuotesV1, type StockQuoteStockV1 } from '../src/stockQuotes.js';
 
 const NOW = new Date('2026-10-03T14:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
@@ -190,4 +190,23 @@ test('a price whose $1,000 round trip loses a fifth or more is a thin market, me
     prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 18.33 }],
   }).rows[0]!;
   assert.deepEqual(unmeasured.depth, { state: 'unmeasured', roundTripLossBps: null, buyMoveBps: null, sellMoveBps: null, measuredAt: null });
+});
+
+// 2026-11-19: ANETc, BACc, CMGc and CRMc were minted with no pool on Base, and read "Not priced now", which looked like our failure.
+test('a stock nobody makes a market in says so, and a price in the window outranks that word', () => {
+  const OTHER = '0xb2000000000000000000000000000000000a0e70';
+  const result = stockQuotesV1({
+    now: NOW,
+    stocks: [stock(), stock({ tokenAddress: OTHER, underlyingKey: 'security:isin:US0404131064', tokenSymbol: 'ANETc' })],
+    prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 236 }],
+    noMarket: new Set([TOKEN, OTHER]),
+  });
+  const [priced, none] = result.rows;
+  assert.equal(priced!.priceUsd, 236);
+  assert.equal(priced!.market, undefined);
+  assert.equal(none!.priceUsd, null);
+  assert.equal(none!.market, 'none');
+  assert.doesNotThrow(() => StockQuotesResponseV1Schema.parse(result));
+  // Without the word, a row without a price is just that.
+  assert.equal(stockQuotesV1({ now: NOW, stocks: [stock()], prices: [] }).rows[0]!.market, undefined);
 });

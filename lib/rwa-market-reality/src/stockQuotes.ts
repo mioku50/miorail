@@ -70,6 +70,10 @@ export interface StockQuoteRowV1 {
   /** How much of a real trade the price survives. Absent only in a reply
    * from a server older than the field, which is read as `normal`. */
   depth?: StockQuoteDepthV1;
+  /** `none`: nothing to price, because nobody makes a market in the token on Base yet: no pool Miorail
+   * knows of holds it, and the newest run found no route for $100. Only on a row with no price; absent
+   * otherwise, and in a reply from a server older than the field. */
+  market?: 'none';
 }
 
 export interface StockQuotesResponseV1 {
@@ -111,6 +115,7 @@ export const StockQuotesResponseV1Schema = z
               })
               .strict()
               .optional(),
+            market: z.literal('none').optional(),
           })
           .strict(),
       )
@@ -197,6 +202,8 @@ export function stockQuotesV1(input: {
   now: Date;
   prices: readonly { token: string; at: string; mid: number; buyAt1k?: number | null; sellAt1k?: number | null }[];
   stocks: readonly StockQuoteStockV1[];
+  /** Tokens nobody makes a market in on Base yet (route-storage `readPublicLadderNoMarketTokensV1`). */
+  noMarket?: ReadonlySet<string>;
 }): StockQuotesResponseV1 {
   const now = input.now.getTime();
   const byToken = new Map<string, { at: number; mid: number; buyAt1k: number | null; sellAt1k: number | null }[]>();
@@ -235,6 +242,8 @@ export function stockQuotesV1(input: {
       change24h: price !== null && before !== null ? price / before - 1 : null,
       changeFromAt: shown && compared ? new Date(compared.at).toISOString() : null,
       depth: stockQuoteDepthV1(current),
+      // A price measured inside the window outranks the newest run: it is what the list shows.
+      ...(price === null && input.noMarket?.has(stock.tokenAddress.toLowerCase()) ? { market: 'none' as const } : {}),
     };
   });
   return { schemaVersion: 'stock-quotes/v1', asOf: input.now.toISOString(), rows };

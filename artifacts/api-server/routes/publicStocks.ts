@@ -23,6 +23,7 @@ import { createCoinbaseStockMetaCacheV1 } from '../lib/coinbaseStockMeta.js';
 import { databasePoolYieldReadingsV1, readPoolYieldV1 } from '../lib/poolYieldRead.js';
 import {
   databaseStockChartPricesV1,
+  databaseStockNoMarketV1,
   databaseStockPricesV1,
   readStockChartV1,
   readStockQuotesV1,
@@ -175,6 +176,7 @@ export const publicStocksRuntime = {
   readQuotes: (now: Date) =>
     readStockQuotesV1(now, {
       prices: databaseStockPricesV1,
+      noMarket: databaseStockNoMarketV1,
       meta: () => publicStocksRuntime.stockMeta.read(),
       identify: (tokenAddress: string) => publicStocksRuntime.coinbaseUnderlying(tokenAddress),
     }),
