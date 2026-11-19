@@ -14,10 +14,12 @@ import { createSpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { verifyStillSpendShareV1 } from '../../lib/stillSpendShare.js';
 import type { SpendWalletReadyV1 } from '../../lib/stillSpendWallet.js';
 import { MemorySpendWalletStoreV1, type SpendWalletPaymentV1 } from '../../lib/stillSpendWalletStore.js';
+import { InMemoryStillLoopRepositoryV1 } from '@mioagent/route-storage';
+import { stillLoopsRuntimeV1 } from '../../lib/stillLoops.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { StillReviewStatusOutputV1Schema, stillReviewStatusV1, type StillReviewStatusDepsV1 } from './stillReviewTool.js';
+import { STILL_LOOP_META_KEY_V1, StillReviewStatusOutputV1Schema, stillLoopReplyMetaV1, stillReviewStatusAndLoopV1, stillReviewStatusV1, type StillReviewStatusDepsV1 } from './stillReviewTool.js';
 
 // What happened to a review an assistant prepared. Every loan, invoice, hash
 // and address here is synthetic.
@@ -28,6 +30,7 @@ const NOW = new Date('2026-11-02T15:00:00.000Z');
 const INVOICE = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', DRAFT = '0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11';
 const TX = `0x${'ab'.repeat(32)}` as const;
 const NVDAC = STOCKS.find((stock) => stock.id === 'NVDAc')!.token.toLowerCase();
+const AAPLC = STOCKS.find((stock) => stock.id === 'AAPLc')!.token.toLowerCase();
 const PAYMENT: LendingPaymentV1 = { merchant: 'bitrefill', orderId: INVOICE, payTo: `0x${'3'.repeat(40)}`, assets: '9800000', productName: 'Bitrefill eSIM Japan',
   packageValue: '5GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-02T15:15:00.000Z' };
 
@@ -42,10 +45,13 @@ function run(payment: LendingPaymentV1 | null): Extract<LendingRunV1, { state: '
 }
 
 async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: string; state?: LoanExecutionV1['state']; heldOrder?: boolean; allowRead?: boolean; returning?: boolean;
-  lastRead?: SpendInvoiceStatusNameV1 } = {}) {
+  lastRead?: SpendInvoiceStatusNameV1; loop?: boolean } = {}) {
   const store = new MemoryLoanExecutionStoreV1();
   const owner = input.owner ?? WALLET;
   const review = run(input.payment === undefined ? PAYMENT : input.payment);
+  // A Loop: a loan against Apple's stock that paid an Apple card.
+  if (input.loop) Object.assign(review.facts, { collateralTokenAddress: AAPLC, collateralSymbol: 'AAPLc',
+    payment: { ...PAYMENT, productId: 'itunes-germany', productName: 'iTunes Germany', packageValue: '25', faceCurrency: 'EUR' } });
   // Repay all, then take the stock back.
   if (input.returning) Object.assign(review.facts, { operation: 'repay', amountMode: 'all', requestedAssets: null, maximumDebitAssets: '190000',
     debtBeforeAssets: '180030', debtAfterAssets: '0', collateralBeforeAssets: '3014121', collateralAfterAssets: '0', collateralReturnAssets: '3014121' });
@@ -280,4 +286,43 @@ test('the connected surface lists it as a read, and its answer fits the schema i
   assert.deepEqual([wallet.state, wallet.paidFrom], ['ready', 'wallet']);
   const odd = await client.callTool({ name: 'miorail_get_still_review_status', arguments: { reviewId: 'not-a-review' } });
   assert.equal((odd as { isError?: boolean }).isError, true);
+});
+
+// 2026-11-19: in the chat a Loop looked like any purchase. Its status names the Loop, shares the Loop's own card
+// once Bitrefill delivered it, and hands the card the Loop beside the answer, never in it.
+test('a confirmed Loop purchase names its Loop, shares the Loop’s card, and gives the card the Loop as _meta only', async (t) => {
+  const originalLoops = { ...stillLoopsRuntimeV1 };
+  const repository = new InMemoryStillLoopRepositoryV1();
+  Object.assign(stillLoopsRuntimeV1, { enabled: () => true, repository: () => repository, team: () => new Set<string>(), now: () => NOW });
+  t.after(() => { Object.assign(stillLoopsRuntimeV1, originalLoops); });
+  const { deps } = await fixture({ state: 'confirmed', loop: true });
+  const { answer, loop } = await stillReviewStatusAndLoopV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.equal(loop?.loopNo, 1);
+  assert.match(answer.next, /shareUrl shares Loop #1 without naming the wallet\. This purchase is Loop #1: Apple stock stayed and an Apple gift card arrived\./);
+  assert.match(answer.next, /put it on the Loop wall, on Still’s review card or at https:\/\/miorail\.xyz\/loops/);
+  const claim = verifyStillSpendShareV1((answer.purchase?.shareUrl ?? '').replace(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/`, ''), SECRET);
+  assert.deepEqual(claim?.loop, { loopNo: 1, brand: 'apple', via: 'web' });
+  // The answer keeps its declared shape: the Loop is the card's, as _meta.
+  assert.doesNotThrow(() => StillReviewStatusOutputV1Schema.parse(answer));
+  assert.ok(!('loop' in answer));
+  assert.deepEqual(stillLoopReplyMetaV1(loop), { _meta: { [STILL_LOOP_META_KEY_V1]: {
+    executionId: loop!.executionId, loopNo: 1, brand: 'apple', complete: true, undelivered: null, onWall: false } } });
+  assert.deepEqual(stillLoopReplyMetaV1(null), {});
+  // Once on the wall, it is said so.
+  await repository.putOnWall({ executionId: loop!.executionId, walletAddress: WALLET, label: null, at: NOW });
+  assert.match((await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps)).next, /Loop #1: Apple stock stayed and an Apple gift card arrived\. It is on the Loop wall\./);
+});
+
+test('while Bitrefill has not delivered, a Loop is promised, and the purchase’s own card is the one shared', async (t) => {
+  const originalLoops = { ...stillLoopsRuntimeV1 };
+  Object.assign(stillLoopsRuntimeV1, { enabled: () => true, repository: () => new InMemoryStillLoopRepositoryV1(), team: () => new Set<string>(), now: () => NOW });
+  t.after(() => { Object.assign(stillLoopsRuntimeV1, originalLoops); });
+  const { deps } = await fixture({ state: 'confirmed', loop: true });
+  // Bitrefill is still preparing the card.
+  deps.invoice = async () => ({ status: { status: 'pending', accessLink: null, esimInstallLink: null }, readAt: NOW.toISOString(), error: null });
+  const { answer, loop } = await stillReviewStatusAndLoopV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.equal(loop?.deliveredAt, null);
+  assert.match(answer.next, /shareUrl shares the purchase without naming the wallet\. Once Bitrefill says the card arrived, this purchase counts as Loop #1\./);
+  assert.equal(verifyStillSpendShareV1((answer.purchase?.shareUrl ?? '').replace(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/`, ''), SECRET)?.loop, undefined);
+  assert.equal((stillLoopReplyMetaV1(loop)._meta?.[STILL_LOOP_META_KEY_V1] as { complete: boolean }).complete, false);
 });

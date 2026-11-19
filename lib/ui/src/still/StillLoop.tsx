@@ -2,7 +2,15 @@
 
 import { useState } from 'react';
 
+import { loopBrandByIdV1, loopBrandProductsV1, type LoopBrandIdV1 } from '@mioagent/still-engine/loops';
+
 import type { LendingLoopWireV1 } from '../console/lendingReviewView';
+import { StillIconV1 } from './icons';
+
+export { loopBrandByIdV1, loopBrandProductsV1, type LoopBrandIdV1 };
+
+/** Where a brand's row on /loops goes: Spend, on that brand's own cards in the reader's country. */
+export const stillLoopSpendHrefV1 = (brand: LoopBrandIdV1): string => `/spend?card=${brand}`;
 
 // ---------------------------------------------------------------------------
 // A numbered Loop on the loan's own result: its number, Bitrefill's word on
@@ -41,6 +49,8 @@ export interface StillLoopOfferModelV1 {
   loop: LendingLoopWireV1;
   /** Puts it on the wall. Resolves with the name shown, null for "Loop #N"; rejects when the wall could not take it. */
   onWall: (showName: boolean) => Promise<{ label: string | null }>;
+  /** False where a list of Loops says what the wall shows once, under them all. */
+  note?: boolean;
 }
 
 export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
@@ -63,38 +73,46 @@ export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
   };
   return (
     <section className="still-section still-extras still-loop" aria-label={`Loop #${loop.loopNo}`}>
-      <h2 className="still-loop-head">Loop #{loop.loopNo}</h2>
-      {loop.complete ? (
-        <p>{loopSentenceV1(loop.brand)}</p>
-      ) : loop.undelivered ? (
-        <p className="still-warn">
-          Bitrefill {UNDELIVERED_V1[loop.undelivered]}, so the card did not arrive and this Loop does not count. Bitrefill’s support handles the refund.
+      {/* Its own card, as the order above it has: the moment the stock stayed and the card arrived (2026-11-19). */}
+      <div className="still-extra still-loop-card" data-complete={loop.complete ? 'yes' : 'no'}>
+        <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
+        <div className="still-extra-body">
+          <h2 className="still-loop-head">Loop #{loop.loopNo}</h2>
+          {loop.complete ? (
+            <p className="still-loop-line">{loopSentenceV1(loop.brand)}</p>
+          ) : loop.undelivered ? (
+            <p className="still-warn">
+              Bitrefill {UNDELIVERED_V1[loop.undelivered]}, so the card did not arrive and this Loop does not count. Bitrefill’s support handles the refund.
+            </p>
+          ) : (
+            <p className="still-extra-note">It counts once Bitrefill says the card arrived.</p>
+          )}
+          {loop.team ? <p className="still-extra-note">A Still team Loop: shown as the team’s and not counted.</p> : null}
+          {loop.complete && !loop.team ? (
+            state === 'done' ? (
+              <p className="still-extra-note still-loop-walled" role="status">
+                On the Loop wall{label ? ` as ${label}` : ` as Loop #${loop.loopNo}`}.
+                {nameMissing ? ' Your wallet has no Basename to show, so the wall shows the number.' : ''}
+              </p>
+            ) : (
+              <div className="still-share still-loop-actions">
+                <button type="button" className="still-btn" disabled={state === 'sending'} onClick={put}>
+                  {state === 'sending' ? 'Putting it on the wall…' : 'Put it on the Loop wall'}
+                </button>
+                <label className="still-note still-loop-name">
+                  <input type="checkbox" checked={showName} onChange={(event) => setShowName(event.target.checked)} /> Show my Basename
+                </label>
+              </div>
+            )
+          ) : null}
+          {state === 'failed' ? <p className="still-warn" role="status">The wall could not take it just now. Try again in a minute.</p> : null}
+        </div>
+      </div>
+      {model.note === false ? null : (
+        <p className="still-note">
+          The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction. Not affiliated with {brand.name}.
         </p>
-      ) : (
-        <p className="still-note">It counts once Bitrefill says the card arrived.</p>
       )}
-      {loop.team ? <p className="still-note">A Still team Loop: shown as the team’s and not counted.</p> : null}
-      {loop.complete && !loop.team ? (
-        state === 'done' ? (
-          <p className="still-note" role="status">
-            On the Loop wall{label ? ` as ${label}` : ` as Loop #${loop.loopNo}`}.
-            {nameMissing ? ' Your wallet has no Basename to show, so the wall shows the number.' : ''}
-          </p>
-        ) : (
-          <div className="still-share">
-            <label className="still-note still-loop-name">
-              <input type="checkbox" checked={showName} onChange={(event) => setShowName(event.target.checked)} /> Show my Basename
-            </label>
-            <button type="button" className="still-btn sec" disabled={state === 'sending'} onClick={put}>
-              {state === 'sending' ? 'Putting it on the wall…' : 'Put it on the Loop wall'}
-            </button>
-          </div>
-        )
-      ) : null}
-      {state === 'failed' ? <p className="still-warn" role="status">The wall could not take it just now. Try again in a minute.</p> : null}
-      <p className="still-note">
-        The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction. Not affiliated with {brand.name}.
-      </p>
     </section>
   );
 }

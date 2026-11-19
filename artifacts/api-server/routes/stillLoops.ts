@@ -33,6 +33,8 @@ import { stillSpendRuntimeV1 } from './stillSpend.js';
 //
 // POST /api/still/loops/:executionId/wall: the session's own Loop goes on the
 // wall, under the wallet's checked Basename only when the owner asks for it.
+// GET /api/still/loops/mine: the session's own Loops, so its owner can put one
+// on the wall from /loops, wherever it was made.
 //
 // The draws (lib/stillLoopDraws.ts), while STILL_LOOP_DRAW_V1=on as well:
 // GET /api/public/still/loops/draws/:drawId is a fixed list as anybody can
@@ -136,6 +138,26 @@ stillLoopsRouter.post('/:executionId/wall', async (req: Request, res: Response) 
   }
 });
 
+/** The session wallet's own Loops, for its owner's page: each with its number, its card and whether it is on the wall,
+ * so a Loop made in an assistant's chat can go on the wall from /loops too. Never anybody else's. */
+stillLoopsRouter.get('/mine', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return;
+  if (!stillLoopsRuntimeV1.enabled()) {
+    res.status(404).json({ error: 'loops_off' });
+    return;
+  }
+  try {
+    const loops = await stillLoopsRuntimeV1.repository().byWallet({ walletAddress: wallet, limit: 20 });
+    res.json({ outcome: 'mine', loops: loops.filter((loop) => !loop.team).map((loop) => ({
+      ...stillLoopWireV1(loop), executionId: loop.executionId, productName: loop.productName, packageLabel: loop.packageLabel, day: loop.confirmedAt.slice(0, 10),
+    })) });
+  } catch (error) {
+    logger.warn('Still Loops of a wallet not read', { errorName: errorNameV1(error) });
+    res.status(503).json({ error: 'unavailable' });
+  }
+});
 
 const DRAW_ID_V1 = /^\d{4}-\d{2}-\d{2}$/;
 

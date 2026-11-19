@@ -2,13 +2,15 @@ import { z } from 'zod';
 
 import { stillLoopOfExecutionV1 } from '../../lib/stillLoops.js';
 import type { SpendInvoiceStatusNameV1 } from '@mioagent/commerce-engine';
+import type { StillLoopV1 } from '@mioagent/route-storage';
+import { LOOP_BRANDS_V1 } from '@mioagent/still-engine/loops';
 import { LOAN_WALLET_SENT_NOTHING_V1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1 } from '../../lib/lendingSteps.js';
 import { loanPositionMovedOutsideV1 } from '../../lib/loanExecutionStatus.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendInvoiceDisplayV1 } from '../../lib/stillSpendInvoiceReads.js';
 import type { SpendOrderStoreV1, SpendOrderV1 } from '../../lib/stillSpendOrders.js';
-import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
+import { loanExecutionShareV1, stillLoopSharePathV1 } from '../../lib/stillSpendShare.js';
 import type { SpendWalletPaymentV1 } from '../../lib/stillSpendWalletStore.js';
 
 // ---------------------------------------------------------------------------
@@ -97,41 +99,79 @@ function usdcTextV1(atomic: string): string {
   return `${value / 1_000_000n}${fraction ? `.${fraction}` : ''}`;
 }
 
+/** The `_meta` key a status result carries when the purchase made a Loop: for the card, never the answer, which a
+ * client may check against a tool list it cached (what an assistant sees is the answer and `next`). */
+export const STILL_LOOP_META_KEY_V1 = 'xyz.miorail/loop';
+
+/** A status result's `_meta` for the card: the Loop, when the purchase made one, with what its owner may do with it. */
+export function stillLoopReplyMetaV1(loop: StillLoopV1 | null): { _meta?: Record<string, unknown> } {
+  return loop && !loop.team ? { _meta: { [STILL_LOOP_META_KEY_V1]: {
+    executionId: loop.executionId, loopNo: loop.loopNo, brand: loop.brand, complete: loop.deliveredAt !== null, undelivered: loop.undelivered, onWall: loop.onWall,
+  } } } : {};
+}
+
+/** What the assistant is told of the Loop a purchase made, in its `next`. */
+function loopWordsV1(loop: StillLoopV1 | null, origin: string): string {
+  if (!loop || loop.team) return '';
+  if (loop.undelivered) return ' Bitrefill did not deliver the card, so this purchase does not count as a Loop.';
+  if (loop.deliveredAt === null) return ` Once Bitrefill says the card arrived, this purchase counts as Loop #${loop.loopNo}.`;
+  const brand = LOOP_BRANDS_V1.find((row) => row.brand === loop.brand)!;
+  return ` This purchase is Loop #${loop.loopNo}: ${brand.name} stock stayed and ${brand.article.toLowerCase()} ${brand.card} arrived.${loop.onWall ? ' It is on the Loop wall.'
+    : ` Its owner can put it on the Loop wall, on Still’s review card or at ${origin}/loops: the wall shows the number, the brand, the card, the price to the dollar and the day, never the wallet or the transaction.`}`;
+}
+
 export async function stillReviewStatusV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillReviewStatusInputV1Schema>,
   deps: StillReviewStatusDepsV1,
 ): Promise<z.infer<typeof StillReviewStatusOutputV1Schema>> {
+  return (await stillReviewStatusAndLoopV1(identity, args, deps)).answer;
+}
+
+/** The status, and the Loop its purchase made for the card's `_meta` (stillLoopReplyMetaV1), never in the answer. */
+export async function stillReviewStatusAndLoopV1(
+  identity: { tenantId: string; walletAddress: string },
+  args: z.infer<typeof StillReviewStatusInputV1Schema>,
+  deps: StillReviewStatusDepsV1,
+): Promise<{ answer: z.infer<typeof StillReviewStatusOutputV1Schema>; loop: StillLoopV1 | null }> {
   const owner = { tenantId: identity.tenantId, walletAddress: identity.walletAddress.toLowerCase() };
   const reviewId = args.reviewId.toLowerCase();
   const opened = await (await deps.store()).getByDraft({ owner, draftId: reviewId });
   if (!opened) {
     // A purchase paid from the wallet's own USDC is named by its invoice.
     const payment = deps.walletPayment ? await deps.walletPayment({ owner, orderId: reviewId }) : null;
-    if (payment) return walletPurchaseStatusV1(reviewId, payment, owner, deps);
+    if (payment) return { answer: await walletPurchaseStatusV1(reviewId, payment, owner, deps), loop: null };
     const order = deps.orders.get(owner, reviewId);
     if (order) {
-      return { reviewId, state: 'not_opened', paidFrom: 'wallet', purchase: { ...orderPurchaseV1(order), invoiceStatus: null, invoiceStatusError: null, shareUrl: null },
-        next: WALLET_NEXT_V1.not_opened };
+      return { answer: { reviewId, state: 'not_opened', paidFrom: 'wallet', purchase: { ...orderPurchaseV1(order), invoiceStatus: null, invoiceStatusError: null, shareUrl: null },
+        next: WALLET_NEXT_V1.not_opened }, loop: null };
     }
-    return { reviewId, state: 'not_opened', next: NEXT_V1.not_opened };
+    return { answer: { reviewId, state: 'not_opened', next: NEXT_V1.not_opened }, loop: null };
   }
   const record = await deps.refresh({ owner, executionId: opened.executionId }) ?? opened;
   const facts = record.run.facts;
+  const origin = deps.origin ?? STILL_PUBLIC_ORIGIN_V1;
   let purchase: z.infer<typeof StillReviewStatusOutputV1Schema>['purchase'];
+  let loop: StillLoopV1 | null = null;
+  let loopShared = false;
   if (facts.operation === 'borrow' && facts.payment) {
     const payment = facts.payment;
-    const share = loanExecutionShareV1(record, deps.secret);
     const invoice = await invoiceReadV1(owner, payment.orderId, record.state, deps);
+    // A Loop's number, and Bitrefill's word on its card: kept, said in `next` and given to the card.
+    loop = await stillLoopOfExecutionV1(record, invoice.invoiceStatusError === null ? invoice.invoiceStatus as SpendInvoiceStatusNameV1 | null : null);
+    // Once Bitrefill said the card arrived, the link to share is the Loop's own, as on the review page.
+    const loopShare = loop && loop.deliveredAt !== null && !loop.team
+      ? stillLoopSharePathV1(record, { loopNo: loop.loopNo, brand: loop.brand, via: loop.via }, deps.secret) : null;
+    loopShared = loopShare !== null;
+    const share = loopShare ?? loanExecutionShareV1(record, deps.secret);
     purchase = {
       ...orderPurchaseV1({ ...payment, priceAtomic: payment.assets }), ...invoice,
-      shareUrl: share ? `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}${share.path}` : null,
+      shareUrl: share ? `${origin}${share.path}` : null,
     };
-    // A Loop's number, and Bitrefill's word on its card: kept, and not part of this answer.
-    await stillLoopOfExecutionV1(record, invoice.invoiceStatusError === null ? invoice.invoiceStatus as SpendInvoiceStatusNameV1 | null : null);
   }
   const paid = record.state === 'confirmed' && purchase
-    ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares the purchase without naming the wallet.`
+    ? ` The loan paid Bitrefill’s invoice; ${invoiceWordsV1(purchase, 'it')}. shareUrl shares ${loopShared ? `Loop #${loop!.loopNo}` : 'the purchase'} without naming the wallet.${
+      loopWordsV1(loop, origin)}`
     : '';
   // What came back and what is left are what the receipt proved, never what the plan expected (audit MCP-1,
   // 2026-11-18: the plan's return was said in every state, and "the loan is closed" beside a debt still owing).
@@ -151,7 +191,7 @@ export async function stillReviewStatusV1(
   const closed = returned !== null && leftRaw === 0n;
   // Confirmed, and another hand moved the position too around then (audit LM-1).
   const movedOutside = loanPositionMovedOutsideV1(record);
-  return {
+  return { loop, answer: {
     reviewId, state: record.state, operation: facts.operation, venue: facts.venue, collateral: facts.collateralSymbol,
     ...(returned === null ? {} : { collateralReturned: returned }),
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
@@ -166,7 +206,7 @@ export async function stillReviewStatusV1(
       tail === null ? '' : movedOutside ? ` ${usdcTextV1(tail)} USDC is still owing after it: the loan is not closed until that is repaid too.`
         : ` Interest that added to the debt until the repayment landed left ${usdcTextV1(tail)} USDC owing: the loan is not closed until that is repaid too.`}${
       movedOutside ? ' The position also changed outside this review around then (a liquidation, a repayment or pledge someone else made for this wallet, or the user’s own action in the protocol’s app), so what it holds now differs from what the review showed: read it again before suggesting a next step.' : ''}`,
-  };
+  } };
 }
 
 function orderPurchaseV1(order: Pick<SpendOrderV1, 'productName' | 'packageValue' | 'priceAtomic' | 'expiresAt'>) {

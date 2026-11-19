@@ -52,7 +52,7 @@ import {
   stillPurchaseReplyMetaV1,
   usdcTextV1,
 } from './stillLoanTool.js';
-import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
+import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillLoopReplyMetaV1, stillReviewStatusAndLoopV1 } from './stillReviewTool.js';
 import { StillPrepareSwapInputV1Schema, StillPrepareSwapOutputV1Schema, StillSwapRefusalV1, stillPrepareSwapV1 } from './stillSwapTool.js';
 import { registerStillCardV1, stillCardRuntimeV1, stillCardToolMetaV1 } from './stillCard.js';
 import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
@@ -218,7 +218,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   if (options.apps) {
     server.registerTool(STILL_CARD_LENDING_TOOL_V1, {
       title: 'Still review card: the lending review',
-      description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, through Still’s own routes as this grant’s wallet.',
+      description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, and the owner’s own choice to put a Loop on the Loop wall, through Still’s own routes as this grant’s wallet.',
       inputSchema: StillCardLendingInputV1Schema.shape,
       outputSchema: StillCardLendingOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -348,14 +348,15 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_get_still_review_status', {
     title: 'What happened to a Still review',
-    description: `Reads what happened to ONE Still review this connected wallet opened, by the reviewId miorail_prepare_still_loan, miorail_prepare_still_purchase, miorail_prepare_still_wallet_purchase or miorail_prepare_still_repay returned; a purchase paid from the wallet's own USDC says paidFrom wallet. It is the review page's own status, refreshed from Base: not_opened (nobody has opened it ready on this wallet yet), ready (open, not sent), awaiting_wallet, submitted, confirmed (Still read the loan or repayment, and a purchase's payment, from Base) or failed, with the transaction hash. unknown means Still could not establish the result yet, never that the transaction failed. A purchase also carries Bitrefill's own word for its invoice once the payment may have been sent (complete is Bitrefill's finished order), while Still holds the open order for half an hour, and, once confirmed, shareUrl: a card of the purchase that names no wallet. Reading it again is safe; it sends and signs nothing.`,
+    description: `Reads what happened to ONE Still review this connected wallet opened, by the reviewId miorail_prepare_still_loan, miorail_prepare_still_purchase, miorail_prepare_still_wallet_purchase or miorail_prepare_still_repay returned; a purchase paid from the wallet's own USDC says paidFrom wallet. It is the review page's own status, refreshed from Base: not_opened (nobody has opened it ready on this wallet yet), ready (open, not sent), awaiting_wallet, submitted, confirmed (Still read the loan or repayment, and a purchase's payment, from Base) or failed, with the transaction hash. unknown means Still could not establish the result yet, never that the transaction failed. A purchase also carries Bitrefill's own word for its invoice once the payment may have been sent (complete is Bitrefill's finished order), while Still holds the open order for half an hour, and, once confirmed, shareUrl: a card of the purchase that names no wallet (the card of its Loop, once Bitrefill delivered a Loop's card). Reading it again is safe; it sends and signs nothing.`,
     inputSchema: StillReviewStatusInputV1Schema.shape,
     outputSchema: StillReviewStatusOutputV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     ...card,
   }, async (args) => {
     try {
-      return reply(await stillReviewStatusV1(identity, args, {
+      // The answer as the tool declares it; the Loop the purchase made goes to the card as _meta.
+      const { answer, loop } = await stillReviewStatusAndLoopV1(identity, args, {
         store: rwaLendingRuntimeV1.store,
         refresh: async (input) => refreshLoanExecutionV1({ ...input, refresh: true }, {
           store: await rwaLendingRuntimeV1.store(), reader: rwaLendingRuntimeV1.reader(), readBatchHashes: rwaLendingRuntimeV1.readBatchHashes,
@@ -371,7 +372,8 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
             : store.get(input);
         },
         secret: rwaLendingRuntimeV1.secret(),
-      }));
+      });
+      return { ...reply(answer), ...stillLoopReplyMetaV1(loop) };
     } catch (error) {
       logger.warn('Still review status read failed', { errorName: error instanceof Error ? error.name : typeof error });
       return { isError: true as const, content: [{ type: 'text' as const,

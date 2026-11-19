@@ -83,3 +83,17 @@ describe('Loops in public', () => {
     assert.equal(stillLoopWeekStartV1(new Date('2026-11-23T00:00:00.000Z')).toISOString(), '2026-11-23T00:00:00.000Z');
   });
 });
+
+describe('a wallet’s own Loops', () => {
+  it('are its own alone, newest first, with the number, the card and the wall, and need its session', async () => {
+    const mine = await request(app()).get('/api/still/loops/mine');
+    assert.equal(mine.status, 200);
+    assert.equal(mine.headers['cache-control'], 'private, no-store');
+    assert.deepEqual(mine.body, { outcome: 'mine', loops: [{ loopNo: 1, brand: 'apple', complete: true, undelivered: null, onWall: false, team: false,
+      executionId: id(1), productName: 'iTunes Germany', packageLabel: '25 EUR', day: '2026-11-20' }] });
+    assert.equal((await request(app(OTHER)).get('/api/still/loops/mine')).body.loops.length, 1);
+    assert.equal((await request(app(null)).get('/api/still/loops/mine')).status, 401);
+    Object.assign(stillLoopsRuntimeV1, { enabled: () => false });
+    assert.equal((await request(app()).get('/api/still/loops/mine')).status, 404);
+  });
+});

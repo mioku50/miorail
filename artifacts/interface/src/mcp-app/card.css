@@ -21,3 +21,6 @@ html, body { margin: 0; padding: 0; background: transparent; }
 .still-mcp-uri { display: block; margin-top: 6px; font-size: 11px; word-break: break-all; }
 .still-mcp-link { border: 0; background: none; padding: 0; color: var(--sm-link); text-decoration: underline; cursor: pointer; font: inherit; }
 .still-mcp-sign .still-lending-review { max-width: none; }
+
+/* A Loop inside the card sits on the card's own edge, not a page's margins (2026-11-19). */
+.still-mcp-card .still-section.still-loop { margin: 14px 0 0; max-width: none; }

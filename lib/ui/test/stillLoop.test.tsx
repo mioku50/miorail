@@ -8,7 +8,7 @@ void React;
 
 import { lendingLoopWireV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView';
 import { StillLoopOffer, loopSentenceV1, loopShareTextV1 } from '../src/still/StillLoop';
-import { STILL_LOOP_PROMPT_V1, StillLoops, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsViewV1 } from '../src/still/StillLoops';
+import { STILL_LOOP_PROMPT_V1, StillLoops, stillLoopDayV1, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsMineViewV1, stillLoopsViewV1 } from '../src/still/StillLoops';
 import { StillMore } from '../src/still/StillPages';
 import { skyStateV1 } from '../src/still/skyState';
 
@@ -37,6 +37,9 @@ describe('a Loop on the loan’s own result', () => {
     assert.match(html, />Put it on the Loop wall</);
     assert.match(html, /type="checkbox"/);
     assert.match(html, /never your wallet or the transaction\. Not affiliated with Apple\./);
+    // Its own card, as the order above it has (2026-11-19).
+    assert.match(html, /class="still-extra still-loop-card" data-complete="yes"/);
+    assert.match(html, /<h2 class="still-loop-head">Loop #7<\/h2>/);
   });
 
   it('offers nothing before the card arrived, for the team, or once on the wall; and says when Bitrefill stopped it', () => {
@@ -78,10 +81,40 @@ describe('/loops: Loops in public', () => {
     assert.match(html, new RegExp(STILL_LOOP_PROMPT_V1.replace(/[.€]/g, '.')));
     assert.match(html, /Loop #2 · alice\.base\.eth/);
     assert.match(html, /Apple stock stayed\. iTunes Germany \(25 EUR\) arrived\./);
-    assert.match(html, /about \$27 · Aave · Done in Claude · 2026-11-17/);
+    // The day in words, never split on a phone (2026-11-19).
+    assert.match(html, /about \$27 · Aave · Done in Claude · 17\u00a0Nov\u00a02026/);
+    // Each brand opens Spend on its own cards.
+    assert.match(html, /href="\/spend\?card=apple"/);
+    assert.match(html, /href="\/spend\?card=microsoft"/);
     assert.match(html, /can be liquidated if prices fall/);
     assert.match(html, /Not affiliated with Apple, Amazon, Google, Meta, Microsoft or Bitrefill/);
     assert.doesNotMatch(html, /0x[0-9a-f]{6}/i);
+  });
+
+  // 2026-11-19: three zeros at the top read as nobody coming.
+  it('before the first Loop, says the first number is still unclaimed instead of three zeros', () => {
+    const none = { ...ANSWER, counts: { total: 0, week: 0, viaAssistant: 0, byBrand: { apple: 0, amazon: 0, google: 0, meta: 0, microsoft: 0 } }, wall: [] };
+    const html = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(none), failed: false }} />);
+    assert.match(html, /<span class="n">#1<\/span><span class="t">still unclaimed: no Loop has been made yet<\/span>/);
+    assert.doesNotMatch(html, /this week/);
+    assert.equal(stillLoopDayV1('2026-11-25'), '25\u00a0Nov\u00a02026');
+    assert.equal(stillLoopDayV1('not a day'), 'not a day');
+  });
+
+  // 2026-11-19: a Loop made in an assistant's chat had no way to the wall but the review page.
+  it('shows a signed-in wallet its own Loops, each with the wall to put it on', () => {
+    const own = stillLoopsMineViewV1({ outcome: 'mine', loops: [
+      { ...LOOP, executionId: EXECUTION, productName: 'iTunes Germany', packageLabel: '25 EUR', day: '2026-11-21' },
+      { ...LOOP, loopNo: 0, executionId: EXECUTION, productName: 'x', packageLabel: 'y', day: '2026-11-21' },
+    ] });
+    assert.equal(own?.length, 1, 'a row of another shape is left out');
+    assert.equal(stillLoopsMineViewV1({ outcome: 'nope', loops: [] }), null);
+    const html = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(ANSWER), failed: false, mine: { loops: own, onWall: never } }} />);
+    assert.match(html, /<h2 id="still-loops-mine" class="still-more-group-head">Your Loops<\/h2>/);
+    assert.match(html, /aria-label="Loop #7"/);
+    assert.match(html, />Put it on the Loop wall</);
+    const none = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(ANSWER), failed: false, mine: { loops: [], onWall: never } }} />);
+    assert.doesNotMatch(none, /Your Loops/);
   });
 
   it('says when Loops are not open, are being read, or could not be read', () => {

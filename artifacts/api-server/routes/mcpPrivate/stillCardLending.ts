@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { logger } from '@mioagent/utils';
 
 import { rwaLendingRouter } from '../rwaLending.js';
+import { stillLoopsRouter } from '../stillLoops.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
@@ -30,11 +31,18 @@ import { spendDeliveryMaskedV1 } from '../../lib/stillSpendOrders.js';
 // checked against Base by the route, and sends nothing. Until 2026-11-11 the
 // card could ask for the first and not the second, so an attempt that held a
 // market could be released only on Still's site.
+//
+// One route outside lending goes the same way since 2026-11-19: the owner's own
+// press that puts a Loop the purchase made on the Loop wall (routes/stillLoops.ts),
+// which only that wallet's own complete Loop can take. Before it, a person who
+// signed in the chat never saw the wall at all.
 // ---------------------------------------------------------------------------
 
 export const STILL_CARD_LENDING_TOOL_V1 = 'still_card_lending';
 const ROOT_V1 = '/api/route-intelligence';
-const PATH_V1 = /^\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps|stop|release))?)$/;
+const LOOPS_ROOT_V1 = '/api/still/loops';
+const LOOP_WALL_V1 = /^\/api\/still\/loops\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wall$/;
+const PATH_V1 = /^(?:\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps|stop|release))?)|\/api\/still\/loops\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wall)$/;
 
 export const StillCardLendingInputV1Schema = z.object({
   method: z.enum(['GET', 'POST']),
@@ -51,9 +59,10 @@ export const StillCardLendingOutputV1Schema = z.object({
 
 type AnswerV1 = { status: number; body: unknown };
 
-/** One request to the page's own lending routes, as this grant's wallet. */
+/** One request to the page's own lending routes, or to a Loop's wall, as this grant's wallet. */
 function routeV1(identity: McpPrivateIdentityV1, method: 'GET' | 'POST', path: string, body: Record<string, unknown>): Promise<AnswerV1> {
-  const url = path.slice(ROOT_V1.length);
+  const wall = LOOP_WALL_V1.test(path);
+  const url = path.slice((wall ? LOOPS_ROOT_V1 : ROOT_V1).length);
   const [pathname = '', search = ''] = url.split('?');
   return new Promise<AnswerV1>((resolve, reject) => {
     let status = 200;
@@ -67,7 +76,7 @@ function routeV1(identity: McpPrivateIdentityV1, method: 'GET' | 'POST', path: s
       method, url, originalUrl: url, path: pathname, query: Object.fromEntries(new URLSearchParams(search)), body, headers: {},
       session: { user: { id: identity.tenantId, address: identity.walletAddress.toLowerCase(), chainId: 8453 } },
     };
-    rwaLendingRouter(req as unknown as Request, res as unknown as Response,
+    (wall ? stillLoopsRouter : rwaLendingRouter)(req as unknown as Request, res as unknown as Response,
       (error?: unknown) => (error ? reject(error) : resolve({ status: 404, body: { error: 'lending_route_not_found' } })));
   });
 }
@@ -86,7 +95,7 @@ export function cardReviewBodyV1(body: unknown): unknown {
 
 export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z.infer<typeof StillCardLendingInputV1Schema>): Promise<z.infer<typeof StillCardLendingOutputV1Schema>> {
   const wallet = identity.walletAddress.toLowerCase();
-  const writes = /\/(?:arm|submission|transaction|steps|stop|release)$/.test(args.path);
+  const writes = /\/(?:arm|submission|transaction|steps|stop|release)$/.test(args.path) || LOOP_WALL_V1.test(args.path);
   if ((args.method === 'POST') !== writes) return { status: 400, body: { error: 'lending_request_invalid' }, wallet };
   const routed = await routeV1(identity, args.method, args.path, args.body ?? {});
   const answer = { status: routed.status, body: cardReviewBodyV1(routed.body) };

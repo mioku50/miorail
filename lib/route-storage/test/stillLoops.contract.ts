@@ -55,6 +55,15 @@ export function stillLoopsContractV1(label: string, make: () => Promise<StillLoo
       assert.deepEqual(await repo.wall({ limit: 0 }), []);
     });
 
+    test('one wallet reads its own Loops, the newest first, and no other wallet’s', async () => {
+      const repo = await make();
+      await repo.record([loopCandidateV1(1), loopCandidateV1(2, { walletAddress: OTHER }), loopCandidateV1(3)]);
+      assert.deepEqual((await repo.byWallet({ walletAddress: WALLET.toUpperCase().replace('0X', '0x'), limit: 10 })).map((row) => row.loopNo), [3, 1]);
+      assert.deepEqual((await repo.byWallet({ walletAddress: OTHER, limit: 10 })).map((row) => row.loopNo), [2]);
+      assert.deepEqual((await repo.byWallet({ walletAddress: WALLET, limit: 1 })).map((row) => row.loopNo), [3]);
+      assert.deepEqual(await repo.byWallet({ walletAddress: `0x${'c'.repeat(40)}`, limit: 10 }), []);
+    });
+
     test('count only complete Loops outside the team, this week apart', async () => {
       const repo = await make();
       await repo.record([

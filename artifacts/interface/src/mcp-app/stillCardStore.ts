@@ -1,4 +1,4 @@
-import { stillCardFromStatusV1, stillCardPreparedV1, stillCardStatusV1, type StillCardPhaseV1, type StillCardPreparedV1, type StillCardStatusV1 } from './stillCardView';
+import { stillCardFromStatusV1, stillCardLoopV1, stillCardPreparedV1, stillCardStatusV1, type StillCardLoopV1, type StillCardPhaseV1, type StillCardPreparedV1, type StillCardStatusV1 } from './stillCardView';
 
 // The card's one store: the host's notifications come in, the status reads go
 // out through the host with the person's own connection to Miorail. It reads
@@ -13,7 +13,7 @@ export interface StillCardHostV1 {
   onhostcontextchanged: ((params: { theme?: string }) => void) | undefined;
   connect(): Promise<void>;
   getHostContext(): { theme?: string } | undefined;
-  callServerTool(params: { name: string; arguments: Record<string, unknown> }): Promise<{ structuredContent?: unknown; isError?: boolean }>;
+  callServerTool(params: { name: string; arguments: Record<string, unknown> }): Promise<{ structuredContent?: unknown; isError?: boolean; _meta?: unknown }>;
   openLink(params: { url: string }): Promise<unknown>;
 }
 
@@ -28,6 +28,8 @@ export interface StillCardStateV1 {
   /** The host did not open the review link. */
   linkRefused: boolean;
   dark: boolean;
+  /** The Loop the purchase made, from the status result's `_meta`; null for any other review. */
+  loop: StillCardLoopV1 | null;
 }
 
 /** How the review screen asks Still, from the card: the page's own routes, as
@@ -67,6 +69,9 @@ export interface StillCardStoreV1 {
   checkAgain(): void;
   openShare(): Promise<void>;
   openTransaction(): Promise<void>;
+  /** The owner's own press: their Loop on the Loop wall, through the card's tool. Resolves with the name shown, null for
+   * "Loop #N"; rejects when the wall did not take it. */
+  putOnWall(showName: boolean): Promise<{ label: string | null }>;
 }
 
 const FOLLOW_FOR_MS_V1 = 15 * 60_000;
@@ -89,7 +94,7 @@ function refusalOfV1(content: unknown): string {
 
 export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () => Date } = { now: () => new Date() }): StillCardStoreV1 {
   let state: StillCardStateV1 = { prepared: null, refusal: null, status: null, statusUnread: false, following: false, linkRefused: false,
-    dark: host.getHostContext()?.theme === 'dark' };
+    dark: host.getHostContext()?.theme === 'dark', loop: null };
   const listeners = new Set<() => void>();
   const set = (patch: Partial<StillCardStateV1>) => { state = { ...state, ...patch }; for (const listener of listeners) listener(); };
   let timer: ReturnType<typeof setTimeout> | null = null, until = 0, reading = false;
@@ -111,7 +116,9 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
     try {
       const answer = await host.callServerTool({ name: 'miorail_get_still_review_status', arguments: { reviewId: prepared.reviewId } });
       const status = answer.isError ? null : stillCardStatusV1(answer.structuredContent, prepared, clock.now());
-      set(status ? { status, statusUnread: false } : { statusUnread: true });
+      // A Loop, once made, stays: a later answer without one leaves it as it was.
+      const loop = answer.isError ? null : stillCardLoopV1(answer._meta);
+      set(status ? { status, statusUnread: false, ...(loop ? { loop } : {}) } : { statusUnread: true });
       // Something is moving: keep following it without a press.
       if (status && !status.settled && status.phase !== 'waiting' && !state.following) {
         until = clock.now().getTime() + FOLLOW_FOR_MS_V1;
@@ -138,7 +145,7 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
     // prepared review is the one that follows; this one reads again when pressed.
     const shown = stillCardFromStatusV1(params.structuredContent, clock.now());
     if (!shown) { set({ refusal: 'This card could not read the result. The assistant’s message has it.' }); return; }
-    set({ prepared: shown.prepared, status: shown.status, refusal: null });
+    set({ prepared: shown.prepared, status: shown.status, refusal: null, loop: stillCardLoopV1(params._meta) });
   };
   host.onhostcontextchanged = (context) => { if (context.theme) set({ dark: context.theme === 'dark' }); };
   void host.connect().then(() => set({ dark: host.getHostContext()?.theme === 'dark' }), () => undefined);
@@ -157,6 +164,16 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
     async openShare() {
       const url = state.status?.shareUrl;
       if (url) await host.openLink({ url }).catch(() => undefined);
+    },
+    async putOnWall(showName) {
+      const loop = state.loop;
+      if (!loop || !loop.complete || loop.onWall) throw new Error('loop_not_wallable');
+      const answer = await host.callServerTool({ name: 'still_card_lending',
+        arguments: { method: 'POST', path: `/api/still/loops/${loop.executionId}/wall`, body: { showName } } });
+      const reply = answer.structuredContent as { status?: unknown; body?: { label?: unknown } } | undefined;
+      if (answer.isError || reply?.status !== 200) throw new Error('loop_not_walled');
+      set({ loop: { ...loop, onWall: true } });
+      return { label: typeof reply.body?.label === 'string' ? reply.body.label : null };
     },
     async openTransaction() {
       const hash = state.status?.transactionHash;

@@ -242,6 +242,14 @@ describe('the Spend page', () => {
     assert.match(cards, /Nothing in stock here for Germany\./);
   });
 
+  // 2026-11-19: /loops sent every brand to Spend's front page. Opened for one brand, Spend says what its cards make.
+  it('opened from /loops for a brand, it says paying one of its cards with a loan against its stock makes a Loop', () => {
+    const html = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null,
+      loop: { name: 'Apple', card: 'Apple gift card', collateral: 'AAPLc' } })} />);
+    assert.match(html, /<p class="still-note still-spend-loop">Apple’s own cards for Germany: paid with a loan\s+against AAPLc, one makes a Loop, and the stock stays as the loan’s collateral\.<\/p>/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />), /makes a Loop/);
+  });
+
   it('gift cards offer Bitrefill’s categories beside the brand, the chosen one pressed, and no payment cards', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', category: 'games', onCategory: noop, products: [], selected: null, product: null })} />);
     assert.match(html, /<div class="still-spend-categories" role="group" aria-label="Gift cards by category">/);

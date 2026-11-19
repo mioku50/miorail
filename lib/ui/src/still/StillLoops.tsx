@@ -4,7 +4,8 @@ import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import type { SkyStateV1 } from './skyState';
 import { StillEligibilityConfirmSlotV1 } from './StillEligibility';
 import { StillHeader, StillLink } from './StillFrame';
-import { LOOP_BRAND_WORDS_V1 } from './StillLoop';
+import { LOOP_BRAND_WORDS_V1, StillLoopOffer, stillLoopSpendHrefV1 } from './StillLoop';
+import type { LendingLoopWireV1 } from '../console/lendingReviewView';
 
 void React;
 
@@ -158,6 +159,34 @@ export function stillLoopDrawMineViewV1(value: unknown): StillLoopDrawMineViewV1
     loop: loopOf } : null, entered };
 }
 
+/** One of the session wallet's own Loops, as GET /api/still/loops/mine sends it. */
+export interface StillLoopMineViewV1 extends LendingLoopWireV1 {
+  executionId: string;
+  productName: string;
+  packageLabel: string;
+  day: string;
+}
+
+const UUID_V1 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UNDELIVERED_V1 = ['blocked', 'denied', 'payment_error'] as const;
+
+/** The session wallet's own Loops as the server sends them, or null; a row of another shape is left out. */
+export function stillLoopsMineViewV1(value: unknown): StillLoopMineViewV1[] | null {
+  const v = value as Record<string, unknown> | null;
+  if (!v || typeof v !== 'object' || v.outcome !== 'mine' || !Array.isArray(v.loops)) return null;
+  const loops: StillLoopMineViewV1[] = [];
+  for (const raw of v.loops.slice(0, 20)) {
+    const r = raw as Record<string, unknown> | null;
+    if (!r || typeof r.executionId !== 'string' || !UUID_V1.test(r.executionId) || !Number.isSafeInteger(r.loopNo) || (r.loopNo as number) < 1
+      || !BRANDS_V1.includes(r.brand as BrandV1) || typeof r.complete !== 'boolean' || typeof r.onWall !== 'boolean' || typeof r.team !== 'boolean'
+      || !(r.undelivered === null || UNDELIVERED_V1.includes(r.undelivered as (typeof UNDELIVERED_V1)[number]))
+      || !text(r.productName, 120) || !text(r.packageLabel, 84) || !text(r.day, 10)) continue;
+    loops.push({ executionId: r.executionId, loopNo: r.loopNo as number, brand: r.brand as BrandV1, complete: r.complete, onWall: r.onWall, team: r.team,
+      undelivered: r.undelivered as StillLoopMineViewV1['undelivered'], productName: r.productName, packageLabel: r.packageLabel, day: r.day });
+  }
+  return loops;
+}
+
 const WEEKDAYS_V1 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS_V1 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** "Sat 28 Nov, 18:00 UTC": the same words in every browser. */
@@ -165,6 +194,13 @@ export function stillLoopDrawTimeV1(value: string): string {
   const d = new Date(value);
   const two = (n: number) => String(n).padStart(2, '0');
   return `${WEEKDAYS_V1[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS_V1[d.getUTCMonth()]}, ${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC`;
+}
+/** "17 Nov 2026": a Loop's day on the wall, the same in every browser, and never split across two lines
+ * (on a phone "2026-11-" and "25" fell on two, 2026-11-19). */
+export function stillLoopDayV1(day: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  const month = match ? MONTHS_V1[Number(match[2]) - 1] : undefined;
+  return match && month ? `${Number(match[3])}\u00a0${month}\u00a0${match[1]}` : day;
 }
 const shortHash = (hash: string) => `${hash.slice(0, 10)}…${hash.slice(-6)}`;
 const NUMBER_WORDS_V1 = ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
@@ -185,6 +221,29 @@ export interface StillLoopsModelV1 {
   failed: boolean;
   /** How this person enters the draw open now; absent in a host that offers no entry. */
   entry?: StillLoopDrawEntryModelV1;
+  /** The signed-in wallet's own Loops, wherever they were made, each with the wall to put it on; absent signed out. */
+  mine?: StillLoopsMineModelV1;
+}
+
+export interface StillLoopsMineModelV1 {
+  /** Undefined while read, null when they could not be. */
+  loops: StillLoopMineViewV1[] | null | undefined;
+  /** Puts one on the wall; resolves with the name shown, null for "Loop #N". */
+  onWall: (executionId: string, showName: boolean) => Promise<{ label: string | null }>;
+}
+
+/** The signed-in wallet's own Loops: one made in an assistant's chat can go on the wall here too (2026-11-19). */
+function MineV1({ mine }: { mine: StillLoopsMineModelV1 }) {
+  if (!mine.loops || mine.loops.length === 0) return null;
+  return (
+    <section className="still-section still-loops-mine" aria-labelledby="still-loops-mine">
+      <h2 id="still-loops-mine" className="still-more-group-head">Your Loops</h2>
+      {mine.loops.map((loop) => (
+        <StillLoopOffer key={loop.executionId} model={{ loop, note: false, onWall: (showName) => mine.onWall(loop.executionId, showName) }} />
+      ))}
+      <p className="still-note">The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction.</p>
+    </section>
+  );
 }
 
 export interface StillLoopDrawEntryModelV1 {
@@ -375,11 +434,19 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
         <p className="still-section still-note" role="status">Loops are not open yet.</p>
       ) : (
         <>
-          <div className="still-section still-safety-figures" aria-label="Loops so far">
-            <div className="still-safety-figure"><span className="n">{view.counts.week}</span><span className="t">this week</span></div>
-            <div className="still-safety-figure"><span className="n">{view.counts.total}</span><span className="t">in all</span></div>
-            <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done with an AI assistant</span></div>
-          </div>
+          {/* Three zeros read as nobody coming (2026-11-19): before the first Loop, the number still free. */}
+          {view.counts.total === 0 ? (
+            <div className="still-section still-safety-figures" aria-label="Loops so far">
+              <div className="still-safety-figure"><span className="n">#1</span><span className="t">still unclaimed: no Loop has been made yet</span></div>
+            </div>
+          ) : (
+            <div className="still-section still-safety-figures" aria-label="Loops so far">
+              <div className="still-safety-figure"><span className="n">{view.counts.week}</span><span className="t">this week</span></div>
+              <div className="still-safety-figure"><span className="n">{view.counts.total}</span><span className="t">in all</span></div>
+              <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done with an AI assistant</span></div>
+            </div>
+          )}
+          {model.mine ? <MineV1 mine={model.mine} /> : null}
           {view.draws ? <StillLoopDrawV1 draws={view.draws} entry={model.entry} /> : null}
           <section className="still-section" aria-labelledby="still-loops-how">
             <h2 id="still-loops-how" className="still-more-group-head">How a Loop is made</h2>
@@ -390,7 +457,7 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
                     <div className="name">{LOOP_BRAND_WORDS_V1[brand].name}</div>
                     <div className="line">{LOOP_BRAND_WORDS_V1[brand].article} {LOOP_BRAND_WORDS_V1[brand].card}, paid by a loan against {COLLATERAL_V1[brand]}</div>
                   </div>
-                  <div className="val"><StillLink href="/spend" className="still-btn sec">Spend</StillLink></div>
+                  <div className="val"><StillLink href={stillLoopSpendHrefV1(brand)} className="still-btn sec">Spend</StillLink></div>
                 </li>
               ))}
             </ul>
@@ -409,7 +476,7 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
                     <div style={{ minWidth: 0 }}>
                       <div className="name">Loop #{item.loopNo}{item.label ? ` · ${item.label}` : ''}</div>
                       <div className="line">{LOOP_BRAND_WORDS_V1[item.brand].name} stock stayed. {item.productName} ({item.packageLabel}) arrived.</div>
-                      <div className="line still-note">{[`about $${item.priceUsdc}`, item.venueName, VIA_WORDS_V1[item.via], item.day].filter(Boolean).join(' · ')}</div>
+                      <div className="line still-note">{[`about $${item.priceUsdc}`, item.venueName, VIA_WORDS_V1[item.via], stillLoopDayV1(item.day)].filter(Boolean).join(' · ')}</div>
                     </div>
                   </li>
                 ))}

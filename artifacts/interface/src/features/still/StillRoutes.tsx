@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Redirect, useLocation } from 'wouter';
-import { enterStillLoopDrawV1, useMyDividends, useStillCheck, useStillLoopDrawMineV1, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { enterStillLoopDrawV1, putStillLoopOnWallV1, useMyDividends, useStillCheck, useStillLoopDrawMineV1, useStillLoopsMineV1, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
 import {
@@ -18,6 +18,7 @@ import {
   homeViewV1,
   stillCheckMessageV1,
   stillLoopDrawMineViewV1,
+  stillLoopsMineViewV1,
   stillLoopsViewV1,
   stillTabForPathV1,
 } from '@mioagent/ui/still';
@@ -249,6 +250,17 @@ export function StillLoopsPage() {
   const mineRead = useStillLoopDrawMineV1(signedIn && drawsOn ? wallet : null);
   const mine = !signedIn || !drawsOn ? null : mineRead.data === undefined && !mineRead.isError ? undefined
     : mineRead.data ? stillLoopDrawMineViewV1(mineRead.data) : null;
+  // The wallet's own Loops: one made in an assistant's chat goes on the wall from here too.
+  const ownRead = useStillLoopsMineV1(signedIn && view ? wallet : null);
+  const own = !signedIn || !view ? undefined : {
+    loops: ownRead.data === undefined && !ownRead.isError ? undefined : ownRead.data ? stillLoopsMineViewV1(ownRead.data) : null,
+    onWall: async (executionId: string, showName: boolean) => {
+      const answer = await putStillLoopOnWallV1(executionId, showName) as { label?: unknown };
+      void queryClient.invalidateQueries({ queryKey: ['still-loops-mine'] });
+      void queryClient.invalidateQueries({ queryKey: ['still-loops'] });
+      return { label: typeof answer?.label === 'string' ? answer.label : null };
+    },
+  };
   const entry = {
     signedIn, signInHref, mine,
     onEnter: async () => {
@@ -260,7 +272,7 @@ export function StillLoopsPage() {
   };
   return (
     <StillFrame tab="more" sky={sky}>
-      <StillLoops model={{ sky, view, entry, failed: loops.isError || (loops.data !== undefined && loops.data !== null && view === null) }} />
+      <StillLoops model={{ sky, view, entry, ...(own ? { mine: own } : {}), failed: loops.isError || (loops.data !== undefined && loops.data !== null && view === null) }} />
     </StillFrame>
   );
 }

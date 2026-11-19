@@ -119,6 +119,24 @@ export function useStillLoopDrawMineV1(wallet: string | null) {
 }
 
 /** A free entry into the Loop draw open now, its rules accepted. */
+/** The session wallet's own Loops, wherever they were made: null while Loops are off on this server. */
+export function useStillLoopsMineV1(wallet: string | null) {
+  return useQuery({
+    queryKey: ['still-loops-mine', wallet] as const,
+    enabled: wallet !== null,
+    retry: false,
+    staleTime: 15_000,
+    queryFn: async () => {
+      try {
+        return await fetchApi<unknown>('/api/still/loops/mine');
+      } catch (error) {
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+  });
+}
+
 export function enterStillLoopDrawV1(): Promise<unknown> {
   return fetchApi('/api/still/loops/draw/enter', { method: 'POST', body: JSON.stringify({ rules: true }) });
 }

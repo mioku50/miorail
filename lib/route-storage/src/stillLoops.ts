@@ -60,6 +60,8 @@ export interface StillLoopRepositoryV1 {
   putOnWall(input: { executionId: string; walletAddress: string; label: string | null; at: Date }): Promise<StillLoopV1 | null>;
   /** Loops on the wall, the latest shown first. */
   wall(input: { limit: number }): Promise<StillLoopV1[]>;
+  /** One wallet's own Loops, the newest first: for its owner's page only. */
+  byWallet(input: { walletAddress: string; limit: number }): Promise<StillLoopV1[]>;
   counts(input: { weekSince: Date }): Promise<StillLoopCountsV1>;
 }
 
@@ -118,6 +120,12 @@ export class InMemoryStillLoopRepositoryV1 implements StillLoopRepositoryV1 {
   async wall(input: { limit: number }): Promise<StillLoopV1[]> {
     return [...this.rows.values()].filter((row) => row.onWall)
       .sort((a, b) => Date.parse(b.walledAt!) - Date.parse(a.walledAt!) || b.loopNo - a.loopNo)
+      .slice(0, Math.max(0, Math.min(input.limit, 100))).map((row) => ({ ...row }));
+  }
+
+  async byWallet(input: { walletAddress: string; limit: number }): Promise<StillLoopV1[]> {
+    return [...this.rows.values()].filter((row) => row.walletAddress === input.walletAddress.toLowerCase())
+      .sort((a, b) => b.loopNo - a.loopNo)
       .slice(0, Math.max(0, Math.min(input.limit, 100))).map((row) => ({ ...row }));
   }
 
@@ -209,6 +217,11 @@ export function createDatabaseStillLoopRepositoryV1(sql: SqlTemplateExecutor): S
     async wall(input) {
       const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));
       const rows = await sql`SELECT * FROM still_loops WHERE on_wall ORDER BY walled_at DESC, loop_no DESC LIMIT ${limit}`;
+      return rows.map(loopOfRowV1);
+    },
+    async byWallet(input) {
+      const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));
+      const rows = await sql`SELECT * FROM still_loops WHERE wallet_address = ${input.walletAddress.toLowerCase()} ORDER BY loop_no DESC LIMIT ${limit}`;
       return rows.map(loopOfRowV1);
     },
     async counts(input) {

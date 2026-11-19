@@ -8,6 +8,8 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1, type LendingQuestionV1 } from '../../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../../lib/lendingReview.js';
 import { MemoryLoanExecutionStoreV1 } from '../../lib/loanExecutionStore.js';
+import { InMemoryStillLoopRepositoryV1 } from '@mioagent/route-storage';
+import { stillLoopsRuntimeV1 } from '../../lib/stillLoops.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
@@ -130,4 +132,30 @@ test('only a client that draws apps lists the card’s tool, hidden from the mod
   assert.equal(tool?.annotations?.readOnlyHint, false);
   const elsewhere = await drawing.callTool({ name: 'still_card_lending', arguments: { method: 'POST', path: '/api/route-intelligence/rwa/repay/intent', body: {} } });
   assert.equal((elsewhere as { isError?: boolean }).isError, true);
+});
+
+// 2026-11-19: a person who signed in the chat never saw the Loop wall. The card's tool reaches the one route that
+// puts its owner's own Loop there, and only by a POST.
+test('the card puts its owner’s own Loop on the wall, and nobody else’s, through the wall’s own route', async (t) => {
+  fixture(t);
+  const originalLoops = { ...stillLoopsRuntimeV1 };
+  const repository = new InMemoryStillLoopRepositoryV1();
+  Object.assign(stillLoopsRuntimeV1, { enabled: () => true, repository: () => repository, now: () => NOW, basename: async () => null });
+  t.after(() => { Object.assign(stillLoopsRuntimeV1, originalLoops); });
+  const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+  const loop = (n: number, walletAddress: string) => ({ executionId: id(n), walletAddress, brand: 'apple' as const, collateral: 'AAPLc' as const, productId: 'itunes-germany',
+    productName: 'iTunes Germany', packageLabel: '25 EUR', priceRoundedAtomic: '27000000', venue: 'aave-v4' as const, via: 'claude' as const, team: false, confirmedAt: NOW.toISOString() });
+  await repository.record([loop(1, WALLET), loop(2, OTHER)]);
+  for (const n of [1, 2]) await repository.markDelivery({ executionId: id(n), outcome: 'complete', at: NOW });
+
+  assert.equal((await stillCardLendingV1(IDENTITY, { method: 'GET', path: `/api/still/loops/${id(1)}/wall` })).status, 400, 'a write is a POST');
+  const walled = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `/api/still/loops/${id(1)}/wall`, body: { showName: false } });
+  assert.equal(walled.status, 200);
+  assert.equal(walled.wallet, WALLET);
+  assert.deepEqual((walled.body as { loop: { onWall: boolean } }).loop.onWall, true);
+  const theirs = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `/api/still/loops/${id(2)}/wall`, body: { showName: false } });
+  assert.equal(theirs.status, 409);
+  assert.equal((await repository.byExecution(id(2)))?.onWall, false);
+  assert.ok(StillCardLendingInputV1Schema.safeParse({ method: 'POST', path: `/api/still/loops/${id(1)}/wall`, body: { showName: true } }).success);
+  assert.ok(!StillCardLendingInputV1Schema.safeParse({ method: 'POST', path: '/api/still/loops/draw/enter', body: { rules: true } }).success, 'no other Loop route');
 });

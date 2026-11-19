@@ -31,15 +31,30 @@ export interface LoopBrandV1 {
   article: 'A' | 'An';
   /** Bitrefill product ids of this brand, in any country. */
   productIds: readonly RegExp[];
+  /** The word Bitrefill's catalogue finds this brand's cards by. "Xbox" finds a game's points and other stores
+   * too, so a search by it keeps only `productIds` (loopBrandProductsV1). Read through Spend's search on
+   * 2026-11-19: "Apple" found Apple Germany (itunes-germany) and Apple United Kingdom. */
+  search: string;
 }
 
 export const LOOP_BRANDS_V1: readonly LoopBrandV1[] = [
-  { brand: 'apple', name: 'Apple', collateral: 'AAPLc', card: 'Apple gift card', article: 'An', productIds: [/^itunes-/, /^apple-/] },
-  { brand: 'amazon', name: 'Amazon', collateral: 'AMZNc', card: 'Amazon gift card', article: 'An', productIds: [/^amazon[-_]/] },
-  { brand: 'google', name: 'Google', collateral: 'GOOGLc', card: 'Google Play card', article: 'A', productIds: [/^google-play-/] },
-  { brand: 'meta', name: 'Meta', collateral: 'METAc', card: 'Meta Quest card', article: 'A', productIds: [/^meta-quest-/] },
-  { brand: 'microsoft', name: 'Microsoft', collateral: 'MSFTc', card: 'Xbox card', article: 'An', productIds: [/^xbox-/] },
+  { brand: 'apple', name: 'Apple', collateral: 'AAPLc', card: 'Apple gift card', article: 'An', productIds: [/^itunes-/, /^apple-/], search: 'Apple' },
+  { brand: 'amazon', name: 'Amazon', collateral: 'AMZNc', card: 'Amazon gift card', article: 'An', productIds: [/^amazon[-_]/], search: 'Amazon' },
+  { brand: 'google', name: 'Google', collateral: 'GOOGLc', card: 'Google Play card', article: 'A', productIds: [/^google-play-/], search: 'Google Play' },
+  { brand: 'meta', name: 'Meta', collateral: 'METAc', card: 'Meta Quest card', article: 'A', productIds: [/^meta-quest-/], search: 'Meta Quest' },
+  { brand: 'microsoft', name: 'Microsoft', collateral: 'MSFTc', card: 'Xbox card', article: 'An', productIds: [/^xbox-/], search: 'Xbox' },
 ];
+
+/** A brand by its id, as a link names it (/spend?card=apple); null for anything else. */
+export function loopBrandByIdV1(id: string | null | undefined): LoopBrandV1 | null {
+  return LOOP_BRANDS_V1.find((row) => row.brand === id) ?? null;
+}
+
+/** Of a catalogue search, the brand's own cards only: the products whose id makes a Loop. */
+export function loopBrandProductsV1<T extends { id: string }>(brand: LoopBrandIdV1, products: readonly T[]): T[] {
+  const row = loopBrandByIdV1(brand);
+  return row ? products.filter((product) => row.productIds.some((pattern) => pattern.test(product.id))) : [];
+}
 
 /** Bitrefill's product id: a lowercase slug, as Still's own routes accept it. */
 const PRODUCT_ID_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;

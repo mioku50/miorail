@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { STILL_SPEND_COMMISSION_NOTE_V1 } from '@mioagent/ui/still';
+import { STILL_SPEND_COMMISSION_NOTE_V1, StillLoopOffer } from '@mioagent/ui/still';
 import { stillCardReviewHostV1, type StillCardPhaseV1 } from './stillCardView';
 import type { StillCardHostV1, StillCardStoreV1 } from './stillCardStore';
 import { StillCardSign } from './StillCardSign';
@@ -50,12 +50,15 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
               </p>
             )}
             {status?.bitrefill ? <p className="still-note">{status.bitrefill}</p> : null}
+            {/* The Loop this purchase made, as the review page shows it: a person who signed here saw no wall before 2026-11-19. */}
+            {state.loop ? <StillLoopOffer model={{ loop: { ...state.loop, team: false }, onWall: (showName) => store.putOnWall(showName) }} /> : null}
             {state.statusUnread ? <p className="still-note">Still could not read the status just now. This is our failure; it says nothing about the transaction.</p> : null}
             <div className="still-mcp-actions">
               {!settled && phase !== 'expired' && prepared.reviewUrl ? (
                 <button type="button" className="still-btn" onClick={() => void store.openReview()}>{fromWallet ? 'Review and pay' : 'Review and sign'} on {stillCardReviewHostV1(prepared.reviewUrl)}</button>
               ) : null}
-              {status?.shareUrl ? <button type="button" className="still-btn" onClick={() => void store.openShare()}>Share the purchase</button> : null}
+              {status?.shareUrl ? <button type="button" className="still-btn" onClick={() => void store.openShare()}>
+                {state.loop?.complete ? `Share Loop #${state.loop.loopNo}` : 'Share the purchase'}</button> : null}
               {status?.transactionHash ? <button type="button" className="still-btn sec" onClick={() => void store.openTransaction()}>View on BaseScan</button> : null}
               {!settled ? (
                 <button type="button" className="still-btn sec" disabled={state.following} onClick={() => store.checkAgain()}>

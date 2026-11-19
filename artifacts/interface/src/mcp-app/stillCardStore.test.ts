@@ -108,3 +108,41 @@ test('the card takes the commission from the result’s _meta, as the host hands
   await tick();
   assert.equal(store.get().prepared?.commission, undefined);
 });
+
+// 2026-11-19: a Loop made in the chat looked like any purchase there, and its owner never saw the wall.
+test('a status that names a Loop gives the card its Loop, and the owner’s press puts it on the wall through the card’s tool', async () => {
+  const EXECUTION = '0f6b2a8e-1c4d-4e5f-8a9b-0c1d2e3f4a5b';
+  const LOOP = { executionId: EXECUTION, loopNo: 3, brand: 'apple', complete: true, undelivered: null, onWall: false };
+  const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+  const fake: StillCardHostV1 = {
+    ontoolresult: undefined, onhostcontextchanged: undefined, connect: async () => {}, getHostContext: () => ({}),
+    callServerTool: async (params) => {
+      calls.push(params);
+      if (params.name === 'still_card_lending') return { structuredContent: { status: 200, body: { label: 'alice.base.eth' }, wallet: `0x${'1'.repeat(40)}` } };
+      return { structuredContent: { reviewId: REVIEW_ID, state: 'confirmed', purchase: { productName: 'iTunes Germany', packageValue: '25', priceUsdc: '29.12',
+        invoiceStatus: 'complete', invoiceStatusError: null, shareUrl: null } }, _meta: { 'xyz.miorail/loop': LOOP } };
+    },
+    openLink: async () => ({}),
+  };
+  const store = createStillCardStoreV1(fake, { now: () => new Date('2026-11-02T15:00:00.000Z') });
+  fake.ontoolresult!({ structuredContent: { ...LOAN, purchase: { productName: 'iTunes Germany', packageValue: '25', faceCurrency: 'EUR', priceUsdc: '29.12' } } });
+  await tick();
+  assert.deepEqual(store.get().loop, LOOP);
+  assert.deepEqual(await store.putOnWall(true), { label: 'alice.base.eth' });
+  assert.deepEqual(calls.at(-1), { name: 'still_card_lending', arguments: { method: 'POST', path: `/api/still/loops/${EXECUTION}/wall`, body: { showName: true } } });
+  assert.equal(store.get().loop?.onWall, true);
+  await assert.rejects(store.putOnWall(false), /loop_not_wallable/, 'once on the wall, nothing more is asked');
+});
+
+test('a status without a Loop leaves the card without one, and a malformed Loop is no Loop', async () => {
+  const fake: StillCardHostV1 = {
+    ontoolresult: undefined, onhostcontextchanged: undefined, connect: async () => {}, getHostContext: () => ({}),
+    callServerTool: async () => ({ structuredContent: { reviewId: REVIEW_ID, state: 'confirmed' }, _meta: { 'xyz.miorail/loop': { loopNo: 3, brand: 'nvidia' } } }),
+    openLink: async () => ({}),
+  };
+  const store = createStillCardStoreV1(fake, { now: () => new Date('2026-11-02T15:00:00.000Z') });
+  fake.ontoolresult!({ structuredContent: LOAN });
+  await tick();
+  assert.equal(store.get().loop, null);
+  await assert.rejects(store.putOnWall(false), /loop_not_wallable/);
+});

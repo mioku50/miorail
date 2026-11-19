@@ -53,6 +53,9 @@ export interface StillSpendModelV1 {
   /** Subscriptions a card pays (lib/still-engine/src/subscriptions.ts): the list, and the service chosen in it.
    * Without this, they are not offered. */
   subscriptions?: { open: boolean; chosen: string | null; onOpen: (open: boolean) => void; onChoose: (key: string) => void };
+  /** Opened from /loops for one brand (/spend?card=apple): its own cards only, and what paying one with a loan
+   * against its stock makes. Absent otherwise. */
+  loop?: { name: string; card: string; collateral: string } | null;
   searching: boolean;
   products: SpendProductRowV1[] | null;
   searchError: string | null;
@@ -176,6 +179,10 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
             </form>
           ) : null}
           <div className="still-spend-results" aria-live="polite">
+            {model.loop && model.type === 'giftcard' ? (
+              <p className="still-note still-spend-loop">{model.loop.name}’s own cards for {spendCountryNameV1(model.country)}: paid with a loan
+                against {model.loop.collateral}, one makes a Loop, and the stock stays as the loan’s collateral.</p>
+            ) : null}
             {model.searching ? <p className="still-note" role="status">Reading Bitrefill’s catalogue…</p>
               : model.searchError ? <p className="still-warn" role="alert">{model.searchError}</p>
                 // Bitrefill has no top-up for a number in some countries (Russia, 2026-11-14): said so, with

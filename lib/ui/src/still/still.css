@@ -322,6 +322,18 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
   display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; white-space: nowrap;
 }
 .still-extra-action[disabled] { opacity: 0.6; cursor: progress; }
+/* A Loop, on the loan's result and in an assistant's card: its own card, the number said large (2026-11-19). */
+.still-loop-card { align-items: flex-start; padding: 16px; }
+.still-loop-card[data-complete='yes'] { border-color: var(--sm-accent); background: var(--sm-accent-soft); }
+.still-loop-card[data-complete='yes'] .still-extra-icon { background: var(--sm-accent); color: var(--sm-accent-on); }
+.still-loop-card .still-extra-body { gap: 6px; }
+.still-loop-head { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.2; }
+.still-loop-line { margin: 0; font-size: 15px; line-height: 1.4; color: var(--sm-ink); }
+.still-loop-card p { margin: 0; }
+.still-loops-mine .still-section.still-loop { margin: 12px 0 0; max-width: none; }
+.still-loops-mine > .still-note { margin: 10px 0 0; }
+.still-loop-card .still-loop-actions { margin-top: 4px; }
+.still-loop-name { display: inline-flex; align-items: center; gap: 6px; }
 .still-share { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 10px; }
 .still-share .still-note { margin: 0; }
 .still-share-link { font-size: 14px; font-weight: 500; color: var(--sm-link); text-decoration: none; }

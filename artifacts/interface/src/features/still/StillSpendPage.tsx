@@ -12,6 +12,8 @@ import {
   spendProductViewV1,
   spendSearchViewV1,
   spendUsdcTextV1,
+  loopBrandByIdV1,
+  loopBrandProductsV1,
   STILL_SUBSCRIPTIONS_V1,
   stillSubscriptionProductsV1,
   type SpendGiftCategoryV1,
@@ -30,10 +32,12 @@ export function StillSpendPage() {
   const usdc = useStillUsdcV1(session.wallet, { enabled: session.signedIn });
   // /subscriptions opens on them: a link a post can carry, with or without a slash after it.
   const startsOnSubscriptions = location.replace(/\/+$/, '') === '/subscriptions';
-  const [type, setType] = useState<SpendTypeV1>(startsOnSubscriptions ? 'giftcard' : 'esim');
+  // /spend?card=apple, from /loops: that brand's own cards in the reader's country, and its stock ready for the loan.
+  const [loop, setLoop] = useState(() => loopBrandByIdV1(typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('card')));
+  const [type, setType] = useState<SpendTypeV1>(startsOnSubscriptions || loop ? 'giftcard' : 'esim');
   const [country, setCountry] = useState(() => spendCountryDefaultV1(typeof navigator === 'undefined' ? undefined : navigator.language));
-  const [query, setQuery] = useState('');
-  const [asked, setAsked] = useState('');
+  const [query, setQuery] = useState(loop?.search ?? '');
+  const [asked, setAsked] = useState(loop?.search ?? '');
   const [category, setCategory] = useState<SpendGiftCategoryV1 | null>(null);
   // Subscriptions: the list open, and the service whose cards are searched for (lib/still-engine/src/subscriptions.ts).
   const [subscriptionsOpen, setSubscriptionsOpen] = useState(startsOnSubscriptions);
@@ -53,7 +57,9 @@ export function StillSpendPage() {
   const room = mine.data?.headline.availableCents != null ? { cents: mine.data.headline.availableCents, complete: mine.data.headline.complete } : null;
   const results = useMemo(() => search.data !== undefined ? spendSearchViewV1(search.data) : null, [search.data]);
   // A service's search keeps only that service's cards: "Disney" also finds a park ticket, "Xbox" a game's points.
-  const listed = results?.products && subscriptionsOpen && service ? stillSubscriptionProductsV1(service, results.products) : results?.products ?? null;
+  const listed = results?.products && subscriptionsOpen && service ? stillSubscriptionProductsV1(service, results.products)
+    // A brand's word finds other stores too ("Xbox": Kinguin, G2A, a game's points): only its own cards make a Loop.
+    : results?.products && loop ? loopBrandProductsV1(loop.brand, results.products) : results?.products ?? null;
   const walletAtomic = usdc.data?.raw ?? null;
   const detail = useMemo(() => product.data !== undefined ? spendProductViewV1(product.data, room, walletAtomic) : null, [product.data, room?.cents, room?.complete, walletAtomic]);
   const productError = product.error
@@ -76,7 +82,9 @@ export function StillSpendPage() {
       // A number goes only with a top-up, never with anything else the person picked after typing it.
       const opened = spendOrderViewV1(await order.mutateAsync({ productId: view.id, packageValue: chosen, email: email.trim(), ...(view.phone ? { phone: phone.trim() } : {}) }));
       if (!opened) { setPayError(spendOrderErrorV1('unreadable')); return; }
-      navigate(paidWith === 'wallet' ? `/spend/pay/${opened.orderId}` : `/borrow?spend=${opened.orderId}`);
+      // A brand's own card paid with a loan: its stock is the one the loan page offers first.
+      const pledge = loop && loopBrandProductsV1(loop.brand, [view]).length === 1 ? `&asset=${loop.collateral}` : '';
+      navigate(paidWith === 'wallet' ? `/spend/pay/${opened.orderId}` : `/borrow?spend=${opened.orderId}${pledge}`);
     } catch (error) {
       setPayError(spendOrderErrorV1(error instanceof Error ? error.message : ''));
     }
@@ -86,17 +94,18 @@ export function StillSpendPage() {
     <StillFrame tab="more" sky={sky} entry>
       <StillSpend model={{
         sky, signedIn: session.signedIn, signInHref: `/signin?next=${encodeURIComponent(location)}`,
-        type, onType: (next) => { setType(next); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
+        type, onType: (next) => { setType(next); setLoop(null); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         country, onCountry: (next) => { setCountry(next); setSelected(null); pick(null); },
         query, onQuery: setQuery,
-        onSearch: () => { setAsked(query.trim()); setCategory(null); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
+        // Another word is another search: the brand's own cards only for the word the link searched.
+        onSearch: () => { setAsked(query.trim()); setLoop(loop && query.trim() === loop.search ? loop : null); setCategory(null); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         // A category replaces the brand searched for, and a brand replaces the category; either closes the subscriptions.
-        category, onCategory: (next) => { setCategory(next); setQuery(''); setAsked(''); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
+        category, onCategory: (next) => { setCategory(next); setLoop(null); setQuery(''); setAsked(''); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         subscriptions: {
           open: subscriptionsOpen, chosen: service,
           onOpen: (open) => {
             if (open) setType('giftcard');
-            setSubscriptionsOpen(open); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null);
+            setSubscriptionsOpen(open); setLoop(null); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null);
           },
           onChoose: (key) => {
             const chosen = STILL_SUBSCRIPTIONS_V1.find((row) => row.key === key);
@@ -104,6 +113,7 @@ export function StillSpendPage() {
             setService(key); setCategory(null); setQuery(''); setAsked(chosen.search); setSelected(null); pick(null);
           },
         },
+        loop: loop ? { name: loop.name, card: loop.card, collateral: loop.collateral } : null,
         searching: search.isFetching,
         // Nothing listed while the subscriptions are open and no service is chosen yet.
         products: subscriptionsOpen && !service ? null : listed,

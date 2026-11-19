@@ -62,6 +62,29 @@ function purchaseTitleV1(p: Record<string, unknown>): string {
 export const STILL_CARD_COMMISSION_META_V1 = 'xyz.miorail/commission';
 const commissionV1 = (meta: unknown): { commission?: true } => (object(meta) && meta[STILL_CARD_COMMISSION_META_V1] === true ? { commission: true } : {});
 
+/** The Loop a purchase made, as the status tool hands it to the card: its `_meta` under this key, the server's
+ * STILL_LOOP_META_KEY_V1 (routes/mcpPrivate/stillReviewTool.ts), never the answer the assistant reads. */
+export const STILL_CARD_LOOP_META_V1 = 'xyz.miorail/loop';
+
+export interface StillCardLoopV1 {
+  executionId: string;
+  loopNo: number;
+  brand: 'apple' | 'amazon' | 'google' | 'meta' | 'microsoft';
+  complete: boolean;
+  undelivered: 'blocked' | 'denied' | 'payment_error' | null;
+  onWall: boolean;
+}
+
+/** The Loop from a status result's `_meta`, or null: a shape the server does not send is no Loop. */
+export function stillCardLoopV1(meta: unknown): StillCardLoopV1 | null {
+  const loop = object(meta) ? meta[STILL_CARD_LOOP_META_V1] : null;
+  if (!object(loop) || typeof loop.executionId !== 'string' || !UUID.test(loop.executionId) || !Number.isSafeInteger(loop.loopNo) || (loop.loopNo as number) < 1
+    || !['apple', 'amazon', 'google', 'meta', 'microsoft'].includes(String(loop.brand)) || typeof loop.complete !== 'boolean' || typeof loop.onWall !== 'boolean'
+    || !(loop.undelivered === null || ['blocked', 'denied', 'payment_error'].includes(String(loop.undelivered)))) return null;
+  return { executionId: loop.executionId, loopNo: loop.loopNo as number, brand: loop.brand as StillCardLoopV1['brand'], complete: loop.complete,
+    undelivered: loop.undelivered as StillCardLoopV1['undelivered'], onWall: loop.onWall };
+}
+
 /** The prepared review from a prepare tool's structured result (and the result's `_meta`); null for anything else. */
 export function stillCardPreparedV1(structured: unknown, meta?: unknown): StillCardPreparedV1 | null {
   if (!object(structured) || !text(structured.reviewId, 36) || !UUID.test(structured.reviewId)) return null;
