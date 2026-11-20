@@ -273,7 +273,8 @@ const AMOUNT_TOKENS_V2 = /(?:(?<![\p{L}\d])([-−–]))?((?:\d|[.,](?=\d))[\d.,]
  * a hundred times what was written; "5k" and "2 тысячи" prepared 5 and 2. A token's name ("5 USDC",
  * "0.5 NVDAc") and a dollar after it are not here.
  */
-const AMOUNT_SCALE_AFTER_V2 = /^\s*(?:k|к|kk|mm|m|mln|bn|thousands?|millions?|billions?|cents?|¢|тыс\p{L}*|млн|млрд|миллион\p{L}*|миллиард\p{L}*|цент\p{L}*|коп\p{L}*)(?![\p{L}\d])/iu;
+// "5 hundred", "5 grand", «5 тыщ», «5 сотен» too (audit SS-5, 2026-11-20: each prepared 5).
+const AMOUNT_SCALE_AFTER_V2 = /^\s*(?:k|к|kk|mm|m|mln|bn|hundreds?|grand|lakhs?|thousands?|millions?|billions?|cents?|¢|тыс\p{L}*|тыщ\p{L}*|сот\p{L}*|косар\p{L}*|млн|млрд|миллион\p{L}*|миллиард\p{L}*|цент\p{L}*|коп\p{L}*)(?![\p{L}\d])/iu;
 /** "1.000", "12,500" or "250.000": three digits after one separator is how much of Europe writes a
  * thousand, so it is not read as one, twelve and a half or two hundred and fifty (audit MCP-1). */
 const AMOUNT_GROUPED_V2 = /^[1-9]\d{0,2}[.,]\d{3}$/u;
@@ -607,6 +608,16 @@ export function agentSwapAnswerV2(input: {
         : line?.wallet
           ? { raw: line.wallet.raw, decimals: line.wallet.decimals, block: input.report.reading.block }
           : 'unread';
+  // "All" or "half" is worked out only for what the Mirror reads: Still's own stocks, cbBTC, ETH and PAXG. Any other
+  // stock was never read, which is not our failure to read it (audit SW-3, 2026-11-20).
+  if (held === 'unread' && !line) {
+    return say(
+      ru
+        ? `«Всё» и «половину» я считаю только для того, что Still читает в кошельке: его акций, cbBTC, ETH и PAXG. Укажите количество ${from} в Swap AI. ${signs}`
+        : `I work out “all” or “half” only for what Still reads in your wallet: its own stocks, cbBTC, ETH and PAXG. Name an amount of ${from} in Swap AI. ${signs}`,
+      goalFor(null),
+    );
+  }
   if (held === null || held === 'unread') {
     return say(
       held === null
@@ -683,8 +694,10 @@ const SEND_NEGATED_V2 = new RegExp(`${EDGE}(?:(?:do\\s+not|don['’]?t|never)\\s
 // A sentence ends at . ! ? ; … before a space, or at a line break: the point
 // of 0.5 or of alice.base.eth does not end one.
 // ---------------------------------------------------------------------------
-const SEND_NEGATION_V2 = new RegExp(`${EDGE}(?:not|never|cancel\\p{L}*|stop|abort|undo|\\p{L}+n['’]t`
-  + `|не|ни|нельзя|никогда|отмен\\p{L}*|стоп|останов\\p{L}*|передумал\\p{L}*)(?=$|[^\\p{L}\\p{N}])`, 'iu');
+// And "hold off", "no, scrap that", «погоди», «потом» (audit SS-7, 2026-11-20): each answered "Prepared".
+const SEND_NEGATION_V2 = new RegExp(`${EDGE}(?:not|never|no|cancel\\p{L}*|stop|abort|undo|\\p{L}+n['’]t|hold\\s+off|scrap\\p{L}*|forget\\s+it`
+  + `|never\\s*mind|wait|later|не|ни|нельзя|никогда|отмен\\p{L}*|стоп|останов\\p{L}*|передумал\\p{L}*|погоди|подожди|повремени|потом|позже|забудь`
+  + `)(?=$|[^\\p{L}\\p{N}])`, 'iu');
 const SEND_SENTENCE_END_V2 = /[.!?;…]+(?=\s|$)|\n+/u;
 function sendNegatedV2(question: string): boolean {
   return SEND_NEGATED_V2.test(question) ||

@@ -8,7 +8,7 @@ void React;
 
 import { lendingLoopWireV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView';
 import { StillLoopOffer, loopSentenceV1, loopShareTextV1 } from '../src/still/StillLoop';
-import { LOOP_LOGO_V1, STILL_LOOP_PROMPT_V1, StillLoops, stillLoopCountdownV1, stillLoopDayV1, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsMineViewV1, stillLoopsViewV1 } from '../src/still/StillLoops';
+import { LOOP_LOGO_V1, STILL_LOOP_PROMPT_V1, StillLoops, stillLoopCountdownV1, stillLoopDayV1, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopLocalTimeV1, stillLoopsMineViewV1, stillLoopsViewV1 } from '../src/still/StillLoops';
 import { StillMore } from '../src/still/StillPages';
 import { StillSpendDoor } from '../src/still/StillHome';
 import { skyStateV1 } from '../src/still/skyState';
@@ -39,7 +39,7 @@ describe('a Loop on the loan’s own result', () => {
     assert.match(html, /Apple stock stayed\. An Apple gift card arrived\./);
     assert.match(html, />Put it on the Loop wall</);
     assert.match(html, /type="checkbox"/);
-    assert.match(html, /never your wallet or the transaction\. Not affiliated with Apple\./);
+    assert.match(html, /never your wallet or the transaction\. While loans on Base\s+are few, someone could still match those to your loan, and so to your wallet: put it on the wall only if that is fine with you\.\s+Not affiliated with Apple\./);
     // Its own card, as the order above it has (2026-11-19).
     assert.match(html, /class="still-extra still-loop-card" data-complete="yes"/);
     assert.match(html, /<h2 class="still-loop-head">Loop #7<\/h2>/);
@@ -55,7 +55,9 @@ describe('a Loop on the loan’s own result', () => {
     assert.match(team, /A Still team Loop: shown as the team’s and not counted\./);
     assert.doesNotMatch(team, /Put it on the Loop wall/);
     const walled = renderToStaticMarkup(<StillLoopOffer model={{ loop: { ...LOOP, onWall: true }, onWall: never }} />);
-    assert.match(walled, /On the Loop wall as Loop #7\./);
+    // Read after a reload, which does not say the wall's name: only that it is there (audit UI-4).
+    assert.match(walled, /On the Loop wall\./);
+    assert.doesNotMatch(walled, /On the Loop wall as/);
     assert.doesNotMatch(walled, /Put it on the Loop wall/);
   });
 });
@@ -199,7 +201,9 @@ describe('/loops: the draw', () => {
     assert.match(html, /the first Base block at least five and a half minutes after the close/);
     assert.match(html, /could not be fixed within two minutes of the close, the block is the first at least five minutes after it was/);
     assert.match(html, /The Still team has committed not to enter\./);
-    assert.match(html, /href="\/spend" class="still-btn sec">Spend</);
+    assert.match(html, /href="\/spend" class="still-btn sec" aria-label="Spend: pick a card to make a Loop">Spend</);
+    // Each brand's link says its card to a screen reader (audit UI-5).
+    assert.match(html, /href="\/spend\?card=apple" class="still-btn sec" aria-label="Spend: An Apple gift card">Spend</);
     assert.match(html, /href="\/signin\?next=%2Floops" class="still-btn sec">Sign in to enter</, 'the same button as Spend');
     // One rule both ways, and one that can be checked (audit LOOP-2): per wallet, not per person.
     assert.match(html, /the same step: enter here before the close/);
@@ -293,6 +297,15 @@ describe('/loops: the draw', () => {
     assert.match(html, /Draw of Sat 28 Nov · 3 × 5 USDC/);
     assert.match(html, /won by Entry K3F9X2 \(paid\), Loop #4, Entry AB12CD/);
     assert.equal(stillLoopDrawPrizeV1({ winnerCount: 1, prizeUsdc: '10' }), '10 USDC');
+  });
+});
+
+describe('the draw’s times by the reader’s clock (audit UI-3)', () => {
+  it('adds the local time beside UTC, with the day when it differs, and nothing in UTC', () => {
+    assert.equal(stillLoopLocalTimeV1('2026-11-28T18:00:00.000Z', -180), ' (21:00 your time)');
+    assert.equal(stillLoopLocalTimeV1('2026-11-21T00:00:00.000Z', 300), ' (Fri 19:00 your time)');
+    assert.equal(stillLoopLocalTimeV1('2026-11-28T18:00:00.000Z', 0), '');
+    assert.equal(stillLoopLocalTimeV1('never', -180), '');
   });
 });
 

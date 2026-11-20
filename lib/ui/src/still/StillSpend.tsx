@@ -302,7 +302,8 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                               onChange={(event) => model.pay!.onEmail(event.target.value)} placeholder="you@example.com" />
                             <span aria-hidden="true" />
                           </div>
-                          <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and keeps no copy.</p>
+                          {/* As held, not "no copy" (audit PRIV-3, 2026-11-20): the open order holds it in memory to show it on the review. */}
+                          <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and holds it only with the open order, in memory and for at most half an hour, to show it on the review; no database, log or loan keeps it.</p>
                           {product.phone ? (
                             <>
                               <label className="still-borrow-label" htmlFor={`${id}-phone`}>Phone number to top up</label>

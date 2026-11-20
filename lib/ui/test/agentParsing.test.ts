@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { agentRouteV2, agentSendRequestV2, agentSwapRequestV2, assetsNamedInV2, type AgentStockV2 } from '../src/still/agentAnswers';
+import { computeMirror } from '@mioagent/still-engine';
+import type { MirrorReport } from '@mioagent/still-engine/report';
+
+import { EXAMPLE, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
+import { agentRouteV2, agentSendRequestV2, agentSwapAnswerV2, agentSwapRequestV2, assetsNamedInV2, type AgentStockV2 } from '../src/still/agentAnswers';
 
 // ---------------------------------------------------------------------------
 // How the Agent reads a trade, against the phrases the 11-20 audit found misread (SW-1, MCP-1, SS-1 to SS-4,
@@ -105,5 +109,33 @@ describe('the Agent reads a trade by its words, not by a company name in passing
     assert.equal(swap('swap all five NVDAc to USDC'), 'NVDAc→USDC unclear');
     assert.equal(send('send all my NVDAc to alice.base.eth'), 'NVDAc {"kind":"share","share":"all"}');
     assert.equal(swap('продай половину NVDAc'), 'NVDAc→USDC {"kind":"share","share":"half"}');
+  });
+});
+
+describe('the Agent asks back what it would have to guess (P3s of the 11-20 audit)', () => {
+  it('reads a scale word after a number as a scale it does not take (SS-5)', () => {
+    for (const question of ['send 5 hundred USDC to alice.base.eth', 'send 5 grand USDC to alice.base.eth', 'переведи 5 тыщ USDC на alice.base.eth',
+      'переведи 5 сотен USDC на alice.base.eth']) {
+      assert.equal(send(question), 'USDC unclear', question);
+    }
+    assert.equal(send('send 500 USDC to alice.base.eth'), 'USDC {"kind":"exact","value":"500"}');
+  });
+
+  it('hears "hold off", "no, scrap that" and «погоди» as not now (SS-7)', () => {
+    for (const question of ['Hold off on sending 5 USDC to alice.base.eth', 'send 5 USDC to alice.base.eth — no, scrap that',
+      'Погоди с переводом 5 USDC на alice.base.eth', 'переведи 5 USDC на alice.base.eth потом']) {
+      assert.equal(agentSendRequestV2(question)?.unclear, 'negated', question);
+    }
+    assert.equal(agentSendRequestV2('send 5 USDC to alice.base.eth')?.unclear, null);
+  });
+});
+
+describe('a share of a stock the Mirror does not read', () => {
+  it('asks for an amount instead of calling it our failure to read (SW-3)', () => {
+    const report = JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: snapshot(EXAMPLE), calendar: calendar(),
+      subject: { address: `0x${'1'.repeat(40)}`, name: null, input: `0x${'1'.repeat(40)}` }, assembledAt: new Date('2026-11-20T09:00:00Z') }))) as MirrorReport;
+    const answer = agentSwapAnswerV2({ question: 'Sell all my ANTc', report, stocks: STOCKS });
+    assert.match(answer.text, /^I work out “all” or “half” only for what Still reads in your wallet: its own stocks, cbBTC, ETH and PAXG\. Name an amount of ANTc in Swap AI\./);
+    assert.doesNotMatch(answer.text, /our failure/);
   });
 });

@@ -234,6 +234,16 @@ export function stillLoopDrawTimeV1(value: string): string {
   const two = (n: number) => String(n).padStart(2, '0');
   return `${WEEKDAYS_V1[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS_V1[d.getUTCMonth()]}, ${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC`;
 }
+/** The same moment by the reader's own clock, as " (21:00 your time)", when that clock is not UTC; else nothing
+ * (audit UI-3, 2026-11-20: the draw said its times in UTC only). */
+export function stillLoopLocalTimeV1(value: string, offsetMinutes = new Date(value).getTimezoneOffset()): string {
+  const at = new Date(value);
+  if (!Number.isFinite(at.getTime()) || offsetMinutes === 0) return '';
+  const local = new Date(at.getTime() - offsetMinutes * 60_000);
+  const two = (n: number) => String(n).padStart(2, '0');
+  const sameDay = local.getUTCDate() === at.getUTCDate();
+  return ` (${sameDay ? '' : `${WEEKDAYS_V1[local.getUTCDay()]} `}${two(local.getUTCHours())}:${two(local.getUTCMinutes())} your time)`;
+}
 /** "17 Nov 2026": a Loop's day on the wall, the same in every browser, and never split across two lines
  * (on a phone "2026-11-" and "25" fell on two, 2026-11-19). */
 export function stillLoopDayV1(day: string): string {
@@ -420,8 +430,9 @@ function StillLoopDrawV1({ draws, entry, now }: { draws: NonNullable<StillLoopsV
               {countdown ? <span className="still-loops-countdown">{draw.state === 'upcoming' ? 'Opens in' : 'Closes in'} {countdown}</span> : null}
             </div>
             <p className="still-note">
-              {draw.state === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(draw.opensAt)}; closes ${stillLoopDrawTimeV1(draw.closesAt)}.`
-                : `Closes ${stillLoopDrawTimeV1(draw.closesAt)}. ${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'} so far.`}
+              {draw.state === 'upcoming'
+                ? `Opens ${stillLoopDrawTimeV1(draw.opensAt)}${stillLoopLocalTimeV1(draw.opensAt)}; closes ${stillLoopDrawTimeV1(draw.closesAt)}${stillLoopLocalTimeV1(draw.closesAt)}.`
+                : `Closes ${stillLoopDrawTimeV1(draw.closesAt)}${stillLoopLocalTimeV1(draw.closesAt)}. ${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'} so far.`}
               {' '}{winnersSentenceV1(draw)}
             </p>
           </div>
@@ -440,7 +451,7 @@ function StillLoopDrawV1({ draws, entry, now }: { draws: NonNullable<StillLoopsV
               <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
               <div className="name">Make a Loop</div>
               <div className="line">A Loop made while the draw is open lets you enter with it, with no other check.</div>
-              <StillLink href="/spend" className="still-btn sec">Spend</StillLink>
+              <StillLink href="/spend" className="still-btn sec" aria-label="Spend: pick a card to make a Loop">Spend</StillLink>
             </li>
           </ul>
           <div className="still-loops-enter">
@@ -527,7 +538,8 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
                       <div className="line">{LOOP_BRAND_WORDS_V1[brand].article} {LOOP_BRAND_WORDS_V1[brand].card}, paid by a loan against {COLLATERAL_V1[brand]}</div>
                       {made > 0 ? <div className="line still-loops-made">{made} {made === 1 ? 'Loop' : 'Loops'} so far</div> : null}
                     </div>
-                    <StillLink href={stillLoopSpendHrefV1(brand)} className="still-btn sec">Spend</StillLink>
+                    {/* Six links named "Spend" were one name to a screen reader (audit UI-5): each says its card. */}
+                    <StillLink href={stillLoopSpendHrefV1(brand)} className="still-btn sec" aria-label={`Spend: ${LOOP_BRAND_WORDS_V1[brand].article} ${LOOP_BRAND_WORDS_V1[brand].card}`}>Spend</StillLink>
                   </li>
                 );
               })}

@@ -58,13 +58,14 @@ export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
   const brand = LOOP_BRAND_WORDS_V1[loop.brand];
   const [showName, setShowName] = useState(false);
   const [state, setState] = useState<'idle' | 'sending' | 'done' | 'failed'>(loop.onWall ? 'done' : 'idle');
-  const [label, setLabel] = useState<string | null>(null);
+  // Known only from this page's own press: after a reload the wall's name is not in what this page reads (audit UI-4).
+  const [label, setLabel] = useState<{ value: string | null } | null>(null);
   const [nameMissing, setNameMissing] = useState(false);
   const put = () => {
     setState('sending');
     model.onWall(showName).then(
       (answer) => {
-        setLabel(answer.label);
+        setLabel({ value: answer.label });
         setNameMissing(showName && answer.label === null);
         setState('done');
       },
@@ -91,7 +92,7 @@ export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
           {loop.complete && !loop.team ? (
             state === 'done' ? (
               <p className="still-extra-note still-loop-walled" role="status">
-                On the Loop wall{label ? ` as ${label}` : ` as Loop #${loop.loopNo}`}.
+                On the Loop wall{label === null ? '' : label.value ? ` as ${label.value}` : ` as Loop #${loop.loopNo}`}.
                 {nameMissing ? ' Your wallet has no Basename to show, so the wall shows the number.' : ''}
               </p>
             ) : (
@@ -110,7 +111,9 @@ export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
       </div>
       {model.note === false ? null : (
         <p className="still-note">
-          The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction. Not affiliated with {brand.name}.
+          The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction. While loans on Base
+          are few, someone could still match those to your loan, and so to your wallet: put it on the wall only if that is fine with you.
+          Not affiliated with {brand.name}.
         </p>
       )}
     </section>
