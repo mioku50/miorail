@@ -2010,13 +2010,13 @@ describe('the chooser', () => {
     assert.equal(tickerOnly?.title, 'NVDA');
   });
 
-  test('the headline counters are Coinbase stocks and the ones with tokens outstanding', () => {
+  test('the headline counter is the Coinbase stocks with tokens outstanding, not the size of Coinbase’s list', () => {
     const counters = underlyingCountersV1({
       entries: [],
       totals: { underlyings: 19, boundRepresentations: 25 },
       observedAt: NOW,
     });
-    assert.deepEqual(counters.map((row) => row.label), ['Coinbase stocks', 'With tokens outstanding']);
+    assert.deepEqual(counters.map((row) => row.label), ['With tokens outstanding']);
     assert.ok(counters.every((row) => row.tone === 'neutral'));
     assert.ok(!counters.some((row) => /multi-issuer|elsewhere/i.test(`${row.label} ${row.note ?? ''}`)));
   });
@@ -4305,11 +4305,13 @@ describe('a scoped list says what it is a slice of', () => {
     const entry = (live: number) => ({ liveRepresentationCount: live }) as unknown as Wire['entries'][number];
     const whole = underlyingCountersV1({ scope: 'coinbase_b20', entries: [entry(1), entry(0), entry(2)], totals: { ...totals, underlyings: 3 }, observedAt: NOW });
     assert.deepEqual(whole.map((counter) => [counter.label, counter.value, counter.note]), [
-      ['Coinbase stocks', '3', 'companies Coinbase’s list names now'],
-      ['With tokens outstanding', '2', 'companies among them whose Coinbase contract holds any, as Base was last read'],
+      ['With tokens outstanding', '2', 'companies whose Coinbase contract holds any, as Base was last read'],
     ]);
+    // The size of Coinbase's own list is not a headline: it follows what Coinbase's API lists, minted or not
+    // (377, 87, then 378 within four days, 2026-11-20).
+    assert.ok(!whole.some((counter) => /list names/i.test(`${counter.label} ${counter.note ?? ''}`)));
     const cut = underlyingCountersV1({ scope: 'coinbase_b20', entries: [entry(1), entry(0)], totals: { ...totals, underlyings: 600 }, observedAt: NOW });
-    assert.deepEqual([cut[1]!.value, cut[1]!.note], ['at least 1', 'companies, of the first 2 read here, whose Coinbase contract holds any, as Base was last read']);
+    assert.deepEqual([cut[0]!.value, cut[0]!.note], ['at least 1', 'companies, of the first 2 read here, whose Coinbase contract holds any, as Base was last read']);
   });
 
 });

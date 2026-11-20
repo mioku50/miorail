@@ -3607,21 +3607,15 @@ export function stocksHeadlineV1(
  */
 export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): FactViewV1[] {
   if (!wire) return [];
-  // Coinbase's contracts only. Two numbers a reader can use: how many stocks,
-  // and how many of them hold any tokens at all — the same split the grid
-  // below draws.
+  // Coinbase's contracts only, and one number: the companies whose Coinbase contract holds any tokens. The size of
+  // Coinbase's own list stood beside it until 2026-11-20, when the operator dropped it so it would not confuse
+  // people. That size follows what Coinbase's API chooses to list, minted or not: 377, then 87, then 378 again
+  // within four days. A contract with none outstanding has no holder and no market on Base. Those companies stay
+  // in the fold under the grid and in search.
   return [
-    // What each number counts, said with it (audit STOCK-1, 2026-11-18): the first is the companies Coinbase's
-    // own list names at its last reading, not every contract Coinbase ever deployed; the second is Miorail's own
-    // reading of Base, which can trail a mint by a pass.
-    {
-      label: 'Coinbase stocks',
-      value: String(wire.totals.underlyings),
-      note: 'companies Coinbase’s list names now',
-      tone: 'neutral',
-    },
     // Counted on the rows this answer carries: when the index cut them short of the total (it serves 500 at
-    // most), the count is a floor and says so, never a total beside one it cannot add up to.
+    // most), the count is a floor and says so, never a total beside one it cannot add up to. It is Miorail's own
+    // reading of Base, which can trail a mint by a pass (audit STOCK-1, 2026-11-18).
     (() => {
       const live = wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length;
       const cut = wire.entries.length < wire.totals.underlyings;
@@ -3630,7 +3624,7 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
         value: cut ? `at least ${live}` : String(live),
         note: cut
           ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, as Base was last read`
-          : 'companies among them whose Coinbase contract holds any, as Base was last read',
+          : 'companies whose Coinbase contract holds any, as Base was last read',
         tone: 'neutral' as const,
       };
     })(),
