@@ -82,13 +82,14 @@ export function putStillLoopOnWallV1(executionId: string, showName: boolean): Pr
   return fetchApi(`/api/still/loops/${executionId}/wall`, { method: 'POST', body: JSON.stringify({ showName }) });
 }
 
-/** Loops in public: the counts and the wall. Null while Loops are off on this server. */
-export function useStillLoopsV1() {
+/** Loops in public: the counts and the wall. Null while Loops are off on this server. Home's door reads it once
+ * (`poll: false`); /loops re-reads it every minute. */
+export function useStillLoopsV1(options: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: ['still-loops'] as const,
     retry: false,
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: options.poll === false ? false : 60_000,
     queryFn: async () => {
       try {
         return await fetchApi<unknown>('/api/public/still/loops');

@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 
+import { LOOP_BRANDS_V1 } from '@mioagent/still-engine/loops';
+import { STOCKS } from '@mioagent/still-engine/registry';
+
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import type { SkyStateV1 } from './skyState';
 import { StillEligibilityConfirmSlotV1 } from './StillEligibility';
 import { StillHeader, StillLink } from './StillFrame';
 import { LOOP_BRAND_WORDS_V1, StillLoopOffer, stillLoopSpendHrefV1 } from './StillLoop';
+import { StillIconV1 } from './icons';
 import type { LendingLoopWireV1 } from '../console/lendingReviewView';
 
 void React;
@@ -23,6 +27,36 @@ const VIA_V1 = ['web', 'claude', 'chatgpt', 'grok', 'assistant'] as const;
 const VIA_WORDS_V1: Readonly<Record<(typeof VIA_V1)[number], string | null>> = {
   web: null, claude: 'Done in Claude', chatgpt: 'Done in ChatGPT', grok: 'Done in Grok', assistant: 'Done with an AI assistant',
 };
+
+/**
+ * Each brand's mark: Coinbase's own icon for the stock a Loop pledges (AAPLc for Apple), the one the Stocks list
+ * shows, served from this origin. No mark of our own drawing, and the foot still says "not affiliated"
+ * (2026-11-20: the operator asked for the companies' logos on /loops).
+ */
+export const LOOP_LOGO_V1: Readonly<Record<BrandV1, string>> = Object.fromEntries(LOOP_BRANDS_V1.map((row) => {
+  const token = STOCKS.find((stock) => stock.id === row.collateral)?.token.toLowerCase();
+  return [row.brand, token ? `/api/public/stocks/icons/${token}.png` : ''];
+})) as Record<BrandV1, string>;
+
+/** A brand's mark, or its initial when the icon cannot be had. It sits beside the brand's name, so its alt is empty. */
+function LoopLogoV1({ brand, size }: { brand: BrandV1; size: number }) {
+  const [failed, setFailed] = useState(false);
+  const src = LOOP_LOGO_V1[brand];
+  return failed || !src
+    ? <span className="still-loops-logo is-letter" style={{ width: size, height: size }} aria-hidden="true">{LOOP_BRAND_WORDS_V1[brand].name.slice(0, 1)}</span>
+    : <img className="still-loops-logo" src={src} alt="" width={size} height={size} decoding="async" onError={() => setFailed(true)} />;
+}
+
+/** "19 h 26 min", "6 d 4 h", "12 min": how long until `at`, by the page's own clock; null once it has passed. */
+export function stillLoopCountdownV1(at: string, now: string): string | null {
+  const ms = Date.parse(at) - Date.parse(now);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const minutes = Math.ceil(ms / 60_000);
+  const days = Math.floor(minutes / 1_440);
+  const hours = Math.floor((minutes % 1_440) / 60);
+  const rest = minutes % 60;
+  return days > 0 ? `${days} d ${hours} h` : hours > 0 ? `${hours} h ${rest} min` : `${rest} min`;
+}
 
 export interface StillLoopsWallItemV1 {
   loopNo: number; brand: BrandV1; productName: string; packageLabel: string; priceUsdc: string; venueName: string;
@@ -358,40 +392,48 @@ function PastDrawV1({ draw, mine }: { draw: StillLoopDrawViewV1; mine: StillLoop
   );
 }
 
-function StillLoopDrawV1({ draws, entry }: { draws: NonNullable<StillLoopsViewV1['draws']>; entry: StillLoopDrawEntryModelV1 | undefined }) {
+function StillLoopDrawV1({ draws, entry, now }: { draws: NonNullable<StillLoopsViewV1['draws']>; entry: StillLoopDrawEntryModelV1 | undefined; now: string }) {
   const draw = draws.current;
+  const countdown = draw?.state === 'upcoming' ? stillLoopCountdownV1(draw.opensAt, now)
+    : draw?.state === 'open' ? stillLoopCountdownV1(draw.closesAt, now) : null;
   return (
-    <section className="still-section" aria-labelledby="still-loops-draw">
+    <section className="still-section still-loops-draw" aria-labelledby="still-loops-draw">
       <h2 id="still-loops-draw" className="still-more-group-head">The draw{draw ? ` · ${stillLoopDrawPrizeV1(draw)}` : ''}</h2>
       {draw ? (
         <>
-          <p className="still-note">
-            {draw.state === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(draw.opensAt)}; closes ${stillLoopDrawTimeV1(draw.closesAt)}.`
-              : `Closes ${stillLoopDrawTimeV1(draw.closesAt)}. ${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'} so far.`}
-            {' '}{winnersSentenceV1(draw)}
-          </p>
-          <ul className="still-rows still-loop-ways">
-            <li className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="name">Make a Loop</div>
-                <div className="line">A Loop made while the draw is open lets you enter with it, no attestation needed.</div>
-                <div className="line"><StillLink href="/spend" className="still-btn sec">Spend</StillLink></div>
-              </div>
+          {/* The prize said large, and the time left to the next step by the page's own clock (2026-11-20). */}
+          <div className="still-loops-prize">
+            <div className="still-loops-prize-top">
+              <span className="still-loops-prize-amount">{stillLoopDrawPrizeV1(draw)}</span>
+              {countdown ? <span className="still-loops-countdown">{draw.state === 'upcoming' ? 'Opens in' : 'Closes in'} {countdown}</span> : null}
+            </div>
+            <p className="still-note">
+              {draw.state === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(draw.opensAt)}; closes ${stillLoopDrawTimeV1(draw.closesAt)}.`
+                : `Closes ${stillLoopDrawTimeV1(draw.closesAt)}. ${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'} so far.`}
+              {' '}{winnersSentenceV1(draw)}
+            </p>
+          </div>
+          {/* The free way first: the draw is never a reason to borrow. */}
+          <ul className="still-loops-ways">
+            <li className="still-loops-way">
+              <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
+              <div className="name">Enter free</div>
+              <div className="line">No loan and no purchase: the same chance as a Loop.</div>
+              {/* Said before the draw opens too, so a wallet can be attested in time. */}
+              <div className="line">It takes Coinbase’s Verified Account attestation on your wallet
+                (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</div>
             </li>
-            <li className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="name">Enter free</div>
-                <div className="line">No loan and no purchase: the same chance as a Loop.</div>
-              </div>
-            </li>
-            <li className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="name">Enter</div>
-                {draw.state === 'open' ? <div className="line"><EnterV1 draw={draw} model={entry} /></div>
-                  : <div className="line still-note">Entry opens with the draw.</div>}
-              </div>
+            <li className="still-loops-way">
+              <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
+              <div className="name">Make a Loop</div>
+              <div className="line">A Loop made while the draw is open lets you enter with it, no attestation needed.</div>
+              <StillLink href="/spend" className="still-btn sec">Spend</StillLink>
             </li>
           </ul>
+          <div className="still-loops-enter">
+            {draw.state === 'open' ? <EnterV1 draw={draw} model={entry} />
+              : <p className="still-note">{draw.state === 'upcoming' ? 'Entry opens with the draw.' : 'Entry is closed.'}</p>}
+          </div>
           <DrawRulesV1 draw={draw} />
         </>
       ) : (
@@ -434,50 +476,70 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
         <p className="still-section still-note" role="status">Loops are not open yet.</p>
       ) : (
         <>
-          {/* Three zeros read as nobody coming (2026-11-19): before the first Loop, the number still free. */}
+          {/* Three zeros read as nobody coming (2026-11-19): before the first Loop, its number as a ticket still to
+              claim, with the five companies' marks. */}
           {view.counts.total === 0 ? (
-            <div className="still-section still-safety-figures" aria-label="Loops so far">
-              <div className="still-safety-figure"><span className="n">#1</span><span className="t">still unclaimed: no Loop has been made yet</span></div>
+            <div className="still-section still-loops-hero" aria-label="Loops so far">
+              <div className="still-loops-ticket">
+                <div className="still-loops-ticket-no"><span className="n">#1</span><span className="t">still unclaimed: no Loop has been made yet</span></div>
+                <div className="still-loops-logos">{BRANDS_V1.map((brand) => <LoopLogoV1 key={brand} brand={brand} size={40} />)}</div>
+              </div>
             </div>
           ) : (
-            <div className="still-section still-safety-figures" aria-label="Loops so far">
-              <div className="still-safety-figure"><span className="n">{view.counts.week}</span><span className="t">this week</span></div>
-              <div className="still-safety-figure"><span className="n">{view.counts.total}</span><span className="t">in all</span></div>
-              <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done with an AI assistant</span></div>
+            <div className="still-section still-loops-hero" aria-label="Loops so far">
+              <div className="still-safety-figures">
+                <div className="still-safety-figure"><span className="n">{view.counts.week}</span><span className="t">this week</span></div>
+                <div className="still-safety-figure"><span className="n">{view.counts.total}</span><span className="t">in all</span></div>
+                <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done with an AI assistant</span></div>
+              </div>
             </div>
           )}
           {model.mine ? <MineV1 mine={model.mine} /> : null}
-          {view.draws ? <StillLoopDrawV1 draws={view.draws} entry={model.entry} /> : null}
-          <section className="still-section" aria-labelledby="still-loops-how">
+          {view.draws ? <StillLoopDrawV1 draws={view.draws} entry={model.entry} now={model.sky.at} /> : null}
+          <section className="still-section still-loops-how" aria-labelledby="still-loops-how">
             <h2 id="still-loops-how" className="still-more-group-head">How a Loop is made</h2>
-            <ul className="still-rows">
-              {BRANDS_V1.map((brand) => (
-                <li key={brand} className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="name">{LOOP_BRAND_WORDS_V1[brand].name}</div>
-                    <div className="line">{LOOP_BRAND_WORDS_V1[brand].article} {LOOP_BRAND_WORDS_V1[brand].card}, paid by a loan against {COLLATERAL_V1[brand]}</div>
-                  </div>
-                  <div className="val"><StillLink href={stillLoopSpendHrefV1(brand)} className="still-btn sec">Spend</StillLink></div>
-                </li>
-              ))}
+            <ol className="still-loops-steps">
+              <li><span className="n" aria-hidden="true">1</span><span>Pick a card from a company whose stock you hold.</span></li>
+              <li><span className="n" aria-hidden="true">2</span><span>A USDC loan against that stock pays for it. Your wallet signs.</span></li>
+              <li><span className="n" aria-hidden="true">3</span><span>The card arrives, and the stock stays as the loan’s collateral until you repay.</span></li>
+            </ol>
+            <ul className="still-loops-brands">
+              {BRANDS_V1.map((brand) => {
+                const made = view.counts.byBrand[brand];
+                return (
+                  <li key={brand} className="still-loops-brand">
+                    <LoopLogoV1 brand={brand} size={44} />
+                    <div className="still-loops-brand-text">
+                      <div className="name">{LOOP_BRAND_WORDS_V1[brand].name}</div>
+                      <div className="line">{LOOP_BRAND_WORDS_V1[brand].article} {LOOP_BRAND_WORDS_V1[brand].card}, paid by a loan against {COLLATERAL_V1[brand]}</div>
+                      {made > 0 ? <div className="line still-loops-made">{made} {made === 1 ? 'Loop' : 'Loops'} so far</div> : null}
+                    </div>
+                    <StillLink href={stillLoopSpendHrefV1(brand)} className="still-btn sec">Spend</StillLink>
+                  </li>
+                );
+              })}
             </ul>
             <p className="still-note">Or ask your assistant with Still connected, in its own words or in these:</p>
             <CopyPromptV1 />
             <p className="still-note"><StillLink href="/assistants">Connect Still to Claude, ChatGPT, Grok, Cursor or Codex</StillLink></p>
           </section>
-          <section className="still-section" aria-labelledby="still-loops-wall">
+          <section className="still-section still-loops-wall-part" aria-labelledby="still-loops-wall">
             <h2 id="still-loops-wall" className="still-more-group-head">The wall</h2>
             {view.wall.length === 0 ? (
-              <p className="still-note">No Loop is on the wall yet. A Loop goes on it only when its owner puts it there.</p>
+              <div className="still-loops-wall-empty">
+                <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
+                <p className="still-note">No Loop is on the wall yet. A Loop goes on it only when its owner puts it there.</p>
+              </div>
             ) : (
-              <ul className="still-rows">
+              <ul className="still-loops-wall">
                 {view.wall.map((item) => (
-                  <li key={item.loopNo} className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}>
-                    <div style={{ minWidth: 0 }}>
+                  <li key={item.loopNo} className="still-loops-tile">
+                    <div className="still-loops-tile-head">
+                      <LoopLogoV1 brand={item.brand} size={36} />
                       <div className="name">Loop #{item.loopNo}{item.label ? ` · ${item.label}` : ''}</div>
-                      <div className="line">{LOOP_BRAND_WORDS_V1[item.brand].name} stock stayed. {item.productName} ({item.packageLabel}) arrived.</div>
-                      <div className="line still-note">{[`about $${item.priceUsdc}`, item.venueName, VIA_WORDS_V1[item.via], stillLoopDayV1(item.day)].filter(Boolean).join(' · ')}</div>
                     </div>
+                    <div className="line">{LOOP_BRAND_WORDS_V1[item.brand].name} stock stayed. {item.productName} ({item.packageLabel}) arrived.</div>
+                    <div className="line still-note">{[`about $${item.priceUsdc}`, item.venueName, VIA_WORDS_V1[item.via], stillLoopDayV1(item.day)].filter(Boolean).join(' · ')}</div>
                   </li>
                 ))}
               </ul>

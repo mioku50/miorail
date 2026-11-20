@@ -8,13 +8,16 @@ void React;
 
 import { lendingLoopWireV1, parseLendingExecutionWireV1 } from '../src/console/lendingReviewView';
 import { StillLoopOffer, loopSentenceV1, loopShareTextV1 } from '../src/still/StillLoop';
-import { STILL_LOOP_PROMPT_V1, StillLoops, stillLoopDayV1, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsMineViewV1, stillLoopsViewV1 } from '../src/still/StillLoops';
+import { LOOP_LOGO_V1, STILL_LOOP_PROMPT_V1, StillLoops, stillLoopCountdownV1, stillLoopDayV1, stillLoopDrawMineViewV1, stillLoopDrawPrizeV1, stillLoopDrawTimeV1, stillLoopsMineViewV1, stillLoopsViewV1 } from '../src/still/StillLoops';
 import { StillMore } from '../src/still/StillPages';
+import { StillSpendDoor } from '../src/still/StillHome';
 import { skyStateV1 } from '../src/still/skyState';
 
 const LOOP = { loopNo: 7, brand: 'apple' as const, complete: true, undelivered: null, onWall: false, team: false };
 const EXECUTION = '0f6b2a8e-1c4d-4e5f-8a9b-0c1d2e3f4a5b';
 const never = async () => { throw new Error('not pressed'); };
+/** The page with the stocks' icons taken out: each names a token contract, never a wallet. */
+const withoutIcons = (html: string) => html.replace(/\/api\/public\/stocks\/icons\/0x[0-9a-f]{40}\.png/g, '');
 
 describe('a Loop on the loan’s own result', () => {
   it('is read from the answer only when it has the shape the server sends, and only for a confirmed loan', () => {
@@ -88,7 +91,25 @@ describe('/loops: Loops in public', () => {
     assert.match(html, /href="\/spend\?card=microsoft"/);
     assert.match(html, /can be liquidated if prices fall/);
     assert.match(html, /Not affiliated with Apple, Amazon, Google, Meta, Microsoft or Bitrefill/);
-    assert.doesNotMatch(html, /0x[0-9a-f]{6}/i);
+    assert.doesNotMatch(withoutIcons(html), /0x[0-9a-f]{6}/i);
+    // The brands that made one say how many, on their own card.
+    assert.match(html, /<div class="line still-loops-made">2 Loops so far<\/div>/);
+    assert.match(html, /<div class="line still-loops-made">1 Loop so far<\/div>/);
+  });
+
+  // 2026-11-20, the operator: «лого компаний в loops». Coinbase's icon of each stock pledged, the one the Stocks list shows.
+  it('shows each company by the icon of the stock a Loop pledges, served from this origin', () => {
+    assert.deepEqual(LOOP_LOGO_V1, {
+      apple: '/api/public/stocks/icons/0xb200000000000000000000c2e324d24d7eecd1fb.png',
+      amazon: '/api/public/stocks/icons/0xb200000000000000000000d9192b6b456483c2e8.png',
+      google: '/api/public/stocks/icons/0xb2000000000000000000002d0ba3164cc74f58b7.png',
+      meta: '/api/public/stocks/icons/0xb2000000000000000000008bc8786b856e61707c.png',
+      microsoft: '/api/public/stocks/icons/0xb200000000000000000000ab99cfa739e253872b.png',
+    });
+    const html = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(ANSWER), failed: false }} />);
+    for (const src of Object.values(LOOP_LOGO_V1)) assert.match(html, new RegExp(`<img class="still-loops-logo" src="${src.replace(/[.]/g, '\\.')}" alt=""`));
+    // A Loop on the wall wears its company's mark too.
+    assert.match(html, /<div class="still-loops-tile-head"><img class="still-loops-logo" src="\/api\/public\/stocks\/icons\/0xb200000000000000000000c2e324d24d7eecd1fb\.png"/);
   });
 
   // 2026-11-19: three zeros at the top read as nobody coming.
@@ -96,7 +117,11 @@ describe('/loops: Loops in public', () => {
     const none = { ...ANSWER, counts: { total: 0, week: 0, viaAssistant: 0, byBrand: { apple: 0, amazon: 0, google: 0, meta: 0, microsoft: 0 } }, wall: [] };
     const html = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(none), failed: false }} />);
     assert.match(html, /<span class="n">#1<\/span><span class="t">still unclaimed: no Loop has been made yet<\/span>/);
+    // The ticket carries the five companies' marks.
+    assert.equal(html.match(/<div class="still-loops-logos">(.*?)<\/div>/)?.[1]?.match(/<img /g)?.length, 5);
     assert.doesNotMatch(html, /this week/);
+    assert.doesNotMatch(html, /so far<\/div>/, 'no brand counts before the first Loop');
+    assert.match(html, /No Loop is on the wall yet\./);
     assert.equal(stillLoopDayV1('2026-11-25'), '25\u00a0Nov\u00a02026');
     assert.equal(stillLoopDayV1('not a day'), 'not a day');
   });
@@ -221,7 +246,22 @@ describe('/loops: the draw', () => {
     const nobody = render({ current: null, past: [{ ...DRAWN, entries: 0, entriesHash: `0x${'1'.repeat(64)}`, block: null, blockAt: null, winners: [], stamps: [] }] }, signedOut);
     assert.match(nobody, /No draw is open now\./);
     assert.match(nobody, /nobody entered, so nobody won/);
-    assert.doesNotMatch(past + nobody, /0x[0-9a-f]{40}(?![0-9a-f])/i, 'never a wallet');
+    assert.doesNotMatch(withoutIcons(past + nobody), /0x[0-9a-f]{40}(?![0-9a-f])/i, 'never a wallet');
+  });
+
+  // 2026-11-20: the prize said large, with the time left by the page's own clock.
+  it('counts down to the open and then to the close, by the page’s clock, and puts the free way first', () => {
+    assert.equal(stillLoopCountdownV1('2026-11-21T00:00:00.000Z', '2026-11-20T04:34:00.000Z'), '19 h 26 min');
+    assert.equal(stillLoopCountdownV1('2026-11-28T18:00:00.000Z', '2026-11-22T12:00:00.000Z'), '6 d 6 h');
+    assert.equal(stillLoopCountdownV1('2026-11-21T00:00:00.000Z', '2026-11-20T23:59:30.000Z'), '1 min');
+    assert.equal(stillLoopCountdownV1('2026-11-21T00:00:00.000Z', '2026-11-21T00:00:00.000Z'), null);
+    assert.equal(stillLoopCountdownV1('never', '2026-11-21T00:00:00.000Z'), null);
+    const open = render({ current: { ...OPEN, winnerCount: 3, prizeUsdc: '5' }, past: [] }, signedOut);
+    assert.match(open, /<span class="still-loops-prize-amount">3 × 5 USDC<\/span><span class="still-loops-countdown">Closes in 6 d 6 h<\/span>/);
+    assert.ok(open.indexOf('Enter free') < open.indexOf('Make a Loop'), 'the free way first');
+    const upcoming = renderToStaticMarkup(<StillLoops model={{ sky: skyStateV1({ now: new Date('2026-11-20T04:34:00Z') }),
+      view: stillLoopsViewV1(answer({ current: { ...OPEN, state: 'upcoming', entries: 0 }, past: [] })), failed: false, entry: signedOut }} />);
+    assert.match(upcoming, />Opens in 19 h 26 min</);
   });
 
   it('says how many win and how much each, and names every winner', () => {
@@ -235,5 +275,33 @@ describe('/loops: the draw', () => {
     assert.match(html, /Draw of Sat 28 Nov · 3 × 5 USDC/);
     assert.match(html, /won by Entry K3F9X2 \(paid\), Loop #4, Entry AB12CD/);
     assert.equal(stillLoopDrawPrizeV1({ winnerCount: 1, prizeUsdc: '10' }), '10 USDC');
+  });
+});
+
+// 2026-11-20, the operator: «ненавязчиво аккуратно добавить на главную страничку loops в виде подарка».
+describe('Home: the quiet door to Loops', () => {
+  const NO_BRANDS = { apple: 0, amazon: 0, google: 0, meta: 0, microsoft: 0 };
+  const DRAW = { drawId: '2026-11-28', opensAt: '2026-11-21T00:00:00.000Z', closesAt: '2026-11-28T18:00:00.000Z', winnerCount: 3, prizeUsdc: '5',
+    state: 'upcoming', entries: 0, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [], stamps: [] };
+  const view = (draws: unknown) => stillLoopsViewV1({ outcome: 'loops', weekStartsAt: '2026-11-16T00:00:00.000Z',
+    counts: { total: 0, week: 0, viaAssistant: 0, byBrand: NO_BRANDS }, wall: [], draws });
+
+  it('says the prize and its free way in, while a draw is coming or open, after the other doors', () => {
+    const upcoming = renderToStaticMarkup(<StillSpendDoor loops={view({ current: DRAW, past: [] })} />);
+    assert.match(upcoming, /<a href="\/loops" class="still-extra is-gift">/);
+    assert.match(upcoming, /Free draw: 3 × 5 USDC/);
+    assert.match(upcoming, /Opens Sat 21 Nov, 00:00 UTC\. No loan or purchase needed to enter\./);
+    assert.ok(upcoming.indexOf('Pay a subscription') < upcoming.indexOf('Free draw'), 'the last door');
+    const open = renderToStaticMarkup(<StillSpendDoor loops={view({ current: { ...DRAW, state: 'open', entries: 4 }, past: [] })} />);
+    assert.match(open, /Open until Sat 28 Nov, 18:00 UTC\. No loan or purchase needed to enter\./);
+    assert.doesNotMatch(upcoming + open, /borrow to|win by|loan to win/i);
+  });
+
+  it('names Loops alone between draws, and is not there while Loops are closed', () => {
+    const between = renderToStaticMarkup(<StillSpendDoor loops={view({ current: null, past: [] })} />);
+    assert.match(between, /<span class="still-extra-title">Loops<\/span>/);
+    assert.doesNotMatch(between, /Free draw/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendDoor loops={null} />), /href="\/loops"/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendDoor />), /href="\/loops"/);
   });
 });

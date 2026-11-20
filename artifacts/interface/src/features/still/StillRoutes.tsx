@@ -154,6 +154,9 @@ function StillHomePage() {
     () => (answer?.outcome === 'report' ? { view: homeViewV1({ report: answer.report, sky }), report: answer.report } : null),
     [answer, sky],
   );
+  // Home's quiet door to Loops, once the server has them open: read once, not polled.
+  const loopsRead = useStillLoopsV1({ poll: false });
+  const loops = useMemo(() => (loopsRead.data ? stillLoopsViewV1(loopsRead.data) : null), [loopsRead.data]);
   return (
     <StillFrame tab="home" sky={sky}>
       {still.booting ? (
@@ -162,7 +165,7 @@ function StillHomePage() {
       ) : still.signedIn ? (
         <StillHomeSignedIn
           model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry, telegram,
-            subject: still.report ? still.report.subject.name ?? still.report.subject.address : null }}
+            subject: still.report ? still.report.subject.name ?? still.report.subject.address : null, loops }}
         />
       ) : (
         <StillHomeSignedOut
@@ -178,6 +181,7 @@ function StillHomePage() {
             },
             signInHref,
             createWallet,
+            loops,
           }}
         />
       )}

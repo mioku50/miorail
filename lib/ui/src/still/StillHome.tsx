@@ -8,6 +8,7 @@ import { SkyLayer } from './Sky';
 import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
+import { stillLoopDrawPrizeV1, stillLoopDrawTimeV1, type StillLoopsViewV1 } from './StillLoops';
 import { StillMobile } from './StillMobile';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 import { composerLinksV1 } from '../console/composerLinks';
@@ -112,6 +113,8 @@ export interface StillHomeModelV1 {
   telegram?: TelegramAlertsModelV1 | null;
   /** The wallet's name, or its address: what a shared card names. */
   subject?: string | null;
+  /** Loops in public, for Home's door to them; null or absent while the server has them closed. */
+  loops?: StillLoopsViewV1 | null;
 }
 
 /**
@@ -152,8 +155,32 @@ function TelegramIconV1() {
   );
 }
 
+/**
+ * Loops, as Home's last and quietest door (2026-11-20, the operator: «ненавязчиво … в виде подарка»): the draw's
+ * prize while one is coming or open, said with its free way in, never as a reason to borrow. Only while the
+ * server has Loops open; otherwise nothing.
+ */
+function StillLoopsDoorV1({ view }: { view: StillLoopsViewV1 }) {
+  const draw = view.draws?.current ?? null;
+  const live = draw && (draw.state === 'upcoming' || draw.state === 'open') ? draw : null;
+  return (
+    <StillLink href="/loops" className="still-extra is-gift">
+      <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
+      <span className="still-extra-body">
+        <span className="still-extra-title">{live ? `Free draw: ${stillLoopDrawPrizeV1(live)}` : 'Loops'}</span>
+        <span className="still-extra-note">
+          {live
+            ? `${live.state === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(live.opensAt)}` : `Open until ${stillLoopDrawTimeV1(live.closesAt)}`}. No loan or purchase needed to enter.`
+            : 'A company’s card, paid by a loan against its stock, which you keep.'}
+        </span>
+      </span>
+      <span className="still-extra-go" aria-hidden="true">›</span>
+    </StillLink>
+  );
+}
+
 /** What a loan could pay for: Home's one door that is about the money itself. */
-export function StillSpendDoor() {
+export function StillSpendDoor({ loops }: { loops?: StillLoopsViewV1 | null } = {}) {
   return (
     <div className="still-section still-extras">
       <StillLink href="/spend" className="still-extra is-lead">
@@ -172,6 +199,7 @@ export function StillSpendDoor() {
         </span>
         <span className="still-extra-go" aria-hidden="true">›</span>
       </StillLink>
+      {loops ? <StillLoopsDoorV1 view={loops} /> : null}
     </div>
   );
 }
@@ -319,10 +347,10 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           {model.subject ? <StillShareRowV1 subject={model.subject} label="Share this wallet’s card:" /> : null}
         </details>
       ) : null}
-      {view ? <StillSpendDoor /> : null}
+      {view ? <StillSpendDoor loops={model.loops} /> : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
       {/* The doors stay when the wallet could not be read: they do not need it. */}
-      {!view && (model.loading || model.failed) ? <StillSpendDoor /> : null}
+      {!view && (model.loading || model.failed) ? <StillSpendDoor loops={model.loops} /> : null}
       {view || model.loading || model.failed ? <StillDoors telegram={model.telegram} /> : null}
       </div>
     </div>
@@ -353,6 +381,8 @@ export interface StillCheckModelV1 {
   signInHref: string;
   /** Absent where no wallet can be created here: inside Base App or Farcaster, or with a wallet connected. */
   createWallet?: StillCreateWalletV1 | null;
+  /** Loops in public, for Home's door to them; null or absent while the server has them closed. */
+  loops?: StillLoopsViewV1 | null;
 }
 
 export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
@@ -428,7 +458,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
         Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
         Offered only in eligible jurisdictions: not to US persons, nor in the countries <StillLink href="/safety">Safety</StillLink> names.
       </p>
-      <StillSpendDoor />
+      <StillSpendDoor loops={model.loops} />
       <StillDoors />
       </div>
     </div>

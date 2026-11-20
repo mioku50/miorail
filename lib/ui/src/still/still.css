@@ -334,6 +334,85 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-loops-mine > .still-note { margin: 10px 0 0; }
 .still-loop-card .still-loop-actions { margin-top: 4px; }
 .still-loop-name { display: inline-flex; align-items: center; gap: 6px; }
+
+/* /loops (2026-11-20, the operator: «лого компаний … и понаряднее»): the companies' marks, the first number as a
+   ticket still to claim, the prize said large with the time left, the steps and the brands as cards. The content
+   keeps a readable width under the full band. */
+.still-loops-page > .still-section { max-width: 960px; }
+.still-loops-page .still-more-group-head { margin-left: 0; }
+.still-loops-logo { display: block; flex: none; border-radius: 50%; object-fit: cover; background: var(--sm-card); box-shadow: 0 0 0 1px var(--sm-line); }
+.still-loops-logo.is-letter { display: inline-grid; place-items: center; background: var(--sm-accent); color: var(--sm-accent-on); font-weight: 600; font-size: 16px; }
+.still-loops-hero .still-safety-figures { margin-top: 0; max-width: none; }
+.still-loops-ticket {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px 24px;
+  padding: 20px 32px; border-radius: 20px; background: var(--sm-accent-card); color: #FFFFFF;
+  /* A notch each side, as a ticket has. */
+  -webkit-mask: radial-gradient(circle 11px at 0 50%, #0000 98%, #000) left / 51% 100% no-repeat, radial-gradient(circle 11px at 100% 50%, #0000 98%, #000) right / 51% 100% no-repeat;
+  mask: radial-gradient(circle 11px at 0 50%, #0000 98%, #000) left / 51% 100% no-repeat, radial-gradient(circle 11px at 100% 50%, #0000 98%, #000) right / 51% 100% no-repeat;
+}
+.still-loops-ticket-no { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.still-loops-ticket-no .n { flex: none; font-size: 52px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.still-loops-ticket-no .t { font-size: 15px; line-height: 1.35; color: #FFFFFFE0; max-width: 24ch; }
+.still-loops-logos { display: flex; padding-left: 6px; }
+.still-loops-logos .still-loops-logo { box-shadow: 0 0 0 2px #FFFFFF; }
+.still-loops-logos .still-loops-logo + .still-loops-logo { margin-left: -6px; }
+.still-loops-prize { padding: 16px 18px; border-radius: 18px; border: 1px solid var(--sm-line); background: var(--sm-card); box-shadow: var(--sm-shadow); }
+.still-loops-prize-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.still-loops-prize-amount { font-size: 34px; font-weight: 700; line-height: 1.05; letter-spacing: -0.01em; color: var(--sm-accent); }
+.still-loops-countdown {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px;
+  background: var(--sm-accent); color: var(--sm-accent-on); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.still-loops-prize > .still-note { margin: 8px 0 0; }
+.still-loops-ways { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; padding: 0; }
+.still-loops-way { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--sm-line); background: var(--sm-card); }
+.still-loops-way .name { margin-top: 4px; font-size: 17px; font-weight: 600; }
+.still-loops-way .line { font-size: 13px; line-height: 1.4; color: var(--sm-ink2); }
+.still-loops-way .still-btn, .still-loops-brand .still-btn { height: 40px; margin-top: 4px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
+.still-loops-enter { margin-top: 12px; }
+.still-loops-enter > .still-note { margin: 0; }
+.still-loops-enter > .still-btn, .still-loops-enter .still-loop-enter .still-btn { height: 44px; padding: 0 20px; border-radius: 12px; font-size: 16px; }
+/* The entry itself, once the draw is open: the rules box and the one button, in the accent's soft card. */
+.still-loops-enter .still-loop-enter {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 14px 16px; border-radius: 16px; border: 1px solid var(--sm-accent); background: var(--sm-accent-soft);
+}
+.still-loops-enter .still-loop-enter > * { margin: 0; }
+.still-loops-enter .still-loop-enter > :is(p, div) { flex-basis: 100%; }
+.still-loops-page .still-loop-rules { margin-top: 10px; }
+.still-loops-page .still-loop-rules > summary { cursor: pointer; font-weight: 500; color: var(--sm-ink); }
+.still-loops-page .still-rows { margin-left: 0; margin-right: 0; }
+.still-loops-steps { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0 0; padding: 0; }
+.still-loops-steps li { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--sm-accent-soft); font-size: 14px; line-height: 1.4; color: var(--sm-ink); }
+.still-loops-steps .n { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--sm-accent); color: var(--sm-accent-on); font-size: 12px; font-weight: 600; }
+.still-loops-brands { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; padding: 0; }
+.still-loops-brand { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; border-radius: 18px; border: 1px solid var(--sm-line); background: var(--sm-card); box-shadow: var(--sm-shadow); }
+.still-loops-brand-text { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.still-loops-brand .name { font-size: 17px; font-weight: 600; }
+.still-loops-brand .line { font-size: 13px; line-height: 1.4; color: var(--sm-ink2); }
+.still-loops-brand .still-loops-made { color: var(--sm-accent); font-weight: 600; }
+.still-loops-how > .still-note { margin: 14px 0 0; }
+.still-loops-how .still-copy { margin-top: 8px; }
+.still-loops-wall-empty { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 16px; border: 1.5px dashed var(--sm-line); border-radius: 18px; }
+.still-loops-wall-empty .still-note { margin: 0; }
+.still-loops-wall { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 12px 0 0; padding: 0; }
+.still-loops-tile { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 18px; border: 1px solid var(--sm-line); background: var(--sm-card); box-shadow: var(--sm-shadow); }
+.still-loops-tile-head { display: flex; align-items: center; gap: 10px; }
+.still-loops-tile .name { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.still-loops-tile .line { font-size: 13px; line-height: 1.4; }
+/* Home's door to Loops: the gift drawn in the accent card's colour, the rest as quiet as its neighbours. */
+.still-extra.is-gift .still-extra-icon { background: var(--sm-accent-card); color: #FFFFFF; }
+@media (max-width: 899px) {
+  .still-loops-brands { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .still-loops-brand { flex-direction: row; align-items: center; gap: 12px; padding: 12px 14px; }
+  .still-loops-brand .still-btn { margin-top: 0; }
+}
+@media (max-width: 640px) {
+  .still-loops-steps, .still-loops-ways { grid-template-columns: minmax(0, 1fr); }
+  .still-loops-ticket { padding: 16px 24px; }
+  .still-loops-ticket-no .n { font-size: 44px; }
+  .still-loops-prize-amount { font-size: 30px; }
+}
 .still-share { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 10px; }
 .still-share .still-note { margin: 0; }
 .still-share-link { font-size: 14px; font-weight: 500; color: var(--sm-link); text-decoration: none; }
