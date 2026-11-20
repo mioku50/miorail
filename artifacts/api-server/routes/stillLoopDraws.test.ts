@@ -48,6 +48,8 @@ const blockAt = (n: bigint): LoopDrawBlockV1 => ({ number: n, hash: keccak256(st
 
 const loops = { ...stillLoopsRuntimeV1 }, draws = { ...stillLoopDrawRuntimeV1 }, region = { ...stillRegionRuntimeV1 }, loans = { ...stillLoopDrawLoansRuntimeV1 };
 let loopRepo: InMemoryStillLoopRepositoryV1, drawRepo: InMemoryStillLoopDrawRepositoryV1, now: Date, verified: Set<string>, codes: string[], reads: number;
+/** Wallets with a past swap of at least 10 USDC through Still, and every wallet whose swaps were read. */
+let swappers: Set<string>, swapReads: string[];
 /** Each wallet's paid loans, and Bitrefill's word on each card by loan (absent: the open order is forgotten). */
 let paid: LoanExecutionV1[], words: Map<string, StillLoopDeliveryWordV1>, asked: string[];
 /** What each time-stamping authority was asked, and whether it answers. */
@@ -60,6 +62,8 @@ beforeEach(() => {
   drawRepo = new InMemoryStillLoopDrawRepositoryV1();
   now = new Date('2026-11-22T10:00:00.000Z');
   verified = new Set([A, B, TEAM]);
+  swappers = new Set();
+  swapReads = [];
   codes = ['K3F9X2', 'AB12CD', 'QW34ER', 'ZX56CV'];
   reads = 0;
   stamped = [];
@@ -76,6 +80,7 @@ beforeEach(() => {
   Object.assign(stillLoopDrawRuntimeV1, {
     enabled: () => true, repository: () => drawRepo, team: () => team, now: () => now,
     verified: async (wallet: string) => verified.has(wallet), code: () => codes.shift() ?? 'QQQQQQ',
+    swapped: async (wallet: string) => { swapReads.push(wallet); return swappers.has(wallet); },
     head: async () => { reads += 1; return blockAt((BigInt(Math.floor(now.getTime() / 1000)) - BigInt(GENESIS)) / 2n); },
     block: async (n: bigint) => { reads += 1; return blockAt(n); },
     tsas: () => TSAS,
@@ -116,6 +121,7 @@ describe('the Loop draws', () => {
     const unverified = await enter(C).expect(403);
     assert.equal(unverified.body.error, 'not_verified');
     assert.equal(unverified.body.url, 'https://www.coinbase.com/onchain-verify');
+    assert.match(unverified.body.detail, /one of two on this wallet: a swap of at least 10 USDC made through Still at any time .* or Coinbase’s Verified Account attestation/);
     assert.equal((await enter(TEAM).expect(409)).body.error, 'draw_team');
     now = new Date('2026-11-20T23:59:59.000Z');
     const early = await enter(B).expect(409);
@@ -126,6 +132,20 @@ describe('the Loop draws', () => {
     assert.equal((await request(app(TEAM)).get('/api/still/loops/draw').expect(200)).body.team, true);
     const open = (await publicLoops()).draws.current;
     assert.deepEqual([open.drawId, open.state, open.entries, open.winnerCount, open.prizeUsdc, open.entriesHash], ['2026-11-28', 'open', 1, 3, '5', null]);
+  });
+
+  it('take a free entry from a wallet with a past swap of 10 USDC through Still, with no attestation (2026-11-20, the operator)', async () => {
+    swappers.add(C);
+    assert.equal(verified.has(C), false);
+    assert.deepEqual((await enter(C).expect(200)).body.entry, { label: 'Entry K3F9X2', kind: 'free' });
+    // The swap is our own database: read before Base, and only by a wallet that has no Loop ready.
+    assert.deepEqual(swapReads, [C]);
+    assert.equal((await enter(D).expect(403)).body.error, 'not_verified', 'neither a swap nor the attestation');
+    // A failed read of the swaps enters nobody and writes nothing.
+    const F = `0x${'9'.repeat(40)}`;
+    Object.assign(stillLoopDrawRuntimeV1, { swapped: async () => { throw new Error('database down'); } });
+    assert.equal((await enter(F).expect(503)).body.error, 'unavailable');
+    assert.equal(await drawRepo.entryOf({ drawId: '2026-11-28', walletAddress: F }), null);
   });
 
   it('ask the region and the confirmation a new loan asks, before anything is read or written', async () => {
@@ -176,7 +196,7 @@ describe('the Loop draws', () => {
     assert.equal(await loopRepo.byExecution(id(6)), null, 'the team’s loans make no Loop');
   });
 
-  it('fix the list after the close, then let the first Base block five minutes on pick the winner, as anybody can check', async () => {
+  it('fix the list after the close, then let the first Base block five and a half minutes after the close pick the winner, as anybody can check', async () => {
     // One winner here, so a loser can be told apart; three are picked below.
     Object.assign(stillLoopDrawRuntimeV1, { draws: () => LOOP_DRAWS_V1.map((draw) => ({ ...draw, winners: 1, prizeUsdc: '10' })) });
     paid = [paidLoan(1, C, '2026-11-22T08:00:00.000Z'), paidLoan(2, A, '2026-11-23T08:00:00.000Z')];
@@ -200,7 +220,9 @@ describe('the Loop draws', () => {
     assert.deepEqual(fixed.labels, labels);
     assert.equal(fixed.lockedAt, '2026-11-28T18:00:31.000Z');
     assert.equal(fixed.entriesHash, loopDrawListHashV1({ drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', lockedAt: fixed.lockedAt, winners: 1, labels }));
-    assert.equal(fixed.blockAt, '2026-11-28T18:05:31.000Z');
+    // From the schedule, not from the moment the list was fixed (audit LOOP-2).
+    assert.equal(fixed.blockAt, '2026-11-28T18:05:30.000Z');
+    assert.equal(fixed.fixedLate, false);
     assert.deepEqual([fixed.block, fixed.winnerNos, fixed.winnerCount], [null, null, 1]);
     // Time-stamped at once by both authorities, over the exact text whose hash is published (audit LOOP-4).
     // The moment the list was fixed and the number of winners are inside it: they decide the result (audit, 2026-11-18).
@@ -215,7 +237,7 @@ describe('the Loop draws', () => {
     now = new Date('2026-11-28T18:06:31.000Z');
     await settleStillLoopDrawsV1();
     const drawn = (await request(app(null)).get('/api/public/still/loops/draws/2026-11-28').expect(200)).body;
-    const target = Date.parse('2026-11-28T18:05:31.000Z') / 1000;
+    const target = Date.parse('2026-11-28T18:05:30.000Z') / 1000;
     const expected = blockAt(BigInt(Math.ceil((target - GENESIS) / 2)));
     assert.deepEqual(drawn.block, { number: expected.number.toString(), hash: expected.hash, time: new Date(Number(expected.timestamp) * 1000).toISOString() });
     assert.deepEqual(drawn.winnerNos, [loopDrawWinnerV1({ blockHash: expected.hash, drawId: '2026-11-28', count: 3 })]);
@@ -250,6 +272,23 @@ describe('the Loop draws', () => {
     await settleStillLoopDrawsV1();
     assert.equal(stamped.length, 3, 'a stamp after the block is due would prove nothing: not asked');
     assert.deepEqual((await drawRepo.byId('2026-11-28'))?.stamps.length, 1);
+  });
+
+  it('keep the block when the list is fixed again on time, and say a list fixed late was late (audit LOOP-2)', async () => {
+    await enter(A).expect(200);
+    now = new Date('2026-11-28T18:00:31.000Z');
+    await settleStillLoopDrawsV1();
+    const first = (await request(app(null)).get('/api/public/still/loops/draws/2026-11-28').expect(200)).body;
+    assert.deepEqual([first.blockAt, first.fixedLate], ['2026-11-28T18:05:30.000Z', false]);
+    // The server was down at the close: the list is fixed ten minutes on, its block five minutes after that, and it says so.
+    drawRepo = new InMemoryStillLoopDrawRepositoryV1();
+    Object.assign(stillLoopDrawRuntimeV1, { repository: () => drawRepo });
+    await drawRepo.enter({ drawId: '2026-11-28', walletAddress: A, code: 'K3F9X2', kind: 'free', loopNo: null, at: new Date('2026-11-22T10:00:00.000Z') });
+    now = new Date('2026-11-28T18:10:00.000Z');
+    await settleStillLoopDrawsV1();
+    const late = (await request(app(null)).get('/api/public/still/loops/draws/2026-11-28').expect(200)).body;
+    assert.deepEqual([late.lockedAt, late.blockAt, late.fixedLate], ['2026-11-28T18:10:00.000Z', '2026-11-28T18:15:00.000Z', true]);
+    assert.equal((await publicLoops()).draws.past[0].fixedLate, true);
   });
 
   it('draw a list nobody entered with no block and no winner', async () => {

@@ -90,7 +90,9 @@ describe('/loops: Loops in public', () => {
     assert.match(html, /href="\/spend\?card=apple"/);
     assert.match(html, /href="\/spend\?card=microsoft"/);
     assert.match(html, /can be liquidated if prices fall/);
-    assert.match(html, /Not affiliated with Apple, Amazon, Google, Meta, Microsoft or Bitrefill/);
+    // Still is a Bitrefill affiliate: the footer says so instead of denying it (audit DOC-5, 2026-11-20).
+    assert.match(html, /Not affiliated with Apple, Amazon, Google, Meta or Microsoft\. Still is a Bitrefill\s+affiliate: Bitrefill may pay Still a commission, which does not change your price\./);
+    assert.doesNotMatch(html, /Not affiliated with[^.]*Bitrefill/);
     assert.doesNotMatch(withoutIcons(html), /0x[0-9a-f]{6}/i);
     // The brands that made one say how many, on their own card.
     assert.match(html, /<div class="line still-loops-made">2 Loops so far<\/div>/);
@@ -189,8 +191,14 @@ describe('/loops: the draw', () => {
     const html = render({ current: OPEN, past: [] }, signedOut);
     assert.match(html, /The draw · 10 USDC/);
     assert.match(html, /Closes Sat 28 Nov, 18:00 UTC\. 4 entries so far\. One winner, 10 USDC\./);
-    assert.match(html, /Make a Loop.*A Loop made while the draw is open lets you enter with it, no attestation needed/);
-    assert.match(html, /Enter free.*No loan and no purchase: the same chance as a Loop/);
+    assert.match(html, /Make a Loop.*A Loop made while the draw is open lets you enter with it, with no other check/);
+    assert.match(html, /Enter free.*No loan: the same chance as a Loop/);
+    // Two free checks, Coinbase's one of them (2026-11-20, the operator): the attestation, or a past swap of 10 USDC.
+    assert.match(html, /Your wallet needs one of two: Coinbase’s Verified Account attestation, which needs no purchase/);
+    assert.match(html, /a swap of at least\s+10 USDC, to or from USDC, made through Still at any time \(<a href="\/routes"[^>]*>Swap AI<\/a>, or Buy and Sell on Stocks\)/);
+    assert.match(html, /the first Base block at least five and a half minutes after the close/);
+    assert.match(html, /could not be fixed within two minutes of the close, the block is the first at least five minutes after it was/);
+    assert.match(html, /The Still team has committed not to enter\./);
     assert.match(html, /href="\/spend" class="still-btn sec">Spend</);
     assert.match(html, /href="\/signin\?next=%2Floops" class="still-btn sec">Sign in to enter</, 'the same button as Spend');
     // One rule both ways, and one that can be checked (audit LOOP-2): per wallet, not per person.
@@ -212,7 +220,7 @@ describe('/loops: the draw', () => {
     assert.match(ask, /<button type="button" class="still-btn sec" disabled="">Enter free<\/button>/, 'pressed only once the rules are accepted');
     const reading = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true, mine: undefined });
     assert.match(reading, /Reading your entry…/);
-    assert.match(ask, /Free entry needs Coinbase’s Verified Account attestation on this wallet/);
+    assert.match(ask, /Free entry needs one of two on this wallet: a swap of at least 10 USDC, to or from USDC, made through Still at any\s+time, or Coinbase’s Verified Account attestation/);
     const loop = render({ current: OPEN, past: [] }, { ...signedOut, signedIn: true,
       mine: mine({ current: { drawId: '2026-11-28', closesAt: '2026-11-28T18:00:00.000Z', entry: { label: 'Loop #7', kind: 'loop' }, loop: null } }) });
     assert.match(loop, /You are in this draw as Loop #7\. One entry per wallet/);
@@ -264,6 +272,16 @@ describe('/loops: the draw', () => {
     assert.match(upcoming, />Opens in 19 h 26 min</);
   });
 
+  it('says a list was fixed late, or not time-stamped, instead of leaving it out (audits LOOP-2, LOOP-3)', () => {
+    const stamped = render({ current: OPEN, past: [DRAWN] }, signedOut);
+    assert.match(stamped, /time-stamped by timestamp\.digicert\.com and timestamp\.sectigo\.com/);
+    assert.doesNotMatch(stamped, /fixed late, so its block|no time-stamp:/);
+    const late = render({ current: OPEN, past: [{ ...DRAWN, fixedLate: true, stamps: [] }] }, signedOut);
+    assert.match(late, /fixed late, so its block followed the moment it was fixed/);
+    assert.match(late, /no time-stamp: when it was fixed rests on Still’s word/);
+    assert.equal(stillLoopsViewV1(answer({ current: OPEN, past: [{ ...DRAWN, fixedLate: 'yes' }] }))?.draws?.past[0]?.fixedLate, false);
+  });
+
   it('says how many win and how much each, and names every winner', () => {
     const three = { ...OPEN, winnerCount: 3, prizeUsdc: '5' };
     const html = render({ current: three, past: [{ ...DRAWN, winnerCount: 3, prizeUsdc: '5',
@@ -287,13 +305,20 @@ describe('Home: the quiet door to Loops', () => {
     counts: { total: 0, week: 0, viaAssistant: 0, byBrand: NO_BRANDS }, wall: [], draws });
 
   it('says the prize and its free way in, while a draw is coming or open, after the other doors', () => {
-    const upcoming = renderToStaticMarkup(<StillSpendDoor loops={view({ current: DRAW, past: [] })} />);
+    const upcoming = renderToStaticMarkup(<StillSpendDoor loops={view({ current: DRAW, past: [] })} now={Date.parse('2026-11-20T12:00:00.000Z')} />);
     assert.match(upcoming, /<a href="\/loops" class="still-extra is-gift">/);
     assert.match(upcoming, /Free draw: 3 × 5 USDC/);
-    assert.match(upcoming, /Opens Sat 21 Nov, 00:00 UTC\. No loan or purchase needed to enter\./);
+    // What the free entry takes, not "no loan or purchase needed" alone (audit UI-2, 2026-11-20).
+    assert.match(upcoming, /Opens Sat 21 Nov, 00:00 UTC\. Free to enter with Coinbase verification or any past swap of 10\+ USDC on Still\./);
     assert.ok(upcoming.indexOf('Pay a subscription') < upcoming.indexOf('Free draw'), 'the last door');
-    const open = renderToStaticMarkup(<StillSpendDoor loops={view({ current: { ...DRAW, state: 'open', entries: 4 }, past: [] })} />);
-    assert.match(open, /Open until Sat 28 Nov, 18:00 UTC\. No loan or purchase needed to enter\./);
+    const open = renderToStaticMarkup(<StillSpendDoor loops={view({ current: { ...DRAW, state: 'open', entries: 4 }, past: [] })} now={Date.parse('2026-11-22T12:00:00.000Z')} />);
+    assert.match(open, /Open until Sat 28 Nov, 18:00 UTC\. Free to enter with Coinbase verification or any past swap of 10\+ USDC on Still\./);
+    // Home reads the draws once: the page's clock, not that read, says whether it opened, and the door goes at the close.
+    const opened = renderToStaticMarkup(<StillSpendDoor loops={view({ current: DRAW, past: [] })} now={Date.parse('2026-11-21T00:00:01.000Z')} />);
+    assert.match(opened, /Open until Sat 28 Nov, 18:00 UTC\./);
+    const closed = renderToStaticMarkup(<StillSpendDoor loops={view({ current: { ...DRAW, state: 'open' }, past: [] })} now={Date.parse('2026-11-28T18:00:00.000Z')} />);
+    assert.doesNotMatch(closed, /Free draw/);
+    assert.match(closed, /<span class="still-extra-title">Loops<\/span>/);
     assert.doesNotMatch(upcoming + open, /borrow to|win by|loan to win/i);
   });
 

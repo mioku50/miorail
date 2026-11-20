@@ -108,7 +108,7 @@ test('a wallet that made a Loop while open enters with it by the same press (aud
   await page.goto('/loops');
   const button = page.getByRole('button', { name: 'Enter with Loop #7' });
   await expect(button).toBeDisabled();
-  await expect(page.getByText('Free entry needs Coinbase’s Verified Account attestation', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Free entry needs one of two on this wallet', { exact: false })).toHaveCount(0);
   await page.getByLabel('I am 18 or older and I accept the rules below').check();
   await button.click();
   await expect(page.getByText('You are in this draw as Loop #7.', { exact: false })).toBeVisible();
@@ -116,7 +116,7 @@ test('a wallet that made a Loop while open enters with it by the same press (aud
 });
 
 test('a refused free entry says the server’s own words and enters nothing', async ({ page }) => {
-  const detail = 'Without a Loop made while this draw is open, an entry needs Coinbase’s Verified Account attestation on this wallet.';
+  const detail = 'Without a Loop made while this draw is open, an entry needs one of two on this wallet: a swap of at least 10 USDC made through Still at any time, or Coinbase’s Verified Account attestation.';
   await installSignedIn(page, { status: 403, json: { error: 'not_verified', detail } });
   await page.goto('/loops');
   await page.getByLabel('I am 18 or older and I accept the rules below').check();

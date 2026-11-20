@@ -74,6 +74,9 @@ export interface StillLoopDrawViewV1 {
   entriesHash: string | null;
   lockedAt: string | null;
   blockAt: string | null;
+  /** The list was fixed more than two minutes after the close, so its block followed the moment it was (absent from
+   * servers before 2026-11-20). */
+  fixedLate?: boolean;
   block: { number: string; hash: string; time: string } | null;
   /** In the order picked. */
   winners: Array<{ no: number; label: string; paid: boolean }>;
@@ -144,6 +147,8 @@ function drawOfV1(value: unknown): StillLoopDrawViewV1 | null {
     block: block ? { number: block.number as string, hash: block.hash as string, time: block.time as string } : null,
     winners: winners as StillLoopDrawViewV1['winners'],
     stamps,
+    // Only a true from the server says late; an older answer has none.
+    fixedLate: d.fixedLate === true,
   };
 }
 
@@ -335,7 +340,8 @@ function EnterV1({ draw, model }: { draw: StillLoopDrawViewV1; model: StillLoopD
         {state.kind === 'sending' ? 'Entering…' : withLoop ? `Enter with Loop #${loop!.loopNo}` : 'Enter free'}
       </button>
       {withLoop ? null : (
-        <p className="still-note">Free entry needs Coinbase’s Verified Account attestation on this wallet
+        <p className="still-note">Free entry needs one of two on this wallet: a swap of at least 10 USDC, to or from USDC, made through Still at any
+          time, or Coinbase’s Verified Account attestation
           (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</p>
       )}
       {state.kind === 'failed' ? <p className="still-warn" role="status">{state.words}</p> : null}
@@ -350,16 +356,19 @@ function DrawRulesV1({ draw }: { draw: StillLoopDrawViewV1 }) {
       <ul>
         <li>Two ways in, the same chance, and the same step: enter here before the close. A wallet that made a Loop while the draw is open enters
           with it: Still confirmed its loan after the draw opened, and Bitrefill did not report its card undelivered. Any other wallet enters free,
-          with no loan and no purchase, once it holds Coinbase’s Verified Account attestation
-          (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</li>
+          with no loan, once it either holds Coinbase’s Verified Account attestation
+          (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>), which needs no purchase, or
+          made a swap through Still, at any time, in which at least 10 USDC changed hands (Swap AI, or Buy and Sell on Stocks).</li>
         <li>One entry per wallet per draw.</li>
-        <li>Open to people 18 or older who are not U.S. persons, from where Still is offered. The Still team does not enter.</li>
+        <li>Open to people 18 or older who are not U.S. persons, from where Still is offered. The Still team has committed not to enter.</li>
         <li>The list is fixed 30 seconds after the close. Its hash, which also covers the moment it was fixed and the number of winners, is shown
           here, and public time-stamping authorities sign that it existed then.
           {' '}{draw.winnerCount === 1 ? 'The winner is' : 'The first winner is'} entry
-          number keccak256(block hash, draw) mod N + 1, where the block is the first Base block at least five minutes after the list was fixed.
-          {draw.winnerCount === 1 ? '' : ' Each next winner is picked the same way from the entries not yet picked, so nobody wins twice.'} Anybody can check it,
-          the time-stamps too, with <a href={STILL_LOOP_DRAW_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">verify_loop_draw.ts</a>.</li>
+          number keccak256(block hash, draw) mod N + 1, where the block is the first Base block at least five and a half minutes after the close.
+          {draw.winnerCount === 1 ? '' : ' Each next winner is picked the same way from the entries not yet picked, so nobody wins twice.'} If the list
+          could not be fixed within two minutes of the close, the block is the first at least five minutes after it was, and this page says it was
+          fixed late. Anybody can check it, the time-stamps too,
+          with <a href={STILL_LOOP_DRAW_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">verify_loop_draw.ts</a>.</li>
         <li>{draw.prizeUsdc} USDC is sent on Base to {draw.winnerCount === 1 ? 'the winning wallet' : 'each winning wallet'} within 7 days. Your entry’s name
           is all the list shows: never your wallet.</li>
         <li>Not sponsored by Coinbase, Base, Bitrefill, DigiCert, Sectigo or any brand on this page.</li>
@@ -373,7 +382,10 @@ function PastDrawV1({ draw, mine }: { draw: StillLoopDrawViewV1; mine: StillLoop
   const facts = draw.state === 'closing' ? ['closed; the list is being fixed']
     : draw.entries === 0 ? ['nobody entered, so nobody won']
     : [`${draw.entries} ${draw.entries === 1 ? 'entry' : 'entries'}`, draw.entriesHash ? `list ${shortHash(draw.entriesHash)}` : null,
-      draw.stamps.length > 0 ? `time-stamped by ${draw.stamps.map((stamp) => hostOfV1(stamp.tsa)).join(' and ')}` : null,
+      draw.fixedLate ? 'fixed late, so its block followed the moment it was fixed' : null,
+      // A list nobody time-stamped is said so, not left out (audit LOOP-3, 2026-11-20).
+      draw.stamps.length > 0 ? `time-stamped by ${draw.stamps.map((stamp) => hostOfV1(stamp.tsa)).join(' and ')}`
+        : draw.entriesHash && (draw.block || draw.state === 'drawn') ? 'no time-stamp: when it was fixed rests on Still’s word' : null,
       draw.block ? `Base block ${draw.block.number}` : draw.blockAt ? `picked by the first Base block from ${stillLoopDrawTimeV1(draw.blockAt)}` : null,
       draw.winners.length > 0 ? `won by ${draw.winners.map((w) => `${w.label}${w.paid ? ' (paid)' : ''}`).join(', ')}` : null];
   return (
@@ -418,15 +430,16 @@ function StillLoopDrawV1({ draws, entry, now }: { draws: NonNullable<StillLoopsV
             <li className="still-loops-way">
               <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
               <div className="name">Enter free</div>
-              <div className="line">No loan and no purchase: the same chance as a Loop.</div>
-              {/* Said before the draw opens too, so a wallet can be attested in time. */}
-              <div className="line">It takes Coinbase’s Verified Account attestation on your wallet
-                (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>).</div>
+              <div className="line">No loan: the same chance as a Loop.</div>
+              {/* Said before the draw opens too, so a wallet can be ready in time. Coinbase stays one of the two (2026-11-20). */}
+              <div className="line">Your wallet needs one of two: Coinbase’s Verified Account attestation, which needs no purchase
+                (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>), or a swap of at least
+                10 USDC, to or from USDC, made through Still at any time (<StillLink href="/routes">Swap AI</StillLink>, or Buy and Sell on Stocks).</div>
             </li>
             <li className="still-loops-way">
               <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
               <div className="name">Make a Loop</div>
-              <div className="line">A Loop made while the draw is open lets you enter with it, no attestation needed.</div>
+              <div className="line">A Loop made while the draw is open lets you enter with it, with no other check.</div>
               <StillLink href="/spend" className="still-btn sec">Spend</StillLink>
             </li>
           </ul>
@@ -550,7 +563,8 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
       <div className="still-section still-borrow-foot">
         <p className="still-note">
           Loans have interest and can be liquidated if prices fall: see the rate and the limits before you sign. Still is not a lender, and the wall names
-          no wallet and no transaction. Not offered to US persons. Not affiliated with Apple, Amazon, Google, Meta, Microsoft or Bitrefill.
+          no wallet and no transaction. Not offered to US persons. Not affiliated with Apple, Amazon, Google, Meta or Microsoft. Still is a Bitrefill
+          affiliate: Bitrefill may pay Still a commission, which does not change your price.
         </p>
         <StillLink href="/safety">How Still keeps a loan safe</StillLink>
       </div>

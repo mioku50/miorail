@@ -11,6 +11,7 @@ import {
   loopDrawLockMomentV1,
   loopDrawOpenAtV1,
   loopDrawTargetSecondsV1,
+  loopDrawFixedLateV1,
   loopDrawWinnerV1,
   loopDrawWinnersV1,
   type LoopDrawBlockV1,
@@ -86,12 +87,19 @@ describe('the Loop draws', () => {
     assert.throws(() => loopDrawWinnersV1({ blockHash, drawId: '2026-11-28', count: 3, winners: 21 }), /loop_draw_winners_invalid/);
   });
 
-  it('wait five minutes after the later of the close and the lock, in whole seconds', () => {
+  it('take the block five and a half minutes after the close, whenever the list was fixed on time (audit LOOP-2)', () => {
     assert.equal(loopDrawLockMomentV1(new Date('2026-11-28T18:00:30.001Z')).toISOString(), '2026-11-28T18:00:31.000Z');
     assert.equal(loopDrawLockMomentV1(new Date('2026-11-28T18:00:30.000Z')).toISOString(), '2026-11-28T18:00:30.000Z');
-    const close = Date.parse('2026-11-28T18:00:00.000Z') / 1000;
-    assert.equal(loopDrawTargetSecondsV1({ closesAt: '2026-11-28T18:00:00.000Z', lockedAt: '2026-11-28T18:00:31.000Z' }), BigInt(close + 31 + 300));
-    assert.equal(loopDrawTargetSecondsV1({ closesAt: '2026-11-28T18:00:00.000Z', lockedAt: '2026-11-28T17:00:00.000Z' }), BigInt(close + 300));
+    const closesAt = '2026-11-28T18:00:00.000Z', close = Date.parse(closesAt) / 1000;
+    // A list fixed again within two minutes of the close keeps the block: the schedule names it, not the write.
+    for (const lockedAt of ['2026-11-28T18:00:31.000Z', '2026-11-28T18:01:10.000Z', '2026-11-28T18:02:00.000Z']) {
+      assert.equal(loopDrawTargetSecondsV1({ closesAt, lockedAt }), BigInt(close + 330), lockedAt);
+      assert.equal(loopDrawFixedLateV1({ closesAt, lockedAt }), false, lockedAt);
+    }
+    // Fixed late (the server was down): five minutes after it was fixed, and said to be late.
+    assert.equal(loopDrawFixedLateV1({ closesAt, lockedAt: '2026-11-28T18:02:01.000Z' }), true);
+    assert.equal(loopDrawTargetSecondsV1({ closesAt, lockedAt: '2026-11-28T18:10:00.000Z' }), BigInt(close + 600 + 300));
+    assert.throws(() => loopDrawTargetSecondsV1({ closesAt, lockedAt: 'soon' }), /loop_draw_time_invalid/);
   });
 });
 

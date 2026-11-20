@@ -8,9 +8,11 @@
  *      same text, granted, and signed before the picking block: the list
  *      existed before anybody could know the block's hash. With openssl on
  *      the machine its signature is checked too, against the system's roots;
- *   3. the block is the first Base block whose timestamp is at least five
- *      minutes after the later of the close and the moment the list was fixed
- *      (the block before it is earlier), and Base gives it the published hash;
+ *   3. the block is the first Base block whose timestamp is at least five and
+ *      a half minutes after the close, as the schedule says from the day the
+ *      draw opens (the block before it is earlier), and Base gives it the
+ *      published hash. A list fixed more than two minutes after the close was
+ *      fixed late: its block is the first five minutes after it was fixed;
  *   4. the first winner is entry keccak256(blockHash ‖ drawId) mod N + 1, and
  *      each next one, the k-th, keccak256(blockHash ‖ drawId/k) mod (entries
  *      left), counted along the entries not yet picked.
@@ -18,10 +20,15 @@
  *   pnpm still:verify-loop-draw 2026-11-28
  *   pnpm still:verify-loop-draw 2026-11-28 --api https://miorail.xyz --rpc https://mainnet.base.org
  *
+ * The draw itself (its close, its winners, its prize) must be the one this file's schedule names, the list fixed
+ * after the close, and every stamp after the close too (audit LOOP-2, 2026-11-20: a list fixed again later
+ * moved the block and still passed).
+ *
  * Reads only: no key, no wallet, no signature of its own. Exit 0 when every check holds and at least one
  * authority's stamp, signature included, proves the list existed before the block was due; exit 3 when every
- * check that ran holds but that time is not proven (no stamp, or openssl could not check one); exit 1 when a
- * check fails (audit, 2026-11-18: a missing stamp or an unchecked signature used to exit 0).
+ * check that ran holds but that time is not proven (no stamp, or openssl could not check one); exit 4 when every
+ * check holds but the list was fixed late, so its block rests on when Still fixed it; exit 1 when a check fails
+ * (audit, 2026-11-18: a missing stamp or an unchecked signature used to exit 0).
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -29,6 +36,9 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  LOOP_DRAWS_V1,
+  LOOP_DRAW_ON_TIME_S_V1,
+  loopDrawFixedLateV1,
   loopDrawListHashV1,
   loopDrawListTextV1,
   loopDrawTargetSecondsV1,
@@ -38,6 +48,8 @@ import { rfc3161ResponseV1, rfc3161StampsV1 } from '../lib/still-engine/src/rfc3
 
 interface PublishedListV1 {
   drawId: string;
+  opensAt?: string;
+  prizeUsdc?: string;
   closesAt: string;
   lockedAt: string;
   entriesHash: string;
@@ -107,6 +119,21 @@ async function main(): Promise<number> {
     if (!ok) failed += 1;
   };
 
+  // The draw the schedule names, not one the server describes: its close, its winners and its prize.
+  const scheduled = LOOP_DRAWS_V1.find((draw) => draw.drawId === drawId);
+  check(scheduled !== undefined && list.drawId === drawId, `${drawId} is a draw of the published schedule`);
+  if (scheduled) {
+    check(list.closesAt === scheduled.closesAt, `it closed at ${scheduled.closesAt}, as scheduled`);
+    check(list.winnerCount === scheduled.winners, `it has ${scheduled.winners} winner(s), as scheduled`);
+    if (list.opensAt !== undefined) check(list.opensAt === scheduled.opensAt, `it opened at ${scheduled.opensAt}, as scheduled`);
+    if (list.prizeUsdc !== undefined) check(list.prizeUsdc === scheduled.prizeUsdc, `each prize is ${scheduled.prizeUsdc} USDC, as scheduled`);
+  }
+  check(Date.parse(list.lockedAt) >= Date.parse(list.closesAt), `the list was fixed after the close, at ${list.lockedAt}`);
+  const late = loopDrawFixedLateV1({ closesAt: list.closesAt, lockedAt: list.lockedAt });
+  if (late) {
+    console.log(`     the list was fixed late, more than ${LOOP_DRAW_ON_TIME_S_V1} seconds after the close: its block follows the moment`
+      + ' it was fixed, as the rules say, so that moment rests on Still\u2019s word');
+  }
   const committed = { drawId, closesAt: list.closesAt, lockedAt: list.lockedAt, winners: list.winnerCount, labels: list.labels };
   const hash = loopDrawListHashV1(committed);
   check(hash === list.entriesHash, `the list of ${list.labels.length}, fixed at ${list.lockedAt} for ${list.winnerCount} winner(s), hashes to ${hash}`);
@@ -128,6 +155,8 @@ async function main(): Promise<number> {
     check(named, `${new URL(stamp.tsa).host} stamped the SHA-256 of this list at ${of ? reading.genTime : 'no readable time'}`);
     const early = of && Date.parse(reading.genTime) < Number(target) * 1000;
     if (of) check(early, `${new URL(stamp.tsa).host}'s stamp is before the picking block was due`);
+    // A list stamped before its draw closed was not the list of that draw.
+    if (of) check(Date.parse(reading.genTime) >= Date.parse(list.closesAt), `${new URL(stamp.tsa).host}'s stamp is after the close`);
     const signed = opensslVerifiesV1(text, stamp.token);
     if (signed === null) console.log(`     ${new URL(stamp.tsa).host}'s signature not checked: openssl or the system's roots are not on this machine`);
     else check(signed, `openssl checks ${new URL(stamp.tsa).host}'s signature against the system's roots`);
@@ -139,6 +168,10 @@ async function main(): Promise<number> {
     if (!timeProven) {
       console.log(`\n${drawId}: no check failed, but the time the list was fixed is not proven: no authority's stamp was checked in full.`);
       return 3;
+    }
+    if (late) {
+      console.log(`\n${drawId}: no check failed, but the list was fixed late, so its block rests on when Still fixed it.`);
+      return 4;
     }
     return 0;
   };
@@ -158,7 +191,7 @@ async function main(): Promise<number> {
   check(JSON.stringify(winners) === JSON.stringify(list.winnerNos),
     `${winners.length === 1 ? 'the winner is' : `the ${winners.length} winners are`}: ${winners.map((no) => `entry ${no}, ${list.labels[no - 1]}`).join('; ')}`);
   if (failed > 0) console.log(`\n${drawId}: ${failed} check(s) failed.`);
-  else if (timeProven) console.log(`\n${drawId}: every check holds.`);
+  else if (timeProven && !late) console.log(`\n${drawId}: every check holds.`);
   return verdict();
 }
 

@@ -419,3 +419,30 @@ export async function recordLoopPrizesV1(input: {
     return { covered, recorded };
   });
 }
+
+/** USDC on Base. */
+const BASE_USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
+/**
+ * Whether this wallet ever completed a swap through Still (Swap AI, or Buy and Sell on Stocks) in which at least
+ * `minUsdcAtomic` of USDC changed hands, as its proof read the swap from Base: the second way a wallet with no Loop
+ * enters a draw free, beside Coinbase's attestation (2026-11-20, the operator: a swap of $10 or more, at any time).
+ */
+export async function stillLoopSwapVerifiedV1(sql: SqlTemplateExecutor, input: { walletAddress: string; minUsdcAtomic: bigint }): Promise<boolean> {
+  const wallet = input.walletAddress.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) throw new Error('still_loop_swap_wallet_invalid');
+  if (input.minUsdcAtomic < 1n) throw new Error('still_loop_swap_minimum_invalid');
+  const rows = await sql`
+    SELECT 1 AS swapped
+    FROM route_proofs p
+    JOIN route_runs r ON r.id = p.route_run_id
+    WHERE p.user_id = ${`eip155:8453:${wallet}`} AND r.wallet_address = ${wallet} AND p.status = 'completed'
+      AND r.intent_payload->>'goal' = 'swap'
+      AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE(p.payload->'actualResult'->'assetChanges', '[]'::jsonb)) AS change
+        WHERE lower(change->'asset'->>'address') = ${BASE_USDC_V1}
+          AND (change->>'amountAtomic') ~ '^[0-9]{1,78}$'
+          AND (change->>'amountAtomic')::numeric >= ${input.minUsdcAtomic.toString()}::numeric)
+    LIMIT 1`;
+  return rows.length > 0;
+}

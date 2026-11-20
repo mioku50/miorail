@@ -10,11 +10,13 @@ import {
   type StillLoopDrawRecordV1,
   type StillLoopDrawRepositoryV1,
   type StillLoopDrawStampV1,
+  stillLoopSwapVerifiedV1,
 } from '@mioagent/route-storage';
 import {
   LOOP_DRAWS_V1,
   loopDrawCurrentV1,
   loopDrawFirstBlockAtOrAfterV1,
+  loopDrawFixedLateV1,
   loopDrawListHashV1,
   loopDrawListTextV1,
   loopDrawLockMomentV1,
@@ -39,7 +41,9 @@ import { stillLoopOfExecutionV1, stillLoopsEnabledV1, stillLoopsRuntimeV1 } from
 // 2026-11-18): the owner enters, once per wallet, with the rules accepted and
 // from where Still is offered, before the close. A wallet that made a Loop
 // while the draw is open enters with it; any other enters free, with
-// Coinbase's Verified Account attestation. A Loop counts when Still confirmed
+// Coinbase's Verified Account attestation or a swap of at least 10 USDC it
+// made through Still at any time (2026-11-20, the operator: Coinbase stays
+// one of the two ways). A Loop counts when Still confirmed
 // its loan after the draw opened and Bitrefill did not report its card
 // undelivered: Still asks Bitrefill itself while it holds the open order, and
 // a card on its way waits for its word. An entry is one write, at the time
@@ -47,8 +51,10 @@ import { stillLoopOfExecutionV1, stillLoopsEnabledV1, stillLoopsRuntimeV1 } from
 // team never enters.
 //
 // 30 seconds after the close the list is fixed and its hash written; its hash
-// is time-stamped by public authorities at once (RFC 3161, LOOP-4); five
-// minutes after the list was fixed, the first Base block picks the winners.
+// is time-stamped by public authorities at once (RFC 3161, LOOP-4); five and
+// a half minutes after the close, by the schedule, the first Base block picks
+// the winners (LOOP-2, 2026-11-20); a list fixed late, five minutes after it
+// was fixed, and the page says it was late.
 // All of it happens in this process, on a 30-second tick and on any read of
 // the public page, and each is one write that happens once. Open only while
 // STILL_LOOPS_V1=on and STILL_LOOP_DRAW_V1=on.
@@ -60,6 +66,8 @@ export function stillLoopDrawEnabledV1(env: NodeJS.ProcessEnv = process.env): bo
 
 /** A free entry that began before the close is written well within this. */
 export const STILL_LOOP_DRAW_LOCK_AFTER_MS_V1 = 30_000;
+/** The smallest swap through Still that opens a free entry: 10 USDC changed hands in it. */
+export const STILL_LOOP_DRAW_SWAP_MIN_USDC_V1 = 10n;
 /** The picking block is read a minute after it is due, not the second it may appear. */
 const READ_BLOCK_AFTER_S_V1 = 60n;
 const CODE_ALPHABET_V1 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -108,6 +116,9 @@ export const stillLoopDrawRuntimeV1 = {
   now: (): Date => new Date(),
   /** Coinbase's Verified Account attestation on Base; throws when Base could not be read. */
   verified: (wallet: string): Promise<boolean> => coinbaseVerifiedAccountV1(wallet, baseReaderV1() as unknown as CoinbaseVerifiedReaderV1, new Date()),
+  /** A completed swap through Still with at least 10 USDC on one side, ever; throws when the database could not be read. */
+  swapped: (wallet: string): Promise<boolean> => stillLoopSwapVerifiedV1(client as unknown as SqlTemplateExecutor,
+    { walletAddress: wallet, minUsdcAtomic: STILL_LOOP_DRAW_SWAP_MIN_USDC_V1 * 1_000_000n }),
   head: async (): Promise<LoopDrawBlockV1> => blockOfV1(await baseReaderV1().getBlock({ blockTag: 'latest' })),
   /** One block, a tenth of a second apart, so the search never bursts the RPC. */
   block: async (number: bigint): Promise<LoopDrawBlockV1> => {
@@ -270,6 +281,8 @@ export interface StillLoopDrawPublicV1 {
   lockedAt: string | null;
   /** When the picking block is due: its timestamp is at least this. */
   blockAt: string | null;
+  /** The list was fixed more than two minutes after the close, so its block follows the moment it was. */
+  fixedLate: boolean;
   block: { number: string; hash: string; time: string } | null;
   /** In the order picked, each with whether its prize was sent. */
   winners: Array<{ no: number; label: string; paid: boolean }>;
@@ -281,14 +294,15 @@ function publicOfV1(draw: LoopDrawV1, record: StillLoopDrawRecordV1 | null, now:
   const facts = { drawId: draw.drawId, opensAt: draw.opensAt, closesAt: draw.closesAt, winnerCount: record?.winnerCount ?? draw.winners, prizeUsdc: draw.prizeUsdc };
   if (!record) {
     const state = now.getTime() < Date.parse(draw.opensAt) ? 'upcoming' as const : now.getTime() < Date.parse(draw.closesAt) ? 'open' as const : 'closing' as const;
-    return { ...facts, state, entries: state === 'upcoming' ? 0 : soFar, entriesHash: null, lockedAt: null, blockAt: null, block: null, winners: [], stamps: [] };
+    return { ...facts, state, entries: state === 'upcoming' ? 0 : soFar, entriesHash: null, lockedAt: null, blockAt: null, fixedLate: false, block: null,
+      winners: [], stamps: [] };
   }
   const blockAt = record.entryCount > 0
     ? new Date(Number(loopDrawTargetSecondsV1({ closesAt: record.closesAt, lockedAt: record.lockedAt })) * 1000).toISOString() : null;
   const winners = (record.winnerNos ?? []).map((no) => ({ no, label: record.entries[no - 1]?.label ?? '', paid: record.payouts.some((payout) => payout.no === no) }));
   return {
     ...facts, state: record.drawnAt !== null ? 'drawn' : 'drawing', entries: record.entryCount, entriesHash: record.entriesHash, lockedAt: record.lockedAt,
-    blockAt, block: record.blockHash ? { number: record.blockNumber!, hash: record.blockHash, time: record.blockTime! } : null, winners,
+    blockAt, fixedLate: loopDrawFixedLateV1({ closesAt: record.closesAt, lockedAt: record.lockedAt }), block: record.blockHash ? { number: record.blockNumber!, hash: record.blockHash, time: record.blockTime! } : null, winners,
     stamps: record.stamps.map((stamp) => ({ tsa: stamp.tsa, genTime: stamp.genTime })),
   };
 }
@@ -319,7 +333,7 @@ export async function stillLoopDrawListV1(drawId: string) {
   return {
     schemaVersion: 'still-loop-draw/v1' as const, drawId: record.drawId, opensAt: draw.opensAt, closesAt: draw.closesAt, prizeUsdc: draw.prizeUsdc,
     winnerCount: record.winnerCount, lockedAt: record.lockedAt, entriesHash: record.entriesHash, labels: record.entries.map((entry) => entry.label),
-    blockAt: view.blockAt, block: view.block, winnerNos: record.winnerNos,
+    blockAt: view.blockAt, fixedLate: view.fixedLate, block: view.block, winnerNos: record.winnerNos,
     // Each a whole RFC 3161 reply over the SHA-256 of the list's text: `openssl ts -verify` checks it.
     stamps: record.stamps.map((stamp) => ({ tsa: stamp.tsa, genTime: stamp.genTime, token: stamp.token })),
   };
@@ -386,12 +400,15 @@ export async function stillLoopDrawBeforeEntryV1(wallet: string, now: Date): Pro
 }
 
 /** The entry itself, once the region and the confirmations were checked: with the wallet's Loop of the draw when it
- * has one ready, otherwise free with the attestation; one write while the draw is still open. */
+ * has one ready, otherwise free with a past swap through Still or the attestation; one write while the draw is
+ * still open. The swap is read first: it is our own database, and the attestation is a read of Base. */
 export async function enterStillLoopDrawV1(wallet: string, draw: LoopDrawV1, loans: StillLoopDrawLoansV1): Promise<StillLoopDrawEnterOutcomeV1> {
   const runtime = stillLoopDrawRuntimeV1;
   const loop = await stillLoopOfDrawV1(wallet, draw, loans, runtime.now());
   const withLoop = loop !== null && loop.ready;
-  if (!withLoop && !(await runtime.verified(wallet))) return loop ? { outcome: 'loop_pending', loopNo: loop.loopNo } : { outcome: 'not_verified' };
+  if (!withLoop && !(await runtime.swapped(wallet)) && !(await runtime.verified(wallet))) {
+    return loop ? { outcome: 'loop_pending', loopNo: loop.loopNo } : { outcome: 'not_verified' };
+  }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const at = runtime.now();
     if (at.getTime() >= Date.parse(draw.closesAt)) {

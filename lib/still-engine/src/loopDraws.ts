@@ -11,9 +11,15 @@ import { concat, keccak256, stringToHex, type Hex } from 'viem';
 //   result depends on, so the time-stamps fix the picking block and the number of winners as well as the list
 //   (audit, 2026-11-18: lockedAt sets the block and was outside the stamped text, so a later lockedAt could
 //   have moved the draw to another block with every check still passing).
-// - The block is the first Base block whose timestamp is at least five
-//   minutes after the later of the close and the moment the list was fixed:
-//   the hash is shown before that block exists.
+// - The block is the first Base block whose timestamp is at least five and a
+//   half minutes after the close: known from the moment the draw opens, so no
+//   later write can move it (audit LOOP-2, 2026-11-20: the block followed the
+//   moment the list was fixed, which the server sets, so deleting the fixed
+//   list re-rolled the draw with every check passing). The list is fixed 30
+//   seconds after the close and its hash shown and time-stamped before that
+//   block exists. A list fixed more than two minutes after the close (the
+//   server was down) is fixed late: its block is then the first at least five
+//   minutes after it was fixed, and the page and the verifier say so.
 // - The first winner is entry keccak256(blockHash ‖ drawId) mod N + 1. A draw
 //   with more winners picks each next one the same way, from the entries not
 //   yet picked, the k-th with "/k" after the draw: keccak256(blockHash ‖
@@ -39,7 +45,11 @@ export const LOOP_DRAWS_V1: readonly LoopDrawV1[] = [
 /** The most winners one draw may have. */
 export const LOOP_DRAW_MAX_WINNERS_V1 = 20;
 
-/** Seconds between the list being fixed and the block that picks from it. */
+/** Seconds between the close and the block that picks, when the list was fixed on time. */
+export const LOOP_DRAW_BLOCK_AFTER_CLOSE_S_V1 = 330;
+/** A list fixed later than this after the close was fixed late. */
+export const LOOP_DRAW_ON_TIME_S_V1 = 120;
+/** Seconds between a list fixed late and the block that picks from it. */
 export const LOOP_DRAW_BLOCK_DELAY_S_V1 = 300;
 
 /** The draw open at `now`, or null. */
@@ -84,10 +94,18 @@ export function loopDrawLockMomentV1(now: Date): Date {
   return new Date(Math.ceil(now.getTime() / 1000) * 1000);
 }
 
-/** Unix seconds the picking block's timestamp must reach: five minutes after the later of the close and the lock. */
+/** Whether the list was fixed more than LOOP_DRAW_ON_TIME_S_V1 after the close. */
+export function loopDrawFixedLateV1(input: { closesAt: string; lockedAt: string }): boolean {
+  const close = Date.parse(input.closesAt), locked = Date.parse(input.lockedAt);
+  if (!Number.isFinite(close) || !Number.isFinite(locked)) throw new Error('loop_draw_time_invalid');
+  return locked - close > LOOP_DRAW_ON_TIME_S_V1 * 1000;
+}
+
+/** Unix seconds the picking block's timestamp must reach: five and a half minutes after the close, from the
+ * schedule; for a list fixed late, five minutes after it was fixed. */
 export function loopDrawTargetSecondsV1(input: { closesAt: string; lockedAt: string }): bigint {
-  const later = Math.max(Date.parse(input.closesAt), Date.parse(input.lockedAt));
-  return BigInt(Math.ceil(later / 1000) + LOOP_DRAW_BLOCK_DELAY_S_V1);
+  if (loopDrawFixedLateV1(input)) return BigInt(Math.ceil(Date.parse(input.lockedAt) / 1000) + LOOP_DRAW_BLOCK_DELAY_S_V1);
+  return BigInt(Math.ceil(Date.parse(input.closesAt) / 1000) + LOOP_DRAW_BLOCK_AFTER_CLOSE_S_V1);
 }
 
 /** The winning entries' numbers, from 1 to `count`, in the order picked: min(winners, count) of them, none twice. */

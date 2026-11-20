@@ -222,8 +222,9 @@ export function stillLoopDrawLoansV1(wallet: string): StillLoopDrawLoansV1 {
 export const stillLoopDrawLoansRuntimeV1 = { of: (wallet: string): StillLoopDrawLoansV1 => stillLoopDrawLoansV1(wallet) };
 
 const EnterBodyV1 = z.object({ rules: z.literal(true) }).strict();
-const NOT_VERIFIED_DETAIL_V1 = 'Without a Loop made while this draw is open, an entry needs Coinbase’s Verified Account attestation on this wallet. '
-  + `Coinbase gives it at ${COINBASE_VERIFIED_V1.url}; then enter again here.`;
+const NOT_VERIFIED_DETAIL_V1 = 'Without a Loop made while this draw is open, an entry needs one of two on this wallet: a swap of at least 10 USDC '
+  + 'made through Still at any time (Swap AI, or Buy and Sell on Stocks), or Coinbase’s Verified Account attestation, which Coinbase gives at '
+  + `${COINBASE_VERIFIED_V1.url}. Then enter again here.`;
 
 stillLoopsRouter.post('/draw/enter', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'private, no-store');

@@ -1,4 +1,4 @@
-import React, { useState, type ReactNode } from 'react';
+import React, { useEffect, useState, type ReactNode } from 'react';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import { formatCents, formatPercentBps } from '@mioagent/still-engine/format';
 import { TERMS } from '@mioagent/still-engine/policy';
@@ -157,12 +157,26 @@ function TelegramIconV1() {
 
 /**
  * Loops, as Home's last and quietest door (2026-11-20, the operator: «ненавязчиво … в виде подарка»): the draw's
- * prize while one is coming or open, said with its free way in, never as a reason to borrow. Only while the
+ * prize while one is coming or open, said with its free ways in and what they take (audit UI-2: "no loan or
+ * purchase needed" left out that the free entry needs a check), never as a reason to borrow. Only while the
  * server has Loops open; otherwise nothing.
  */
-function StillLoopsDoorV1({ view }: { view: StillLoopsViewV1 }) {
+function StillLoopsDoorV1({ view, now: fixedNow }: { view: StillLoopsViewV1; now?: number }) {
   const draw = view.draws?.current ?? null;
-  const live = draw && (draw.state === 'upcoming' || draw.state === 'open') ? draw : null;
+  const [clock, setClock] = useState(() => Date.now());
+  const now = fixedNow ?? clock;
+  // The page's own clock moves the door on at the opening and at the close: Home reads the draws once, and the door
+  // said "Opens …" after the draw had opened (audit UI-2, 2026-11-20).
+  useEffect(() => {
+    if (fixedNow !== undefined || !draw) return undefined;
+    const next = [Date.parse(draw.opensAt), Date.parse(draw.closesAt)].find((at) => at > clock);
+    if (next === undefined) return undefined;
+    const timer = setTimeout(() => setClock(Date.now()), Math.min(next - clock + 1_000, 2_000_000_000));
+    return () => clearTimeout(timer);
+  }, [fixedNow, draw?.opensAt, draw?.closesAt, clock]);
+  const phase = !draw || !(draw.state === 'upcoming' || draw.state === 'open') ? null
+    : now < Date.parse(draw.opensAt) ? 'upcoming' as const : now < Date.parse(draw.closesAt) ? 'open' as const : null;
+  const live = phase ? draw : null;
   return (
     <StillLink href="/loops" className="still-extra is-gift">
       <span className="still-extra-icon"><StillIconV1 name="giftcard" /></span>
@@ -170,7 +184,8 @@ function StillLoopsDoorV1({ view }: { view: StillLoopsViewV1 }) {
         <span className="still-extra-title">{live ? `Free draw: ${stillLoopDrawPrizeV1(live)}` : 'Loops'}</span>
         <span className="still-extra-note">
           {live
-            ? `${live.state === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(live.opensAt)}` : `Open until ${stillLoopDrawTimeV1(live.closesAt)}`}. No loan or purchase needed to enter.`
+            ? `${phase === 'upcoming' ? `Opens ${stillLoopDrawTimeV1(live.opensAt)}` : `Open until ${stillLoopDrawTimeV1(live.closesAt)}`}. `
+              + 'Free to enter with Coinbase verification or any past swap of 10+ USDC on Still.'
             : 'A company’s card, paid by a loan against its stock, which you keep.'}
         </span>
       </span>
@@ -180,7 +195,7 @@ function StillLoopsDoorV1({ view }: { view: StillLoopsViewV1 }) {
 }
 
 /** What a loan could pay for: Home's one door that is about the money itself. */
-export function StillSpendDoor({ loops }: { loops?: StillLoopsViewV1 | null } = {}) {
+export function StillSpendDoor({ loops, now }: { loops?: StillLoopsViewV1 | null; now?: number } = {}) {
   return (
     <div className="still-section still-extras">
       <StillLink href="/spend" className="still-extra is-lead">
@@ -199,7 +214,7 @@ export function StillSpendDoor({ loops }: { loops?: StillLoopsViewV1 | null } = 
         </span>
         <span className="still-extra-go" aria-hidden="true">›</span>
       </StillLink>
-      {loops ? <StillLoopsDoorV1 view={loops} /> : null}
+      {loops ? <StillLoopsDoorV1 view={loops} now={now} /> : null}
     </div>
   );
 }
