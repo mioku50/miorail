@@ -92,19 +92,29 @@ export function isRussianV1(text: string): boolean {
 // "not a letter or digit" and Russian endings as a Cyrillic class.
 const EDGE = '(?:^|[^\\p{L}\\p{N}])';
 
+/**
+ * A word of the table, on both sides (audit SS-4, 2026-11-20: with no right edge "Goldman" was gold, "WBTC" was
+ * BTC, "TSLAx" and "NVDA.d" were Coinbase's TSLAc and NVDAc). Latin words end where letters, digits or a dot
+ * followed by one end, and begin after no letter, digit or dot (".eth" ends a name); a Russian stem takes
+ * Cyrillic endings ("золота", "теслы") and nothing Latin after them.
+ */
+const tableWordV2 = (latin: string, russian?: string): RegExp => new RegExp(
+  `(?<![\\p{L}\\p{N}.])(?:(?:${latin})(?!\\.?[\\p{L}\\p{N}])${russian ? `|(?:${russian})[а-яё]*(?![\\p{L}\\p{N}])` : ''})`, 'iu');
+
 /** The assets Still reads, by the names people use. One table for the page and the server. */
 export const AGENT_ASSET_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
-  ['NVDAc', /nvda|nvidia|нвиди/iu],
-  ['AAPLc', /aapl|apple|эппл|эпл|яблок/iu],
-  ['TSLAc', /tsla|tesla|тесл/iu],
-  ['SPCXc', /spcx|space ?x|спейс ?икс|спейсикс/iu],
-  ['MSFTc', /msft|microsoft|майкрософт/iu],
-  ['AMZNc', /amzn|amazon|амазон/iu],
-  ['GOOGLc', /googl|google|alphabet|гугл/iu],
-  ['METAc', new RegExp(`${EDGE}(?:meta|мета)(?:$|[^\\p{L}])`, 'iu')],
-  ['cbBTC', /cbbtc|btc|bitcoin|биткоин|биткойн|битк/iu],
-  ['ETH', new RegExp(`${EDGE}(?:w?eth|ether|ethereum|эфир)`, 'iu')],
-  ['PAXG', new RegExp(`${EDGE}(?:paxg|gold|xau|золот)`, 'iu')],
+  ['NVDAc', tableWordV2('nvdac?|nvidia', 'нвиди')],
+  ['AAPLc', tableWordV2('aaplc?|apple', 'эппл|эпл|яблок')],
+  ['TSLAc', tableWordV2('tslac?|tesla', 'тесл')],
+  ['SPCXc', tableWordV2('spcxc?|space ?x', 'спейс ?икс|спейсикс')],
+  ['MSFTc', tableWordV2('msftc?|microsoft', 'майкрософт')],
+  ['AMZNc', tableWordV2('amznc?|amazon', 'амазон')],
+  ['GOOGLc', tableWordV2('googlc?|google|alphabet', 'гугл')],
+  // «мета» takes no ending here: «метаданные» is not Meta.
+  ['METAc', tableWordV2('metac?|meta|мета')],
+  ['cbBTC', tableWordV2('cbbtc|btc|bitcoin', 'биткоин|биткойн|битк')],
+  ['ETH', tableWordV2('w?eth|ether|ethereum', 'эфир')],
+  ['PAXG', tableWordV2('paxg|gold|xau', 'золот')],
 ];
 
 /** Every asset the question names, in the order of the table. */
@@ -140,6 +150,11 @@ const ANALYSIS_V2: readonly RegExp[] = [
   /(?:добав|внес|довнес|залож|deposit|pledge|add)\S*\s.*\d/iu,
 ];
 
+/** What Spend sells: "a Netflix gift card", «пополнение», "an eSIM" (audit DIFF-1, 2026-11-20: «Купи подарочную карту Netflix
+ * за 20 USDC» prepared a swap of 20 USDC to Netflix's stock). */
+export const AGENT_SPEND_WORDS_V2 = new RegExp(`${EDGE}(?:gift\\s*cards?|cards?|vouchers?|top[\\s-]?ups?|recharge|e-?sims?|subscriptions?`
+  + `|подарочн\\p{L}*|карт(?:а|у|ы|е|ой|очк\\p{L}*)?|сертификат\\p{L}*|пополн\\p{L}*|подписк\\p{L}*|есим\\p{L}*)(?![\\p{L}])`, 'iu');
+
 const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
   ['dividends', /dividend|дивиденд/iu],
   ['safety', /safe|liquidat|health|risk|безопас|ликвид|риск/iu],
@@ -151,6 +166,8 @@ const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
 /** Where a question goes. One rule for the page and the server, so they cannot disagree. */
 export function agentRouteV2(question: string, stocks?: readonly AgentStockV2[]): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
   const whatIf = WHAT_IF_V2.test(question);
+  // A card, a top-up, an eSIM or a subscription is bought in Spend, never swapped into the brand's stock (audit DIFF-1).
+  if (!whatIf && AGENT_SPEND_WORDS_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (!whatIf && agentSwapRequestV2(question, stocks)) return { route: 'swap', topic: 'action_prep' };
   if (!whatIf && agentSendRequestV2(question)) return { route: 'send', topic: 'action_prep' };
   if (!whatIf && ACTION_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
@@ -308,9 +325,15 @@ export function agentAmountUnclearV2(text: string): boolean {
   const token = agentAmountTokenV2(text);
   return AMOUNT_PERCENT_V2.test(text) || AMOUNT_EXCEPT_V2.test(text) || AMOUNT_THOUSANDS_V2.test(text)
     || AMOUNT_HALF_UNIT_V2.test(text) || AMOUNT_REPEAT_V2.test(text)
-    || ((ALL_WORDS_V2.test(text) || HALF_WORDS_V2.test(text)) && token.kind !== 'none')
+    || ((ALL_WORDS_V2.test(text) || HALF_WORDS_V2.test(text)) && (token.kind !== 'none' || AMOUNT_NUMBER_WORDS_V2.test(text)))
     || token.kind === 'unclear';
 }
+
+/** A number in words: beside "all" or "half" it is the amount, not a share of the wallet (audit SS-2, 2026-11-20: "send
+ * one and a half USDC" with 150 USDC held prepared 75, "max five" all of it, «все пять» all of it). */
+const AMOUNT_NUMBER_WORDS_V2 = new RegExp(`${EDGE}(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty`
+  + `|forty|fifty|hundred|thousand|couple|dozen|один|одна|одну|одного|два|две|двух|три|трёх|трех|четыре|пять|шесть|семь|восемь|девять|десять`
+  + `|двадцать|тридцать|сорок|пятьдесят|сто|двести|тысяч\\p{L}*|полтор\\p{L}*)(?![\\p{L}])`, 'iu');
 
 /** The tokens a swap can name: USDC and the assets Still reads. */
 const SWAP_TOKEN_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
@@ -341,28 +364,50 @@ export interface AgentStockV2 {
 const NOT_TICKERS_V2 = new Set(['A', 'I', 'AI', 'AN', 'AT', 'BE', 'BY', 'DO', 'GO', 'IT', 'ME', 'MY', 'NO', 'OF', 'OK', 'ON', 'OR', 'SO', 'TO', 'UP', 'US',
   'ALL', 'AND', 'ANY', 'APP', 'ARE', 'BIG', 'BUY', 'CAN', 'CEO', 'DAY', 'EV', 'FOR', 'FUN', 'GET', 'HAS', 'LOW', 'MAX', 'NEW', 'NOW', 'ONE', 'OUT', 'PAY',
   'SEE', 'THE', 'TV', 'USA', 'WIN', 'YOU', 'CASH', 'GOLD', 'HIGH', 'LOAN', 'NEXT', 'REAL', 'SAVE', 'SELL', 'SWAP', 'TRUE', 'WELL', 'WORK', 'USD', 'USDC',
-  'ETH', 'BTC', 'PAXG']);
+  'ETH', 'BTC', 'PAXG',
+  // Words, abbreviations and units that are tickers too on Coinbase's list (2026-11-20, from its 415 rows).
+  'CAT', 'EAT', 'GAP', 'OWL', 'RUN', 'WAY', 'DNA', 'FLY', 'MED', 'TAP', 'PCT', 'WTI']);
 const LEGAL_SUFFIX_V2 = /(?:[,\s]+(?:inc\.?|incorporated|corp\.?|corporation|co\.|company|plc|ltd\.?|limited|pbc|n\.v\.|s\.a\.|s\.e\.|se|ag|sa|nv|holdings?|class\s+[a-z]|\(the\)))+\s*$/iu;
 const escapeV2 = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const B20_SYMBOL_V2 = /^[A-Z][A-Z0-9.]{0,6}c$/u;
 
-/** The words that name each stock, beyond the fixed table: one pattern that ignores case (a long symbol such as
- * "antc", the company's whole name) and one that does not (a short symbol such as "Cc", the ticker in capitals). */
-export function agentStockWordsV2(stocks: readonly AgentStockV2[]): Array<readonly [string, RegExp]> {
+/** A word for shares: what makes a company's name, or a two-letter ticker, a stock in a question. */
+const STOCK_WORD_V2 = '(?:stocks?|shares?|equity|акци[а-яё]*|бумаг[а-яё]*)';
+/** Right before a name: a word for shares ("shares of", «акции»), or a trade word or a side's mark ("buy", "to",
+ * «на»), with "my", "all" or "the" between. */
+const STOCK_CONTEXT_BEFORE_V2 = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${STOCK_WORD_V2}\\s+(?:of\\s+|in\\s+)?|(?:buy|sell|swap|convert|exchange|trade|`
+  + `купи|купить|продай|продать|обменяй|обменять|поменяй|поменять|to|into|for|на|в|во|за)\\s+${FILLER_V2})$`, 'iu');
+/** Right after a name: a word for shares ("Target stock", "Target's shares", «Anthropic акции»). */
+const STOCK_CONTEXT_AFTER_V2 = new RegExp(`^(?:['’]s)?\\s+${STOCK_WORD_V2}(?![\\p{L}\\p{N}])`, 'iu');
+
+/** One way a question names a stock: a pattern, and whether a match counts only in a stock's context. */
+export interface AgentStockWordV2 {
+  asset: string;
+  pattern: RegExp;
+  /** A company's name or a two-letter ticker: a word before it is a stock (audits SW-1, SS-3, MCP-1, 2026-11-20:
+   * "best strategy" was Strategy's MSTRc, "my target" Target's TGTc, "at 5 PM" PMc and "Netflix gift card" NFLXc). */
+  context: boolean;
+}
+
+/** The words that name each stock, beyond the fixed table: its token symbol ("ANTc", in any case when it is four
+ * letters or more), its ticker written in capitals ("ANT"), and its company's whole name in any case
+ * ("Anthropic"). A name and a two-letter ticker count only beside a word for shares or a trade's word. */
+export function agentStockWordsV2(stocks: readonly AgentStockV2[]): AgentStockWordV2[] {
   const fixed = new Set(SWAP_TOKEN_WORDS_V2.map(([asset]) => asset));
-  const edge = (body: string, flags: string) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${body})(?![\\p{L}\\p{N}])`, flags);
-  const words: Array<readonly [string, RegExp]> = [];
+  const edge = (body: string, flags: string) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${body})(?![\\p{L}\\p{N}])`, `${flags}g`);
+  const words: AgentStockWordV2[] = [];
   for (const stock of stocks) {
     if (!B20_SYMBOL_V2.test(stock.symbol) || fixed.has(stock.symbol)) continue;
     const ticker = stock.symbol.slice(0, -1);
-    const anyCase: string[] = [];
-    const exactCase: string[] = [];
-    (stock.symbol.length >= 4 ? anyCase : exactCase).push(escapeV2(stock.symbol));
-    if (ticker.length >= 2 && !NOT_TICKERS_V2.has(ticker)) exactCase.push(escapeV2(ticker));
+    const symbol = escapeV2(stock.symbol);
+    words.push({ asset: stock.symbol, pattern: edge(symbol, stock.symbol.length >= 4 ? 'iu' : 'u'), context: false });
+    if (ticker.length >= 2 && !NOT_TICKERS_V2.has(ticker)) {
+      words.push({ asset: stock.symbol, pattern: edge(escapeV2(ticker), 'u'), context: ticker.length === 2 });
+    }
     const company = (stock.name ?? '').replace(LEGAL_SUFFIX_V2, '').replace(/,+$/u, '').trim();
-    if (company.length >= 5 && !NOT_TICKERS_V2.has(company.toUpperCase())) anyCase.push(escapeV2(company).replace(/\s+/gu, '\\s+'));
-    if (anyCase.length > 0) words.push([stock.symbol, edge(anyCase.join('|'), 'iu')]);
-    if (exactCase.length > 0) words.push([stock.symbol, edge(exactCase.join('|'), 'u')]);
+    if (company.length >= 5 && !NOT_TICKERS_V2.has(company.toUpperCase())) {
+      words.push({ asset: stock.symbol, pattern: edge(escapeV2(company).replace(/\s+/gu, '\\s+'), 'iu'), context: true });
+    }
   }
   return words;
 }
@@ -377,15 +422,18 @@ function namedAssetsV2(question: string, stocks?: readonly AgentStockV2[]): Arra
   });
   const taken = (at: number, end: number) => fixed.some((f) => at < f.end && f.at < end);
   const extra: Array<{ asset: string; at: number; end: number }> = [];
-  const words = stocks ? agentStockWordsV2(stocks)
+  const words: AgentStockWordV2[] = stocks ? agentStockWordsV2(stocks)
     : [...question.matchAll(/(?<![\p{L}\p{N}])([A-Z][A-Z0-9.]{0,6}c)(?![\p{L}\p{N}])/gu)]
       .map((m) => m[1]!).filter((symbol) => !/^(?:USD|ETH|BTC)/u.test(symbol))
-      .map((symbol) => [symbol, new RegExp(`(?<![\\p{L}\\p{N}])${escapeV2(symbol)}(?![\\p{L}\\p{N}])`, 'u')] as const);
-  for (const [asset, pattern] of words) {
-    const match = pattern.exec(question);
+      .map((symbol) => ({ asset: symbol, pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escapeV2(symbol)}(?![\\p{L}\\p{N}])`, 'gu'), context: false }));
+  for (const { asset, pattern, context } of words) {
+    const match = [...question.matchAll(pattern)].find((m) => {
+      const at = m.index ?? 0, end = at + m[0].length;
+      return !taken(at, end)
+        && (!context || STOCK_CONTEXT_BEFORE_V2.test(question.slice(0, at)) || STOCK_CONTEXT_AFTER_V2.test(question.slice(end)));
+    });
     if (!match) continue;
-    const at = match.index, end = at + match[0].length;
-    if (taken(at, end)) continue;
+    const at = match.index ?? 0, end = at + match[0].length;
     const seen = extra.find((e) => e.asset === asset);
     if (!seen) extra.push({ asset, at, end });
     else if (at < seen.at) Object.assign(seen, { at, end });
@@ -409,11 +457,13 @@ export interface AgentSwapRequestV2 {
 
 /** A request to swap, read by fixed rules; null when the question is not one. */
 export function agentSwapRequestV2(question: string, stocks?: readonly AgentStockV2[]): AgentSwapRequestV2 | null {
-  if (LOAN_WORDS_V2.test(question)) return null;
+  if (LOAN_WORDS_V2.test(question) || AGENT_SPEND_WORDS_V2.test(question)) return null;
   const named = namedAssetsV2(question, stocks);
   const buy = BUY_WORDS_V2.test(question);
   const sell = SELL_WORDS_V2.test(question);
   if (!SWAP_WORDS_V2.test(question) && !((buy || sell) && named.length > 0)) return null;
+  // More than two assets is more than one swap, or one these rules would have to choose: neither side is guessed.
+  if (new Set(named.map((n) => n.asset)).size > 2) return { from: null, to: null, amount: null, amountUnclear: false };
 
   const dollars = /\$|доллар|\busd\b/iu.test(question);
   let from: string | null = null;
@@ -445,7 +495,13 @@ export function agentSwapRequestV2(question: string, stocks?: readonly AgentStoc
   if (from !== null && from === to) to = null;
 
   let amount: AgentSwapRequestV2['amount'] = null;
-  const amountUnclear = agentAmountUnclearV2(question);
+  // Dollars, or USDC, beside the number of a sale of anything else are what it should bring, which Swap AI does not
+  // take (audit SS-1, 2026-11-20: "sell my meta for $50" prepared 50 METAc, about $30 000): asked back, never read.
+  const written = agentAmountTokenV2(question);
+  const inDollars = written.kind === 'one'
+    && (/(?:\$|worth|на\s+сумму)\s*$/iu.test(question.slice(0, written.index))
+      || /^\s*(?:\$|usdc|usd|dollars?|bucks?|доллар|бакс)/iu.test(question.slice(written.end)));
+  const amountUnclear = agentAmountUnclearV2(question) || (from !== null && from !== 'USDC' && inDollars);
   if (amountUnclear) amount = null;
   else if (ALL_WORDS_V2.test(question)) amount = { kind: 'share', share: 'all' };
   else if (HALF_WORDS_V2.test(question)) amount = { kind: 'share', share: 'half' };
@@ -634,7 +690,8 @@ function sendNegatedV2(question: string): boolean {
   return SEND_NEGATED_V2.test(question) ||
     question.split(SEND_SENTENCE_END_V2).some((sentence) => SEND_WORDS_V2.test(sentence) && SEND_NEGATION_V2.test(sentence));
 }
-const SEND_DOLLARS_V2 = /\$|доллар|бакс/iu;
+// English too (audit SS-1, 2026-11-20: "send 5 dollars of NVDAc" prepared 5 NVDAc). "USD Coin" and USDC are not dollars here.
+const SEND_DOLLARS_V2 = /\$|доллар|бакс|(?<![\p{L}])(?:dollars?|bucks?|usd(?!\s*coin)|worth)(?![\p{L}])/iu;
 
 export interface AgentSendRequestV2 {
   /** The one asset named; null when none, or more than one, is. */
@@ -719,6 +776,19 @@ export function agentAnswerV1(input: {
   const boundarySource = ru ? 'БЕЗОПАСНОСТЬ · только подготовка, подпись в кошельке' : 'BOUNDARY · preparation only, wallet signs';
 
   if (topic === 'action_prep') {
+    // Spend's things go to Spend: Still sells the card itself, where the loan or the wallet's USDC pays (audit DIFF-1).
+    if (AGENT_SPEND_WORDS_V2.test(input.question)) {
+      return {
+        topic,
+        mode: 'action_prep',
+        text: ru
+          ? 'Подарочные карты, пополнения связи, eSIM и подписки покупаются в Spend: там видна цена в USDC, а платит займ под то, что вы держите, или USDC из кошелька, как вы выберете. Подписываете вы, в своём кошельке.'
+          : 'Gift cards, mobile top-ups, eSIMs and subscriptions are bought in Spend: it shows the price in USDC, and a loan against what you hold or the USDC in your wallet pays, as you choose. You sign in your own wallet.',
+        sources: [boundarySource],
+        actionLink: { href: '/spend', label: ru ? 'Открыть Spend →' : 'Open Spend →' },
+        engineFacts: { mode: 'action_prep', autonomousSigningRefused: true, targetRoute: '/spend' },
+      };
+    }
     const thirdParty = /(?:отправ|перевед|друг|send|transfer|friend)/i.test(input.question);
     const wantsRepay = /(?:погас|вернут|закрыт|repay|pay\s*down|pay\s*off)/i.test(input.question) && !/(?:займ|возьми|borrow)/i.test(input.question);
     const requestedCents = parseDollarCentsV2(input.question);
