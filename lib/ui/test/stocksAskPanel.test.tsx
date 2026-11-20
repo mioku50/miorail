@@ -135,6 +135,10 @@ describe('the Stocks ask panel', () => {
     }
     // Nothing is asked until a reader asks: an empty panel carries no answer.
     assert.equal(markup.includes('Established'), false);
+    // Beside a price it does not ask why there is none (audit UI-7, 2026-11-20).
+    const priced = html({ answer: null, priced: true } as never);
+    assert.equal(priced.includes('Why is there no price at this size?'), false);
+    assert.ok(priced.includes('What does buying in and selling back out cost at this size?'));
   });
 
   test('the execution vocabulary never appears on this panel', () => {

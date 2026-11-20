@@ -691,6 +691,12 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     );
   });
 
+  // A HEAD reached the GET handler past the payment, which is declared for GET only, and read Base unpaid (audit
+  // X402-1, 2026-11-20). It is answered before anything is read, and the quote is a GET resource only.
+  router.head(STILL_LOAN_QUOTE_PATH_V1, (_req, res) => {
+    res.setHeader('Allow', 'GET');
+    res.status(405).end();
+  });
   router.get(
     STILL_LOAN_QUOTE_PATH_V1,
     featureGate,
@@ -702,7 +708,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   // preflights pass on to the CORS handler.
   router.all(STILL_LOAN_QUOTE_PATH_V1, (req, res, next) => {
     if (req.method === 'OPTIONS') return next();
-    res.setHeader('Allow', 'GET, HEAD');
+    res.setHeader('Allow', 'GET');
     res.status(405).json({ error: 'method_not_allowed', code: 'method_not_allowed', message: 'This resource answers GET.' });
   });
 

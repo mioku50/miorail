@@ -2094,7 +2094,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       ) : null}
 
       {actions.onAsk && model.ask ? (
-        <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
+        <StocksAskPanel model={{ ...model.ask, priced: Boolean(model.selectedKey && model.quotes?.get(model.selectedKey)?.price) }} actions={{ onAsk: actions.onAsk }} />
       ) : null}
 
       <details

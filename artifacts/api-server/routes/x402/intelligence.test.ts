@@ -362,8 +362,18 @@ test('another method on the quote is 405, not a 401 that implies a key would hel
   const app = appV1();
   for (const method of ['post', 'put', 'patch', 'delete'] as const) {
     const response = await request(app)[method](QUOTE).expect(405);
-    assert.equal(response.headers.allow, 'GET, HEAD');
+    assert.equal(response.headers.allow, 'GET');
   }
+});
+
+// Audit X402-1, 2026-11-20: a HEAD passed the payment, declared for GET only, and the handler read Base unpaid.
+test('a HEAD on the quote is 405 before anything is paid for or read', async () => {
+  let charges = 0;
+  const app = appV1({ middlewareFactory: () => ((_req, _res, next) => { charges += 1; next(); }) as RequestHandler });
+  const response = await request(app).head(QUOTE).query({ asset: 'NVDAc', amount: '10' }).expect(405);
+  assert.equal(response.headers.allow, 'GET');
+  assert.equal(response.headers['x-miorail-data-hash'], undefined);
+  assert.equal(charges, 0);
 });
 
 test('the 402 names an address, not a path, and it is the path this router is mounted at', async () => {

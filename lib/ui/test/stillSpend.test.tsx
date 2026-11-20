@@ -111,6 +111,7 @@ describe('what a loan could pay for, as the page says it', () => {
     assert.equal(spendCountryDefaultV1('ru-RU'), 'RU');
     assert.equal(spendCountryDefaultV1('kk-KZ'), 'KZ');
     assert.equal(spendCountryDefaultV1('en'), 'DE');
+    assert.equal(spendCountryDefaultV1('en-US'), 'DE', 'never the US on a browser’s say (audit UI-9)');
     assert.equal(spendCountryDefaultV1('xx-ZZ'), 'DE');
   });
 

@@ -50,10 +50,12 @@ export const SPEND_COUNTRIES_V1 = [
   'UG', 'US', 'UY', 'UZ', 'VA', 'VC', 'VE', 'VG', 'VI', 'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA', 'ZM', 'ZW',
 ] as const;
 
-/** The reader's own country when the browser says it and the page offers it, else Germany. */
+/** The reader's own country when the browser says it and the page offers it, else Germany. Never the United States
+ * on its own say: "en-US" is most browsers' English wherever they are, and Still is not offered there (audit UI-9,
+ * 2026-11-20: every en-US browser opened on "Bitrefill eSIM USA"). It stays on the list to pick. */
 export function spendCountryDefaultV1(language: string | undefined): string {
   const region = /[-_]([A-Za-z]{2})\b/.exec(language ?? '')?.[1]?.toUpperCase();
-  return region && (SPEND_COUNTRIES_V1 as readonly string[]).includes(region) ? region : 'DE';
+  return region && region !== 'US' && (SPEND_COUNTRIES_V1 as readonly string[]).includes(region) ? region : 'DE';
 }
 
 export function spendCountryNameV1(code: string): string {

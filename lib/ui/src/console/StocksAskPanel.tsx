@@ -35,6 +35,8 @@ export interface StocksAskPanelModelV1 {
   error: string | null;
   /** False when the surface is not offered — no session, no security chosen. */
   available: boolean;
+  /** The card shows a price: "Why is there no price at this size?" is not offered beside it (audit UI-7). */
+  priced?: boolean;
 }
 
 export interface StocksAskPanelActionsV1 {
@@ -112,7 +114,7 @@ export function StocksAskPanel({
       </p>
 
       <div className="b20-prompt-chips" role="group" aria-label="Suggested questions">
-        {STOCKS_ASK_PROMPTS_V1.map((prompt) => (
+        {STOCKS_ASK_PROMPTS_V1.filter((prompt) => !(model.priced && prompt === STOCKS_ASK_PROMPTS_V1[0])).map((prompt) => (
           <button
             key={prompt}
             type="button"
