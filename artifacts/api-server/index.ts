@@ -5,6 +5,8 @@ import { getMiorailProductMigrationFlags } from './lib/productMigrationConfig';
 import { resolveEarnContractPreflightV1 } from './lib/earnPreflight';
 import { probeSimulationProviderHealthV1 } from './lib/swapSimulation';
 import { startStillLoopDrawTickerV1 } from './lib/stillLoopDraws';
+import { startStillLoopDeliveryTickerV1 } from './lib/stillLoopDelivery';
+import { stillLoopDeliveryDepsV1 } from './routes/stillLoops';
 
 // Bind to loopback unless an operator asks for otherwise. Nginx terminates TLS
 // and proxies to 127.0.0.1, so nothing needs to reach this process over the
@@ -64,6 +66,8 @@ export function startServer() {
     void warmEarnContractPreflightV1();
     // The Loop draws' lists and winners, on time; idle while the draws are off.
     startStillLoopDrawTickerV1();
+    // A Loop's card asked again until Bitrefill says what became of it (audit LOOP-1); idle while Loops are off.
+    startStillLoopDeliveryTickerV1(stillLoopDeliveryDepsV1);
     // Learn at boot whether the simulator can serve requests. A key that is
     // present but out of monthly capacity used to leave every capability read
     // claiming a batch simulation this deployment could not run.

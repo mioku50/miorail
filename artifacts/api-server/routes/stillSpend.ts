@@ -10,6 +10,7 @@ import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { spendInvoiceReadsV1, type SpendInvoiceDisplayV1 } from '../lib/stillSpendInvoiceReads.js';
+import { keepStillLoopInvoiceReadV1 } from '../lib/stillLoopDelivery.js';
 import { SPEND_WALLET_MOVED_DETAIL_V1, prepareSpendWalletPaymentV1, refreshSpendWalletPaymentV1, spendWalletDeclinedButMovedV1, spendWalletWireV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import {
@@ -186,6 +187,8 @@ async function openCountedSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
     commission: checkout.affiliated === true,
   };
   stillSpendRuntimeV1.orders.put(order);
+  // A Loop brand's card is read again after the order is forgotten, until Bitrefill says what became of it (audit LOOP-1).
+  void keepStillLoopInvoiceReadV1(order);
   return { ok: true, order };
 }
 

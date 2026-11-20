@@ -20,6 +20,8 @@ import {
 import { COINBASE_VERIFIED_V1 } from '../lib/coinbaseVerified.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
 import { stillLoopDeliveryOfV1, stillLoopPublicV1, stillLoopsRuntimeV1, stillLoopWeekStartV1, stillLoopWireV1, type StillLoopPublicV1 } from '../lib/stillLoops.js';
+import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
+import { stillLoopKeptInvoiceRefV1, type StillLoopDeliveryDepsV1 } from '../lib/stillLoopDelivery.js';
 import { stillPaidLoansSinceV1 } from './rwaLending.js';
 import { stillSpendRuntimeV1 } from './stillSpend.js';
 
@@ -210,13 +212,23 @@ export function stillLoopDrawLoansV1(wallet: string): StillLoopDrawLoansV1 {
     paidSince: (since) => stillPaidLoansSinceV1(owner, since),
     delivery: async (record): Promise<StillLoopDeliveryWordV1> => {
       const payment = record.run.facts.payment;
-      const order = payment ? stillSpendRuntimeV1.orders.get(owner, payment.orderId) : null;
+      // The open order while Spend holds it, else the invoice kept for a Loop brand's card (audit LOOP-1).
+      const order = payment ? stillSpendRuntimeV1.orders.get(owner, payment.orderId) ?? await stillLoopKeptInvoiceRefV1(owner, payment.orderId) : null;
       if (!order) return 'forgotten';
       const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() });
       return stillLoopDeliveryOfV1(read.status?.status) ?? 'pending';
     },
   };
 }
+
+/** What the delivery ticker reads with (lib/stillLoopDelivery.ts): the Loop's loan, and Bitrefill through Spend's own reads. */
+export const stillLoopDeliveryDepsV1: StillLoopDeliveryDepsV1 = {
+  loanOf: async (owner, executionId) => (await loanExecutionRuntimeV1.store()).get({ owner, executionId }),
+  readInvoice: async (owner, ref) => {
+    const read = await stillSpendRuntimeV1.invoiceReads.display({ wallet: owner.walletAddress, order: ref, checkout: stillSpendRuntimeV1.checkout() });
+    return read.status?.status ?? null;
+  },
+};
 
 /** A seam, so a test hands in the loans it means. */
 export const stillLoopDrawLoansRuntimeV1 = { of: (wallet: string): StillLoopDrawLoansV1 => stillLoopDrawLoansV1(wallet) };

@@ -61,7 +61,9 @@ export interface StillReviewStatusDepsV1 {
   refresh: (input: { owner: LoanOwnerV1; executionId: string }) => Promise<LoanExecutionV1 | null>;
   orders: SpendOrderStoreV1;
   /** Bitrefill's word for the invoice as the Spend page reads it: the same kept reading, under the same limit. */
-  invoice: (input: { wallet: string; order: SpendOrderV1 }) => Promise<SpendInvoiceDisplayV1>;
+  invoice: (input: { wallet: string; order: Pick<SpendOrderV1, 'orderId' | 'accessToken'> }) => Promise<SpendInvoiceDisplayV1>;
+  /** The invoice kept for a Loop brand's card once the open order is forgotten (audit LOOP-1); absent in older wiring. */
+  keptInvoice?: (owner: LoanOwnerV1, orderId: string) => Promise<Pick<SpendOrderV1, 'orderId' | 'accessToken'> | null>;
   /** A purchase paid from the wallet's own USDC, by its invoice, refreshed from Base as its page refreshes it. */
   walletPayment?: (input: { owner: LoanOwnerV1; orderId: string }) => Promise<SpendWalletPaymentV1 | null>;
   secret: string;
@@ -214,10 +216,10 @@ function orderPurchaseV1(order: Pick<SpendOrderV1, 'productName' | 'packageValue
 }
 
 /** Bitrefill's own word for an invoice: asked only once the payment may have been sent, and only while
- * Still still holds the open order with its access token. */
+ * Still still holds the open order with its access token, or keeps it for a Loop brand's card (audit LOOP-1). */
 async function invoiceReadV1(owner: LoanOwnerV1, orderId: string, state: string, deps: StillReviewStatusDepsV1) {
   if (state !== 'submitted' && state !== 'unknown' && state !== 'confirmed') return { invoiceStatus: null, invoiceStatusError: null };
-  const order = deps.orders.get(owner, orderId);
+  const order = deps.orders.get(owner, orderId) ?? await deps.keptInvoice?.(owner, orderId) ?? null;
   if (!order) return { invoiceStatus: null, invoiceStatusError: 'spend_order_forgotten' };
   // A reading Bitrefill could not give again just now stays, with the reason beside it.
   const read = await deps.invoice({ wallet: owner.walletAddress, order });

@@ -73,6 +73,7 @@ import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 import type { LendingOriginV1 } from '../../lib/lendingDraft.js';
 import { mcpClientKindV1 } from '../../lib/mcpClientKind.js';
+import { stillLoopKeptInvoiceRefV1 } from '../../lib/stillLoopDelivery.js';
 import { stillLoopsRuntimeV1 } from '../../lib/stillLoops.js';
 import { mcpOAuthProviderV1 } from '../../lib/mcpOAuthProvider.js';
 
@@ -364,6 +365,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
         }),
         orders: stillSpendRuntimeV1.orders,
         invoice: ({ wallet, order }) => stillSpendRuntimeV1.invoiceReads.display({ wallet, order, checkout: stillSpendRuntimeV1.checkout() }),
+        keptInvoice: stillLoopKeptInvoiceRefV1,
         // As its payment page reads it: from Base under the page's own limit, otherwise as last recorded.
         walletPayment: async (input) => {
           const store = await stillSpendRuntimeV1.walletPayments();

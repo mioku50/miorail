@@ -36,6 +36,9 @@ export function stillLoopsContractV1(label: string, make: () => Promise<StillLoo
       const repo = await make();
       await repo.record([loopCandidateV1(1), loopCandidateV1(2, { team: true }), loopCandidateV1(3, { via: 'web' })]);
       const at = new Date('2026-11-20T13:00:00.000Z');
+      // Each with no word on its card yet is asked again (audit LOOP-1); none confirmed before `since`.
+      assert.deepEqual((await repo.awaitingDelivery({ since: new Date(0), limit: 10 })).map((row) => row.loopNo), [1, 2, 3]);
+      assert.deepEqual(await repo.awaitingDelivery({ since: new Date('2100-01-01T00:00:00.000Z'), limit: 10 }), []);
       assert.equal(await repo.putOnWall({ executionId: id(1), walletAddress: WALLET, label: null, at }), null, 'not before the card arrived');
       assert.equal((await repo.markDelivery({ executionId: id(1), outcome: 'complete', at }))?.deliveredAt, at.toISOString());
       const later = await repo.markDelivery({ executionId: id(1), outcome: 'denied', at: new Date('2026-11-20T14:00:00.000Z') });
@@ -43,6 +46,7 @@ export function stillLoopsContractV1(label: string, make: () => Promise<StillLoo
       assert.equal((await repo.markDelivery({ executionId: id(3), outcome: 'blocked', at }))?.undelivered, 'blocked');
       assert.equal(await repo.markDelivery({ executionId: id(42), outcome: 'complete', at }), null);
       await repo.markDelivery({ executionId: id(2), outcome: 'complete', at });
+      assert.deepEqual(await repo.awaitingDelivery({ since: new Date(0), limit: 10 }), [], 'none once each has its word');
       assert.equal(await repo.putOnWall({ executionId: id(1), walletAddress: OTHER, label: null, at }), null, 'only its own wallet');
       assert.equal(await repo.putOnWall({ executionId: id(2), walletAddress: WALLET, label: null, at }), null, 'never a team Loop');
       assert.equal(await repo.putOnWall({ executionId: id(3), walletAddress: WALLET, label: null, at }), null, 'never one whose card did not arrive');

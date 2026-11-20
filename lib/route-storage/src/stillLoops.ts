@@ -63,6 +63,8 @@ export interface StillLoopRepositoryV1 {
   /** One wallet's own Loops, the newest first: for its owner's page only. */
   byWallet(input: { walletAddress: string; limit: number }): Promise<StillLoopV1[]>;
   counts(input: { weekSince: Date }): Promise<StillLoopCountsV1>;
+  /** Loops confirmed since `since` that have no word on their card yet, the oldest first: read again (audit LOOP-1). */
+  awaitingDelivery(input: { since: Date; limit: number }): Promise<StillLoopV1[]>;
 }
 
 const BRANDS_V1 = ['apple', 'amazon', 'google', 'meta', 'microsoft'] as const;
@@ -129,6 +131,12 @@ export class InMemoryStillLoopRepositoryV1 implements StillLoopRepositoryV1 {
       .slice(0, Math.max(0, Math.min(input.limit, 100))).map((row) => ({ ...row }));
   }
 
+  async awaitingDelivery(input: { since: Date; limit: number }): Promise<StillLoopV1[]> {
+    const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));
+    return [...this.rows.values()]
+      .filter((row) => row.deliveredAt === null && row.undelivered === null && Date.parse(row.confirmedAt) >= input.since.getTime())
+      .sort((a, b) => Date.parse(a.confirmedAt) - Date.parse(b.confirmedAt) || a.loopNo - b.loopNo).slice(0, limit).map((row) => ({ ...row }));
+  }
   async counts(input: { weekSince: Date }): Promise<StillLoopCountsV1> {
     const complete = [...this.rows.values()].filter((row) => !row.team && row.deliveredAt !== null);
     const byBrand = zeroBrandsV1();
@@ -222,6 +230,14 @@ export function createDatabaseStillLoopRepositoryV1(sql: SqlTemplateExecutor): S
     async byWallet(input) {
       const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));
       const rows = await sql`SELECT * FROM still_loops WHERE wallet_address = ${input.walletAddress.toLowerCase()} ORDER BY loop_no DESC LIMIT ${limit}`;
+      return rows.map(loopOfRowV1);
+    },
+    async awaitingDelivery(input) {
+      const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));
+      const rows = await sql`
+        SELECT * FROM still_loops
+         WHERE delivered_at IS NULL AND undelivered IS NULL AND confirmed_at >= ${input.since.toISOString()}::timestamptz
+         ORDER BY confirmed_at, loop_no LIMIT ${limit}`;
       return rows.map(loopOfRowV1);
     },
     async counts(input) {
