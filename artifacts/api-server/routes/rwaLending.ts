@@ -24,7 +24,7 @@ import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDeliveryV1, spendOrderStoreV1, st
 import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanPaymentMayStillBeSentV1, loanStepsStandingV1, loanStoppedBeforePaymentV1, nextStoppedStepLandedV1, recheckLoanStepsV1, remainingQuestionV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1, stillLoopSharePathV1 } from '../lib/stillSpendShare.js';
 import { stillLoopOfExecutionV1, stillLoopWireV1 } from '../lib/stillLoops.js';
-import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
+import { SPEND_WALLET_MOVED_DETAIL_V1, spendWalletDeclinedButMovedV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import { offerSponsorshipV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 import { stillEntryGateV1 } from '../lib/stillRegion.js';
@@ -196,6 +196,9 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
     if (fromWallet && fromWallet.state !== 'ready') {
       refuse('spend_invoice_has_attempt', 'Your wallet already paid this invoice from its own USDC, or tried to. Check it on Spend before paying again.'); return;
     }
+    // A wallet payment declined once may be on Base all the same: not paid by a loan either (audit SPEND-1).
+    const walletMoved = await spendWalletDeclinedButMovedV1(fromWallet, rwaLendingRuntimeV1.reader());
+    if (walletMoved) { refuse(walletMoved, SPEND_WALLET_MOVED_DETAIL_V1[walletMoved]); return; }
     // Before a payment, Bitrefill's own answer and never a kept one (lib/stillSpendInvoiceReads.ts).
     const status = await rwaLendingRuntimeV1.spendInvoiceReads.payment({ wallet: owner.walletAddress, order, checkout: rwaLendingRuntimeV1.spendCheckout() });
     if (!status.ok) { refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.'); return; }
@@ -308,7 +311,7 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const arm = async () => {
     if (paying) {
       const fromWallet = await (await rwaLendingRuntimeV1.walletPayments()).get({ owner, orderId: paying.orderId });
-      if ((fromWallet && fromWallet.state !== 'ready') ||
+      if ((fromWallet && fromWallet.state !== 'ready') || await spendWalletDeclinedButMovedV1(fromWallet, rwaLendingRuntimeV1.reader()) ||
           (await store.listByPaymentOrder({ owner, orderId: paying.orderId })).some(row => row.executionId !== executionId && row.state !== 'ready')) {
         return { ok: false as const, refusal: 'invoice_has_attempt' as const };
       }

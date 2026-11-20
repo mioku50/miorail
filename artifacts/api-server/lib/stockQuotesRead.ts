@@ -37,6 +37,8 @@ export interface StockQuotesReadDepsV1 {
   /** Tokens nobody makes a market in on Base yet, from runs since `since`. A failed read names none: the list
    * says "not priced now" rather than calling a market absent on a guess. */
   noMarket?: (since: Date) => Promise<readonly string[]>;
+  /** Each multiplier change seen since `since`: a token and when. A failed read names none. */
+  ratioChanges?: (since: Date) => Promise<ReadonlyArray<{ tokenAddress: string; observedAt: string }>>;
 }
 
 /** How far back the newest run may be for "no market" to stand: the ladder runs hourly. */
@@ -48,11 +50,18 @@ export function stockIconPathV1(tokenAddress: string): string {
 }
 
 export async function readStockQuotesV1(now: Date, deps: StockQuotesReadDepsV1): Promise<StockQuotesResponseV1> {
-  const [prices, meta, noMarket] = await Promise.all([
+  const [prices, meta, noMarket, ratioChanges] = await Promise.all([
     deps.prices(new Date(now.getTime() - 26 * 3_600_000), now),
     deps.meta(),
     (deps.noMarket?.(new Date(now.getTime() - STOCK_NO_MARKET_WINDOW_MS_V1)) ?? Promise.resolve([])).catch(() => [] as readonly string[]),
+    (deps.ratioChanges?.(new Date(now.getTime() - 26 * 3_600_000)) ?? Promise.resolve([]))
+      .catch(() => [] as ReadonlyArray<{ tokenAddress: string; observedAt: string }>),
   ]);
+  const ratioChangedAt = new Map<string, string[]>();
+  for (const change of ratioChanges) {
+    const token = change.tokenAddress.toLowerCase();
+    ratioChangedAt.set(token, [...(ratioChangedAt.get(token) ?? []), change.observedAt]);
+  }
   const tokens = [...new Set([...meta.keys(), ...prices.map((row) => row.token.toLowerCase())])].sort();
   const stocks: StockQuoteStockV1[] = [];
   for (const tokenAddress of tokens) {
@@ -67,7 +76,7 @@ export async function readStockQuotesV1(now: Date, deps: StockQuotesReadDepsV1):
       iconPath: row?.iconUrl ? stockIconPathV1(tokenAddress) : null,
     });
   }
-  return stockQuotesV1({ now, prices, stocks, noMarket: new Set(noMarket.map((token) => token.toLowerCase())) });
+  return stockQuotesV1({ now, prices, stocks, noMarket: new Set(noMarket.map((token) => token.toLowerCase())), ratioChangedAt });
 }
 
 /** Tokens with no market on Base, over the production database. */

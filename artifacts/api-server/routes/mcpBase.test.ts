@@ -141,6 +141,11 @@ test('a connect start that a browser says did not begin on Still\'s own page cle
   }
   assert.deepStrictEqual(['same-origin', ' Same-Origin', 'none', undefined, '', ['cross-site'], ['same-origin'], 42].map(startedOutsideStillPageV1),
     [false, false, true, false, false, true, false, false]);
+  // A path that resolves to another site is sent home instead (audit AUTH-1, 2026-11-20: "/.//evil.example" left as "//evil.example").
+  for (const returnTo of ['/.//evil.example', '/%2e//evil.example', '/a/..//evil.example']) {
+    const response = await request(app).get(`/api/mcp/base/connect?returnTo=${encodeURIComponent(returnTo)}`).set('Sec-Fetch-Site', 'cross-site');
+    assert.strictEqual(response.headers.location, '/base-mcp?mcp=error&code=started_elsewhere', returnTo);
+  }
 });
 
 test('GET /api/mcp/base/connect reports missing SESSION_SECRET through a safe redirect', async () => {

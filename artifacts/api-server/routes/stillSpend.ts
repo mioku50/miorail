@@ -10,7 +10,7 @@ import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { spendInvoiceReadsV1, type SpendInvoiceDisplayV1 } from '../lib/stillSpendInvoiceReads.js';
-import { prepareSpendWalletPaymentV1, refreshSpendWalletPaymentV1, spendWalletWireV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
+import { SPEND_WALLET_MOVED_DETAIL_V1, prepareSpendWalletPaymentV1, refreshSpendWalletPaymentV1, spendWalletDeclinedButMovedV1, spendWalletWireV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import {
   STILL_SPEND_CAP_ATOMIC_V1,
@@ -311,6 +311,12 @@ stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) 
     refuse(gate.refusal, gate.detail);
     return;
   }
+  // Declined once, and the wallet has sent something since: that payment may be on Base (audit SPEND-1).
+  const moved = await spendWalletDeclinedButMovedV1(prior, stillSpendRuntimeV1.reader());
+  if (moved) {
+    refuse(moved, SPEND_WALLET_MOVED_DETAIL_V1[moved]);
+    return;
+  }
   const order = stillSpendRuntimeV1.orders.get(owner, orderId);
   if (!order) {
     refuse('spend_order_unread', 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Open a new one from Spend. Nothing was sent.');
@@ -367,11 +373,17 @@ stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Respon
   }
   const store = await stillSpendRuntimeV1.walletPayments();
   // Read beside the loans of the same invoice, one arm at a time: a loan armed first wins, and so does this.
-  const result = await withSpendInvoiceLockV1(orderId, async () => (await loanHoldsInvoiceV1(owner, orderId))
-    ? { ok: false as const, refusal: 'spend_invoice_has_attempt' }
-    : store.arm({ owner, orderId, ...body.data, now: stillSpendRuntimeV1.now() }));
+  const result = await withSpendInvoiceLockV1(orderId, async () => {
+    if (await loanHoldsInvoiceV1(owner, orderId)) return { ok: false as const, refusal: 'spend_invoice_has_attempt' };
+    // Asked again here: a payment declined before may have landed since its review (audit SPEND-1).
+    const moved = await spendWalletDeclinedButMovedV1(await store.get({ owner, orderId }), stillSpendRuntimeV1.reader());
+    if (moved) return { ok: false as const, refusal: moved };
+    return store.arm({ owner, orderId, ...body.data, now: stillSpendRuntimeV1.now() });
+  });
   if (!result.ok) {
-    res.status(409).json({ error: result.refusal === 'payment_not_ready' ? 'spend_wallet_not_ready' : result.refusal });
+    const refusal = result.refusal;
+    res.status(409).json({ error: refusal === 'payment_not_ready' ? 'spend_wallet_not_ready' : refusal,
+      ...(refusal in SPEND_WALLET_MOVED_DETAIL_V1 ? { detail: SPEND_WALLET_MOVED_DETAIL_V1[refusal as keyof typeof SPEND_WALLET_MOVED_DETAIL_V1] } : {}) });
     return;
   }
   res.json({ attemptId: result.attemptId });

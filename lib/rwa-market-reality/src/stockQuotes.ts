@@ -74,6 +74,10 @@ export interface StockQuoteRowV1 {
    * knows of holds it, and the newest run found no route for $100. Only on a row with no price; absent
    * otherwise, and in a reply from a server older than the field. */
   market?: 'none';
+  /** True when the token's multiplier changed between the two prices (a split, a reverse split, a stock dividend):
+   * `change24h` is null then, the prices are of different things. Read by clients from 2026-11-21; a server sends
+   * it only once those are the ones served, since an older client refuses a field it does not know. */
+  corporateAction?: true;
 }
 
 export interface StockQuotesResponseV1 {
@@ -116,6 +120,7 @@ export const StockQuotesResponseV1Schema = z
               .strict()
               .optional(),
             market: z.literal('none').optional(),
+            corporateAction: z.literal(true).optional(),
           })
           .strict(),
       )
@@ -204,6 +209,8 @@ export function stockQuotesV1(input: {
   stocks: readonly StockQuoteStockV1[];
   /** Tokens nobody makes a market in on Base yet (route-storage `readPublicLadderNoMarketTokensV1`). */
   noMarket?: ReadonlySet<string>;
+  /** When each token's multiplier was seen to change, by lower-case address. */
+  ratioChangedAt?: ReadonlyMap<string, readonly string[]>;
 }): StockQuotesResponseV1 {
   const now = input.now.getTime();
   const byToken = new Map<string, { at: number; mid: number; buyAt1k: number | null; sellAt1k: number | null }[]>();
@@ -230,7 +237,11 @@ export function stockQuotesV1(input: {
     const shown = stockQuoteRunV1(current, (runs) => runs[runs.length - 1]!);
     const compared = stockQuoteRunV1(earlier, (runs) => runs[0]!);
     const price = shown?.mid ?? null;
-    const before = compared?.mid ?? null;
+    // A multiplier that changed between the two prices makes them prices of different things: an 8-for-1 split read
+    // as SNDK −89.45% in 24 hours (audit UI-1, 2026-11-20). No change is said then.
+    const actedOn = !!shown && !!compared && (input.ratioChangedAt?.get(stock.tokenAddress.toLowerCase()) ?? [])
+      .some((at) => Date.parse(at) > compared!.at && Date.parse(at) <= shown!.at);
+    const before = actedOn ? null : compared?.mid ?? null;
     return {
       underlyingKey: stock.underlyingKey,
       tokenAddress: stock.tokenAddress.toLowerCase(),
@@ -240,7 +251,7 @@ export function stockQuotesV1(input: {
       priceUsd: price,
       priceAt: shown ? new Date(shown.at).toISOString() : null,
       change24h: price !== null && before !== null ? price / before - 1 : null,
-      changeFromAt: shown && compared ? new Date(compared.at).toISOString() : null,
+      changeFromAt: shown && compared && !actedOn ? new Date(compared.at).toISOString() : null,
       depth: stockQuoteDepthV1(current),
       // A price measured inside the window outranks the newest run: it is what the list shows.
       ...(price === null && input.noMarket?.has(stock.tokenAddress.toLowerCase()) ? { market: 'none' as const } : {}),

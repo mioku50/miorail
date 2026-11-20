@@ -9,8 +9,10 @@ import type { BaseChainReaderV1, BaseTransactionSourceV1 } from './baseReceiptRe
 import type { LendingPaymentV1 } from './lendingDraft.js';
 import { bindLoanTransactionV1, receiptFingerprintV1, type LoanTransactionBindingV1 } from './loanExecutionStatus.js';
 import type { LoanOwnerV1 } from './loanExecutionStore.js';
+import { walletSentNothingSinceBlockV1 } from './loanRelease.js';
 import { readStockHoldingV1 } from './stockTokenRead.js';
 import { STILL_SPEND_CAP_ATOMIC_V1, STILL_SPEND_REVIEW_MARGIN_MS_V1 } from './stillSpendOrders.js';
+import { SPEND_WALLET_DECLINED_V1 } from './stillSpendWalletStore.js';
 import { spendPayeeRefusedV1 } from './stillSpendPayment.js';
 import type { SpendWalletPaymentV1, SpendWalletStoreV1 } from './stillSpendWalletStore.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
@@ -205,6 +207,35 @@ export async function refreshSpendWalletPaymentV1(input: { owner: LoanOwnerV1; o
 }
 
 /** What the owner's page sees of a payment. Calls only while it can still be armed. */
+export type SpendWalletMovedV1 = 'spend_wallet_moved' | 'spend_wallet_pending' | 'spend_wallet_unread';
+
+/**
+ * A payment its wallet once answered "declined" may be on Base all the same: Base Account answers 4001 however its
+ * window closed (audit SPEND-1, 2026-11-20). Null when Base says the wallet has sent nothing since that review's block,
+ * or for any other row; otherwise why this invoice is not prepared, armed or paid by a loan again. Not read is a no.
+ */
+export async function spendWalletDeclinedButMovedV1(record: SpendWalletPaymentV1 | null, reader: BaseChainReaderV1): Promise<SpendWalletMovedV1 | null> {
+  if (!record || record.state !== 'ready' || record.errorCode !== SPEND_WALLET_DECLINED_V1) return null;
+  try {
+    const sent = await walletSentNothingSinceBlockV1(record.walletAddress, BigInt(record.run.facts.blockNumber), reader);
+    if (sent.ok) return null;
+    return sent.refusal === 'loan_release_later_transaction' ? 'spend_wallet_moved'
+      : sent.refusal === 'loan_release_transaction_pending' ? 'spend_wallet_pending' : 'spend_wallet_unread';
+  } catch {
+    return 'spend_wallet_unread';
+  }
+}
+
+/** What the person reads for each of those. */
+export const SPEND_WALLET_MOVED_DETAIL_V1: Record<SpendWalletMovedV1, string> = {
+  spend_wallet_moved: 'Your wallet answered that this payment was declined, and it has sent a transaction since, so the payment may have been sent '
+    + 'after all. Check your wallet’s activity before anything else. Still will not pay this invoice again; if nothing was paid, open a new one from Spend.',
+  spend_wallet_pending: 'Your wallet has a transaction still waiting on Base since it answered that this payment was declined. Wait for it and check '
+    + 'your wallet’s activity before paying again.',
+  spend_wallet_unread: 'Your wallet once answered that this payment was declined, and Still could not read its activity on Base just now, so the '
+    + 'payment is not prepared again yet. Try again in a minute.',
+};
+
 export function spendWalletWireV1(record: SpendWalletPaymentV1): Record<string, unknown> {
   const run = record.run;
   return {

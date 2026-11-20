@@ -351,14 +351,54 @@ describe('paying the invoice from the wallet’s own USDC', () => {
     assert.deepEqual((await request(app()).post(wallet('/transaction')).send({ transactionHash: `0x${'ab'.repeat(32)}` })).body, { error: 'spend_wallet_attempt_changed' });
   });
 
-  it('a wallet that declined leaves the invoice free to pay again, by either way', async () => {
+  /** A plain wallet that has sent `sent` transactions since the review's block, and `waiting` more not landed yet. */
+  const walletReader = (activity: { sent: number; waiting?: number; unread?: boolean }) => () => ({
+    getAccountKind: async () => (activity.unread ? null : 'eoa' as const),
+    getTransactionCountAt: async () => 7,
+    getTransactionCount: async (_address: string, tag: 'latest' | 'pending') => 7 + activity.sent + (tag === 'pending' ? activity.waiting ?? 0 : 0),
+  });
+
+  it('a wallet that declined, and has sent nothing since, leaves the invoice free to pay again, by either way', async () => {
+    const activity = { sent: 0 };
+    Object.assign(stillSpendRuntimeV1, { reader: walletReader(activity) });
+    Object.assign(rwaLendingRuntimeV1, { reader: walletReader(activity) });
     await openOrder();
     const review = (await request(app()).post(wallet())).body;
     const armed = await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash });
     const declined = await request(app()).post(wallet('/submission')).send({ attemptId: armed.body.attemptId, outcome: 'rejected' });
-    assert.equal(declined.body.state, 'ready');
+    assert.deepEqual([declined.body.state, declined.body.errorCode], ['ready', 'wallet_declined']);
     const loan = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`);
     assert.equal(loan.body.state, 'ready');
+    const again = (await request(app()).post(wallet())).body;
+    assert.equal(again.state, 'ready');
+    assert.equal((await request(app()).post(wallet('/arm')).send({ callsHash: again.callsHash, signingTermsHash: again.signingTermsHash })).status, 200);
+  });
+
+  // Audit SPEND-1, 2026-11-20: Base Account answers 4001 however its window closed, even after the person confirmed, and the
+  // second press paid the same invoice again.
+  it('a wallet that declined and has sent something since pays this invoice no more, by either way', async () => {
+    const activity: { sent: number; waiting?: number; unread?: boolean } = { sent: 0 };
+    Object.assign(stillSpendRuntimeV1, { reader: walletReader(activity) });
+    Object.assign(rwaLendingRuntimeV1, { reader: walletReader(activity) });
+    await openOrder();
+    const review = (await request(app()).post(wallet())).body;
+    const armed = await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash });
+    await request(app()).post(wallet('/submission')).send({ attemptId: armed.body.attemptId, outcome: 'rejected' });
+    // The "declined" payment landed after all.
+    activity.sent = 1;
+    const refused = (await request(app()).post(wallet())).body;
+    assert.deepEqual([refused.state, refused.refusal], ['refused', 'spend_wallet_moved']);
+    assert.match(refused.detail, /may have been sent after all\. Check your wallet’s activity/);
+    const armAgain = await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash });
+    assert.deepEqual([armAgain.status, armAgain.body.error], [409, 'spend_wallet_moved']);
+    const loan = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`);
+    assert.equal(loan.body.refusal, 'spend_wallet_moved');
+    // One still waiting, or a wallet Base could not read: not prepared either.
+    Object.assign(activity, { sent: 0, waiting: 1 });
+    assert.equal((await request(app()).post(wallet())).body.refusal, 'spend_wallet_pending');
+    Object.assign(activity, { waiting: 0, unread: true });
+    assert.equal((await request(app()).post(wallet())).body.refusal, 'spend_wallet_unread');
+    assert.equal(walletRuns, 1, 'no payment was prepared again');
   });
 
   it('pays one invoice once: a loan that holds it refuses the wallet, and the wallet that holds it refuses a loan', async () => {

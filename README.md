@@ -111,7 +111,7 @@ No server signs or sends anything. A tool that prepares an action returns a five
 
 Still is built on Miorail, which measures tokenized assets on Base before anyone acts on them.
 
-- **Stocks** (`/stocks`): one company can be held on Base through several contracts (Coinbase's B20 tokens, Backed bTokens, Dinari dShares), and they do not trade alike. Miorail measures each exact address at one exact size: what a sale into USDC would return now, and its dividends.
+- **Stocks** (`/stocks`): Coinbase's tokenized stocks on Base (B20 tokens; other issuers were removed on 2026-11-18), each named by its exact contract. Miorail measures each exact address at one exact size: what a sale into USDC would return now, and its dividends.
 - **Swap AI** (`/routes`): describe a swap in words; Miorail compares the routes it supports, decodes the chosen route's calls against what you approve (routes whose calls Miorail writes itself, or cannot read in full, are simulated too), and your wallet signs it. Afterwards it reconciles what you expected with what landed.
 
 One rule runs through all of it: **no data, no score.** A measurement that did not happen is never shown as zero, safe, or a recommendation.

@@ -187,7 +187,8 @@ describe('a rate jump', () => {
     const source = readFileSync(resolve(root, 'lib/route-storage/src/stillLoanAlerts.ts'), 'utf8');
     const query = source.slice(source.indexOf('async rateDue(input) {'), source.indexOf('async markRateTold(input) {'));
     assert.match(query, /a\.rate_high_since <= \$\{input\.highSince\.toISOString\(\)\}::timestamptz/);
-    assert.match(query, /n\.kind = 'rate'\s+AND n\.notice_key = a\.wallet_address \|\| '\|' \|\| a\.market \|\| '\|' \|\| a\.rate_episode::text/);
+    // With the loan's first reading for a loan read from 2026-11-21 (audit LL-1).
+    assert.match(query, /n\.kind = 'rate'\s+AND n\.notice_key = a\.wallet_address \|\| '\|' \|\| a\.market \|\| '\|' \|\| CASE WHEN a\.created_at >= \$\{STILL_LOAN_GENERATION_FROM_V1\}::timestamptz THEN floor\(extract\(epoch FROM a\.created_at\)\)::bigint::text \|\| '\|' ELSE '' END \|\| a\.rate_episode::text/);
     const calls: string[] = [];
     const sql = (async (strings: TemplateStringsArray) => {
       calls.push(strings.join('$'));
@@ -206,7 +207,8 @@ describe('a margin back', () => {
     assert.match(query, /a\.state = 'calm' AND a\.episode > 0/);
     assert.match(query, /THEN a\.told_base_app ELSE a\.told_telegram END\) = a\.episode/);
     assert.match(query, /COALESCE\(a\.state_since, a\.read_at\) < a\.read_at/);
-    assert.match(query, /n\.kind = 'recovered'\s+AND n\.notice_key = a\.wallet_address \|\| '\|' \|\| a\.market \|\| '\|' \|\| a\.episode::text/);
+    // With the loan's first reading for a loan read from 2026-11-21 (audit LL-1).
+    assert.match(query, /n\.kind = 'recovered'\s+AND n\.notice_key = a\.wallet_address \|\| '\|' \|\| a\.market \|\| '\|' \|\| CASE WHEN a\.created_at >= \$\{STILL_LOAN_GENERATION_FROM_V1\}::timestamptz THEN floor\(extract\(epoch FROM a\.created_at\)\)::bigint::text \|\| '\|' ELSE '' END \|\| a\.episode::text/);
   });
 });
 

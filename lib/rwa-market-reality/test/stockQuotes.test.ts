@@ -210,3 +210,21 @@ test('a stock nobody makes a market in says so, and a price in the window outran
   // Without the word, a row without a price is just that.
   assert.equal(stockQuotesV1({ now: NOW, stocks: [stock()], prices: [] }).rows[0]!.market, undefined);
 });
+
+// Audit UI-1, 2026-11-20: Sandisk's 8-for-1 split, a change of SNDKc's multiplier, read as −89.45% in 24 hours.
+test('a multiplier change between the two prices says no change, the prices being of different things', () => {
+  const prices = [
+    { token: TOKEN, at: hoursAgo(24.5), mid: 700 }, { token: TOKEN, at: hoursAgo(24), mid: 698 }, { token: TOKEN, at: hoursAgo(23.5), mid: 699 },
+    { token: TOKEN, at: hoursAgo(2.5), mid: 88 }, { token: TOKEN, at: hoursAgo(1.5), mid: 89 }, { token: TOKEN, at: hoursAgo(0.5), mid: 88.5 },
+  ];
+  const split = stockQuotesV1({ now: NOW, stocks: [stock()], prices, ratioChangedAt: new Map([[TOKEN, [hoursAgo(9)]]]) });
+  assert.deepEqual([split.rows[0]!.priceUsd, split.rows[0]!.change24h, split.rows[0]!.changeFromAt], [88.5, null, null]);
+  assert.ok(StockQuotesResponseV1Schema.safeParse(split).success);
+  // Before the day-ago price, or after the newest: the comparison stands.
+  for (const at of [hoursAgo(30), new Date(NOW.getTime() + 60_000).toISOString()]) {
+    const row = stockQuotesV1({ now: NOW, stocks: [stock()], prices, ratioChangedAt: new Map([[TOKEN, [at]]]) }).rows[0]!;
+    assert.notEqual(row.change24h, null, at);
+  }
+  // A client reads the field a later server will send.
+  assert.ok(StockQuotesResponseV1Schema.safeParse({ ...split, rows: [{ ...split.rows[0]!, corporateAction: true }] }).success);
+});

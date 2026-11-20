@@ -79,11 +79,23 @@ async function ensureUser(userId: string): Promise<void> {
     .onConflictDoNothing();
 }
 
+/**
+ * A path on this site to return to, as the browser will resolve it; otherwise /base-mcp. The parsed URL is checked,
+ * not the raw string (audit AUTH-1, 2026-11-20: "/.//evil.example" passed the string checks and resolved to
+ * "//evil.example", another site, as did "/%2e//x" and "/a/..//x"). A backslash is refused: browsers read it as "/".
+ */
 export function sanitizeReturnTo(input?: string | null): string {
   const fallback = '/base-mcp';
   if (!input) return fallback;
-  if (!input.startsWith('/') || input.startsWith('//') || input.includes('://')) return fallback;
-  return input;
+  if (!input.startsWith('/') || input.startsWith('//') || input.includes('://') || input.includes('\\') || [...input].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return fallback;
+  let url: URL;
+  try {
+    url = new URL(input, 'http://local');
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== 'http://local' || url.pathname.startsWith('//') || url.pathname.includes('\\')) return fallback;
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 export async function saveBaseMcpOAuthState(input: {

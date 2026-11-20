@@ -74,6 +74,12 @@ test('sanitizeReturnTo accepts only local return paths', () => {
   assert.strictEqual(sanitizeReturnTo('/base-mcp'), '/base-mcp');
   assert.strictEqual(sanitizeReturnTo('https://evil.example'), '/base-mcp');
   assert.strictEqual(sanitizeReturnTo('//evil.example/path'), '/base-mcp');
+  // Paths that pass a check of the string and resolve to another site (audit AUTH-1, 2026-11-20).
+  for (const path of ['/.//evil.example', '/%2e//evil.example', '/a/..//evil.example', '/./\\evil.example', '/\\evil.example', '/x\nLocation: //evil']) {
+    assert.strictEqual(sanitizeReturnTo(path), '/base-mcp', path);
+  }
+  assert.strictEqual(sanitizeReturnTo('/stream?mcp=1#top'), '/stream?mcp=1#top');
+  assert.strictEqual(sanitizeReturnTo('/a/../base-mcp'), '/base-mcp');
 });
 
 test('Base MCP OAuth state stores hashed state and encrypted verifier', async () => {

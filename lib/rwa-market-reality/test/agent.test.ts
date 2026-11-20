@@ -448,6 +448,21 @@ describe('list_reviewed_stocks', () => {
     });
   });
 
+  // Audit STK-2, 2026-11-20: the tool read the first 200 of 415 bindings and said a row past them did not exist.
+  test('reads the whole corpus before it matches, and cuts only what it returns', async () => {
+    const row = index[1]!;
+    const corpus = Array.from({ length: 250 }, (_, at) => ({ ...row, underlying: { ...row.underlying,
+      underlyingKey: `security:isin:US${String(at).padStart(10, '0')}`, displaySymbol: at === 249 ? 'ZS' : `T${at}`,
+      canonicalName: at === 249 ? 'Zscaler, Inc.' : `Company ${at}`, identifierValue: `US${String(at).padStart(10, '0')}` } }));
+    let asked = 0;
+    const deps = { underlyings: { listUnderlyings: async (input: { limit: number }) => { asked = input.limit; return corpus.slice(0, input.limit); } } } as never;
+    const found = await listReviewedStocksForAgentV1(deps, { query: 'zscaler' });
+    assert.ok(asked >= 250, `asked for ${asked}`);
+    assert.deepEqual([found.returned, found.reviewedTotal, found.truncated, found.stocks[0]?.displaySymbol], [1, 250, false, 'ZS']);
+    const all = await listReviewedStocksForAgentV1(deps, {});
+    assert.deepEqual([all.returned, all.reviewedTotal, all.truncated], [200, 250, true]);
+  });
+
   test('matches a ticker and an identifier as well as a name', async () => {
     for (const query of ['MSFT', 'msft', 'US5949181045', 'microsoft']) {
       const result = await listReviewedStocksForAgentV1(stockDeps, { query });

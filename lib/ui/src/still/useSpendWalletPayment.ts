@@ -47,6 +47,10 @@ function armRefusalV1(error: unknown): string | null {
     case 'spend_wallet_not_ready': return 'This payment’s review expired or changed. Read it again before paying; nothing was sent.';
     case 'spend_order_unread': return 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Nothing was sent. Open a new one from Spend.';
     case 'spend_pay_off': return 'Paying from Still is turned off on this server. Nothing was sent.';
+    // A payment its wallet answered "declined", where the wallet has sent something since (audit SPEND-1).
+    case 'spend_wallet_moved': return 'Your wallet answered that this payment was declined, and it has sent a transaction since, so the payment may have been sent after all. Check your wallet’s activity. Still will not pay this invoice again; if nothing was paid, open a new one from Spend.';
+    case 'spend_wallet_pending': return 'Your wallet has a transaction still waiting on Base. Wait for it and check your wallet’s activity before paying again.';
+    case 'spend_wallet_unread': return 'Still could not read your wallet’s activity on Base just now, so this payment was not armed. Try again in a minute.';
     default: return null;
   }
 }
@@ -262,7 +266,8 @@ export function useSpendWalletPaymentV1(input: {
         return 'batchId' in sent ? sent.batchId : sent.transactionHash;
       } });
     } catch (error) {
-      update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
+      // A wallet says "declined" however its window closed, even after a confirmation (Base Account, audit SPEND-1): not "nothing was sent".
+      update({ walletError: borrowUserRejectedV1(error) ? 'Your wallet answered that you declined. If it showed the payment as sent, do not pay again: check its activity first.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? armRefusalV1(error)
           ?? (error instanceof BorrowSubmissionStorageErrorV1 || error instanceof BorrowSubmissionLockedErrorV1 ? error.message
             : handedToWallet ? 'Your wallet did not say whether it sent the payment. Check its activity before paying again; Still reads the result from Base.'

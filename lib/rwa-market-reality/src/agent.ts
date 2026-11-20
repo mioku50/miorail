@@ -1,5 +1,6 @@
 import { stableHashV1 } from '@mioagent/route-domain';
 import {
+  REVIEWED_UNIVERSE_LIMIT_V1,
   type OfficialCashExitRepositoryV1,
   type RepresentationRatioRepositoryV1,
   type RepresentationSupplyRepositoryV1,
@@ -501,9 +502,12 @@ export async function listReviewedStocksForAgentV1(
 ) {
   const input = MarketRealityAgentStocksInputV1Schema.parse(rawInput ?? {});
   const limit = input.limit ?? MARKET_REALITY_AGENT_STOCKS_MAX_V1;
+  // The whole reviewed corpus is read and matched; only the answer is cut to `limit` (audit STK-2, 2026-11-20: the
+  // first 200 of 415 bindings were read, so Zscaler, row 414, was "no reviewed underlying matches", with
+  // reviewedTotal 200 and truncated false).
   const entries = await deps.underlyings.listUnderlyings({
     chainId: 8453,
-    limit: MARKET_REALITY_AGENT_STOCKS_MAX_V1,
+    limit: REVIEWED_UNIVERSE_LIMIT_V1,
   });
   const query = input.query?.toLowerCase() ?? null;
 

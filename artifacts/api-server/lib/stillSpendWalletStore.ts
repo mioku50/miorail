@@ -15,6 +15,12 @@ import type { SpendWalletReadyV1 } from './stillSpendWallet.js';
 // ---------------------------------------------------------------------------
 
 export type SpendWalletStateV1 = 'ready' | 'awaiting_wallet' | 'submitted' | 'unknown' | 'confirmed' | 'failed';
+/**
+ * A `ready` row whose wallet once answered "declined": kept on the row through every review after it. Base Account
+ * answers 4001 however its window closed, even after the person confirmed (loanRelease.ts), so such a payment may
+ * be on Base (audit SPEND-1, 2026-11-20): it is not prepared or armed again once the wallet has sent anything since.
+ */
+export const SPEND_WALLET_DECLINED_V1 = 'wallet_declined';
 export interface SpendWalletPaymentV1 extends LoanOwnerV1 {
   paymentId: string;
   orderId: string;
@@ -114,7 +120,7 @@ export class MemorySpendWalletStoreV1 implements SpendWalletStoreV1 {
     if (!row || row.attemptId !== input.attemptId || !active(row.state)) return null;
     if (input.outcome === 'rejected') {
       if (row.state !== 'awaiting_wallet') return null;
-      row.state = 'ready'; row.attemptId = null; row.errorCode = null;
+      row.state = 'ready'; row.attemptId = null; row.errorCode = SPEND_WALLET_DECLINED_V1;
     } else {
       // A late unknown cannot erase a recorded answer, and two different answers stay unknown.
       const batch = input.batchId ?? null, hash = input.transactionHash ?? null;
@@ -183,7 +189,7 @@ export function createDatabaseSpendWalletStoreV1(sql: SqlV1): SpendWalletStoreV1
       assertOwner(input.owner); validateSubmission(input); const { owner } = input; const at = input.now.toISOString();
       const batch = input.batchId ?? null, hash = input.transactionHash ?? null;
       const rows = input.outcome === 'rejected'
-        ? await sql`UPDATE spend_wallet_payments SET state = 'ready', attempt_id = NULL, error_code = NULL, updated_at = ${at}::timestamptz, version = version + 1
+        ? await sql`UPDATE spend_wallet_payments SET state = 'ready', attempt_id = NULL, error_code = ${SPEND_WALLET_DECLINED_V1}, updated_at = ${at}::timestamptz, version = version + 1
           WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress} AND order_id = ${input.orderId}
             AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' RETURNING *`
         : await sql`UPDATE spend_wallet_payments SET

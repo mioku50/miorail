@@ -227,9 +227,22 @@ export function stillLoanStateRankV1(state: StillLoanStateV1): number {
   return STILL_LOAN_STATES_V1.indexOf(state);
 }
 
+/**
+ * A loan first read from this moment on tells its hold, rate and margin-back episodes under its own first reading too
+ * (audit LL-1, 2026-11-20): a loan repaid in full loses its row, the next loan on the same market counts its
+ * episodes from 1 again, and its first pause, rate jump or margin back was silenced by the last loan's key. A loan
+ * read before keeps the keys it was told under, so nothing it heard is said twice.
+ */
+export const STILL_LOAN_GENERATION_FROM_V1 = '2026-11-21T00:00:00.000Z';
+/** "<unix seconds of the first reading>|" for a loan first read from STILL_LOAN_GENERATION_FROM_V1, else nothing. */
+function generationV1(loan: { createdAt: string }): string {
+  const first = Date.parse(loan.createdAt);
+  return first >= Date.parse(STILL_LOAN_GENERATION_FROM_V1) ? `${Math.floor(first / 1000)}|` : '';
+}
+
 /** The key a hold episode is told under. */
-export function stillLoanHoldKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'holdEpisode'>): string {
-  return `${loan.walletAddress}|${loan.market}|${loan.holdEpisode}`;
+export function stillLoanHoldKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'holdEpisode' | 'createdAt'>): string {
+  return `${loan.walletAddress}|${loan.market}|${generationV1(loan)}${loan.holdEpisode}`;
 }
 
 /** The key a loan's week is told under. */
@@ -238,13 +251,13 @@ export function stillLoanWeekKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' 
 }
 
 /** The key a margin back is told under: the episode whose worse band it ends. */
-export function stillLoanRecoveredKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'episode'>): string {
-  return `${loan.walletAddress}|${loan.market}|${loan.episode}`;
+export function stillLoanRecoveredKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'episode' | 'createdAt'>): string {
+  return `${loan.walletAddress}|${loan.market}|${generationV1(loan)}${loan.episode}`;
 }
 
 /** The key a rate jump is told under. */
-export function stillLoanRateKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'rateEpisode'>): string {
-  return `${loan.walletAddress}|${loan.market}|${loan.rateEpisode}`;
+export function stillLoanRateKeyV1(loan: Pick<StillLoanAlertV1, 'walletAddress' | 'market' | 'rateEpisode' | 'createdAt'>): string {
+  return `${loan.walletAddress}|${loan.market}|${generationV1(loan)}${loan.rateEpisode}`;
 }
 
 /** The key a weekend band is told under: once per band per window, so a margin that wavers says nothing twice. */
@@ -746,7 +759,7 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
            AND NOT EXISTS (
              SELECT 1 FROM still_loan_notices n
               WHERE n.channel = ${input.channel} AND n.kind = 'hold'
-                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || a.hold_episode::text)
+                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || CASE WHEN a.created_at >= ${STILL_LOAN_GENERATION_FROM_V1}::timestamptz THEN floor(extract(epoch FROM a.created_at))::bigint::text || '|' ELSE '' END || a.hold_episode::text)
          ORDER BY a.wallet_address, a.market`) as Record<string, unknown>[];
       return rows.map(loanOfRowV1);
     },
@@ -831,7 +844,7 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
            AND NOT EXISTS (
              SELECT 1 FROM still_loan_notices n
               WHERE n.channel = ${input.channel} AND n.kind = 'recovered'
-                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || a.episode::text)
+                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || CASE WHEN a.created_at >= ${STILL_LOAN_GENERATION_FROM_V1}::timestamptz THEN floor(extract(epoch FROM a.created_at))::bigint::text || '|' ELSE '' END || a.episode::text)
          ORDER BY a.wallet_address, a.market`) as Record<string, unknown>[];
       return rows.map(loanOfRowV1);
     },
@@ -847,7 +860,7 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
            AND NOT EXISTS (
              SELECT 1 FROM still_loan_notices n
               WHERE n.channel = ${input.channel} AND n.kind = 'rate'
-                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || a.rate_episode::text)
+                AND n.notice_key = a.wallet_address || '|' || a.market || '|' || CASE WHEN a.created_at >= ${STILL_LOAN_GENERATION_FROM_V1}::timestamptz THEN floor(extract(epoch FROM a.created_at))::bigint::text || '|' ELSE '' END || a.rate_episode::text)
          ORDER BY a.wallet_address, a.market`) as Record<string, unknown>[];
       return rows.map(loanOfRowV1);
     },

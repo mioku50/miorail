@@ -55,10 +55,11 @@ miorail_find_b20_projects
 miorail_b20_market_rails
 ```
 
-`get_representations` never chooses one: different issuers publish different
-contracts for the same company, and that choice is not Miorail's to make. A
-company name reaches a security through a small ISIN-bound alias table, and
-every row says whether the issuer's own naming or a Miorail alias found it.
+`get_representations` returns each reviewed contract for a company by its exact
+address and never chooses one for you. Since 2026-11-18 one issuer is read,
+Coinbase; others were removed with their data. A company name reaches a
+security through a small ISIN-bound alias table, and every row says whether the
+issuer's own naming or a Miorail alias found it.
 
 `get_still_terms` reads the same earnings service and cache as
 `GET /api/public/still/terms`. Its answer is the terms themselves: 50% of the

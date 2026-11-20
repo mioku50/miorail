@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import type { StillLoanAlertRepositoryV1, StillLoanReadingLineV1 } from '../src/stillLoanAlerts.js';
+import { stillLoanHoldKeyV1, stillLoanRateKeyV1, stillLoanRecoveredKeyV1 } from '../src/stillLoanAlerts.js';
 
 // ---------------------------------------------------------------------------
 // Still's loan alerts: one row per loan, and an episode that moves only when
@@ -161,6 +162,32 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
 
   describe(`${label}: a hold on the collateral is told once per episode`, () => {
     const held = (held: string[], cleared: string[] = []) => ({ ...morpho('calm', 6_000), holds: { held, cleared } });
+
+    // Audit LL-1, 2026-11-20: the next loan counted its episodes from 1 again under the repaid loan's keys, and its first
+    // pause was never told. A loan first read from 2026-11-21 has its first reading in its keys.
+    test('a loan repaid in full and borrowed again is told of its own first hold', async () => {
+      const alerts = await make();
+      const at = (minutes: number) => new Date(Date.parse('2026-11-22T10:00:00.000Z') + minutes * 60_000);
+      await alerts.recordReading({ walletAddress: WALLET, at: at(0), block: '100', lines: [held([], ['PAXG:transfers_paused'])], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: at(5), block: '200', lines: [held(['PAXG:transfers_paused'])], unread: [] });
+      let [loan] = await alerts.holdsDue({ channel: 'telegram', freshSince: at(0) });
+      assert.equal(loan!.holdEpisode, 1);
+      const first = stillLoanHoldKeyV1(loan!);
+      assert.equal(first, `${WALLET}|${MORPHO_MARKET}|${Math.floor(at(0).getTime() / 1000)}|1`);
+      await alerts.recordNotice({ channel: 'telegram', kind: 'hold', key: first, walletAddress: WALLET, market: MORPHO_MARKET, at: at(5) });
+      assert.deepEqual(await alerts.holdsDue({ channel: 'telegram', freshSince: at(0) }), []);
+      // Repaid in full: the loan goes. A day on, a new loan on the same market, and the same pause.
+      await alerts.recordReading({ walletAddress: WALLET, at: at(10), block: '300', lines: [], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: at(1440), block: '400', lines: [held([], ['PAXG:transfers_paused'])], unread: [] });
+      await alerts.recordReading({ walletAddress: WALLET, at: at(1445), block: '500', lines: [held(['PAXG:transfers_paused'])], unread: [] });
+      [loan] = await alerts.holdsDue({ channel: 'telegram', freshSince: at(1440) });
+      assert.equal(loan?.holdEpisode, 1, 'the new loan’s first hold is due');
+      assert.notEqual(stillLoanHoldKeyV1(loan!), first);
+      // A loan first read before 2026-11-21 keeps the keys it was told under.
+      const old = { walletAddress: WALLET, market: MORPHO_MARKET, createdAt: '2026-11-20T10:00:00.000Z', holdEpisode: 2, rateEpisode: 3, episode: 4 };
+      assert.deepEqual([stillLoanHoldKeyV1(old), stillLoanRateKeyV1(old), stillLoanRecoveredKeyV1(old)],
+        [`${WALLET}|${MORPHO_MARKET}|2`, `${WALLET}|${MORPHO_MARKET}|3`, `${WALLET}|${MORPHO_MARKET}|4`]);
+    });
 
     test('a hold appearing starts an episode; the same hold does not; one unread stays as it was', async () => {
       const alerts = await make();

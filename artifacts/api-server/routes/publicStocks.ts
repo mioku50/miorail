@@ -179,6 +179,10 @@ export const publicStocksRuntime = {
       noMarket: databaseStockNoMarketV1,
       meta: () => publicStocksRuntime.stockMeta.read(),
       identify: (tokenAddress: string) => publicStocksRuntime.coinbaseUnderlying(tokenAddress),
+      // A split shows as a multiplier change, the one place a corporate action is recorded (audit UI-1).
+      ratioChanges: async (since: Date) => (await rwaMarketRealityRuntime.ratios().recentChanges({ chainId: 8453, limit: 500 }))
+        .filter((row) => row.ratioKind === 'b20_multiplier' && Date.parse(row.observedAt) >= since.getTime())
+        .map((row) => ({ tokenAddress: row.tokenAddress, observedAt: row.observedAt })),
     }),
   readChart: (now: Date, tokenAddress: string) =>
     readStockChartV1(now, tokenAddress, { prices: databaseStockChartPricesV1 }),

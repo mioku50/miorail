@@ -308,6 +308,13 @@ describe("a thin market's price is not shown as the stock's", () => {
   const viewOf = (overrides: Record<string, unknown>) =>
     stockQuoteViewsByKeyV1({ schemaVersion: 'stock-quotes/v1', asOf: NOW.toISOString(), rows: [row(overrides) as never] }).get(NVDA)!;
 
+  // Audit UI-1, 2026-11-20: a split read as −89.45%. A server that marks it gets these words instead of a change.
+  test('a corporate action is said instead of a 24-hour change', () => {
+    assert.equal(viewOf({ change24h: null, changeFromAt: null, corporateAction: true }).change, 'Corporate action');
+    assert.equal(viewOf({ change24h: null, changeFromAt: null }).change, null);
+    assert.equal(viewOf({}).change, '+0.03%');
+  });
+
   test('thin: no price, no change, a label, a sentence and a warning before Buy', () => {
     // PFEc on 2026-10-10: $143 on Base, $28 on the NYSE, a $1,000 round trip losing 21%.
     const view = viewOf({ depth: { state: 'thin', roundTripLossBps: 2084, measuredAt: '2026-10-10T10:02:00Z' } });

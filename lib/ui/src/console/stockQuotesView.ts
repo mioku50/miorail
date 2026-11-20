@@ -101,7 +101,8 @@ export function stockQuoteViewsByKeyV1(
       tokenSymbol: row.tokenSymbol,
       priceUsd: shown ? row.priceUsd : null,
       price: shown ? stockPriceLabelV1(row.priceUsd!) : null,
-      change: shown && row.change24h !== null ? stockChangeLabelV1(row.change24h) : null,
+      // A split or another change of the token's multiplier: the two prices are not of the same thing (audit UI-1).
+      change: shown && row.corporateAction ? 'Corporate action' : shown && row.change24h !== null ? stockChangeLabelV1(row.change24h) : null,
       priceAt: shown ? row.priceAt : null,
       depthLabel: withheld ? (depth.state === 'thin' ? 'Thin market' : 'Depth not measured') : null,
       depthNote: withheld

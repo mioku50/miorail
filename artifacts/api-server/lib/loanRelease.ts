@@ -99,8 +99,13 @@ export function loanReleaseStandingV1(record: LoanExecutionV1, now: Date): { off
 /** What Base says the wallet has sent since the review's block: nothing (with the count that shows it), or why that cannot be said. */
 export async function sentNothingSinceV1(record: LoanExecutionV1, reader: BaseChainReaderV1):
   Promise<{ ok: true; proof: Record<string, unknown> } | { ok: false; refusal: LoanReleaseRefusalV1 }> {
+  return walletSentNothingSinceBlockV1(record.walletAddress, BigInt(record.run.measured.blockNumber), reader);
+}
+
+/** What Base says `wallet` has sent since `block`: its own transactions, or its operations through an EntryPoint. */
+export async function walletSentNothingSinceBlockV1(wallet: string, block: bigint, reader: BaseChainReaderV1):
+  Promise<{ ok: true; proof: Record<string, unknown> } | { ok: false; refusal: LoanReleaseRefusalV1 }> {
   const unread = { ok: false as const, refusal: 'loan_release_wallet_unread' as const };
-  const wallet = record.walletAddress, block = BigInt(record.run.measured.blockNumber);
   const kind = reader.getAccountKind ? await reader.getAccountKind(wallet) : null;
   if (kind === null) return unread;
   if (kind === 'contract') {

@@ -134,7 +134,7 @@ test('a payment declined in the wallet sends nothing, says so, and can be paid a
   const state = await install(page, 'declined');
   await page.goto(`/spend/pay/${ORDER_ID}`);
   await page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true }).click();
-  await expect(page.getByText('You declined in your wallet. Nothing was sent.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Your wallet answered that you declined. If it showed the payment as sent, do not pay again: check its activity first.', { exact: true })).toBeVisible();
   expect(state.order.slice(0, 4)).toEqual(['review', 'review', 'arm', 'submission:rejected']);
   expect(await sends(page)).toEqual([CALL]);
   await expect(page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true })).toBeEnabled();
