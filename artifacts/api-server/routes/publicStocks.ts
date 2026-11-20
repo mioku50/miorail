@@ -188,6 +188,16 @@ export const publicStocksRuntime = {
 };
 
 /**
+ * The Coinbase stocks the Stocks list binds, as the Agent names them in a swap: each token's symbol, contract and
+ * company, from the same cached five-minute computation as the list (2026-11-20).
+ */
+export async function stillAgentStocksV1(): Promise<Array<{ symbol: string; token: string; name: string | null }>> {
+  const slot = weekendSlotStartV1(publicStocksRuntime.now());
+  const quotes = await publicStocksCachesV1.quotes.read(`quotes|${slot.getTime()}`, () => publicStocksRuntime.readQuotes(slot));
+  return quotes.rows.flatMap((row) => (row.tokenSymbol ? [{ symbol: row.tokenSymbol, token: row.tokenAddress, name: row.companyName }] : []));
+}
+
+/**
  * A stock's market price on Base, as the list shows it, or null where the
  * list withholds it: a thin or unmeasured market, or no price at all. The
  * same cached five-minute computation as the list, so a pool is valued at the

@@ -15,6 +15,7 @@ import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
   AGENT_PROMPTS_V1,
   agentAnswerV1,
+  agentCapabilitiesV2,
   agentRouteV2,
   agentAmountUnclearV2,
   agentSendRequestV2,
@@ -659,6 +660,53 @@ describe('the Agent', () => {
     assert.match(decodeURIComponent(half.actionLink!.href), new RegExp(`^/routes\\?goal=Swap \\d+(?:\\.\\d+)? ${nvda.token} to USDC$`));
     const unclear = agentSwapAnswerV2({ question: 'swap something', report: r });
     assert.equal(unclear.actionLink?.href, '/routes');
+  });
+
+  // 2026-11-20, the operator: the Agent should swap ANTc, Anthropic's stock, which no fixed table named. Any Coinbase
+  // stock the Stocks list binds is named by its symbol, its ticker in capitals or its company's whole name.
+  it('prepares a swap of any Coinbase stock on Base by its symbol, ticker or company, naming its contract', () => {
+    const ANT = '0xb20000000000000000000016e38fd364d271ba28';
+    const AMD = `0xb2${'0'.repeat(30)}aaaaaaaa`;
+    const GOLD = `0xb2${'0'.repeat(30)}bbbbbbbb`;
+    const stocks = [
+      { symbol: 'ANTc', token: ANT, name: 'Anthropic, PBC' },
+      { symbol: 'AMDc', token: AMD, name: 'Advanced Micro Devices, Inc.' },
+      // A ticker that is a word of the fixed table: "gold" stays PAXG.
+      { symbol: 'GOLDc', token: GOLD, name: 'Barrick Mining Corporation' },
+      // A symbol that is not a B20 symbol is left out.
+      { symbol: 'weird', token: `0x${'c'.repeat(40)}`, name: 'Weird Inc.' },
+    ];
+    for (const [q, expected] of [
+      ['Buy ANTc for 25 USDC', { from: 'USDC', to: 'ANTc', amount: { kind: 'exact', value: '25' } }],
+      ['buy antc for 25 usdc', { from: 'USDC', to: 'ANTc', amount: { kind: 'exact', value: '25' } }],
+      ['Swap 25 USDC to Anthropic', { from: 'USDC', to: 'ANTc', amount: { kind: 'exact', value: '25' } }],
+      ['Купи ANT на 25 USDC', { from: 'USDC', to: 'ANTc', amount: { kind: 'exact', value: '25' } }],
+      ['buy Advanced Micro Devices with 40 USDC', { from: 'USDC', to: 'AMDc', amount: { kind: 'exact', value: '40' } }],
+      ['sell all my AMDc', { from: 'AMDc', to: 'USDC', amount: { kind: 'share', share: 'all' } }],
+      ['Buy gold (PAXG) for $10', { from: 'USDC', to: 'PAXG', amount: { kind: 'exact', value: '10' } }],
+      ['swap 10 USDC to ETH', { from: 'USDC', to: 'ETH', amount: { kind: 'exact', value: '10' } }],
+      ['купи Apple на 10 usdc', { from: 'USDC', to: 'AAPLc', amount: { kind: 'exact', value: '10' } }],
+    ] as const) {
+      assert.deepEqual(agentSwapRequestV2(q, stocks), { ...expected, amountUnclear: false }, q);
+      assert.equal(agentRouteV2(q, stocks).route, 'swap', q);
+    }
+    // A lower-case ticker and a common word in capitals name no stock.
+    assert.equal(agentSwapRequestV2('buy ant for 25 usdc', stocks)?.to, null);
+    assert.equal(agentSwapRequestV2('Swap ALL my USDC to ETH', [...stocks, { symbol: 'ALLc', token: `0x${'d'.repeat(40)}`, name: 'Allstate Corp' }])?.to, 'ETH');
+    // The answer names the stock by its contract, as Swap AI takes it.
+    const answer = agentSwapAnswerV2({ question: 'Buy ANTc for 25 USDC', report: report(), stocks });
+    assert.equal(answer.mode, 'action_prep');
+    assert.match(answer.text, /^Prepared: swap 25 USDC to ANTc\. Swap AI compares routes/);
+    assert.equal(answer.actionLink?.href, `/routes?goal=${encodeURIComponent(`Swap 25 USDC to ${ANT}`)}`);
+    assert.equal(answer.engineFacts?.autonomousSigningRefused, true);
+    // Without the server's list the page still sends a token symbol on to the server.
+    assert.equal(agentRouteV2('Buy ANTc').route, 'swap');
+    assert.equal(agentRouteV2('Buy ANTc for 25 USDC').route, 'swap');
+    // A what-if stays a calculation, whatever it names.
+    assert.equal(agentRouteV2('What happens if ANTc drops 30%?', stocks).route, 'analysis');
+    // The capabilities say so.
+    assert.match(agentCapabilitiesV2(false), /any Coinbase stock on Base, like ANTc/);
+    assert.match(agentCapabilitiesV2(true), /любой акции Coinbase на Base, вроде ANTc/);
   });
 
   // Audit MCP-1, 2026-11-10: the amount was the first number in the question, and "all" wherever the word

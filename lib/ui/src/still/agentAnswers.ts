@@ -149,9 +149,9 @@ const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
 ];
 
 /** Where a question goes. One rule for the page and the server, so they cannot disagree. */
-export function agentRouteV2(question: string): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
+export function agentRouteV2(question: string, stocks?: readonly AgentStockV2[]): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
   const whatIf = WHAT_IF_V2.test(question);
-  if (!whatIf && agentSwapRequestV2(question)) return { route: 'swap', topic: 'action_prep' };
+  if (!whatIf && agentSwapRequestV2(question, stocks)) return { route: 'swap', topic: 'action_prep' };
   if (!whatIf && agentSendRequestV2(question)) return { route: 'send', topic: 'action_prep' };
   if (!whatIf && ACTION_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (ANALYSIS_V2.some((pattern) => pattern.test(question))) return { route: 'analysis', topic: 'analysis' };
@@ -177,8 +177,8 @@ export const AGENT_PROMPTS_V1: ReadonlyArray<{ en: string; ru: string }> = [
 /** What the agent answers, said when a question is not one of them. */
 export function agentCapabilitiesV2(ru: boolean): string {
   return ru
-    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды. И готовлю обмен для Swap AI, например покупку золота (PAXG) за USDC, и перевод акции из кошелька на адрес 0x… или имя .base.eth: подписываете их вы.'
-    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends. I also prepare a swap for Swap AI, such as buying gold (PAXG) with USDC, and a transfer of a stock from your wallet to a 0x address or a .base.eth name, which you sign.';
+    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды. И готовлю обмен для Swap AI, например покупку золота (PAXG) или любой акции Coinbase на Base, вроде ANTc, за USDC, и перевод акции из кошелька на адрес 0x… или имя .base.eth: подписываете их вы.'
+    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends. I also prepare a swap for Swap AI, such as buying gold (PAXG) or any Coinbase stock on Base, like ANTc, with USDC, and a transfer of a stock from your wallet to a 0x address or a .base.eth name, which you sign.';
 }
 
 function parseDollarCentsV2(question: string): bigint | null {
@@ -318,6 +318,86 @@ const SWAP_TOKEN_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
   ...AGENT_ASSET_WORDS_V2,
 ];
 
+// ---------------------------------------------------------------------------
+// Any Coinbase stock on Base (2026-11-20, the operator: the Agent should swap ANTc, Anthropic's stock, which no
+// fixed table named). The server passes the stocks its Stocks list binds to Coinbase, each with its contract; a
+// stock is named by its token symbol ("ANTc"), its ticker written in capitals ("ANT"), or its company's whole name
+// without the legal suffix ("Anthropic"). Never by a lower-case ticker or a single common word: "ant", "all", "on"
+// and "now" are words before they are tickers. A word of the fixed table wins over a stock on the same letters, so
+// "gold" stays PAXG.
+// ---------------------------------------------------------------------------
+
+/** A Coinbase stock the server's Stocks list binds, with its contract on Base. */
+export interface AgentStockV2 {
+  /** The token's own symbol, "ANTc". */
+  symbol: string;
+  /** The token's contract on Base: what Swap AI is given. */
+  token: string;
+  /** The company, as Coinbase names it: "Anthropic, PBC". */
+  name: string | null;
+}
+
+/** Capitals that are words in a question before they are tickers. */
+const NOT_TICKERS_V2 = new Set(['A', 'I', 'AI', 'AN', 'AT', 'BE', 'BY', 'DO', 'GO', 'IT', 'ME', 'MY', 'NO', 'OF', 'OK', 'ON', 'OR', 'SO', 'TO', 'UP', 'US',
+  'ALL', 'AND', 'ANY', 'APP', 'ARE', 'BIG', 'BUY', 'CAN', 'CEO', 'DAY', 'EV', 'FOR', 'FUN', 'GET', 'HAS', 'LOW', 'MAX', 'NEW', 'NOW', 'ONE', 'OUT', 'PAY',
+  'SEE', 'THE', 'TV', 'USA', 'WIN', 'YOU', 'CASH', 'GOLD', 'HIGH', 'LOAN', 'NEXT', 'REAL', 'SAVE', 'SELL', 'SWAP', 'TRUE', 'WELL', 'WORK', 'USD', 'USDC',
+  'ETH', 'BTC', 'PAXG']);
+const LEGAL_SUFFIX_V2 = /(?:[,\s]+(?:inc\.?|incorporated|corp\.?|corporation|co\.|company|plc|ltd\.?|limited|pbc|n\.v\.|s\.a\.|s\.e\.|se|ag|sa|nv|holdings?|class\s+[a-z]|\(the\)))+\s*$/iu;
+const escapeV2 = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const B20_SYMBOL_V2 = /^[A-Z][A-Z0-9.]{0,6}c$/u;
+
+/** The words that name each stock, beyond the fixed table: one pattern that ignores case (a long symbol such as
+ * "antc", the company's whole name) and one that does not (a short symbol such as "Cc", the ticker in capitals). */
+export function agentStockWordsV2(stocks: readonly AgentStockV2[]): Array<readonly [string, RegExp]> {
+  const fixed = new Set(SWAP_TOKEN_WORDS_V2.map(([asset]) => asset));
+  const edge = (body: string, flags: string) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${body})(?![\\p{L}\\p{N}])`, flags);
+  const words: Array<readonly [string, RegExp]> = [];
+  for (const stock of stocks) {
+    if (!B20_SYMBOL_V2.test(stock.symbol) || fixed.has(stock.symbol)) continue;
+    const ticker = stock.symbol.slice(0, -1);
+    const anyCase: string[] = [];
+    const exactCase: string[] = [];
+    (stock.symbol.length >= 4 ? anyCase : exactCase).push(escapeV2(stock.symbol));
+    if (ticker.length >= 2 && !NOT_TICKERS_V2.has(ticker)) exactCase.push(escapeV2(ticker));
+    const company = (stock.name ?? '').replace(LEGAL_SUFFIX_V2, '').replace(/,+$/u, '').trim();
+    if (company.length >= 5 && !NOT_TICKERS_V2.has(company.toUpperCase())) anyCase.push(escapeV2(company).replace(/\s+/gu, '\\s+'));
+    if (anyCase.length > 0) words.push([stock.symbol, edge(anyCase.join('|'), 'iu')]);
+    if (exactCase.length > 0) words.push([stock.symbol, edge(exactCase.join('|'), 'u')]);
+  }
+  return words;
+}
+
+/** Each asset a question names, at its first place, a fixed word winning over a stock on the same letters. With no
+ * list at all (the page) a token symbol ("ANTc") still names itself, so the page sends such a question on to the
+ * server; a list the server read, even an empty one, names only what it holds, so nothing unlisted becomes a goal. */
+function namedAssetsV2(question: string, stocks?: readonly AgentStockV2[]): Array<{ asset: string; at: number }> {
+  const fixed = SWAP_TOKEN_WORDS_V2.flatMap(([asset, pattern]) => {
+    const match = pattern.exec(question);
+    return match ? [{ asset, at: match.index, end: match.index + match[0].length }] : [];
+  });
+  const taken = (at: number, end: number) => fixed.some((f) => at < f.end && f.at < end);
+  const extra: Array<{ asset: string; at: number; end: number }> = [];
+  const words = stocks ? agentStockWordsV2(stocks)
+    : [...question.matchAll(/(?<![\p{L}\p{N}])([A-Z][A-Z0-9.]{0,6}c)(?![\p{L}\p{N}])/gu)]
+      .map((m) => m[1]!).filter((symbol) => !/^(?:USD|ETH|BTC)/u.test(symbol))
+      .map((symbol) => [symbol, new RegExp(`(?<![\\p{L}\\p{N}])${escapeV2(symbol)}(?![\\p{L}\\p{N}])`, 'u')] as const);
+  for (const [asset, pattern] of words) {
+    const match = pattern.exec(question);
+    if (!match) continue;
+    const at = match.index, end = at + match[0].length;
+    if (taken(at, end)) continue;
+    const seen = extra.find((e) => e.asset === asset);
+    if (!seen) extra.push({ asset, at, end });
+    else if (at < seen.at) Object.assign(seen, { at, end });
+  }
+  return [...fixed, ...extra].map(({ asset, at }) => ({ asset, at })).sort((a, b) => a.at - b.at);
+}
+
+/** Whether a question speaks of a trade at all: only then does the server read its list of stocks. */
+export function agentAsksToTradeV2(question: string): boolean {
+  return SWAP_WORDS_V2.test(question) || BUY_WORDS_V2.test(question) || SELL_WORDS_V2.test(question);
+}
+
 export interface AgentSwapRequestV2 {
   from: string | null;
   to: string | null;
@@ -328,12 +408,9 @@ export interface AgentSwapRequestV2 {
 }
 
 /** A request to swap, read by fixed rules; null when the question is not one. */
-export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null {
+export function agentSwapRequestV2(question: string, stocks?: readonly AgentStockV2[]): AgentSwapRequestV2 | null {
   if (LOAN_WORDS_V2.test(question)) return null;
-  const named = SWAP_TOKEN_WORDS_V2.flatMap(([asset, pattern]) => {
-    const match = pattern.exec(question);
-    return match ? [{ asset, at: match.index }] : [];
-  }).sort((a, b) => a.at - b.at);
+  const named = namedAssetsV2(question, stocks);
   const buy = BUY_WORDS_V2.test(question);
   const sell = SELL_WORDS_V2.test(question);
   if (!SWAP_WORDS_V2.test(question) && !((buy || sell) && named.length > 0)) return null;
@@ -397,9 +474,12 @@ export function agentSwapAnswerV2(input: {
   report: MirrorReport | null;
   /** The wallet's USDC, read by the server when a share of it is asked for. */
   usdcBalance?: { raw: string; decimals: number; block: string } | 'unread' | null;
+  /** The Coinbase stocks the server's Stocks list binds, each with its contract. */
+  stocks?: readonly AgentStockV2[];
 }): AgentAnswerV1 {
   const ru = isRussianV1(input.question);
-  const request = agentSwapRequestV2(input.question);
+  const stocks = input.stocks;
+  const request = agentSwapRequestV2(input.question, stocks);
   const boundary = ru ? 'БЕЗОПАСНОСТЬ · только подготовка, подпись в кошельке' : 'BOUNDARY · preparation only, wallet signs';
   const say = (text: string, goal: string | null): AgentAnswerV1 => ({
     topic: 'action_prep',
@@ -427,7 +507,7 @@ export function agentSwapAnswerV2(input: {
   const refOf = (symbol: string) =>
     symbol === 'USDC' || symbol === 'ETH'
       ? symbol
-      : input.report?.assets.find((asset) => asset.symbol === symbol)?.token ?? symbol;
+      : input.report?.assets.find((asset) => asset.symbol === symbol)?.token ?? stocks?.find((stock) => stock.symbol === symbol)?.token ?? symbol;
   const goalFor = (amount: string | null) => `Swap ${amount ? `${amount} ` : ''}${refOf(from)} to ${refOf(to)}`;
   const signs = ru
     ? 'Swap AI сравнит маршруты и сверит вызовы выбранного с тем, что вы одобряете; подписываете вы, в своём кошельке.'

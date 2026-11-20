@@ -4,11 +4,13 @@ import { formatCents } from '@mioagent/still-engine/format';
 import {
   agentAnswerV1,
   agentCapabilitiesV2,
+  agentAsksToTradeV2,
   agentRouteV2,
   agentSwapAnswerV2,
   agentSwapRequestV2,
   isRussianV1,
   type AgentAnswerV1,
+  type AgentStockV2,
 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { skyStateV1 } from '../../../lib/ui/src/still/skyState.js';
 import { numbersInV1, stripNarrationFormattingV1 } from './b20AnswerVerify.js';
@@ -225,6 +227,9 @@ export interface StillAgentAskV3 {
   modelClient?: string;
   /** A Basename a transfer's question writes, resolved on Base. */
   resolveName?: (name: string) => Promise<BaseNameResolutionV1>;
+  /** The Coinbase stocks the Stocks list binds, each with its contract: read only for a question about a trade, so any
+   * of them can be swapped by name (2026-11-20). A failed read names none, and the fixed table still serves. */
+  stocks?: () => Promise<readonly AgentStockV2[]>;
   onStage?: (stage: StillAgentStageV1) => void;
   now?: Date;
 }
@@ -234,7 +239,9 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   const modelClient = input.modelClient ?? 'agent:unattributed';
   const ru = isRussianV1(question);
   const stage = input.onStage ?? (() => undefined);
-  const { route } = agentRouteV2(question);
+  // A list the server read, even an empty one after a failed read, names only what it holds.
+  const stocks = input.stocks && agentAsksToTradeV2(question) ? await input.stocks().catch(() => [] as readonly AgentStockV2[]) : undefined;
+  const { route } = agentRouteV2(question, stocks);
 
   stage({ stage: 'reading' });
   const reading = await input.read();
@@ -254,12 +261,12 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
 
   // A swap is written out for Swap AI; only "all"/"half" of USDC needs a read.
   if (route === 'swap') {
-    const request = agentSwapRequestV2(question);
+    const request = agentSwapRequestV2(question, stocks);
     const usdcBalance =
       request?.from === 'USDC' && request.amount?.kind === 'share' && input.readUsdc
         ? ((await input.readUsdc().catch(() => null)) ?? 'unread')
         : null;
-    return agentSwapAnswerV2({ question, report, usdcBalance });
+    return agentSwapAnswerV2({ question, report, usdcBalance, stocks });
   }
   // A transfer is read by the rules alone: its recipient is the question's own words.
   if (route === 'send') {

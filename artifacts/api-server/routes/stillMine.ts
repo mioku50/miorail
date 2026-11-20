@@ -9,6 +9,7 @@ import { modelBudgetClientKeyV1 } from '../lib/modelBudget.js';
 import { readNativeEthV1, readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { rememberStillReadingV1 } from '../lib/stillReadings.js';
+import { stillAgentStocksV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
 // The signed-in wallet's own Mirror: its loans on Aave V4 and Morpho, read from
@@ -33,6 +34,8 @@ export const stillMineRuntimeV1 = {
   readNativeEth: (wallet: string, block: string): Promise<string | null> => readNativeEthV1(wallet, block),
   /** The Basename a transfer names, on Base, as the stock page's gift form resolves it. */
   resolveName: (name: string) => resolveBaseNameV1(name),
+  /** The Coinbase stocks the Stocks list binds, for a swap the Agent prepares by a stock's name (2026-11-20). */
+  agentStocks: () => stillAgentStocksV1(),
   // A question can cost two model calls and a chain read: a person asks a few
   // a minute, a script asks hundreds.
   askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
@@ -135,6 +138,7 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '8kb', inflate: false }
       read: () => service.reading(wallet as `0x${string}`),
       readUsdc: () => stillMineRuntimeV1.readUsdc(wallet),
       resolveName: (name) => stillMineRuntimeV1.resolveName(name),
+      stocks: () => stillMineRuntimeV1.agentStocks(),
       // The model calls a question makes are counted under the asking address (audit MCP-5).
       modelClient: modelBudgetClientKeyV1(req),
       onStage: (stage) => send({ type: 'stage', ...stage }),
