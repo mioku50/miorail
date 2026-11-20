@@ -1889,6 +1889,17 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   align-items: center; justify-content: space-between; margin: 0 0 14px; }
 .mio-console .mr-scope h3 { margin: 0 0 2px; font-size: var(--fs-xl); letter-spacing: -.015em; color: var(--title-ink); }
 .mio-console .mr-scope .lnote { margin: 0; max-width: 62ch; }
+/* The board's own band: the heading on the left, its one count on the right as a headline figure, and the rule
+   that used to sit under a separate row of counters. */
+.mio-console .mr-scope-corpus { padding: 2px 0 16px; border-bottom: 1px solid var(--line); }
+.mio-console .mr-scope-corpus h3 { font-size: var(--fs-title); }
+.mio-console .mr-scope-stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.mio-console .mr-scope-stat { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 14px; align-items: center;
+  max-width: 380px; padding: 10px 18px 10px 16px; border-radius: var(--r); background: var(--node-a-bg); }
+.mio-console .mr-scope-stat .v { grid-row: 1 / span 2; font-size: var(--fs-hero); font-weight: 650; line-height: 1;
+  letter-spacing: -.03em; color: var(--blue); font-variant-numeric: tabular-nums; }
+.mio-console .mr-scope-stat .k { align-self: end; font-size: var(--fs-body); font-weight: 600; line-height: var(--lh-tight); color: var(--ink); }
+.mio-console .mr-scope-stat .d { align-self: start; margin-top: 2px; font-size: var(--fs-micro); line-height: var(--lh-snug); color: var(--dim); }
 
 /* The role heading above the board. An eyebrow, not a title: it says which
    representation a reader is looking at first and why, and gets out of the way. */

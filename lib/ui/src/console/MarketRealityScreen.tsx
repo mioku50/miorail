@@ -2029,24 +2029,29 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       <>
       {/* What this page is, before what it counts: Coinbase B20, the standard
           Base documents for tokenized stocks on this chain. */}
-      {model.scope ? (
-        <div className="mr-scope" aria-label="Corpus scope">
-          <div>
-            <h3>{model.scope.title}</h3>
-            <p className="lnote">{model.scope.body}</p>
-          </div>
+      {/* The count sits in the band beside the title, where the issuer switch stood: on a row of its own, one
+          number under the heading left a wide empty band between the tabs and the board (2026-11-20). */}
+      {model.scope || model.counters.length > 0 ? (
+        <div className="mr-scope mr-scope-corpus" aria-label="Corpus scope">
+          {model.scope ? (
+            <div>
+              <h3>{model.scope.title}</h3>
+              <p className="lnote">{model.scope.body}</p>
+            </div>
+          ) : null}
+          {model.counters.length > 0 ? (
+            <div className="mr-scope-stats" aria-label="Reviewed securities on Base">
+              {model.counters.map((counter) => (
+                <div className="mr-scope-stat" key={counter.label}>
+                  <div className={factClassV1(counter.tone).replace('cr-v', 'v')}>{counter.value}</div>
+                  <div className="k">{counter.label}</div>
+                  {counter.note ? <div className="d">{counter.note}</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
-
-      <div className="kpis" aria-label="Reviewed securities on Base">
-        {model.counters.map((counter) => (
-          <div className="kpi" key={counter.label}>
-            <div className="k">{counter.label}</div>
-            <div className={factClassV1(counter.tone).replace('cr-v', 'v')}>{counter.value}</div>
-            {counter.note ? <div className="d">{counter.note}</div> : null}
-          </div>
-        ))}
-      </div>
 
       {model.questionFixed ? null : (
         <Chooser
