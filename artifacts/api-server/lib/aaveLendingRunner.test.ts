@@ -353,7 +353,7 @@ describe('Aave runner: repay all, then take the stock back', () => {
       change?.(body); return { ok: true, body };
     } };
     const deps = { read: async () => ({ state: 'read' as const, standing: s }), deploymentAt: async () => s.deployment, allowance: async () => ZERO,
-      chain: { providers: [provider], batchCapableIds: new Set(['aave-fixture']) }, now: () => NOW };
+      chain: { providers: [provider], batchCapableIds: new Set(['aave-fixture']) }, now: () => NOW, stockPaused: async () => false as boolean | null };
     return { s, q, deps, simulations: () => simulations,
       run: () => runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: q, ...(delivery ? { delivery } : {}) }, deps) };
   }
@@ -370,6 +370,25 @@ describe('Aave runner: repay all, then take the stock back', () => {
     assert.match(r.facts.warnings[1]!, /Aave checks that the account stays healthy, not that the debt is zero, so Still reads the result from Base/);
     assert.doesNotMatch(r.facts.warnings.join(' '), /revert/);
     assert.equal(lendingSigningTermsFactsV1(r.facts).collateralReturnAssets, h.s.existingSuppliedAssets.toString());
+  });
+  // Audit 11-20 LA-2: during a B20 pause the withdrawal reverts, and the review said only that.
+  it('refuses to take a paused stock back, before any simulation, and says Repay all without it works', async () => {
+    for (const debt of [true, false]) {
+      const h = await returning(debt);
+      const asked: Array<[string, bigint]> = [];
+      const r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q },
+        { ...h.deps, stockPaused: async (token, block) => { asked.push([token, block]); return true; } });
+      assert.equal(r.state, 'refused');
+      if (r.state !== 'refused') continue;
+      assert.equal(r.refusal, 'repay_collateral_held');
+      assert.deepEqual(asked, [[h.s.selectedStock!.token, BigInt(h.s.blockNumber)]]);
+      assert.match(r.detail, /^NVDAc transfers are paused onchain \(Base block [\d,]+\), so the stock cannot come back to this wallet now/);
+      assert.match(r.detail, debt ? /Repay all without taking it back works.*Aave can still liquidate it during the pause\.$/ : /with no debt open there is nothing to liquidate\.$/);
+      assert.equal(h.simulations(), 0, 'nothing was simulated');
+    }
+    // Unread is not paused: the simulation decides.
+    const h = await returning(), r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, { ...h.deps, stockPaused: async () => null });
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
   });
   it('with no debt left returns the stock alone: one withdrawal, no USDC and a zero maximum', async () => {
     const h = await returning(false), r = await h.run();

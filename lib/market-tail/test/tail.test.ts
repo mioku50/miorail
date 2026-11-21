@@ -526,3 +526,13 @@ describe('the endpoint seam', () => {
     assert.equal(times.ok, false);
   });
 });
+
+// Audit 11-20 STK-5: a cursor held for good ended every hourly run "success", with no alert.
+test('a cursor held behind the head for more than three hours fails the run; caught up or recent does not', async () => {
+  const { marketTailHeldTooLongV1 } = await import('../src/range.js');
+  const now = Date.parse('2026-11-21T12:00:00.000Z');
+  assert.equal(marketTailHeldTooLongV1({ lastRunAt: '2026-11-21T08:30:00.000Z', lastBlock: 100, headBlock: 5_000, nowMs: now }), true);
+  assert.equal(marketTailHeldTooLongV1({ lastRunAt: '2026-11-21T10:00:00.000Z', lastBlock: 100, headBlock: 5_000, nowMs: now }), false);
+  assert.equal(marketTailHeldTooLongV1({ lastRunAt: '2026-11-21T01:00:00.000Z', lastBlock: 5_000, headBlock: 5_000, nowMs: now }), false, 'caught up');
+  assert.equal(marketTailHeldTooLongV1({ lastRunAt: null, lastBlock: 100, headBlock: 5_000, nowMs: now }), false, 'no cursor yet');
+});

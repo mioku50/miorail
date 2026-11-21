@@ -105,7 +105,7 @@ export const MIORAIL_MCP_VERSION_V1 = '1.8.0';
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
 
-Five things you must preserve when you summarise anything from this server:
+Six things you must preserve when you summarise anything from this server:
 
 1. ${MIORAIL_MCP_CAVEATS_V1.provisional}
 
@@ -116,6 +116,8 @@ Five things you must preserve when you summarise anything from this server:
 4. ${MIORAIL_MCP_CAVEATS_V1.poolHook}
 
 5. ${MIORAIL_MCP_CAVEATS_V1.launchBuying}
+
+6. ${MIORAIL_MCP_CAVEATS_V1.tokenText}
 
 Miorail measures unique buying wallets only inside a completed launch window. It does not measure buyers beyond that window, trading volume, current holder concentration, related-wallet clusters, organic buy pressure, future price or profit probability. Do not infer any of them from what is here, and do not describe a token as safe, unsafe, good, promising or a scam on this evidence — none of those are things Miorail measured.
 
@@ -663,7 +665,7 @@ Evidence older than a day is labelled stale and describes what was true when it 
     {
       title: 'Call the reopen: this weekend\u2019s round, Base\u2019s call, the results and the leaderboard',
       description:
-        'Miorail\u2019s weekend game on tokenized stocks. Each weekend five stocks (NVDA, TSLA, AAPL, AMZN, MSTR, Coinbase\u2019s tokens on Base) and one question each: will it reopen above or below the close? Takes no argument and returns the round on show: `upcoming` rounds are in `next`; `round.state` is `open` (picks accepted until `locksAt`, Sunday 17:00 ET), `locked` (Base\u2019s calls fixed from its price on Base at the lock) or `settled` (each stock\u2019s first Chainlink print after the reopen, and the scores). READ `miorailSummary` FIRST and prefer its wording. `closeDay` names the close: Friday\u2019s, or Thursday\u2019s before a holiday Friday. `baseNow` is where the token trades on Base during the weekend, NOT a forecast of the reopen and NOT Base\u2019s call, which exists only from the lock on. How players split is hidden until the lock. The leaderboard names a wallet only by a Basename it set for itself, everybody else by player number. Nothing is won but the record: there are no prizes, and the tokens are not offered to US persons. This tool takes no player and makes no pick: a person picks on `playUrl`, or through an assistant connected to Miorail Connected with miorail_call_the_reopen, which picks for that grant\u2019s own wallet only.',
+        'Miorail\u2019s weekend game on tokenized stocks. Each weekend five stocks (NVDA, TSLA, AAPL, AMZN, MSTR, Coinbase\u2019s tokens on Base) and one question each: will it reopen above or below the close? Takes no argument and returns the round on show: `upcoming` rounds are in `next`; `round.state` is `open` (picks accepted until `locksAt`, Sunday 17:00 ET), `locked` (Base\u2019s calls fixed from its price on Base at the lock) or `settled` (each stock\u2019s first Chainlink print after the reopen, and the scores). READ `miorailSummary` FIRST and prefer its wording. `closeDay` names the close: Friday\u2019s, or Thursday\u2019s before a holiday Friday. `baseNow` is where the token trades on Base during the weekend, NOT a forecast of the reopen and NOT Base\u2019s call, which exists only from the lock on. How players split is hidden until the lock. The leaderboard lists every player by number, never by a wallet or its name. Nothing is won but the record: there are no prizes, and the tokens are not offered to US persons. This tool takes no player and makes no pick: a person picks on `playUrl`, or through an assistant connected to Miorail Connected with miorail_call_the_reopen, which picks for that grant\u2019s own wallet only.',
       inputSchema: ReopenRoundAgentInputV1Schema,
       outputSchema: ReopenRoundAgentOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

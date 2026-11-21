@@ -165,13 +165,9 @@ describe('the round is brought up to date by whoever asks', () => {
     assert.deepEqual(late.round?.score?.base, { correct: 3, of: 5, cells: '🟩🟥🟥🟩🟩' });
   });
 
-  test('after the reopen the leaderboard names a Basename, numbers everyone else, and marks the reader', async () => {
+  // Audit 11-20 PRIV-2: a signed-in wallet's Basename on the public table led to the wallet, unasked.
+  test('after the reopen the leaderboard numbers every player, a wallet with a Basename too, and marks the reader', async () => {
     const { deps, repository } = depsV1();
-    const asked: string[] = [];
-    deps.basename = async (wallet) => {
-      asked.push(wallet);
-      return wallet === '0x1111111111111111111111111111111111111111' ? 'first.base.eth' : null;
-    };
     await advanceReopenRoundV1(et('2026-10-10', '12:00'), deps);
     const named = await repository.walletPlayer({ wallet: '0x1111111111111111111111111111111111111111', now: et('2026-10-10', '12:00') });
     const plain = await repository.walletPlayer({ wallet: '0x2222222222222222222222222222222222222222', now: et('2026-10-10', '12:00') });
@@ -191,13 +187,11 @@ describe('the round is brought up to date by whoever asks', () => {
       players: 3,
       rows: [
         { rank: 1, name: 'Player 2', correct: 5, of: 5, played: 1, you: false },
-        { rank: 2, name: 'first.base.eth', correct: 1, of: 5, played: 1, you: false },
+        { rank: 2, name: 'Player 1', correct: 1, of: 5, played: 1, you: false },
         { rank: 3, name: 'Player 3', correct: 0, of: 5, played: 1, you: true },
       ],
       me: { rank: 3, correct: 0, of: 5, played: 1 },
     });
-    // A Basename is asked for wallets only, and never for a device.
-    assert.deepEqual(asked.sort(), ['0x1111111111111111111111111111111111111111', '0x2222222222222222222222222222222222222222']);
   });
 
   test('the notifier’s read settles the round by itself and knows each wallet’s score and place', async () => {

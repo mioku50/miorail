@@ -88,7 +88,7 @@ test('a phone browser with no wallet offers Base Account and reopening the page 
     mobile: true,
     pageUrl: PAGE,
   });
-  assert.deepEqual(names(result), ['Base Account', 'MetaMask', 'Base App (Coinbase Wallet)']);
+  assert.deepEqual(names(result), ['Base Account', 'MetaMask', 'Coinbase Wallet']);
   const links = result.choices.filter((choice) => choice.kind === 'open_in');
   assert.deepEqual(
     links.map((choice) => choice.kind === 'open_in' && choice.href),
@@ -104,7 +104,7 @@ test('a phone browser with WalletConnect offers MetaMask that stays in this brow
   // 2026-11-03, the operator: "Open in MetaMask" opened the page inside MetaMask, where it should come back to Safari.
   const result = walletChoicesV1({ connectors: [GENERIC, BASE_ACCOUNT, WALLET_CONNECT], inBaseApp: false, hasWindowProvider: false, mobile: true, pageUrl: PAGE });
   assert.deepEqual(result.choices.map((choice) => [choice.kind, choice.name]), [
-    ['connector', 'Base Account'], ['connector', 'MetaMask'], ['open_in', 'MetaMask'], ['open_in', 'Base App (Coinbase Wallet)'],
+    ['connector', 'Base Account'], ['connector', 'MetaMask'], ['open_in', 'MetaMask'], ['open_in', 'Coinbase Wallet'],
   ]);
   const paired = result.choices[1]!;
   assert.deepEqual(paired.kind === 'connector' && [paired.connectorId, paired.pairWith, paired.detail],
@@ -155,7 +155,7 @@ test('inside Base App: its own wallet only, and the way to use another one', () 
     pageUrl: PAGE,
   });
   assert.deepEqual(names(announced), ['Coinbase Wallet']);
-  assert.equal(announced.choices[0]!.detail, 'The wallet Base App gives this page.');
+  assert.equal(announced.choices[0]!.detail, 'The wallet that Coinbase Wallet gives this page.');
   assert.match(announced.note ?? '', /open miorail\.xyz in your phone’s browser/);
   // Even a baseAccount connector that slipped into the list is not offered there.
   const leaked = walletChoicesV1({
@@ -180,7 +180,7 @@ test('inside Farcaster: the wallet Farcaster announces, no Base Account popup an
     pageUrl: PAGE,
   });
   assert.deepEqual(names(result), ['Farcaster Wallet']);
-  assert.equal(result.choices[0]!.detail, 'The wallet Farcaster gives this page.');
+  assert.equal(result.choices[0]!.detail, 'The wallet that Farcaster gives this page.');
   assert.equal(
     result.note,
     'Inside Farcaster a page can use only the wallet Farcaster gives it. To connect MetaMask or a Base Account, open miorail.xyz in your phone’s browser.',

@@ -169,7 +169,7 @@ export function reopenRoundSummaryV1(response: ReopenGameResponseV1): string {
   if (board && board.rows.length > 0) {
     const top = board.rows.slice(0, 3).map((row) => `#${row.rank} ${row.name} ${row.correct}/${row.of}`);
     sentences.push(
-      `Leaderboard after ${board.rounds} ${board.rounds === 1 ? 'round' : 'rounds'} and ${board.players} ${board.players === 1 ? 'player' : 'players'}: ${list(top)}. A wallet with a Basename is listed by it, everybody else by player number.`,
+      `Leaderboard after ${board.rounds} ${board.rounds === 1 ? 'round' : 'rounds'} and ${board.players} ${board.players === 1 ? 'player' : 'players'}: ${list(top)}. Everybody is listed by player number, never by a wallet or its name.`,
     );
   }
   sentences.push('Nothing is won but the record.');

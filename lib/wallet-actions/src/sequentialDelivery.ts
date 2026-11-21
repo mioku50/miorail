@@ -192,4 +192,4 @@ export const SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1 =
   'The quote expired while the allowance confirmed, so the swap was not sent. The allowance is in place: go back to routes for a fresh quote, and it will not ask for another.';
 
 export const SWAP_NEEDS_ONE_BATCH_V1 =
-  'These calls can only be sent together, and this wallet cannot do that. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.';
+  'These calls can only be sent together, and this wallet cannot do that. Nothing was sent. Use Base Account, Coinbase Wallet (formerly Base App) or MetaMask.';

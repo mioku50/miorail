@@ -289,7 +289,8 @@ describe('the Spend page', () => {
     assert.match(open, kind(true, 'Subscriptions'));
     assert.match(open, kind(false, 'Gift cards'), 'gift cards are not pressed while subscriptions are');
     assert.doesNotMatch(open, /-brand">Brand<\/label>|still-spend-categories/, 'no brand search and no categories here');
-    assert.match(open, /A card tops up a\s+balance and does not renew by itself\. Take an app store card of your account’s own country; a price inside an app can be above the\s+service’s own web price\./);
+    // Every card is bound to its country's accounts, not only the app stores' (audit 11-20 SPEND-3).
+    assert.match(open, /A card tops up a\s+balance and does not renew by itself\. Every card\s+here works only for an account of its own country, a PlayStation, Xbox or Netflix card as much as an app store’s, so choose your\s+account’s country above first; a price inside an app can be above the service’s own web price\./);
     for (const name of ['Discord Nitro', 'Netflix', 'Disney\\+', 'Xbox and Game Pass', 'PlayStation', 'Nintendo', 'Twitch', 'Crunchyroll', 'Apple \\(iPhone apps\\)', 'Google Play \\(Android apps\\)']) {
       assert.match(open, new RegExp(`<strong>${name}</strong>`), name);
     }

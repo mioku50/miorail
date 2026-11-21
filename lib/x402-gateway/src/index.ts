@@ -749,14 +749,16 @@ export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X40
     throw new Error('x402_payment_configuration_incomplete');
   }
   const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
+  // The x402 v2 requirement, field for field as the PAYMENT-REQUIRED header carries it: a client that reads the
+  // body instead of the header can pay from it (audit 11-20 X402-3; the extra `version` was no v2 field).
   return {
     accepts: [
       {
-        amount: config.amountAtomic,
-        payTo: config.payTo,
-        asset: config.asset,
+        scheme: 'exact',
         network: config.network,
-        version: '2',
+        amount: config.amountAtomic,
+        asset: config.asset,
+        payTo: config.payTo,
         maxTimeoutSeconds: 300,
         extra: extraDomain,
       },
@@ -829,6 +831,8 @@ export function createX402RoutesConfig(
   const effectiveConfig: X402RuntimeConfig = { ...config, amountAtomic };
 
   const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
+  const resource = absoluteResourceV1(routePath, options.resourceOrigin);
+  const description = options.description?.trim() || 'Miorail x402 paid resource';
   const routeConfig = {
     accepts: {
       scheme: 'exact',
@@ -842,8 +846,8 @@ export function createX402RoutesConfig(
       maxTimeoutSeconds: 300,
       extra: extraDomain,
     },
-    resource: absoluteResourceV1(routePath, options.resourceOrigin),
-    description: options.description?.trim() || 'Miorail x402 paid resource',
+    resource,
+    description,
     mimeType: 'application/json',
     serviceName: bazaarServiceNameV1(serviceName),
     tags: bazaarTagsV1(options.tags) ?? ['miorail', 'x402'],
@@ -852,10 +856,12 @@ export function createX402RoutesConfig(
       const paymentRequired = paymentRequiredFromRuntimeConfig(effectiveConfig);
       return {
         contentType: 'application/json',
+        // A v2 PaymentRequired: the resource and the requirements the header names (audit X402-3).
         body: {
           x402Version: 2,
-          accepts: paymentRequired.accepts,
           error: 'Payment Required',
+          resource: { url: resource, description, mimeType: 'application/json' },
+          accepts: paymentRequired.accepts,
         },
       };
     },

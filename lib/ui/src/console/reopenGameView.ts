@@ -149,7 +149,7 @@ export function reopenLeaderboardViewV1(
   const shownYou = board.rows.some((row) => row.you);
   return {
     title: 'Leaderboard',
-    note: `After ${plural(board.rounds, 'round', 'rounds')} · ${plural(board.players, 'player', 'players')}. Most right first. A wallet with a Basename is listed by it; everyone else by player number.`,
+    note: `After ${plural(board.rounds, 'round', 'rounds')} · ${plural(board.players, 'player', 'players')}. Most right first. Everyone is listed by player number, never by a wallet or its name.`,
     rows: board.rows.map((row, index) => ({
       key: `${row.rank}:${index}`,
       rank: `#${row.rank}`,

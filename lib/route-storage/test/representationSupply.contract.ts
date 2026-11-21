@@ -83,7 +83,9 @@ export function representationSupplyContractV1(
       assert.equal(zero.row.changes, 1);
     });
 
-    test('a failed read becomes unknown, never zero, and preserves the prior success in history', async () => {
+    // Audit 11-20 STK-1: a failed read turned a stock with tokens into "read, and zero" on the board until the next
+    // pass. The measured value stays; the failure is kept in the history, and a row never measured stays unknown.
+    test('a failed read keeps the last measured value, records the failure in history, and is never zero', async () => {
       const { repository } = await open();
       await repository.recordObservation(successful({ totalSupplyAtomic: '10' }));
       const failed = await repository.recordObservation(
@@ -100,18 +102,46 @@ export function representationSupplyContractV1(
         }),
       );
       assert.equal(failed.outcome, 'unresolved');
+      assert.equal(failed.row.state, 'positive_supply');
+      assert.equal(failed.row.totalSupplyAtomic, '10');
+      assert.equal(failed.row.readOutcome, 'success');
+      assert.equal(failed.row.observedAt, '2026-08-27T12:00:00.000Z', 'the value keeps the time it was measured');
+      assert.equal(failed.row.lastCheckedAt, '2026-08-27T13:00:01.000Z', 'the failed check is still a check');
+      assert.equal(failed.row.reads, 2);
+      assert.equal(failed.row.changes, 0);
+      const [kept] = await repository.readSupplies({ chainId: 8453, tokenAddresses: [SUPPLY_TOKEN_V1] });
+      assert.equal(kept?.state, 'positive_supply');
+      const history = await repository.recentObservations({ chainId: 8453, tokenAddress: SUPPLY_TOKEN_V1, limit: 10 });
+      assert.deepEqual(history.map((row) => [row.state, row.readOutcome]), [['supply_unknown', 'rpc_failure'], ['positive_supply', 'success']]);
+    });
+
+    test('a failed read of a token never measured is unknown, never zero, and the next success replaces it', async () => {
+      const { repository } = await open();
+      const failed = await repository.recordObservation(
+        successful({
+          totalSupplyAtomic: null,
+          decimals: null,
+          blockNumber: '50000001',
+          blockHash: BLOCK_B,
+          evidenceHash: EV_B,
+          readOutcome: 'rpc_failure',
+          failureCode: 'rpc_timeout',
+          observedAt: '2026-08-27T13:00:00.000Z',
+          now: '2026-08-27T13:00:01.000Z',
+        }),
+      );
+      assert.equal(failed.outcome, 'unresolved');
       assert.equal(failed.row.state, 'supply_unknown');
       assert.equal(failed.row.totalSupplyAtomic, null);
+      assert.equal(failed.row.readOutcome, 'rpc_failure');
       assert.equal(failed.row.changes, 0);
-      const observations = await repository.recentObservations({
-        chainId: 8453,
-        tokenAddress: SUPPLY_TOKEN_V1,
-        limit: 10,
-      });
-      assert.deepEqual(
-        observations.map((row) => row.state),
-        ['supply_unknown', 'positive_supply'],
-      );
+      const measured = await repository.recordObservation(successful({
+        totalSupplyAtomic: '10', blockNumber: '50000002', evidenceHash: `0x${'e3'.repeat(32)}`,
+        observedAt: '2026-08-27T14:00:00.000Z', now: '2026-08-27T14:00:01.000Z' }));
+      assert.equal(measured.row.state, 'positive_supply');
+      assert.equal(measured.row.readOutcome, 'success');
+      assert.equal(measured.row.failureCode, null);
+      assert.equal(measured.row.reads, 2);
     });
   });
 }

@@ -73,7 +73,7 @@ export interface StillAaveStandingV1 extends StillAaveSnapshotV1 {
 }
 export type StillAaveReadingV1 =
   | { state: 'read'; standing: StillAaveStandingV1 }
-  | { state: 'refused'; refusal: 'aave_inputs_invalid' | 'aave_unread' | 'aave_deployment_changed' | 'aave_reserve_mismatch' | 'aave_position_unread' | 'aave_funding_insufficient' | 'aave_borrow_closed' | 'aave_capacity_unread'; detail: string };
+  | { state: 'refused'; refusal: 'aave_inputs_invalid' | 'aave_unread' | 'aave_deployment_changed' | 'aave_reserve_mismatch' | 'aave_position_unread' | 'aave_funding_insufficient' | 'aave_borrow_closed' | 'aave_collateral_closed' | 'aave_capacity_unread'; detail: string };
 
 export interface StillAaveReaderDepsV1 {
   now?: () => Date;
@@ -81,6 +81,29 @@ export interface StillAaveReaderDepsV1 {
   calendar?: () => Promise<CalendarRead>;
 }
 const refuse = (refusal: Extract<StillAaveReadingV1, { state: 'refused' }>['refusal'], detail: string): StillAaveReadingV1 => ({ state: 'refused', refusal, detail });
+
+/**
+ * A stock the account's limit counts, closed at the reading block: by Coinbase's registry, or by Aave on the
+ * Spoke. A fact about the market, said with the stock and the reason, never as Still's failure to read
+ * (audit 11-20 LA-5: it was "Still could not establish…", and an assistant retried).
+ */
+export class AaveCollateralClosedErrorV1 extends Error {
+  constructor(readonly stockId: StockId, readonly reason: 'registry_paused' | 'reserve_paused' | 'reserve_frozen' | 'reserve_inactive') {
+    super('aave_collateral_closed');
+    this.name = 'AaveCollateralClosedErrorV1';
+  }
+}
+
+export function aaveCollateralClosedWordsV1(input: { stockId: StockId; reason: AaveCollateralClosedErrorV1['reason']; selected: boolean; blockNumber: number }): string {
+  const s = input.stockId, at = `Base block ${input.blockNumber.toLocaleString('en-US')}`;
+  const why = input.reason === 'registry_paused' ? `Coinbase’s registry marks ${s} paused at ${at}, which holds its price feed still`
+    : input.reason === 'reserve_paused' ? `Aave paused its ${s} reserve at ${at}`
+      : input.reason === 'reserve_frozen' ? `Aave froze its ${s} reserve at ${at}`
+        : `Aave’s ${s} reserve is not active on the Spoke at ${at}`;
+  return input.selected
+    ? `${why}, so no new loan can be taken against ${s} now. Repaying works.`
+    : `${why}. It counts toward this account’s limit, so Still opens no new loan for this account until that changes. Repaying works.`;
+}
 let providers: ReturnType<typeof createProviders> | null = null;
 const calendarSource = createEarningsCalendar();
 
@@ -422,7 +445,11 @@ export function stillAaveCapacityV1(input: {
     // A borrow refreshes all enabled collateral configs. Taking the smaller
     // of the recorded and newest factor also covers the refresh conservatively.
     const factor = latestFactor < userFactor ? latestFactor : userFactor;
-    if (price <= ZERO || factor < ZERO || factor > BPS || registry.multiplier <= ZERO || registry.paused || flags.paused || flags.frozen || !caps.active || caps.halted) throw new Error('aave_collateral_unavailable');
+    if (registry.paused) throw new AaveCollateralClosedErrorV1(stock.id, 'registry_paused');
+    if (flags.paused) throw new AaveCollateralClosedErrorV1(stock.id, 'reserve_paused');
+    if (flags.frozen) throw new AaveCollateralClosedErrorV1(stock.id, 'reserve_frozen');
+    if (!caps.active || caps.halted) throw new AaveCollateralClosedErrorV1(stock.id, 'reserve_inactive');
+    if (price <= ZERO || factor < ZERO || factor > BPS || registry.multiplier <= ZERO) throw new Error('aave_collateral_unavailable');
     const updatedAt = reserve.priceUpdatedAt.ok ? new Date(Number(reserve.priceUpdatedAt.value) * 1000) : null;
     const { share, lowered } = stockShareTermsV1(stock.id, calendar, blockAt, now, updatedAt);
     shareBpsByStock[stock.id] = Number(share);
@@ -487,10 +514,18 @@ export async function readStillAaveStandingV1(input: {
   if (input.operation === 'borrow') {
     try {
       const flags = need(selected!.config), caps = need(selected!.spokeConfig), added = need(selected!.spokeAdded);
-      if (flags.paused || flags.frozen || !caps.active || caps.halted) throw new Error('aave_borrow_closed');
+      if (flags.paused) throw new AaveCollateralClosedErrorV1(selectedStock!.id, 'reserve_paused');
+      if (flags.frozen) throw new AaveCollateralClosedErrorV1(selectedStock!.id, 'reserve_frozen');
+      if (!caps.active || caps.halted) throw new AaveCollateralClosedErrorV1(selectedStock!.id, 'reserve_inactive');
       if (!read.universe.aave.ok || (supply > ZERO && caps.addCap !== read.universe.aave.noCap && added + supply > caps.addCap * BigInt(10) ** BigInt(selectedStock!.decimals))) return refuse('aave_borrow_closed', 'The exact pledge exceeds the registered collateral supply cap.');
       capacity = stillAaveCapacityV1({ ...read, calendar, now, selectedStockId: selectedStock!.id, additionalCollateralAssets: supply });
-    } catch { return refuse('aave_capacity_unread', 'Still could not establish a current borrowing allowance for the whole reviewed Aave account.'); }
+    } catch (error) {
+      if (error instanceof AaveCollateralClosedErrorV1) {
+        return refuse('aave_collateral_closed', aaveCollateralClosedWordsV1({ stockId: error.stockId, reason: error.reason,
+          selected: error.stockId === selectedStock!.id, blockNumber: Number(read.snapshot.block.number) }));
+      }
+      return refuse('aave_capacity_unread', 'Still could not establish a current borrowing allowance for the whole reviewed Aave account.');
+    }
   }
   return { state: 'read', standing: { ...read, walletAddress: wallet as Address, readAt: now.toISOString(), blockNumber: Number(read.snapshot.block.number), blockTimestamp: read.snapshot.block.timestamp,
     operation: input.operation, selectedStock, collateralReserve, loanReserve, collateralSupplyAssets: supply, existingSuppliedAssets: supplied,

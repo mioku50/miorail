@@ -62,7 +62,6 @@ function depsV1(stocks: WeekendMarketStockInputV1[]) {
     stocks: async (_since, until) =>
       stocks.map((row) => ({ ...row, runs: row.runs.filter((run) => Date.parse(run.at) <= until.getTime()) })),
     weekend: async (now) => weekendMarketV1({ now, stocks }),
-    basename: async (wallet) => (wallet.endsWith('1') ? 'first.base.eth' : null),
   };
   return { deps, repository };
 }
@@ -114,7 +113,8 @@ describe('Call the reopen, for an assistant', () => {
     );
     assert.match(answer.miorailSummary, /Base got 3 of 5; the players' majority got 1 of 5; 1 person played\./);
     assert.match(answer.miorailSummary, /Round #2 opens Fri 20:00 ET \(/);
-    assert.match(answer.miorailSummary, /Leaderboard after 1 round and 1 player: #1 first\.base\.eth 1\/5\./);
+    // Numbers only, a wallet with a Basename too (audit 11-20 PRIV-2).
+    assert.match(answer.miorailSummary, /Leaderboard after 1 round and 1 player: #1 Player 1 1\/5\. Everybody is listed by player number, never by a wallet or its name\./);
 
     const mine = reopenMineForAgentV1(
       await reopenGameForV1({ shared, player: { playerId: player, signed: true }, now, repository }),

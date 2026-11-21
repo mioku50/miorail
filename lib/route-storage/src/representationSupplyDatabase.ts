@@ -146,16 +146,19 @@ export function createDatabaseRepresentationSupplyRepository(
           'erc20_total_supply', ${input.evidenceHash}, ${input.readOutcome},
           ${input.failureCode}, ${input.observedAt}, ${input.now}, ${null}, 1, 0, ${input.now}
         )
+        -- A failed read after a successful one keeps the measured value: the failure is ours, and it stays in
+        -- the observation history. It turned a stock with tokens into "read, and zero" on the board and lowered
+        -- its headline until the next pass (audit 11-20 STK-1). Only a success, or a row never measured, moves.
         ON CONFLICT (chain_id, token_address) DO UPDATE SET
-          supply_state       = EXCLUDED.supply_state,
-          total_supply_atomic = EXCLUDED.total_supply_atomic,
-          decimals          = EXCLUDED.decimals,
-          block_number      = EXCLUDED.block_number,
-          block_hash        = EXCLUDED.block_hash,
-          evidence_hash     = EXCLUDED.evidence_hash,
-          read_outcome      = EXCLUDED.read_outcome,
-          failure_code      = EXCLUDED.failure_code,
-          observed_at       = EXCLUDED.observed_at,
+          supply_state       = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.supply_state ELSE EXCLUDED.supply_state END,
+          total_supply_atomic = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.total_supply_atomic ELSE EXCLUDED.total_supply_atomic END,
+          decimals          = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.decimals ELSE EXCLUDED.decimals END,
+          block_number      = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.block_number ELSE EXCLUDED.block_number END,
+          block_hash        = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.block_hash ELSE EXCLUDED.block_hash END,
+          evidence_hash     = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.evidence_hash ELSE EXCLUDED.evidence_hash END,
+          read_outcome      = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.read_outcome ELSE EXCLUDED.read_outcome END,
+          failure_code      = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.failure_code ELSE EXCLUDED.failure_code END,
+          observed_at       = CASE WHEN (EXCLUDED.read_outcome <> 'success' AND representation_supply.read_outcome = 'success') THEN representation_supply.observed_at ELSE EXCLUDED.observed_at END,
           last_checked_at   = EXCLUDED.last_checked_at,
           last_changed_at   = CASE WHEN ${transitionRecorded} THEN EXCLUDED.last_checked_at
                                    ELSE representation_supply.last_changed_at END,

@@ -63,6 +63,26 @@ describe('Still Aave bounded same-block standing', () => {
     assert.deepEqual(stockShareTermsV1('NVDAc', calendar(), new Date('2026-10-26T13:00:00Z'), new Date('2026-10-26T13:00:00Z'), new Date('2026-10-23T19:55:00Z')),
       { share: BigInt(5000), lowered: null });
   });
+  // Audit 11-20 LA-5: a closed reserve or a paused registry was "Still could not establish…", our read failure.
+  it('names a closed reserve or a paused registry with the stock and the reason, not as an unread allowance', async () => {
+    const stockReserve = (r: ReturnType<typeof aaveReadFixture>, id: string) => r.snapshot.aave!.reserves.find(x => x.info.role.kind === 'stock' && x.info.role.asset.id === id)!;
+    const frozen = aaveReadFixture();
+    const own = stockReserve(frozen, 'NVDAc');
+    if (own.config.ok) own.config = { ok: true, value: { ...own.config.value, frozen: true } };
+    const a = await readStillAaveStandingV1(input(frozen));
+    assert.equal(a.state, 'refused'); if (a.state !== 'refused') return;
+    assert.equal(a.refusal, 'aave_collateral_closed');
+    assert.match(a.detail, /^Aave froze its NVDAc reserve at Base block [\d,]+, so no new loan can be taken against NVDAc now\. Repaying works\.$/);
+    // Another counted stock, paused in Coinbase's registry: named, and the account's loans wait.
+    const other = aaveReadFixture({ AAPLc: BigInt(10_000_000) });
+    const registry = other.snapshot.coinbase.get('AAPLc');
+    if (registry?.ok) other.snapshot.coinbase.set('AAPLc', { ok: true, value: { ...registry.value, paused: true } });
+    const b = await readStillAaveStandingV1(input(other));
+    assert.equal(b.state, 'refused'); if (b.state !== 'refused') return;
+    assert.equal(b.refusal, 'aave_collateral_closed');
+    assert.match(b.detail, /^Coinbase’s registry marks AAPLc paused at Base block [\d,]+, which holds its price feed still\. It counts toward this account’s limit/);
+    assert.doesNotMatch(a.detail + b.detail, /could not establish/);
+  });
   it('does not require a health factor, oracle or borrow allowance for repayment', async () => {
     const r = aaveReadFixture(); if (!r.snapshot.aave) throw Error('fixture');
     r.snapshot.aave.account = { ok: false, reason: 'reverted' };

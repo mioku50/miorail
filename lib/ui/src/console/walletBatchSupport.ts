@@ -3,7 +3,7 @@
 //
 // Every Miorail trade and every Still loan leaves as one EIP-5792 batch with
 // `atomicRequired`, so an approval never goes out without the action it was
-// granted for. Base Account, Coinbase Wallet (Base App) and MetaMask can all do
+// granted for. Base Account, Coinbase Wallet (formerly Base App) and MetaMask can all do
 // that — MetaMask by offering to switch the account to its smart account first.
 // A wallet that cannot must hear so in words BEFORE anything is approved, not
 // as a raw JSON-RPC error after.
@@ -53,13 +53,13 @@ export function atomicBatchSupportV1(capabilities: unknown, chainId = 8453): Ato
 }
 
 export const WALLET_CANNOT_BATCH_V1 =
-  'This wallet cannot send these calls as one transaction. They are sent only together, so an approval never goes out without the action it is for. Nothing was approved or sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.';
+  'This wallet cannot send these calls as one transaction. They are sent only together, so an approval never goes out without the action it is for. Nothing was approved or sent. Use Base Account, Coinbase Wallet (formerly Base App) or MetaMask.';
 
 export const WALLET_UPGRADE_DECLINED_V1 =
   'Your wallet offered to switch this account to a smart account so it can send the calls as one transaction, and the switch was declined. Nothing was sent. Accept the switch to continue, or use Base Account.';
 
 export const WALLET_HAS_NO_BATCHES_V1 =
-  'This wallet cannot send several calls in one request, so it cannot send these as one transaction. They are sent only together, so an approval never goes out without the action it is for. Nothing was approved or sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.';
+  'This wallet cannot send several calls in one request, so it cannot send these as one transaction. They are sent only together, so an approval never goes out without the action it is for. Nothing was approved or sent. Use Base Account, Coinbase Wallet (formerly Base App) or MetaMask.';
 
 /** The first numeric error code along a viem/wagmi error's `cause` chain. */
 function walletErrorCodeV1(cause: unknown): number | null {

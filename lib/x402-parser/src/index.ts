@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const x402PaymentOptionSchema = z.object({
+  scheme: z.string().optional(),
   amount: z.string(),
   payTo: z.string(),
   asset: z.string(),

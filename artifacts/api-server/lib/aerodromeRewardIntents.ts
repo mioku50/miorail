@@ -173,8 +173,8 @@ export function aerodromeRewardAlertReplyV1(input: {
           ? russian ? `Порог изменён на ${amount}.` : `Moved to ${amount}.`
           : russian ? 'Готово.' : 'Done.';
       const how = russian
-        ? `Когда то, что этот кошелёк может забрать на Aerodrome и Uniswap, дойдёт до ${amount}, Miorail сообщит один раз — в Telegram и в Base App, где уведомления доходят до этого кошелька. Всё читается примерно раз в 6 часов; после сбора следующее накопление снова будет сообщено.`
-        : `When what this wallet can claim on Aerodrome and Uniswap reaches ${amount}, Miorail tells you once, in Telegram and in Base App, wherever notifications reach this wallet. Both are read about every 6 hours; after you claim, the next build-up is told again.`;
+        ? `Когда то, что этот кошелёк может забрать на Aerodrome и Uniswap, дойдёт до ${amount}, Miorail сообщит один раз — в Telegram, если к этому кошельку подключён чат. Всё читается примерно раз в 6 часов; после сбора следующее накопление снова будет сообщено.`
+        : `When what this wallet can claim on Aerodrome and Uniswap reaches ${amount}, Miorail tells you once, in Telegram, once a chat is connected to this wallet. Both are read about every 6 hours; after you claim, the next build-up is told again.`;
       const telegram = input.telegram === false
         ? [russian ? 'Telegram к этому кошельку пока не подключён: Settings → Telegram.' : 'Telegram is not connected to this wallet yet: Settings → Telegram.']
         : [];

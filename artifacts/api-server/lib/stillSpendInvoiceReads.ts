@@ -42,8 +42,10 @@ type CheckoutV1 = Pick<BitrefillGuestCheckoutV1, 'readInvoice'>;
 
 interface KeptV1 { value: SpendInvoiceStatusV1 | null; at: number; pending: Promise<SpendInvoiceDisplayV1> | null }
 
-/** A read that may succeed a moment later: Bitrefill did not answer, or a window was full. */
-const passingV1 = (reason: SpendFailureV1): boolean => reason === 'bitrefill_unreachable' || reason === 'bitrefill_rate_limited';
+/** The read before a loan's step waits for a slot in a full window this many times, this long each: 40 s in all, within
+ * the request's own time, while the window is a minute and frees a slot as each call in it ages out. */
+const STEP_RATE_WAITS_V1 = 8, STEP_RATE_WAIT_MS_V1 = 5_000;
+
 
 export function createSpendInvoiceReadsV1(options: {
   now?: () => number; displayTtlMs?: number; max?: number; displayPerMinute?: number; paymentPerMinute?: number;
@@ -118,10 +120,16 @@ export function createSpendInvoiceReadsV1(options: {
     },
 
     async step(input: { order: InvoiceRefV1; checkout: CheckoutV1 }): Promise<InvoiceReadV1> {
-      // From the part of the window no review, page or new invoice can take (audit SPEND-2).
+      // From the part of the window no review, page or new invoice can take (audit SPEND-2). Bitrefill silent: asked
+      // once more. A full window, ours or Bitrefill's, is waited out instead of ending a loan that has already moved
+      // money: an expired token took the step's last slot and the one retry found none (audit 11-20 DIFF-2).
       let read = await ask(input.checkout, input.order, 'step');
-      if (!read.ok && passingV1(read.reason)) {
+      if (!read.ok && read.reason === 'bitrefill_unreachable') {
         await wait(1_000);
+        read = await ask(input.checkout, input.order, 'step');
+      }
+      for (let waited = 0; !read.ok && read.reason === 'bitrefill_rate_limited' && waited < STEP_RATE_WAITS_V1; waited += 1) {
+        await wait(STEP_RATE_WAIT_MS_V1);
         read = await ask(input.checkout, input.order, 'step');
       }
       if (read.ok) remember(input.order.orderId, read.value);

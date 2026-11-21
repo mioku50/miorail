@@ -51,3 +51,17 @@ export function passFitsBudgetV1(input: {
   if (input.budgetMs === null) return true;
   return input.elapsedMs + input.slowestPassMs <= input.budgetMs;
 }
+
+/** How long the cursor may stand still behind the head before the run fails its unit: three hourly runs. */
+export const MARKET_TAIL_HELD_ALERT_MS_V1 = 3 * 3_600_000;
+
+/**
+ * A cursor held behind the head for longer than the limit: every run since ended "success" while the ledger
+ * learnt nothing, and a new pool stayed unknown (audit 11-20 STK-5). True fails the unit, whose failure alerts.
+ * A cursor the head has not passed is caught up, never held.
+ */
+export function marketTailHeldTooLongV1(input: { lastRunAt: string | null; lastBlock: number; headBlock: number; nowMs: number; limitMs?: number }): boolean {
+  if (input.lastRunAt === null || input.headBlock <= input.lastBlock) return false;
+  const since = Date.parse(input.lastRunAt);
+  return Number.isFinite(since) && input.nowMs - since > (input.limitMs ?? MARKET_TAIL_HELD_ALERT_MS_V1);
+}

@@ -47,9 +47,6 @@ export interface ReopenGameDepsV1 {
    * name is not part of a round's record: the close, the calls and the
    * results are, and nothing here touches them. */
   names?: () => Promise<ReadonlyMap<string, { name: string }>>;
-  /** The Basename a wallet calls itself, verified forward, or null. Asked only
-   * for the players the leaderboard shows. */
-  basename?: (wallet: string) => Promise<string | null>;
 }
 
 /** How many players the leaderboard names. */
@@ -236,18 +233,10 @@ export async function reopenSharedStateV1(now: Date, deps: ReopenGameDepsV1): Pr
       picks: await deps.repository.standings(),
     });
     const shown = standings.slice(0, REOPEN_LEADERBOARD_ROWS_V1);
+    // Every player by number, a signed-in wallet too: a device's picks move to the wallet that signs in, and its
+    // Basename on a public table would lead anyone to that wallet and its loans, unasked (audit 11-20 PRIV-2).
     const names = new Map<string, string>();
-    await Promise.all(
-      shown.map(async (standing) => {
-        // A Basename the wallet set for itself, or the player's number. A
-        // device has neither a wallet nor a name, only its number.
-        const basename =
-          standing.playerId.startsWith('w:') && deps.basename
-            ? await deps.basename(standing.playerId.slice(2)).catch(() => null)
-            : null;
-        names.set(standing.playerId, basename ?? reopenPlayerNameV1(standing.playerNumber));
-      }),
-    );
+    for (const standing of shown) names.set(standing.playerId, reopenPlayerNameV1(standing.playerNumber));
     leaderboard = { rounds: settledRows.length, standings, names };
   }
 

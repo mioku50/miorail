@@ -390,7 +390,7 @@ export function reopenRecordV1(rounds: readonly ReopenPlayedRoundV1[]): ReopenRe
 
 export interface ReopenStandingV1 {
   playerId: string;
-  /** In the order players joined; the board's name for anyone without a Basename. */
+  /** In the order players joined: the board's name for every player. */
   playerNumber: number;
   rank: number;
   correct: number;
@@ -442,8 +442,8 @@ export function reopenLeaderboardV1(input: {
   });
 }
 
-/** The board's name for a player without a Basename: never anything derived
- * from an address, which anybody could recompute from a list of addresses. */
+/** The board's name for every player: never anything derived from an address, which anybody could recompute
+ * from a list of addresses, and never a wallet's Basename (audit 11-20 PRIV-2). */
 export function reopenPlayerNameV1(playerNumber: number): string {
   return `Player ${playerNumber}`;
 }
@@ -458,7 +458,7 @@ export const ReopenLeaderboardV1Schema = z
         z
           .object({
             rank: z.number().int().positive(),
-            /** A Basename that resolves back to the wallet, or "Player 12". */
+            /** "Player 12". */
             name: z.string().min(1).max(120),
             correct: z.number().int().nonnegative(),
             of: z.number().int().nonnegative(),

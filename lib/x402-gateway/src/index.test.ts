@@ -596,6 +596,12 @@ describe('x402-gateway', () => {
     assert.strictEqual(route.accepts.price.amount, '1000');
     const unpaid = route.unpaidResponseBody();
     assert.strictEqual(unpaid.body.accepts[0].amount, '1000');
+    // A v2 PaymentRequired, as the header says it: the scheme and the resource, and no `version` (audit 11-20 X402-3).
+    assert.deepStrictEqual(Object.keys(unpaid.body).sort(), ['accepts', 'error', 'resource', 'x402Version']);
+    assert.deepStrictEqual(unpaid.body.resource, { url: route.resource, description: route.description, mimeType: 'application/json' });
+    assert.deepStrictEqual(Object.keys(unpaid.body.accepts[0]).sort(), ['amount', 'asset', 'extra', 'maxTimeoutSeconds', 'network', 'payTo', 'scheme']);
+    assert.strictEqual(unpaid.body.accepts[0].scheme, 'exact');
+    assert.strictEqual(unpaid.body.accepts[0].payTo, route.accepts.payTo);
   });
 
   it('overrides route price via amountAtomicOverride without touching global config', () => {

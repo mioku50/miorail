@@ -591,8 +591,9 @@ function SubscriptionsV1({ subscriptions }: { subscriptions: NonNullable<StillSp
     <div className="still-spend-subscriptions">
       <p className="still-note">
         Pay a subscription with a card: the service’s own, or your app store’s balance for one the store bills, bought inside the app. A
-        store card does not pay a plan bought on the service’s website. A card tops up a balance and does not renew by itself. Take an
-        app store card of your account’s own country; a price inside an app can be above the service’s own web price.
+        store card does not pay a plan bought on the service’s website. A card tops up a balance and does not renew by itself. Every card
+        here works only for an account of its own country, a PlayStation, Xbox or Netflix card as much as an app store’s, so choose your
+        account’s country above first; a price inside an app can be above the service’s own web price.
       </p>
       <div className="still-borrow-assets" role="group" aria-label="Subscriptions">
         {STILL_SUBSCRIPTIONS_V1.map((service) => (

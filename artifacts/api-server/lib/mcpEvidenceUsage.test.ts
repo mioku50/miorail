@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { logger } from '@mioagent/utils';
 import { evidenceReadUsageV1 } from './mcpEvidenceUsage.js';
@@ -21,6 +22,12 @@ test('usage logs contain a tool and opaque client groups, never request contents
   assert.notEqual(events[0]!.clientFingerprint, events[2]!.clientFingerprint);
   assert.deepEqual(Object.keys(events[0]!).sort(), ['actorFingerprint', 'clientFamily', 'clientFingerprint', 'surface', 'toolName', 'usageVersion']);
   assert.doesNotMatch(JSON.stringify(events), /secret-test-header|ExampleClient|eip155|0x111/);
+  // Keyed, not a bare hash: an IP's fingerprint cannot be found by hashing every IP (audit 11-20 PRIV-4).
+  const ip = '203.0.113.7';
+  evidenceReadUsageV1({ surface: 'public', actorKey: ip, userAgent })('get_representations');
+  const bare = createHash('sha256').update(`miorail-evidence-usage/v1|public|${ip}`).digest('hex');
+  assert.notEqual(events[3]!.actorFingerprint, bare);
+  assert.equal(events[3]!.usageVersion, 2);
 });
 
 test('known robots and operator smokes have an explicit exclusion family', t => {

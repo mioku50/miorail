@@ -277,7 +277,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
               ) : null}
               {model.markedRead ? (
                 <p className="lnote" role="status">
-                  Marked as read — on the web, in Base App and in connected assistants.
+                  Marked as read — on the web, in Coinbase Wallet and in connected assistants.
                 </p>
               ) : null}
               {model.markFailed ? (

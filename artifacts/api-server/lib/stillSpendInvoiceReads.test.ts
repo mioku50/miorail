@@ -141,4 +141,27 @@ describe('Bitrefill’s word for an invoice, before it is paid', () => {
     assert.deepEqual(await reads.step({ order: ORDER, checkout: refused }), { ok: false, reason: 'bitrefill_refused' });
     assert.equal(asked, 1);
   });
+
+  // Audit 11-20 DIFF-2: an expired token took the step's last slot, the one retry found none, and the loan stopped.
+  it('before a step, a full window is waited out, for 40 seconds at most, instead of stopping the loan', async () => {
+    const waits: number[] = [];
+    const reads = createSpendInvoiceReadsV1({ wait: async (ms) => { waits.push(ms); } });
+    let full = 3;
+    const busy = { readInvoice: async () => (full-- > 0 ? { ok: false as const, reason: 'bitrefill_rate_limited' as const } : { ok: true as const, value: status('unpaid') }) };
+    assert.deepEqual(await reads.step({ order: ORDER, checkout: busy }), { ok: true, value: status('unpaid') });
+    assert.deepEqual(waits, [5_000, 5_000, 5_000]);
+    waits.length = 0;
+    let asked = 0;
+    const jammed = { readInvoice: async () => { asked++; return { ok: false as const, reason: 'bitrefill_rate_limited' as const }; } };
+    assert.deepEqual(await reads.step({ order: ORDER, checkout: jammed }), { ok: false, reason: 'bitrefill_rate_limited' });
+    assert.equal(asked, 9);
+    assert.equal(waits.reduce((sum, ms) => sum + ms, 0), 40_000);
+    // Silent, then a full window: the second is waited out too.
+    waits.length = 0;
+    let step = 0;
+    const mixed = { readInvoice: async () => (step++ === 0 ? { ok: false as const, reason: 'bitrefill_unreachable' as const }
+      : step === 2 ? { ok: false as const, reason: 'bitrefill_rate_limited' as const } : { ok: true as const, value: status('payment_confirmed') }) };
+    assert.deepEqual(await reads.step({ order: ORDER, checkout: mixed }), { ok: true, value: status('payment_confirmed') });
+    assert.deepEqual(waits, [1_000, 5_000]);
+  });
 });

@@ -7,6 +7,8 @@ import { Logger } from './logger.js';
 const INFURA_KEY = '0123456789abcdef0123456789abcdef';
 const ALCHEMY_KEY = 'aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY';
 const WALLET = `0x${'1a'.repeat(20)}`;
+// Built from parts, so a secret scanner does not read the synthetic bot token as a leak (audit 11-20 SUP-1: alert #1).
+const BOT_TOKEN = ['123456789', 'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw'].join(':');
 
 test('an RPC URL keeps its host and loses its key (audit OPS-2)', () => {
   assert.equal(redactSecretsV1(`URL: https://base-mainnet.infura.io/v3/${INFURA_KEY}`), 'URL: https://base-mainnet.infura.io/v3/…');
@@ -16,7 +18,7 @@ test('an RPC URL keeps its host and loses its key (audit OPS-2)', () => {
   assert.equal(redactSecretsV1('https://api.example.com/q?api_key=short&token=t'), 'https://api.example.com/q?api_key=…&token=…');
   assert.equal(redactSecretsV1('https://user:pass@db.example.com/path'), 'https://db.example.com/path');
   assert.equal(redactSecretsV1('Authorization: Bearer abc.def-ghi_jkl'), 'Authorization: Bearer …');
-  assert.equal(redactSecretsV1('https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/sendMessage'), 'https://api.telegram.org/…/sendMessage');
+  assert.equal(redactSecretsV1(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`), 'https://api.telegram.org/…/sendMessage');
   assert.doesNotMatch(redactSecretsV1(`a "https://base-mainnet.infura.io/v3/${INFURA_KEY}" b`), new RegExp(INFURA_KEY));
 });
 

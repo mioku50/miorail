@@ -112,7 +112,7 @@ export function walletChoicesV1(input: {
   const choices: WalletChoiceV1[] = [];
   const seen = new Set<string>();
   // An app that hosts the page gives it one wallet, and only that one.
-  const host = input.inBaseApp ? 'Base App' : input.inFarcaster ? 'Farcaster' : null;
+  const host = input.inBaseApp ? 'Coinbase Wallet' : input.inFarcaster ? 'Farcaster' : null;
 
   // 1. What this browser announced. The generic connector reaches the same
   // wallet a second time, so it is offered only when nothing announced itself
@@ -130,7 +130,7 @@ export function walletChoicesV1(input: {
       connectorId: connector.id,
       name: walletDisplayNameV1(connector, input.inBaseApp),
       icon: connector.icon?.trim() ? connector.icon : null,
-      detail: host ? `The wallet ${host} gives this page.` : 'Found in this browser.',
+      detail: host ? `The wallet that ${host} gives this page.` : 'Found in this browser.',
     });
   }
   const generic = input.connectors.find((connector) => connector.id === GENERIC_INJECTED_ID);
@@ -141,7 +141,7 @@ export function walletChoicesV1(input: {
       connectorId: generic.id,
       name: walletDisplayNameV1(generic, input.inBaseApp),
       icon: null,
-      detail: host ? `The wallet ${host} gives this page.` : 'The wallet this browser gives the page.',
+      detail: host ? `The wallet that ${host} gives this page.` : 'The wallet this browser gives the page.',
     });
   }
   const walletInPage = choices.length > 0;
@@ -196,9 +196,9 @@ export function walletChoicesV1(input: {
       {
         kind: 'open_in',
         key: 'open_in:base-app',
-        name: 'Base App (Coinbase Wallet)',
+        name: 'Coinbase Wallet',
         href: openInBaseAppHrefV1(input.pageUrl),
-        detail: 'Opens this page in Base App, where its wallet connects.',
+        detail: 'Opens this page in Coinbase Wallet (formerly Base App), where its wallet connects.',
       },
     );
   }

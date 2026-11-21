@@ -47,6 +47,7 @@ import {
   UNISWAP_V4_SINGLETON_V1,
   assetTransfersFromLogsV1,
   createMarketTailSourceV1,
+  marketTailHeldTooLongV1,
   passFitsBudgetV1,
   tailRangeV1,
   venueTransfersFromLedgerV1,
@@ -403,10 +404,17 @@ async function main(): Promise<void> {
       toBlock: range.toBlock,
     });
     logCalls += 1;
+    // A cursor that stays where it is for hours fails the unit, so the alert says what the log alone did not.
+    const heldTooLong = () => {
+      if (!marketTailHeldTooLongV1({ lastRunAt: cursor?.lastRunAt ?? null, lastBlock, headBlock: head.value, nowMs: Date.now() })) return;
+      console.log(`cursor held at ${lastBlock} since ${cursor!.lastRunAt}, ${head.value - lastBlock} blocks behind the head: the ledger learns nothing`);
+      process.exitCode = 1;
+    };
     if (!logs.ok) {
       // The cursor stays where it is. A range read half-way is a range not
       // read, because nothing here comes back to it.
       console.log(`pass ${pass + 1}: ${range.fromBlock}-${range.toBlock} — ${logs.reason}`);
+      heldTooLong();
       break;
     }
 
@@ -419,6 +427,7 @@ async function main(): Promise<void> {
       console.log(
         `pass ${pass + 1}: ${range.fromBlock}-${range.toBlock} — ${reading.unreadable} Transfer log(s) of a tracked token could not be read — cursor held at ${lastBlock}`,
       );
+      heldTooLong();
       break;
     }
     const transfers = reading.transfers;

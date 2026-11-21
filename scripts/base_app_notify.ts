@@ -1,6 +1,13 @@
 /**
- * One pass of Base App notifications — what is said, to whom and how often is
- * in ./baseAppNotify.ts.
+ * One pass of notifications — what is said, to whom and how often is in
+ * ./baseAppNotify.ts.
+ *
+ * Base retired the Base App notifications API: its opt-in list answered 404
+ * "retired" from about 2026-10-13 and refused our key with 401 from
+ * 2026-10-21, and every pass since stopped on base_app_http_401. The app is
+ * Coinbase Wallet again. So Telegram is the one channel, and the Base App pass
+ * runs only with MIORAIL_BASE_APP_NOTIFICATIONS_V1=on, should Base reopen it.
+ * What follows describes that pass as it was.
  *
  * Reads Miorail's own records and Base's list of wallets that turned
  * notifications on; writes only its cursor and a per-wallet daily count. No
@@ -94,9 +101,9 @@ import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   reportLoadedEnvFileV1(loadRootEnvFileV1());
-  const config = baseAppNotifyConfigV1(process.env);
+  const config = (process.env.MIORAIL_BASE_APP_NOTIFICATIONS_V1 ?? '').trim().toLowerCase() === 'on' ? baseAppNotifyConfigV1(process.env) : null;
   const telegram = telegramConfigV1(process.env);
-  if (!config) console.log(JSON.stringify({ event: 'base_app_notify', outcome: 'off' }));
+  if (!config) console.log(JSON.stringify({ event: 'base_app_notify', outcome: 'retired' }));
   if (!telegram) console.log(JSON.stringify({ event: 'telegram_notify', outcome: 'off' }));
   if (!config && !telegram) return;
 
@@ -216,6 +223,19 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ event: 'still_loan_notices_read', channel, kind, outcome: 'failed', error: describeErrorV1(cause).slice(0, 120) }));
       return [];
     });
+  // A rate a notice said becomes the one its owner heard of only after every channel's pass: marked at once,
+  // the Base App pass cleared the jump before the Telegram pass could tell it (audit 11-20 DIFF-3).
+  const ratesTold = new Map<string, { walletAddress: string; market: string; rateBps: number; at: Date; channel: NotificationChannelV1; kind: string }>();
+  const markRatesTold = async () => {
+    for (const told of ratesTold.values()) {
+      await loanAlerts.markRateTold({ walletAddress: told.walletAddress, market: told.market, rateBps: told.rateBps, at: told.at })
+        .catch((cause: unknown) => {
+          console.log(JSON.stringify({ event: 'still_loan_rate_told', channel: told.channel, kind: told.kind, outcome: 'failed',
+            error: describeErrorV1(cause).slice(0, 120) }));
+        });
+    }
+    ratesTold.clear();
+  };
   const stillLoansFor = (channel: NotificationChannelV1) => ({
     due: async (): Promise<StillLoanDueV1[]> => {
       const now = new Date();
@@ -292,14 +312,12 @@ async function main(): Promise<void> {
         await loanAlerts.recordNotice({ channel, kind: notice.kind, key: notice.key!, walletAddress: notice.walletAddress, market: notice.market,
           at, ...(notice.kind === 'week' ? { interestAtomic: notice.interestAtomic!, estimatedAtomic: notice.estimatedAtomic! } : {}) });
       }
-      // A notice that said the rate makes it the one its owner heard of: a later jump is counted from it. The
-      // notice is already kept as told, so a failure here only leaves the older rate to count from, and is said so.
+      // A notice that said the rate makes it the one its owner heard of: a later jump is counted from it, once
+      // every channel has had its pass (markRatesTold). The notice is already kept as told, so a failure there
+      // only leaves the older rate to count from, and is said so.
       if (notice.rateBps !== undefined) {
-        await loanAlerts.markRateTold({ walletAddress: notice.walletAddress, market: notice.market, rateBps: notice.rateBps, at })
-          .catch((cause: unknown) => {
-            console.log(JSON.stringify({ event: 'still_loan_rate_told', channel, kind: notice.kind ?? 'band', outcome: 'failed',
-              error: describeErrorV1(cause).slice(0, 120) }));
-          });
+        ratesTold.set(`${notice.walletAddress}|${notice.market}`, { walletAddress: notice.walletAddress, market: notice.market,
+          rateBps: notice.rateBps, at, channel, kind: notice.kind ?? 'band' });
       }
     },
   });
@@ -434,6 +452,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ event: 'telegram_notify', dry, ...report }));
     if (notifyPassFailsUnitV1('telegram', report.stoppedBy)) process.exitCode = 1;
   }
+  await markRatesTold();
 }
 
 main()

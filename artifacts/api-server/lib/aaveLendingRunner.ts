@@ -10,6 +10,7 @@ import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } fr
 import { repayAllBoundAtomicV1, repayAllMinimumAtomicV1 } from '@mioagent/still-engine/repay';
 import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
 import { aaveLendingStressV1, collateralTransfersPausedWordsV1, otherCollateralPausedWordsV1 } from './lendingStress.js';
+import { readStillStockTransfersPausedV1, stillLoanHoldClientsV1 } from './stillLoanHolds.js';
 
 export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
@@ -19,8 +20,22 @@ export interface AaveLendingDepsV1 {
   chain?: SimulationChainV1;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  /** Whether a stock's own transfers are paused at a block: true, false, or null when unread. */
+  stockPaused?: (token: string, blockNumber: bigint) => Promise<boolean | null>;
 }
 const fail = (refusal: string, detail: string): LendingRunV1 => ({ state: 'refused', refusal, detail });
+
+/**
+ * Taking a stock back out of the Spoke while its transfers are paused: the withdrawal cannot happen, and the
+ * review said only "reverted in simulation", with nothing of the repayment that still works (audit 11-20
+ * LA-2). Aave can liquidate through a pause, so a loan left open stays at risk; one repaid in full does not.
+ */
+export function aaveTakeBackPausedWordsV1(input: { symbol: string; blockNumber: number; debtOpen: boolean }): string {
+  const what = `${input.symbol} transfers are paused onchain (Base block ${input.blockNumber.toLocaleString('en-US')}), so the stock cannot come back to this wallet now and this review was not prepared.`;
+  return input.debtOpen
+    ? `${what} Repay all without taking it back works: the ${input.symbol} stays deposited in Aave until transfers resume, and a loan repaid in full has nothing left to liquidate. While the loan stays open, Aave can still liquidate it during the pause.`
+    : `${what} It stays deposited in Aave until transfers resume; with no debt open there is nothing to liquidate.`;
+}
 
 /** Said on a review that goes in steps, before anything is signed. */
 function stepsWarningV1(count: number, operation: 'borrow' | 'repay', returning = false): string {
@@ -83,6 +98,13 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
       return fail('aave_other_debt_open', 'Another asset is borrowed in this Aave account, so a stock is not taken back here. Only a USDC loan is repaid and closed by Still.');
     }
     if (s.debtAssets === 0n && !returning) return fail('nothing_to_repay', 'No USDC debt was recorded in this Aave Spoke at the reading block.');
+    if (returning) {
+      const pausedAt = deps.stockPaused ?? ((token: string, block: bigint) => readStillStockTransfersPausedV1(stillLoanHoldClientsV1(deps.env ?? process.env), token, block));
+      // Unread is not paused: the simulation then decides, as before.
+      if (await pausedAt(s.selectedStock.token, BigInt(s.blockNumber)) === true) {
+        return fail('repay_collateral_held', aaveTakeBackPausedWordsV1({ symbol: s.selectedStock.id, blockNumber: s.blockNumber, debtOpen: s.debtAssets > 0n }));
+      }
+    }
     if (repayAllMinimum !== null && repayAllAdvised !== null && ask < repayAllMinimum) {
       return fail('repay_maximum_exceeded', repayMaximumBelowDebtWordsV1({ debt: s.debtAssets, maximum: ask, wallet: s.walletUsdcAssets, minimum: repayAllAdvised }));
     }

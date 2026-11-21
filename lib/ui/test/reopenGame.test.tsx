@@ -70,7 +70,7 @@ describe('the leaderboard', () => {
     const view = reopenGameViewV1(game({ leaderboard: board() }), { now: NOW, origin: ORIGIN })!;
     assert.equal(
       view.leaderboard?.note,
-      'After 2 rounds · 14 players. Most right first. A wallet with a Basename is listed by it; everyone else by player number.',
+      'After 2 rounds · 14 players. Most right first. Everyone is listed by player number, never by a wallet or its name.',
     );
     assert.deepEqual(view.leaderboard?.rows.map((row) => [row.rank, row.name, row.score, row.rounds]), [
       ['#1', 'first.base.eth', '9/10', '2'],

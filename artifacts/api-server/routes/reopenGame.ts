@@ -11,7 +11,6 @@ import {
 import { weekendSlotStartV1, type WeekendMarketStockInputV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import { tenantUserFromRequest } from '../middleware/tenantAuth';
-import { reverseBaseNameV1 } from '../lib/baseNameResolver';
 import { sessionWalletV1 } from '../lib/sessionWallet';
 import {
   reopenGameForV1,
@@ -69,9 +68,6 @@ export const reopenGameRuntime = {
   },
   /** Coinbase's company names, the ones the stock list shows. */
   names: () => publicStocksRuntime.stockMeta.read(),
-  /** A wallet's Basename for the leaderboard: the reverse record, kept only
-   * when it resolves forward to the same wallet. */
-  basename: (wallet: string): Promise<string | null> => reverseBaseNameV1(wallet),
   storageAvailable: (): Promise<boolean> => publicStocksRuntime.storageAvailable(),
   enabled: (env: NodeJS.ProcessEnv): boolean => publicStocksRuntime.enabled(env),
   now: () => new Date(),
@@ -86,35 +82,12 @@ export const reopenGameCachesV1 = {
   shared: createPublicReadCacheV1({ ttlMs: 30_000, max: 4 }),
 };
 
-/**
- * Basenames, asked at most every six hours per wallet. Two Ethereum calls per
- * name (the reverse record, then forward again), and a board shows ten: a
- * thirty-second refresh must not pay that every time. A failed answer is not
- * kept, so the next refresh asks again.
- */
-const BASENAME_TTL_MS_V1 = 6 * 3_600_000;
-const basenameCache = new Map<string, { at: number; name: Promise<string | null> }>();
-function cachedBasenameV1(wallet: string): Promise<string | null> {
-  const key = wallet.toLowerCase();
-  const hit = basenameCache.get(key);
-  const now = Date.now();
-  if (hit && now - hit.at < BASENAME_TTL_MS_V1) return hit.name;
-  const name = reopenGameRuntime.basename(key);
-  basenameCache.set(key, { at: now, name });
-  name.catch(() => {
-    if (basenameCache.get(key)?.name === name) basenameCache.delete(key);
-  });
-  if (basenameCache.size > 2_000) basenameCache.delete(basenameCache.keys().next().value!);
-  return name;
-}
-
 function depsV1(): ReopenGameDepsV1 {
   return {
     repository: reopenGameRuntime.repository(),
     stocks: reopenGameRuntime.stocks,
     weekend: reopenGameRuntime.weekend,
     names: reopenGameRuntime.names,
-    basename: cachedBasenameV1,
   };
 }
 

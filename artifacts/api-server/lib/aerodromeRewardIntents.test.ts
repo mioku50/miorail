@@ -70,6 +70,9 @@ test('the alert replies say what was kept and where it is told', () => {
   assert.equal(centsV1(125_000), '$1,250');
   const created = aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: false, russian: false });
   assert.match(created, /^Done\.\nWhen what this wallet can claim on Aerodrome and Uniswap reaches \$5, Miorail tells you once/);
+  // Base App notifications were retired by Base (2026-10): only Telegram is promised.
+  assert.match(created, /Miorail tells you once, in Telegram, once a chat is connected to this wallet\./);
+  assert.doesNotMatch(created, /Base App/);
   assert.match(created, /Telegram is not connected to this wallet yet: Settings → Telegram\.$/);
   assert.doesNotMatch(aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: true, russian: false }), /not connected/);
   assert.doesNotMatch(aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: null, russian: false }), /not connected/);

@@ -79,6 +79,13 @@ export function createMemoryRepresentationSupplyRepository(): RepresentationSupp
           }),
         );
       }
+      // A failed read after a successful one keeps the measured value; the failure stays in the history
+      // (audit 11-20 STK-1), as the Postgres repository does.
+      if (input.readOutcome !== 'success' && existing?.readOutcome === 'success') {
+        const kept = assertRepresentationSupplyV1({ ...existing, lastCheckedAt: input.now, reads: existing.reads + 1 });
+        rows.set(key, kept);
+        return { outcome: 'unresolved', row: kept };
+      }
       const row = assertRepresentationSupplyV1({
         chainId: input.chainId,
         tokenAddress: address,
