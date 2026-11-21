@@ -2,6 +2,12 @@
 
 The two evidence layers behind Miorail's Discover surface, in full.
 
+> **Discover and Watch were retired on 2026-11-17.** This document describes
+> that surface as it was. The pages are gone: their old addresses, such as
+> `/opportunities`, now lead to `/more`. The B20 corpus and its reads remain
+> behind the MCP tools (`miorail_find_b20_projects` and the other `miorail_*`
+> B20 reads), so the layers below still describe what those tools answer from.
+
 They moved out of the README on 2026-09-05 for the reason any reference does:
 a README is read once, to decide whether to keep reading, and these two
 sections were a quarter of it. Nothing here changed in the move.
@@ -53,13 +59,7 @@ The right rail is a measured view, not a token ranking.
 - **24h Route Cost Changes** compares compatible observations roughly one day apart. A dedicated remeasurement queue reserves worker capacity for tokens that need a second comparable observation instead of letting newest-first ingestion starve the history rail.
 - Stale measurements are visibly marked as stale.
 
-`View measurement` deep-links to the exact token on Discover:
-
-```text
-/opportunities?token=0x...&view=measurement
-```
-
-The focused view can load a token by address even when it is not present in the current 25-card feed page, and URL state survives refresh/back navigation.
+`View measurement` deep-linked to the exact token on Discover, including a token outside the current 25-card feed page; that page was retired with Discover.
 
 ## Fundamental Intelligence
 

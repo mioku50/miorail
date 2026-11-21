@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
-import { useCreateStillSpendOrderV1, useStillMine, useStillSpendProductV1, useStillSpendSearchV1, useStillSpendStatusV1, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { useCreateStillSpendOrderV1, useStillLoopsV1, useStillMine, useStillSpendProductV1, useStillSpendSearchV1, useStillSpendStatusV1, useStillUsdcV1 } from '@mioagent/api-client-react';
 import {
   StillFrame,
   StillSpend,
@@ -34,6 +34,8 @@ export function StillSpendPage() {
   const startsOnSubscriptions = location.replace(/\/+$/, '') === '/subscriptions';
   // /spend?card=apple, from /loops: that brand's own cards in the reader's country, and its stock ready for the loan.
   const [loop, setLoop] = useState(() => loopBrandByIdV1(typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('card')));
+  // Null while Loops are off here, undefined until read: either way, nothing promises a Loop (audit SPEND-4).
+  const loopsOn = useStillLoopsV1({ poll: false }).data != null;
   const [type, setType] = useState<SpendTypeV1>(startsOnSubscriptions || loop ? 'giftcard' : 'esim');
   const [country, setCountry] = useState(() => spendCountryDefaultV1(typeof navigator === 'undefined' ? undefined : navigator.language));
   const [query, setQuery] = useState(loop?.search ?? '');
@@ -113,7 +115,7 @@ export function StillSpendPage() {
             setService(key); setCategory(null); setQuery(''); setAsked(chosen.search); setSelected(null); pick(null);
           },
         },
-        loop: loop ? { name: loop.name, card: loop.card, collateral: loop.collateral } : null,
+        loop: loop ? { name: loop.name, card: loop.card, collateral: loop.collateral, makesLoop: loopsOn } : null,
         searching: search.isFetching,
         // Nothing listed while the subscriptions are open and no service is chosen yet.
         products: subscriptionsOpen && !service ? null : listed,

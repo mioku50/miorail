@@ -49,7 +49,8 @@ export const stillSpendRuntimeV1 = {
   entryGate: stillEntryGateV1,
   catalog: () => publicStillRuntimeV1.spend(),
   checkout: (): BitrefillGuestCheckoutV1 => stillSpendCheckoutV1(),
-  // The team's own purchases carry no affiliate code (lib/stillTeam.ts, Bitrefill's affiliate terms §14).
+  // A wallet listed in STILL_TEAM_WALLETS buys without the affiliate code (lib/stillTeam.ts, Bitrefill's affiliate
+  // terms §14). With the list empty, as in production, every purchase carries it.
   teamCheckout: (): BitrefillGuestCheckoutV1 => stillSpendTeamCheckoutV1(),
   team: (): ReadonlySet<string> => stillTeamWalletsV1(),
   orders: spendOrderStoreV1,

@@ -44,7 +44,8 @@ const GENERIC_INJECTED_ID = 'injected';
 /** A wallet's name as a person knows it — never wagmi's "Injected" or "WalletConnect". */
 export function walletDisplayNameV1(connector: { id: string; name: string; type?: string } | null | undefined, inBaseApp: boolean): string {
   if (!connector) return 'your wallet';
-  if (connector.id === GENERIC_INJECTED_ID) return inBaseApp ? 'Base App wallet' : 'Browser wallet';
+  // The app is Coinbase Wallet again, renamed back from Base App (2026-09; audit 11-20 BASE-2).
+  if (connector.id === GENERIC_INJECTED_ID) return inBaseApp ? 'Coinbase Wallet' : 'Browser wallet';
   // The page pairs WalletConnect only through MetaMask's own link (choice 3 below).
   if (connector.type === 'walletConnect') return 'MetaMask';
   return connector.name.trim() || 'your wallet';

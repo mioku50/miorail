@@ -16,7 +16,7 @@ function truncateAddress(address: string): string {
 // fall back to the connector's own name.
 const LABELS: Record<string, string> = {
   baseAccount: "Sign in with Base",
-  injected: "Base App wallet",
+  injected: "Coinbase Wallet (formerly Base App)",
 };
 
 export function WalletConnect() {

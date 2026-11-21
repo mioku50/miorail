@@ -41,7 +41,7 @@ import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlert
 import type { WeekendMarketViewV1, WeekendQuietViewV1 } from './weekendMarketView';
 import type { StocksSectionsModelV1, StocksSectionV1 } from './stocksSections';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
-import { stockPriceNoteV1, stockPriceStaleLabelV1, type StockQuoteViewV1 } from './stockQuotesView';
+import { STOCK_NO_MARKET_LABEL_V1, STOCK_NO_MARKET_TILE_LABEL_V1, stockPriceNoteV1, stockPriceStaleLabelV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { StockUsesViewV1 } from './stockUsesView';
 import type { StockChartViewV1 } from './stockChartView';
 import { StockWeekChart } from './ConsoleCharts';
@@ -1152,6 +1152,8 @@ function ChoiceButton({
           market's price is not the stock's: its label stands in that slot. */}
       {quote?.price ? (
         <span className="mr-choice-px mono">{quote.price}</span>
+      ) : quote?.depthLabel === STOCK_NO_MARKET_LABEL_V1 ? (
+        <span className="mr-choice-px thin" title={STOCK_NO_MARKET_LABEL_V1}>{STOCK_NO_MARKET_TILE_LABEL_V1}</span>
       ) : quote?.depthLabel ? (
         <span className="mr-choice-px thin">{quote.depthLabel}</span>
       ) : choice.emptyNote ? (

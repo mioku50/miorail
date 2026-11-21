@@ -12,6 +12,17 @@ import { formatTokenAmount } from './format.js';
 import { TERMS, earningsWindow, weekendWindow } from './policy.js';
 import { ADDRESSES, ASSETS, STOCKS } from './registry.js';
 
+/**
+ * Every reason a stock counts at the lower share, in the one phrase each description that names
+ * the share uses (audit 11-20 DOC-4, LA-3): "40% for a stock " + this.
+ */
+export const STILL_STOCK_LOWER_SHARE_WHEN_V1 =
+  'while Wall Street is closed (weekends and market holidays included), around its earnings report, while its earnings calendar cannot be read, ' +
+  `while its reference price has gone more than ${TERMS.stockPriceStaleAfterHours} open-market hours without an update, or while its price time cannot be read`;
+
+/** "40%": the lower share a stock counts at, as the descriptions say it. */
+export const STILL_STOCK_LOWER_SHARE_PERCENT_V1 = `${Number(TERMS.weekendStockShareOfProtocolBps) / 100}%`;
+
 export function stillTerms(read: CalendarRead, now: Date) {
   const weekend = weekendWindow(now);
   // Plain strings in the shape: a client built before a change of terms still reads the new ones.

@@ -2395,6 +2395,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-choice-quoted .mr-choice-icon { grid-column: 1; grid-row: 1 / span 2; }
 .mio-console .mr-choice-quoted .mr-choice-name { grid-column: 2; grid-row: 1; }
 .mio-console .mr-choice-quoted .mr-choice-sub { grid-column: 2; grid-row: 2; }
+/* A tile's name keeps its line: an age tag beside it squeezed AAPL's and APP's to a sliver at 1440 px, so the tag
+   goes under it (audit 11-20 UI-10). */
+.mio-console .mr-choice-quoted .mr-choice-sub { display: flex; flex-wrap: wrap; row-gap: 2px; min-width: 0; }
+.mio-console .mr-choice-quoted .mr-choice-sub .mr-choice-company { flex: 1 1 100%; }
 .mio-console .mr-choice-quoted .mr-choice-px { grid-column: 3; grid-row: 1; justify-self: end; color: var(--ink); font-size: var(--fs-body); font-variant-numeric: tabular-nums; }
 /* A thin market's tile says so in the price's place, in the warning colour. */
 .mio-console .mr-choice-quoted .mr-choice-px.thin { color: var(--amber); font-size: var(--fs-meta); }

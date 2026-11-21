@@ -42,6 +42,8 @@ export interface StockQuoteViewV1 {
 
 /** A stock nobody makes a market in on Base yet, on its tile and its card. */
 export const STOCK_NO_MARKET_LABEL_V1 = 'No market on Base yet';
+/** The same, in a board tile's price slot: the long one squeezed the ticker to one letter at 1440 px (audit 11-20 UI-10). */
+export const STOCK_NO_MARKET_TILE_LABEL_V1 = 'No market';
 
 /** `$1,722.70`, `$234.31`, `$0.4421`: cents for a dollar and up, four
  * decimals below one, because a 30-cent stock rounded to cents loses its move. */

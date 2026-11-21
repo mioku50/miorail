@@ -238,9 +238,10 @@ export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { 
 }
 
 let teamCheckoutV1: BitrefillGuestCheckoutV1 | null = null;
-/** The Still team's own purchases (lib/stillTeam.ts) go through a checkout that carries no affiliate code:
- * Bitrefill's affiliate terms (§14) forbid buying through one's own affiliate link, so they earn Still nothing.
- * The same registered client otherwise, with its own token and rate window. */
+/** The purchases of a wallet listed in STILL_TEAM_WALLETS (lib/stillTeam.ts) go through a checkout that carries
+ * no affiliate code: Bitrefill's affiliate terms (§14) forbid buying through one's own affiliate link, so they earn
+ * Still nothing. The same registered client otherwise, with its own token and rate window. With the list empty, as
+ * in production since 2026-11-20, this checkout is never used and every purchase carries the code. */
 export const stillSpendTeamCheckoutV1 = (): BitrefillGuestCheckoutV1 => {
   if (!teamCheckoutV1) {
     const client = { ...stillBitrefillClientV1() };

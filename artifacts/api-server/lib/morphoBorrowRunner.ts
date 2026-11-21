@@ -564,7 +564,7 @@ export async function runMorphoBorrowV1(
       : `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
     ...review.warnings,
     MORPHO_DIRECT_CALLS_WARNING_V1,
-    ...(sequential ? [morphoStepsWarningV1(plan.plan.calls.length, 'borrow')] : []),
+    ...(sequential ? [morphoStepsWarningV1(plan.plan.calls.length, 'borrow', false, false, (standing.position?.borrowShares ?? 0n) > 0n)] : []),
   ];
   // The clock changes on every fresh read. Every economic field, every call,
   // and the raw projected debt remain bound, including sub-display rounding.

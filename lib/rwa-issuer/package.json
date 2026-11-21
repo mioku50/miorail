@@ -16,7 +16,6 @@
     "./defiVenues": "./src/defiVenues.ts",
     "./aaveV4": "./src/aaveV4.ts",
     "./venueAnnouncements": "./src/venueAnnouncements.ts",
-    "./openFigi": "./src/openFigi.ts",
     "./ecosystemClaims": "./src/ecosystemClaims.ts",
     "./morphoBorrowMath": "./src/morphoBorrowMath.ts",
     "./morphoRepayMath": "./src/morphoRepayMath.ts",

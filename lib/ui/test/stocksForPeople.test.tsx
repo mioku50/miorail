@@ -344,7 +344,8 @@ describe("a thin market's price is not shown as the stock's", () => {
       <Chooser choices={[choice(NVDA, 'ANET', 'Arista Networks')]} quotes={new Map([[NVDA, view]])} selectedKey={null}
         loading={false} error={null} onUnderlying={() => undefined} />,
     );
-    assert.match(markup, /<span class="mr-choice-px thin">No market on Base yet<\/span>/);
+    // The tile's slot holds the short label, the full phrase on hover and in the card (audit 11-20 UI-10).
+    assert.match(markup, /<span class="mr-choice-px thin" title="No market on Base yet">No market<\/span>/);
     const unpriced = viewOf({ priceUsd: null, priceAt: null, change24h: null, changeFromAt: null });
     const plain = renderToStaticMarkup(
       <Chooser choices={[choice(NVDA, 'ANET', 'Arista Networks')]} quotes={new Map([[NVDA, unpriced]])} selectedKey={null}

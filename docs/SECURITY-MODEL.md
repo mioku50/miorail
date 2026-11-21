@@ -70,9 +70,12 @@ that has one; the confirmation is the person's own word.
 
 ### Outbound network
 
-Every outbound request goes through a host allowlist owned by code, generated
-from the plugin specs Base publishes. A model can write text; it cannot
-introduce a host, and it never receives a generic HTTP primitive. Provider
+Plugin and provider requests go through a host allowlist owned by code,
+generated from the plugin specs Base publishes. Still's own fixed services, the
+RDAP registries behind the region check and the draw's time-stamping
+authorities, use hosts fixed in code instead. Either way, a model can write
+text; it cannot introduce a host, and it never receives a generic HTTP
+primitive. Provider
 links shown in the UI come from a code-owned registry keyed by the plugin the
 router resolved — never from model output.
 

@@ -7,7 +7,7 @@ import request from 'supertest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { BitrefillGuestCatalogV1, SpendProductV1 } from '@mioagent/commerce-engine';
-import { STOCKS, computeMirror, type MirrorInput, type MirrorService } from '@mioagent/still-engine';
+import { STILL_STOCK_LOWER_SHARE_WHEN_V1, STOCKS, computeMirror, type MirrorInput, type MirrorService } from '@mioagent/still-engine';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
@@ -77,8 +77,12 @@ test('five tools under Still’s own name, every one a read, and instructions th
   for (const tool of tools) assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
   const instructions = client.getInstructions() ?? '';
   assert.match(instructions, /Still is not a lender/);
+  // A text that names the lower share names every reason for it (audit 11-20 LA-3, DOC-4).
+  for (const text of [instructions, ...tools.map((tool) => tool.description ?? '')].filter((text) => text.includes('40%'))) {
+    assert.ok(text.includes(STILL_STOCK_LOWER_SHARE_WHEN_V1), text.slice(0, 120));
+  }
   // Every rule that lowers a stock to 40%, the unread calendar and the stale reference price included (audit DOC-2).
-  assert.match(instructions, /at 40% for a stock while Wall Street is closed, around its earnings report, while its earnings date cannot be read, or while its reference price has gone more than 25 open-market hours without an update/);
+  assert.match(instructions, /at 40% for a stock while Wall Street is closed \(weekends and market holidays included\), around its earnings report, while its earnings calendar cannot be read, while its reference price has gone more than 25 open-market hours without an update, or while its price time cannot be read/);
   assert.match(instructions, /This server only reads: it prepares, signs and sends nothing/);
   assert.match(instructions, /null means unread, never zero/);
   // Eligible jurisdictions, with the places named (audit BASE-2).

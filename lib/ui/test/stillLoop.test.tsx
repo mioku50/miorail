@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+// The page adds the reader's own time beside UTC (audit UI-3); these renders read as a browser in UTC would,
+// on any machine. stillLoopLocalTimeV1 is checked below with the offset given.
+process.env.TZ = 'UTC';
+
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 

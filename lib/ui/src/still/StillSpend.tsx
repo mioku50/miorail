@@ -54,8 +54,9 @@ export interface StillSpendModelV1 {
    * Without this, they are not offered. */
   subscriptions?: { open: boolean; chosen: string | null; onOpen: (open: boolean) => void; onChoose: (key: string) => void };
   /** Opened from /loops for one brand (/spend?card=apple): its own cards only, and what paying one with a loan
-   * against its stock makes. Absent otherwise. */
-  loop?: { name: string; card: string; collateral: string } | null;
+   * against its stock makes. Absent otherwise. `makesLoop` is true only once this server says Loops are on: a link
+   * from an old post must not promise one (audit 11-20 SPEND-4). */
+  loop?: { name: string; card: string; collateral: string; makesLoop?: boolean } | null;
   searching: boolean;
   products: SpendProductRowV1[] | null;
   searchError: string | null;
@@ -181,7 +182,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
           <div className="still-spend-results" aria-live="polite">
             {model.loop && model.type === 'giftcard' ? (
               <p className="still-note still-spend-loop">{model.loop.name}’s own cards for {spendCountryNameV1(model.country)}: paid with a loan
-                against {model.loop.collateral}, one makes a Loop, and the stock stays as the loan’s collateral.</p>
+                against {model.loop.collateral}, {model.loop.makesLoop ? 'one makes a Loop, and ' : ''}the stock stays as the loan’s collateral.</p>
             ) : null}
             {model.searching ? <p className="still-note" role="status">Reading Bitrefill’s catalogue…</p>
               : model.searchError ? <p className="still-warn" role="alert">{model.searchError}</p>

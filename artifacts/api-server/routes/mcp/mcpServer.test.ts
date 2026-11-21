@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { STILL_STOCK_LOWER_SHARE_WHEN_V1 } from '@mioagent/still-engine';
 
 import {
   createMiorailMcpServerV1,
@@ -251,7 +252,8 @@ describe('§8 — tool discovery', () => {
       assert.deepEqual(
         tool.annotations,
         { readOnlyHint: true, destructiveHint: false, idempotentHint: true,
-          openWorldHint: tool.name === 'miorail_get_b20_opportunity' },
+          // These two read outside services: the B20 public context and Aave's earnings calendar.
+          openWorldHint: tool.name === 'miorail_get_b20_opportunity' || tool.name === 'get_still_terms' },
         `${tool.name} does not declare itself read-only`,
       );
     }
@@ -411,8 +413,13 @@ describe('§8 — tool discovery', () => {
     // Every rule that lowers a stock to 40%, the stale reference price included (audit DOC-2), and where Still is offered (BASE-2).
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /while its reference price has gone more than 25 open-market hours without an update/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /Still is offered only in eligible jurisdictions: not to US persons, and not in the United States, Cuba, Iran, North Korea, Syria/);
-    const terms = (await (await connectedClient()).listTools()).tools.find((tool) => tool.name === 'get_still_terms')!;
-    assert.match(terms.description ?? '', /reference price has gone more than 25 open-market hours without an update \(stalePrice\)/);
+    const listed = (await (await connectedClient()).listTools()).tools;
+    const terms = listed.find((tool) => tool.name === 'get_still_terms')!;
+    // A text that names the lower share names every reason for it (audit 11-20 LA-3, DOC-4).
+    for (const text of [MIORAIL_MCP_INSTRUCTIONS_V1, ...listed.map((tool) => tool.description ?? '')].filter((text) => text.includes('40%'))) {
+      assert.ok(text.includes(STILL_STOCK_LOWER_SHARE_WHEN_V1), text.slice(0, 120));
+    }
+    assert.match(terms.description ?? '', /reference price has gone more than 25 open-market hours without an update, or while its price time cannot be read \(weekend, earnings and stalePrice\)/);
   });
 
   test('Aave is named by version: V3 does not list Coinbase stocks, V4’s stocks spoke takes them', async () => {

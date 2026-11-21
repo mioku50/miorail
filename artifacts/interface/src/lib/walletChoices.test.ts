@@ -165,7 +165,7 @@ test('inside Base App: its own wallet only, and the way to use another one', () 
     mobile: true,
     pageUrl: PAGE,
   });
-  assert.deepEqual(names(leaked), ['Base App wallet']);
+  assert.deepEqual(names(leaked), ['Coinbase Wallet']);
 });
 
 test('inside Farcaster: the wallet Farcaster announces, no Base Account popup and no app links', () => {
@@ -201,7 +201,7 @@ test('a desktop browser with nothing installed says so, and still offers Base Ac
 
 test('names and devices', () => {
   assert.equal(walletDisplayNameV1(GENERIC, false), 'Browser wallet');
-  assert.equal(walletDisplayNameV1(GENERIC, true), 'Base App wallet');
+  assert.equal(walletDisplayNameV1(GENERIC, true), 'Coinbase Wallet');
   assert.equal(walletDisplayNameV1(METAMASK, false), 'MetaMask');
   assert.equal(walletDisplayNameV1(null, false), 'your wallet');
   assert.equal(openInMetaMaskHrefV1('http://localhost:5173/signin?next=%2Fstocks'), 'https://link.metamask.io/dapp/localhost:5173/signin?next=%2Fstocks');

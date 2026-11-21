@@ -7,8 +7,10 @@ data is lost silently and for good.
 
 ## What the Builder Code is
 
-The `bc_…` value registered at [base.dev](https://base.dev) > Settings >
-Builder Codes. It is a **public** value, not a secret. The production build
+The `bc_…` value Base gives a project registered on the
+[Base Dashboard](https://dashboard.base.org), under Settings > Project Settings >
+Builder Code. The same registration lists the app in Coinbase Wallet (formerly
+Base App), whose mini apps were retired. It is a **public** value, not a secret. The production build
 gets it from `BASE_BUILDER_CODE` in the server's environment, as
 `VITE_BASE_BUILDER_CODE` for the web app and `NEXT_PUBLIC_BASE_BUILDER_CODE`
 for the Next.js surface (`ops/deploy.sh`); a build without a valid code is
@@ -41,7 +43,7 @@ Attribution never changes what a call does and never blocks a transaction.
 
 ## Checking it
 
-- On [base.dev](https://base.dev) > Onchain > Total Transactions, attributed
+- On the [Base Dashboard](https://dashboard.base.org) > Onchain > Total Transactions, attributed
   transactions are counted after they confirm.
 - On Basescan, a confirmed transaction's input ends with the ERC-8021 marker,
   `8021` repeated, when the code is attached.

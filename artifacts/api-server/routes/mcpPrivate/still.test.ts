@@ -4,7 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { computeMirror, type MirrorOutcome, type MirrorService } from '@mioagent/still-engine';
+import { STILL_STOCK_LOWER_SHARE_WHEN_V1, computeMirror, type MirrorOutcome, type MirrorService } from '@mioagent/still-engine';
 
 import { EXAMPLE, calendar, reverted, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
 import { stillMineRouter, stillMineRuntimeV1 } from '../stillMine.js';
@@ -86,6 +86,17 @@ test('every tool names the host Still’s review links use', async t => {
   assert.ok(words.includes(`Get money opens on ${STILL_PUBLIC_HOST_V1},`));
   assert.ok(words.includes(`${STILL_PUBLIC_HOST_V1}/spend`));
   assert.equal(words.includes('stills.lat'), STILL_PUBLIC_HOST_V1 === 'stills.lat');
+});
+
+// A description that names the lower share names every reason for it (audit 11-20 LA-3, DOC-4).
+test('every text that says 40% lists every reason a stock counts at it', async t => {
+  fixture(t, async () => assert.fail('listing does not read the wallet'));
+  const client = await connected(t);
+  const texts = [...(await client.listTools()).tools.map(entry => entry.description ?? ''), client.getInstructions() ?? ''];
+  const naming = texts.filter(text => text.includes('40%'));
+  assert.ok(naming.length > 0);
+  for (const text of naming) assert.ok(text.includes(STILL_STOCK_LOWER_SHARE_WHEN_V1), text.slice(0, 120));
+  assert.match(STILL_STOCK_LOWER_SHARE_WHEN_V1, /closed.*earnings report.*calendar cannot be read.*25 open-market hours.*price time cannot be read/);
 });
 
 test('web and Connected read the same owner’s report with unchanged integers, provenance and cache flag', async t => {

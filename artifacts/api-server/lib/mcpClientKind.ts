@@ -4,12 +4,18 @@ import type { LendingOriginV1 } from './lendingDraft.js';
 // Which assistant a connected MCP client is, for a Loop's "Done in Claude".
 //
 // A client's name is its own claim: dynamic registration lets anybody call a
-// client "Claude". Where its authorization codes go is not: only Claude,
-// ChatGPT and Grok can receive a code at claude.ai, chatgpt.com or grok.com.
-// So a client counts as one of them only when EVERY redirect it registered is
-// on that assistant's own host over https. A client that also registered any
-// other address could have used that one instead, and proves nothing; a CLI
-// on localhost (Codex, Claude Code) stays "other".
+// client "Claude". Where its authorization codes go is a better sign, though
+// not a proof: a code sent to claude.ai, chatgpt.com or grok.com is meant for
+// that assistant, but the person who consents sees the redirect in their own
+// browser, and someone who registered the client themselves holds its PKCE
+// verifier and can exchange the code (audit 11-20 LOOP-6). So the label is the
+// grant owner's own word about their own Loop: shown as "Done in Claude", and
+// never offered to anyone else as evidence of which assistant was used.
+//
+// A client counts as one of them only when EVERY redirect it registered is on
+// that assistant's own host over https. A client that also registered any
+// other address could have used that one instead; a CLI on localhost (Codex,
+// Claude Code) stays "other", and "other" is any MCP client, a script included.
 //
 // Production on 2026-11-17 held authorization codes for claude.ai, chatgpt.com,
 // grok.com and loopback addresses only.

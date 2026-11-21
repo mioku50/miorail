@@ -121,7 +121,7 @@ export function StillCardSign({ host, draft, projectId, reviewHost, onSent }: {
         {uri ? (
           <>
             <PairingCodeV1 uri={uri} />
-            <p className="still-note">Scan it with your wallet app: Base App, MetaMask, Rabby, Rainbow or any wallet with WalletConnect. Connect the wallet this review was prepared for.</p>
+            <p className="still-note">Scan it with your wallet app: Coinbase Wallet (formerly Base App), MetaMask, Rabby, Rainbow or any wallet with WalletConnect. Connect the wallet this review was prepared for.</p>
             <details className="still-note"><summary>The pairing link</summary><code className="still-mcp-uri">{uri}</code></details>
           </>
         ) : (

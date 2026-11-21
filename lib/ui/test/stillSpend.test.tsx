@@ -246,8 +246,13 @@ describe('the Spend page', () => {
   // 2026-11-19: /loops sent every brand to Spend's front page. Opened for one brand, Spend says what its cards make.
   it('opened from /loops for a brand, it says paying one of its cards with a loan against its stock makes a Loop', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null,
-      loop: { name: 'Apple', card: 'Apple gift card', collateral: 'AAPLc' } })} />);
+      loop: { name: 'Apple', card: 'Apple gift card', collateral: 'AAPLc', makesLoop: true } })} />);
     assert.match(html, /<p class="still-note still-spend-loop">Apple’s own cards for Germany: paid with a loan\s+against AAPLc, one makes a Loop, and the stock stays as the loan’s collateral\.<\/p>/);
+    // While Loops are off here (or not read yet), the same link promises none (audit 11-20 SPEND-4).
+    const off = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null,
+      loop: { name: 'Apple', card: 'Apple gift card', collateral: 'AAPLc', makesLoop: false } })} />);
+    assert.match(off, /Apple’s own cards for Germany: paid with a loan\s+against AAPLc, the stock stays as the loan’s collateral\./);
+    assert.doesNotMatch(off, /makes a Loop/);
     assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />), /makes a Loop/);
   });
 

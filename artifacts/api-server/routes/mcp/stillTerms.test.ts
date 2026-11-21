@@ -50,7 +50,7 @@ test('MCP and HTTP return identical terms from one cached calendar, including th
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), []);
   assert.equal(tool.annotations?.readOnlyHint, true);
   assert.ok(tool.outputSchema);
-  assert.match(tool.description!, /50%.*40%.*calendar.*unread/);
+  assert.match(tool.description!, /50%.*40%.*calendar cannot be read.*price time cannot be read/);
   assert.match(tool.description!, /not.*recommendation to borrow/);
 
   const result = await client.callTool({ name: 'get_still_terms', arguments: {} });
