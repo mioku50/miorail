@@ -1,0 +1,25 @@
+[Unit]
+# The reopen lineup's ladder pass (miorail-rwa-cash-exit-lineup.service), at the moments Call the reopen
+# is about, New York time:
+#
+#   Friday 20:01, 20:14, 20:27: the first three quotes after the bell. The game's card names Base's
+#   price only from three quotes taken after 20:00 ET; with the full pass alone, which now takes about
+#   half an hour, the third came at 21:36 ET on 2026-11-20.
+#   Sunday 20:01, 20:06, 20:15: the reopen. The game settles on the first reference price recorded after
+#   the feeds print again; on 2026-11-15 the full pass recorded it from 20:27 ET, up to 77 minutes into
+#   the session. The later two catch a feed that has not printed by 20:01 and a quote that did not finish.
+#   Monday, the same three: a reopen moved by a holiday (Labor Day 2026 reopened on Monday 20:00 ET). On
+#   other Mondays they are three more quotes of five stocks.
+#
+# No random delay: the minute is the point. Not Persistent: a moment missed is covered by the full pass,
+# and a catch-up run hours later would answer nothing.
+Description=Measure the reopen lineup on the cash-exit ladder at the reopen game's moments
+
+[Timer]
+OnCalendar=Fri *-*-* 20:01,14,27:00 America/New_York
+OnCalendar=Sun,Mon *-*-* 20:01,06,15:00 America/New_York
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

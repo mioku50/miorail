@@ -33,7 +33,9 @@ export const WEEKEND_MARKET_SCHEMA_VERSION_V1 = 'weekend-market/v1' as const;
 export const WEEKEND_MEDIAN_WINDOW_HOURS_V1 = 6;
 /** Fewer runs than this in the window and no price is named. The ladder is
  * sampled hourly, so on its own the third quote after 20:00 ET came at ~23:00
- * ET; `miorail-rwa-cash-exit.timer` adds three passes on Friday evening for it. */
+ * ET; `miorail-rwa-cash-exit.timer` adds Friday evening passes for it, and
+ * `miorail-rwa-cash-exit-lineup.timer` three short ones for the reopen game's
+ * stocks, since a full pass takes about half an hour. */
 export const WEEKEND_MIN_SAMPLES_V1 = 3;
 /** A run further than this from its own reference is a broken quote. */
 export const WEEKEND_JUNK_RATIO_V1 = 0.1;

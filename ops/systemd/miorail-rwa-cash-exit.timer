@@ -33,6 +33,15 @@
 # Call the reopen settles on the first reference price recorded after the
 # reopen; with the hourly passes alone that record can come up to an hour into
 # the overnight session, an hour of trading after the moment the round is about.
+#
+# Since November 2026 a pass takes about half an hour, not five minutes: more
+# assets have tokens outstanding, and every quote waits its turn
+# (scripts/rwaCashExitPacer.ts). So the Friday times merge into passes that run
+# back to back, and a calendar time that falls inside an hourly pass starts
+# only when it ends (2026-11-15: the Sunday pass began at 20:27 ET). The five
+# stocks the game asks about therefore have a timer of their own,
+# miorail-rwa-cash-exit-lineup.timer, and the times here are for the rest of
+# the board (audit 11-20 OPS-1).
 Description=Measure the official-asset cash-exit ladder
 
 [Timer]

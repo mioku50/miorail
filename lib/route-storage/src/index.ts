@@ -99,6 +99,7 @@ export * from './representationRatioMemory.js';
 export * from './representationSupply.js';
 export * from './representationSupplyDatabase.js';
 export * from './representationSupplyMemory.js';
+export * from './cashExitLineupLock.js';
 export * from './underlyingAssets.js';
 export * from './underlyingAssetsDatabase.js';
 export * from './underlyingAssetsMemory.js';

@@ -9,7 +9,9 @@ import {
   listedOfficialAssetsV1,
   mergeTargetsV1,
   registryTargetsV1,
+  reopenLineupTargetsV1,
   reviewedRepresentationTargetsV1,
+  weekendPriceFromRunV1,
   type SupplyCorpusReaderV1,
   type UnderlyingCorpusReaderV1,
 } from './rwaCashExitCorpus.js';
@@ -217,5 +219,46 @@ describe('the official registry a pass reads', () => {
       listedOfficialAssetsV1(registryOfV1(CORPUS_PAGE_LIMIT_V1 + 1).reader),
       /page through it rather than measuring a silent subset/,
     );
+  });
+});
+
+// Audit 11-20 OPS-1: the reopen game's five stocks get a pass of their own.
+describe('the reopen lineup pass', () => {
+  const target = (tokenAddress: string, symbol: string) => ({ tokenAddress, symbol, signalTicker: null, origin: 'reviewed_representation' as const });
+  const ids: Record<string, { symbol: string; coinbase: boolean } | null> = {
+    '0xa1': { symbol: 'NVDA', coinbase: true },
+    // Another issuer's NVDA is another question.
+    '0xa2': { symbol: 'NVDA', coinbase: false },
+    '0xa3': { symbol: 'TSLA', coinbase: true },
+    '0xa4': { symbol: 'NFLX', coinbase: true },
+    '0xa5': null,
+  };
+
+  test('only Coinbase tokens of lineup companies, and the companies it found none for', async () => {
+    const picked = await reopenLineupTargetsV1({
+      targets: Object.keys(ids).map((address) => target(address, 'X')),
+      identify: async (address) => ids[address] ?? null,
+    });
+    assert.deepEqual(picked.targets.map((row) => row.tokenAddress), ['0xa1', '0xa3']);
+    assert.deepEqual(picked.missing, ['AAPL', 'AMZN', 'MSTR']);
+  });
+
+  const side = (direction: 'buy' | 'sell', over: Record<string, unknown> = {}) => ({
+    direction,
+    requestedCashAtomic: '100000000',
+    effectivePriceAtomic: '18712000000',
+    effectivePriceDecimals: 8,
+    reference: { valueAtomic: '18700000000', decimals: 8, referenceUpdatedAt: '2026-11-23T01:00:12.000Z' },
+    ...over,
+  });
+
+  test('a run prices the stock only with a buy and a sell at $100, each beside its reference', () => {
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: [side('buy'), side('sell')] }), true);
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: [side('buy')] }), false);
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: [side('buy'), side('sell', { effectivePriceAtomic: null })] }), false);
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: [side('buy'), side('sell', { requestedCashAtomic: '1000000000' })] }), false);
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: [side('buy'), side('sell', { reference: { valueAtomic: '1', decimals: 8, referenceUpdatedAt: null } })] }), false);
+    assert.equal(weekendPriceFromRunV1({ marketRealitySnapshots: null }), false);
+    assert.equal(weekendPriceFromRunV1({}), false);
   });
 });

@@ -13,6 +13,8 @@ import type {
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 import { REVIEWED_UNIVERSE_LIMIT_V1 } from '@mioagent/route-storage';
+import { REOPEN_LINEUP_V1 } from '@mioagent/rwa-market-reality/reopen-game';
+import { inReopenLineupV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
 
 const CHAIN_ID_V1 = 8453 as const;
 
@@ -184,4 +186,59 @@ export function mergeTargetsV1(
 ): MeasurementTargetV1[] {
   const claimed = new Set(registry.map((target) => target.tokenAddress));
   return [...registry, ...reviewed.filter((target) => !claimed.has(target.tokenAddress))];
+}
+
+/**
+ * The reopen game's stocks, out of the pass's targets (audit 11-20 OPS-1).
+ *
+ * Picked the way the game picks them (`reopenCorpusIdentityV1`): Coinbase's
+ * representation of a lineup company. A symbol alone is not an identifier, and
+ * another issuer's NVDA would be another question. A lineup company the corpus
+ * has no such token for is named in `missing`, and the game leaves it out of
+ * its round the same way.
+ */
+export async function reopenLineupTargetsV1(input: {
+  targets: readonly MeasurementTargetV1[];
+  identify: (tokenAddress: string) => Promise<{ symbol: string; coinbase: boolean } | null>;
+}): Promise<{ targets: MeasurementTargetV1[]; missing: string[] }> {
+  const picked: MeasurementTargetV1[] = [];
+  const found = new Set<string>();
+  for (const target of input.targets) {
+    const identity = await input.identify(target.tokenAddress);
+    if (!identity || !inReopenLineupV1(identity)) continue;
+    picked.push(target);
+    found.add(identity.symbol);
+  }
+  return { targets: picked, missing: REOPEN_LINEUP_V1.filter((symbol) => !found.has(symbol)) };
+}
+
+/** The ladder size the weekend card and the game read: $100 in USDC's six decimals. */
+const WEEKEND_LADDER_CASH_ATOMIC_V1 = '100000000';
+const DIGITS_V1 = /^[0-9]+$/;
+const DECIMALS_V1 = /^[0-9]{1,2}$/;
+
+/**
+ * Whether a run gives the weekend card and the game a price: a buy and a sell
+ * at $100, each with the reference that stood beside it. The same test
+ * `readPublicLadderMidsV1` makes in SQL, so a lineup pass that says it priced a
+ * stock means the card can read it.
+ */
+export function weekendPriceFromRunV1(run: { marketRealitySnapshots?: readonly unknown[] | null }): boolean {
+  const sides = new Set<string>();
+  for (const raw of run.marketRealitySnapshots ?? []) {
+    const snapshot = raw as {
+      direction?: unknown;
+      requestedCashAtomic?: unknown;
+      effectivePriceAtomic?: unknown;
+      effectivePriceDecimals?: unknown;
+      reference?: { valueAtomic?: unknown; decimals?: unknown; referenceUpdatedAt?: unknown } | null;
+    } | null;
+    if (!snapshot || String(snapshot.requestedCashAtomic) !== WEEKEND_LADDER_CASH_ATOMIC_V1) continue;
+    if (!DIGITS_V1.test(String(snapshot.effectivePriceAtomic ?? '')) || !DECIMALS_V1.test(String(snapshot.effectivePriceDecimals ?? ''))) continue;
+    const reference = snapshot.reference;
+    if (!reference || !DIGITS_V1.test(String(reference.valueAtomic ?? '')) || !DECIMALS_V1.test(String(reference.decimals ?? ''))) continue;
+    if (reference.referenceUpdatedAt === null || reference.referenceUpdatedAt === undefined) continue;
+    if (snapshot.direction === 'buy' || snapshot.direction === 'sell') sides.add(snapshot.direction);
+  }
+  return sides.has('buy') && sides.has('sell');
 }

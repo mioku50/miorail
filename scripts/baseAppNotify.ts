@@ -880,9 +880,10 @@ export interface WeeklySummaryV1 {
 
 /** From 20:45 ET after the week's last close, for twelve hours, and only when
  * a weekend follows: a mid-week holiday is not the end of a week. 20:45 ET
- * because the push lands on the Stocks board, and the weekend card there has
- * its three quotes per stock only once the cash-exit timer's Friday passes
- * (20:01, 20:14, 20:27 ET) have run. */
+ * because the push lands on the Stocks board, where the weekend card needs
+ * three quotes per stock after the bell. The reopen game's five stocks have
+ * them by ~20:30 ET (miorail-rwa-cash-exit-lineup.timer); the rest of the board
+ * fills in as the full passes run, about half an hour each since November 2026. */
 export function weeklySummaryDueV1(now: Date): { weekCloseAt: string } | null {
   const window = weekendWindowV1(now);
   if (!window) return null;

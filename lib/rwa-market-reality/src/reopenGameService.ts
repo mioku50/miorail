@@ -1,4 +1,6 @@
-import type { ReopenGameRepositoryV1, ReopenRoundRowV1 } from '@mioagent/route-storage';
+import type { ReopenGameRepositoryV1, ReopenRoundRowV1, RepresentationUnderlyingV1, UnderlyingAssetV1 } from '@mioagent/route-storage';
+
+import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from './canonicalBinding.js';
 import {
   REOPEN_CALL_GRACE_MS_V1,
   REOPEN_LINEUP_V1,
@@ -406,10 +408,26 @@ export async function reopenLineupStocksV1(input: {
   const stocks: WeekendMarketStockInputV1[] = [];
   for (const [token, runs] of byToken) {
     const identity = await input.identify(token);
-    if (!identity?.coinbase || !(REOPEN_LINEUP_V1 as readonly string[]).includes(identity.symbol)) continue;
+    if (!identity || !inReopenLineupV1(identity)) continue;
     stocks.push({ tokenAddress: token, symbol: identity.symbol, name: identity.name, runs });
   }
   return stocks;
+}
+
+/** How the game reads one token of the reviewed corpus: its company's symbol, and whether Coinbase issued it.
+ * The API and the lineup's own ladder pass (`scripts/rwa_measure_cash_exit.ts --reopen-lineup`) pick the
+ * lineup through it, so both mean the same five tokens. */
+export function reopenCorpusIdentityV1(found: {
+  binding: Pick<RepresentationUnderlyingV1, 'issuerId' | 'sourceKind'>;
+  underlying: Pick<UnderlyingAssetV1, 'displaySymbol' | 'canonicalName'>;
+}): { symbol: string; coinbase: boolean } {
+  const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
+  return { symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName, coinbase: issuer === 'coinbase' };
+}
+
+/** Whether a token so read is one of the lineup's: Coinbase's, for a lineup company. */
+export function inReopenLineupV1(identity: { symbol: string; coinbase: boolean }): boolean {
+  return identity.coinbase && (REOPEN_LINEUP_V1 as readonly string[]).includes(identity.symbol);
 }
 
 // --- What the notifier needs ----------------------------------------------------

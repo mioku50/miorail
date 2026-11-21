@@ -36,10 +36,18 @@
  *   pnpm rwa:measure-cash-exit
  *   pnpm rwa:measure-cash-exit --corpus official
  *   pnpm rwa:measure-cash-exit --tickers AAPLc,NVDAc --gap-ms 3000
+ *   pnpm rwa:measure-cash-exit --reopen-lineup
+ *
+ * `--reopen-lineup` measures only Call the reopen's five stocks, picked the way
+ * the game picks them, for miorail-rwa-cash-exit-lineup.timer (audit 11-20
+ * OPS-1): the game settles on the first reference price a run recorded after
+ * the feeds print again, and the full pass now takes half an hour. While it
+ * runs, the full pass waits between assets (lib/route-storage
+ * cashExitLineupLock.ts), so the two never share the router's limit.
  */
 import { describeErrorV1 } from '@mioagent/utils';
 import { callManyV1, createB20ReaderV1, decodeStringV1 } from '@mioagent/b20-control';
-import { client, closeDb } from '@mioagent/db';
+import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
@@ -47,7 +55,9 @@ import {
   createDatabaseRepresentationSupplyRepository,
   createDatabaseUnderlyingAssetRepository,
   createDatabaseRwaSignalRepository,
+  holdCashExitLineupLockV1,
   isOfficialV1,
+  waitOutCashExitLineupLockV1,
 } from '@mioagent/route-storage';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import {
@@ -60,6 +70,7 @@ import {
   createMarketRealityEvidenceCaptureV1,
   createReviewedMarketRealityReferenceAdapterV1,
 } from '@mioagent/rwa-market-reality';
+import { reopenCorpusIdentityV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
 
 import {
   budgetedRpcConfigFromEnvV1,
@@ -86,7 +97,9 @@ import {
   corpusV1,
   mergeTargetsV1,
   registryTargetsV1,
+  reopenLineupTargetsV1,
   reviewedRepresentationTargetsV1,
+  weekendPriceFromRunV1,
   type MeasurementTargetV1,
 } from './rwaCashExitCorpus.js';
 
@@ -165,9 +178,16 @@ function numericArgV1(flag: string, fallback: number): number {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The longest the full pass waits for the lineup's, which takes a minute or two. Past it, it goes on. */
+const LINEUP_WAIT_MAX_MS_V1 = 10 * 60_000;
+
 async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   const requested = tickersV1(process.argv);
+  const lineupPass = process.argv.includes('--reopen-lineup');
+  if (lineupPass && (requested !== null || process.argv.includes('--corpus'))) {
+    throw new Error('--reopen-lineup picks its own stocks; it takes no --tickers or --corpus');
+  }
   // Naming tickers is naming registry members, so it selects the registry.
   const corpus = requested === null ? corpusV1(process.argv) : 'official';
   // The issuer API alone has more than the old 64-row registry cap. Read the
@@ -242,6 +262,21 @@ async function main(): Promise<void> {
           }),
         );
 
+  // The game's stocks alone, out of the same corpus, picked the way the game picks them.
+  let chosen = targets;
+  if (lineupPass) {
+    const lineup = await reopenLineupTargetsV1({
+      targets,
+      identify: async (tokenAddress) => {
+        const found = await underlyings.underlyingOf({ chainId: CHAIN_ID_V1, tokenAddress });
+        return found ? reopenCorpusIdentityV1(found) : null;
+      },
+    });
+    if (lineup.targets.length === 0) throw new Error('no reopen lineup stock is in the measured corpus');
+    if (lineup.missing.length > 0) console.log(`reopen lineup: no Coinbase token measured for ${lineup.missing.join(', ')}`);
+    chosen = lineup.targets;
+  }
+
   const anchor = await reader.readBlockAnchor();
   if (!anchor.ok) throw new Error(`block anchor unavailable: ${anchor.reason}`);
 
@@ -256,13 +291,13 @@ async function main(): Promise<void> {
   // reader already tells those apart.
   const metadata = await callManyV1(
     reader,
-    targets.flatMap((target) => [
+    chosen.flatMap((target) => [
       { to: target.tokenAddress, data: DECIMALS_SELECTOR_V1, blockTag: anchor.value.blockTag },
       { to: target.tokenAddress, data: SYMBOL_SELECTOR_V1, blockTag: anchor.value.blockTag },
     ]),
   );
   const universe: { target: MeasurementTargetV1; symbol: string; decimals: number }[] = [];
-  for (const [index, target] of targets.entries()) {
+  for (const [index, target] of chosen.entries()) {
     const label = (target.symbol ?? target.tokenAddress).padEnd(10);
     const decimalsRead = metadata[index * 2]!;
     const symbolRead = metadata[index * 2 + 1]!;
@@ -325,65 +360,80 @@ async function main(): Promise<void> {
   const byStatus = new Map<string, number>();
   const emitted: string[] = [];
   const errorCodes: string[] = [];
+  // Lineup stocks whose run gave the weekend card no price.
+  const unpriced: string[] = [];
 
-  for (const [index, entry] of universe.entries()) {
-    const { target, symbol, decimals } = entry;
-    const tokenAddress = target.tokenAddress;
-    const label = symbol.padEnd(10);
+  // The lineup's pass holds the lock while it measures; the full pass waits on it before each asset.
+  const releaseLineup = lineupPass && !dry ? await holdCashExitLineupLockV1(withDatabaseTransaction) : null;
+  try {
+    for (const [index, entry] of universe.entries()) {
+      const { target, symbol, decimals } = entry;
+      const tokenAddress = target.tokenAddress;
+      const label = symbol.padEnd(10);
 
-    if (dry) {
-      console.log(`${label} ${tokenAddress} decimals ${decimals} — would measure`);
-      continue;
-    }
-
-    // Read BEFORE the new run is written. `latestCompletedRun` would otherwise
-    // return the run we just stored and every comparison would be with itself.
-    const previous = await cashExit.latestCompletedRun({
-      chainId: CHAIN_ID_V1,
-      tokenAddress,
-      scope: 'public_ladder',
-    });
-    const next = await measureOfficialCashExitV1({
-      repository: cashExit,
-      adapters,
-      token: { address: tokenAddress as `0x${string}`, symbol, decimals },
-      walletAddress: MEASUREMENT_RECIPIENT_V1,
-      tenantId: MEASUREMENT_TENANT_V1,
-      scope: 'public_ladder',
-      captureMarketRealitySnapshots,
-      pacing: pacer.pacing,
-    });
-    measured += 1;
-    const now = new Date();
-    const status = routeStatusFromPreviewV1(previewLadderFromRunV1(next));
-    byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
-    // Why its rungs were not finished, by the router's own code: "measurement_failed" alone hid four
-    // days of 429s behind a word that also means "no route" (audit OPS-3).
-    const codes = next.observations.map((observation) => observation.errorCode);
-    for (const code of codes) if (code) errorCodes.push(code);
-    const why = errorCodeSummaryV1(codes);
-    console.log(`${label} ${status}${why ? ` (${why})` : ''}`);
-
-    // Signals stay inside the vocabulary that owns them: an
-    // `official_asset_*` transition may only name a member of the official
-    // registry. Everything else is measured and stored, and says what it found
-    // on its own card rather than in a feed about somebody else's corpus.
-    if (!watchOpenedNow && target.signalTicker !== null) {
-      const transitions = cashExitSignalsV1({ previous, next, ticker: target.signalTicker });
-      if (transitions.length > 0) {
-        const recorded = await signals.recordSignals({
-          chainId: CHAIN_ID_V1,
-          recordedAt: now.toISOString(),
-          signals: transitions,
-        });
-        for (const key of recorded.recorded) {
-          emitted.push(key);
-          console.log(`           signal ${key.split(':')[0]}`);
+      if (dry) {
+        console.log(`${label} ${tokenAddress} decimals ${decimals} — would measure`);
+        continue;
+      }
+      if (!lineupPass) {
+        const pause = await waitOutCashExitLineupLockV1(withDatabaseTransaction, LINEUP_WAIT_MAX_MS_V1);
+        if (pause.timedOut || pause.waitedMs >= 1_000) {
+          console.log(`paused ${Math.round(pause.waitedMs / 1000)}s for the reopen lineup's pass${pause.timedOut ? ', then went on without it' : ''}`);
         }
       }
-    }
 
-    if (index < universe.length - 1) await sleep(gapMs);
+      // Read BEFORE the new run is written. `latestCompletedRun` would otherwise
+      // return the run we just stored and every comparison would be with itself.
+      const previous = await cashExit.latestCompletedRun({
+        chainId: CHAIN_ID_V1,
+        tokenAddress,
+        scope: 'public_ladder',
+      });
+      const next = await measureOfficialCashExitV1({
+        repository: cashExit,
+        adapters,
+        token: { address: tokenAddress as `0x${string}`, symbol, decimals },
+        walletAddress: MEASUREMENT_RECIPIENT_V1,
+        tenantId: MEASUREMENT_TENANT_V1,
+        scope: 'public_ladder',
+        captureMarketRealitySnapshots,
+        pacing: pacer.pacing,
+      });
+      measured += 1;
+      const now = new Date();
+      const status = routeStatusFromPreviewV1(previewLadderFromRunV1(next));
+      byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
+      // Why its rungs were not finished, by the router's own code: "measurement_failed" alone hid four
+      // days of 429s behind a word that also means "no route" (audit OPS-3).
+      const codes = next.observations.map((observation) => observation.errorCode);
+      for (const code of codes) if (code) errorCodes.push(code);
+      const why = errorCodeSummaryV1(codes);
+      console.log(`${label} ${status}${why ? ` (${why})` : ''}`);
+      if (lineupPass && !weekendPriceFromRunV1(next)) unpriced.push(symbol);
+
+      // Signals stay inside the vocabulary that owns them: an
+      // `official_asset_*` transition may only name a member of the official
+      // registry. Everything else is measured and stored, and says what it found
+      // on its own card rather than in a feed about somebody else's corpus.
+      if (!watchOpenedNow && target.signalTicker !== null) {
+        const transitions = cashExitSignalsV1({ previous, next, ticker: target.signalTicker });
+        if (transitions.length > 0) {
+          const recorded = await signals.recordSignals({
+            chainId: CHAIN_ID_V1,
+            recordedAt: now.toISOString(),
+            signals: transitions,
+          });
+          for (const key of recorded.recorded) {
+            emitted.push(key);
+            console.log(`           signal ${key.split(':')[0]}`);
+          }
+        }
+      }
+
+      if (index < universe.length - 1) await sleep(gapMs);
+    }
+  } finally {
+    await releaseLineup?.();
   }
 
   console.log(`\nmeasured ${measured}:`);
@@ -403,7 +453,8 @@ async function main(): Promise<void> {
   // Old ladders go here, after the pass has measured and said what it measured. Off unless the
   // deployment says how many days to keep, and a failure in it never fails the pass: the pass's
   // work is the measurement.
-  const keepDays = cashExitRetentionDaysV1(process.env);
+  // The lineup's pass leaves that to the full one.
+  const keepDays = lineupPass ? null : cashExitRetentionDaysV1(process.env);
   if (keepDays !== null) {
     try {
       const windows = await dividendPriceWindowsV1(new Date());
@@ -420,6 +471,12 @@ async function main(): Promise<void> {
   }
   // A pass the router throttled out of most of its work did not do its work. The exit code says so, and
   // the service alerts carry a failed unit to Telegram and say when it recovers.
+  // The game reads the first run after the reopen that has a price, so one without it is said, and the
+  // unit fails: the service alerts carry it to Telegram. The pass five minutes later is the next chance.
+  if (lineupPass && unpriced.length > 0) {
+    console.error(`reopen lineup: no $100 price for ${unpriced.join(', ')}; the game reads the next run that has one.`);
+    process.exitCode = 1;
+  }
   if (throttledPassV1(quotes)) {
     console.error(`cash-exit pass was rate limited: ${share}% of its quotes ended in 429. What it could measure is stored; the rest reads "did not finish".`);
     process.exitCode = THROTTLED_PASS_EXIT_CODE_V1;

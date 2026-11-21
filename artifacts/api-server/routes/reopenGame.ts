@@ -3,7 +3,6 @@ import { Router, type Request, type Response } from 'express';
 import { client } from '@mioagent/db';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createDatabaseReopenGameRepositoryV1, type ReopenGameRepositoryV1 } from '@mioagent/route-storage';
-import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
 import {
   ReopenPickRequestV1Schema,
   type ReopenGameResponseV1,
@@ -13,6 +12,7 @@ import { weekendSlotStartV1, type WeekendMarketStockInputV1 } from '@mioagent/rw
 import { tenantUserFromRequest } from '../middleware/tenantAuth';
 import { sessionWalletV1 } from '../lib/sessionWallet';
 import {
+  reopenCorpusIdentityV1,
   reopenGameForV1,
   reopenLineupStocksV1,
   reopenSharedStateV1,
@@ -52,12 +52,7 @@ export const reopenGameRuntime = {
       identify: async (token) => {
         const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress: token });
         if (!found) return null;
-        const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
-        return {
-          symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName,
-          name: names.get(token)?.name ?? found.underlying.canonicalName,
-          coinbase: issuer === 'coinbase',
-        };
+        return { ...reopenCorpusIdentityV1(found), name: names.get(token)?.name ?? found.underlying.canonicalName };
       },
     });
   },
