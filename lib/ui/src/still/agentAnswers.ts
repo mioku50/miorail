@@ -163,6 +163,10 @@ const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
   ['holdings', /hold|own|assets|portfolio|что у меня|акти|держ/iu],
 ];
 
+/** A trade asked for, not mentioned: "Buy …", «купи …», "I want to sell …" (not "without selling"). */
+const TRADE_ASKED_V2 = new RegExp(`^\\s*(?:please\\s+)?(?:buy|sell|swap|convert|exchange)\\s|${EDGE}(?:купи|продай|обменяй|поменяй)(?:$|[^\\p{L}])`
+  + `|${EDGE}(?:i\\s+(?:want|would\\s+like)\\s+to\\s+(?:buy|sell|swap)|хочу\\s+(?:купить|продать|обменять))(?:$|[^\\p{L}])`, 'iu');
+
 /** Where a question goes. One rule for the page and the server, so they cannot disagree. */
 export function agentRouteV2(question: string, stocks?: readonly AgentStockV2[]): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
   const whatIf = WHAT_IF_V2.test(question);
@@ -170,6 +174,9 @@ export function agentRouteV2(question: string, stocks?: readonly AgentStockV2[])
   if (!whatIf && AGENT_SPEND_WORDS_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (!whatIf && agentSwapRequestV2(question, stocks)) return { route: 'swap', topic: 'action_prep' };
   if (!whatIf && agentSendRequestV2(question)) return { route: 'send', topic: 'action_prep' };
+  // A trade naming nothing the page knows goes to the server, which reads the Stocks list (audit SW-4, 2026-11-20:
+  // «Buy Anthropic» was answered here about a loan and never reached it).
+  if (!whatIf && !stocks && TRADE_ASKED_V2.test(question) && !LOAN_WORDS_V2.test(question)) return { route: 'unknown', topic: null };
   if (!whatIf && ACTION_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (ANALYSIS_V2.some((pattern) => pattern.test(question))) return { route: 'analysis', topic: 'analysis' };
   if (whatIf && /(?:займу|возьму|borrow|take)\S*\s.*\d/iu.test(question)) return { route: 'analysis', topic: 'analysis' };
@@ -359,6 +366,8 @@ export interface AgentStockV2 {
   token: string;
   /** The company, as Coinbase names it: "Anthropic, PBC". */
   name: string | null;
+  /** `none`: the Stocks list found no market for it on Base yet (no pool, no route for $100). */
+  market?: 'none';
 }
 
 /** Capitals that are words in a question before they are tickers. */
@@ -558,6 +567,16 @@ export function agentSwapAnswerV2(input: {
     );
   }
   const { from, to } = request;
+  // A stock nobody makes a market in on Base yet has no route to prepare: said so, not "Prepared" (audit SW-5, 2026-11-20).
+  const marketless = [from, to].find((symbol) => stocks?.some((stock) => stock.symbol === symbol && stock.market === 'none'));
+  if (marketless) {
+    return say(
+      ru
+        ? `У ${marketless} пока нет рынка на Base: его не держит ни один пул, и маршрута на $100 не нашлось, так что обмен подготовить не из чего. Когда пул появится, это будет видно на её карточке в Stocks.`
+        : `${marketless} has no market on Base yet: no pool holds it and a $100 trade found no route, so there is no swap to prepare. Its card on Stocks shows when one appears.`,
+      null,
+    );
+  }
   // A stock or cbBTC is named by its address, read from the chain; USDC and
   // ETH by the symbols Swap AI resolves from its own registry.
   const line = input.report?.assets.find((asset) => asset.symbol === from) ?? null;
@@ -610,7 +629,7 @@ export function agentSwapAnswerV2(input: {
           : 'unread';
   // "All" or "half" is worked out only for what the Mirror reads: Still's own stocks, cbBTC, ETH and PAXG. Any other
   // stock was never read, which is not our failure to read it (audit SW-3, 2026-11-20).
-  if (held === 'unread' && !line) {
+  if (held === 'unread' && !line && from !== 'USDC') {
     return say(
       ru
         ? `«Всё» и «половину» я считаю только для того, что Still читает в кошельке: его акций, cbBTC, ETH и PAXG. Укажите количество ${from} в Swap AI. ${signs}`

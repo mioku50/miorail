@@ -139,3 +139,20 @@ describe('a share of a stock the Mirror does not read', () => {
     assert.doesNotMatch(answer.text, /our failure/);
   });
 });
+
+describe('a trade the page cannot name, and a stock with no market', () => {
+  it('sends a trade naming nothing the page knows to the server (SW-4)', () => {
+    assert.equal(agentRouteV2('Buy Anthropic').route, 'unknown');
+    assert.equal(agentRouteV2('Buy Anthropic', STOCKS).route, 'swap');
+    assert.equal(agentRouteV2('Borrow 100 USDC').route, 'action_prep', 'a loan stays the page’s');
+    assert.equal(agentRouteV2('Buy gold (PAXG) for $10').route, 'swap');
+  });
+
+  it('says a stock has no market on Base instead of "Prepared" (SW-5)', () => {
+    const none = STOCKS.map((stock) => (stock.symbol === 'ANTc' ? { ...stock, market: 'none' as const } : stock));
+    const answer = agentSwapAnswerV2({ question: 'Buy ANTc for 25 USDC', report: null, stocks: none });
+    assert.match(answer.text, /^ANTc has no market on Base yet: no pool holds it and a \$100 trade found no route/);
+    assert.equal(answer.engineFacts?.swapGoal, null);
+    assert.match(agentSwapAnswerV2({ question: 'Buy ANTc for 25 USDC', report: null, stocks: STOCKS }).text, /^Prepared: swap 25 USDC to ANTc\./);
+  });
+});

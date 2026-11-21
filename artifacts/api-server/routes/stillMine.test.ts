@@ -414,6 +414,12 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     assert.match(refused.text, said, question);
     assert.equal(refused.sendAction ?? null, null, question);
   }
+  // A reviewed stock's own contract, any of the list's, is never a recipient, as on the page and the review (audit SS-6).
+  const ANT = '0xb20000000000000000000016e38fd364d271ba28';
+  stillMineRuntimeV1.reviewedStock = async (address) => address.toLowerCase() === ANT;
+  const toContract = (await ask(server, `send 0.1 NVDAc to ${ANT}`)).body.answer;
+  assert.match(toContract.text, /is a token or protocol contract on Base, not a person’s wallet/);
+  assert.equal(toContract.sendAction ?? null, null);
   // Audit MCP-1, 2026-11-10: each of these prepared a wrong amount (50 shares, all of them, 12, 1) and said
   // "Prepared". An amount that is not one plain number is asked for again, and nothing is handed over.
   stillMineRuntimeV1.askLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 12 });

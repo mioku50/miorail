@@ -1,5 +1,7 @@
 import express, { Router, type Request, type Response } from 'express';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
+import { client } from '@mioagent/db';
+import { createDatabaseUnderlyingAssetRepository } from '@mioagent/route-storage';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { AGENT_BASE_USDC_V2 } from '../../../lib/ui/src/still/agentAnswers.js';
@@ -34,6 +36,9 @@ export const stillMineRuntimeV1 = {
   readNativeEth: (wallet: string, block: string): Promise<string | null> => readNativeEthV1(wallet, block),
   /** The Basename a transfer names, on Base, as the stock page's gift form resolves it. */
   resolveName: (name: string) => resolveBaseNameV1(name),
+  /** Any representation in the reviewed corpus, as the send review asks (routeIntelligence.ts reviewedStock). */
+  reviewedStock: async (tokenAddress: string): Promise<boolean> =>
+    (await createDatabaseUnderlyingAssetRepository(client).underlyingOf({ chainId: 8453, tokenAddress })) !== null,
   /** The Coinbase stocks the Stocks list binds, for a swap the Agent prepares by a stock's name (2026-11-20). */
   agentStocks: () => stillAgentStocksV1(),
   // A question can cost two model calls and a chain read: a person asks a few
@@ -138,6 +143,8 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '8kb', inflate: false }
       read: () => service.reading(wallet as `0x${string}`),
       readUsdc: () => stillMineRuntimeV1.readUsdc(wallet),
       resolveName: (name) => stillMineRuntimeV1.resolveName(name),
+      // As the page and the send review check it: a reviewed stock's own contract is never a recipient (audit SS-6).
+      isKnownToken: (address) => stillMineRuntimeV1.reviewedStock(address),
       stocks: () => stillMineRuntimeV1.agentStocks(),
       // The model calls a question makes are counted under the asking address (audit MCP-5).
       modelClient: modelBudgetClientKeyV1(req),

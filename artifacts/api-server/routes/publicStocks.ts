@@ -195,10 +195,12 @@ export const publicStocksRuntime = {
  * The Coinbase stocks the Stocks list binds, as the Agent names them in a swap: each token's symbol, contract and
  * company, from the same cached five-minute computation as the list (2026-11-20).
  */
-export async function stillAgentStocksV1(): Promise<Array<{ symbol: string; token: string; name: string | null }>> {
+export async function stillAgentStocksV1(): Promise<Array<{ symbol: string; token: string; name: string | null; market?: 'none' }>> {
   const slot = weekendSlotStartV1(publicStocksRuntime.now());
   const quotes = await publicStocksCachesV1.quotes.read(`quotes|${slot.getTime()}`, () => publicStocksRuntime.readQuotes(slot));
-  return quotes.rows.flatMap((row) => (row.tokenSymbol ? [{ symbol: row.tokenSymbol, token: row.tokenAddress, name: row.companyName }] : []));
+  // With the list's own word that nobody makes a market in it on Base yet (audit SW-5).
+  return quotes.rows.flatMap((row) => (row.tokenSymbol
+    ? [{ symbol: row.tokenSymbol, token: row.tokenAddress, name: row.companyName, ...(row.market === 'none' ? { market: 'none' as const } : {}) }] : []));
 }
 
 /**

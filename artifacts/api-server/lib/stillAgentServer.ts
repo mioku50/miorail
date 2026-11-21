@@ -227,6 +227,8 @@ export interface StillAgentAskV3 {
   modelClient?: string;
   /** A Basename a transfer's question writes, resolved on Base. */
   resolveName?: (name: string) => Promise<BaseNameResolutionV1>;
+  /** Whether an address is a reviewed stock's contract, which a transfer never goes to (audit SS-6). */
+  isKnownToken?: (address: string) => Promise<boolean>;
   /** The Coinbase stocks the Stocks list binds, each with its contract: read only for a question about a trade, so any
    * of them can be swapped by name (2026-11-20). A failed read names none, and the fixed table still serves. */
   stocks?: () => Promise<readonly AgentStockV2[]>;
@@ -270,7 +272,8 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   }
   // A transfer is read by the rules alone: its recipient is the question's own words.
   if (route === 'send') {
-    return stillAgentSendAnswerV1({ question, wallet, report, resolveName: input.resolveName ?? resolveBaseNameV1, ...(input.readUsdc ? { readUsdc: input.readUsdc } : {}), stage });
+    return stillAgentSendAnswerV1({ question, wallet, report, resolveName: input.resolveName ?? resolveBaseNameV1, ...(input.readUsdc ? { readUsdc: input.readUsdc } : {}),
+      ...(input.isKnownToken ? { isKnownToken: input.isKnownToken } : {}), stage });
   }
   // A direct read and a request to act are the page's own answers: no model.
   if (route === 'fast' || route === 'action_prep') return agentAnswerV1({ question, report, sky, signedIn: true });

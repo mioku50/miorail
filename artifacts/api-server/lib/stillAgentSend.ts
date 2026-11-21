@@ -70,6 +70,8 @@ export async function stillAgentSendAnswerV1(input: {
   wallet: string;
   report: MirrorReport;
   resolveName: (name: string) => Promise<BaseNameResolutionV1>;
+  /** Whether an address is a reviewed stock's own contract: never a recipient (audit SS-6, as the page and the review ask). */
+  isKnownToken?: (address: string) => Promise<boolean>;
   /** The wallet's USDC, read on its own: the report reads only what can be collateral. */
   readUsdc?: () => Promise<{ raw: string; decimals: number; block: string } | null>;
   stage: (stage: StillAgentStageV1) => void;
@@ -213,6 +215,7 @@ export async function stillAgentSendAnswerV1(input: {
     value: recipient.value,
     walletAddress: input.wallet,
     resolveName: input.resolveName,
+    ...(input.isKnownToken ? { isKnownToken: input.isKnownToken } : {}),
   }).catch((): GiftRecipientResolutionV1 => ({ outcome: 'refused', code: 'resolver_unavailable', message: '' }));
   if (resolution.outcome !== 'resolved') {
     const label = name ?? recipient.value;
