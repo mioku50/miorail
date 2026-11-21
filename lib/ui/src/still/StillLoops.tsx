@@ -25,8 +25,10 @@ const BRANDS_V1 = Object.keys(LOOP_BRAND_WORDS_V1) as BrandV1[];
 const COLLATERAL_V1: Readonly<Record<BrandV1, string>> = { apple: 'AAPLc', amazon: 'AMZNc', google: 'GOOGLc', meta: 'METAc', microsoft: 'MSFTc' };
 const VIA_V1 = ['web', 'claude', 'chatgpt', 'grok', 'assistant'] as const;
 const VIA_WORDS_V1: Readonly<Record<(typeof VIA_V1)[number], string | null>> = {
-  web: null, claude: 'Done in Claude', chatgpt: 'Done in ChatGPT', grok: 'Done in Grok', assistant: 'Done with an AI assistant',
+  web: null, claude: 'Done in Claude', chatgpt: 'Done in ChatGPT', grok: 'Done in Grok', assistant: 'Done in a connected app',
 };
+// `assistant` is any other client connected over MCP, a script included, so neither its label nor the counter
+// says "AI" (audit 11-20 LOOP-6). And "Done in Claude" is its owner's own word (lib/mcpClientKind.ts).
 
 /**
  * Each brand's mark: Coinbase's own icon for the stock a Loop pledges (AAPLc for Apple), the one the Stocks list
@@ -519,7 +521,7 @@ export function StillLoops({ model }: { model: StillLoopsModelV1 }) {
               <div className="still-safety-figures">
                 <div className="still-safety-figure"><span className="n">{view.counts.week}</span><span className="t">this week</span></div>
                 <div className="still-safety-figure"><span className="n">{view.counts.total}</span><span className="t">in all</span></div>
-                <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done with an AI assistant</span></div>
+                <div className="still-safety-figure"><span className="n">{view.counts.viaAssistant}</span><span className="t">done in a connected app</span></div>
               </div>
             </div>
           )}

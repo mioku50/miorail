@@ -93,6 +93,9 @@ describe('/loops: Loops in public', () => {
   it('shows the week, how to make one and the wall, with no wallet and the risk said', () => {
     const html = renderToStaticMarkup(<StillLoops model={{ sky: SKY, view: stillLoopsViewV1(ANSWER), failed: false }} />);
     assert.match(html, />2<\/span><span class="t">this week/);
+    // Any app connected over MCP counts, a script included, so the counter does not say "AI" (audit 11-20 LOOP-6).
+    assert.match(html, />2<\/span><span class="t">done in a connected app/);
+    assert.doesNotMatch(html, /AI assistant/);
     assert.match(html, /An Apple gift card, paid by a loan against AAPLc/);
     assert.match(html, /An Xbox card, paid by a loan against MSFTc/);
     assert.match(html, new RegExp(STILL_LOOP_PROMPT_V1.replace(/[.€]/g, '.')));

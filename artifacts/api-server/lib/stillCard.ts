@@ -295,7 +295,7 @@ export function stillLoopCardSvgV1(shape: StillCardShapeV1, share: StillSpendSha
 
 /** Who prepared a Loop, as its card says it; nothing for Still's own page. */
 export const STILL_LOOP_VIA_WORDS_V1: Readonly<Record<NonNullable<StillSpendShareV1['loop']>['via'], string | null>> = {
-  web: null, claude: 'Done in Claude.', chatgpt: 'Done in ChatGPT.', grok: 'Done in Grok.', assistant: 'Done with an AI assistant.',
+  web: null, claude: 'Done in Claude.', chatgpt: 'Done in ChatGPT.', grok: 'Done in Grok.', assistant: 'Done in a connected app.',
 };
 
 /** A loan, as its owner shared it: how much, against what, and through which protocol. No wallet, no transaction. */
