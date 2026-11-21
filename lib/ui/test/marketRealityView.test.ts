@@ -4314,6 +4314,25 @@ describe('a scoped list says what it is a slice of', () => {
     assert.deepEqual([cut[0]!.value, cut[0]!.note], ['at least 1', 'companies, of the first 2 read here, whose Coinbase contract holds any, as Base was last read']);
   });
 
+  test('the headline says how old the supply readings behind it are, and colours a stale one (audit 11-20 DATA-1)', () => {
+    type Wire = NonNullable<Parameters<typeof underlyingCountersV1>[0]>;
+    const entry = (live: number) => ({ liveRepresentationCount: live }) as unknown as Wire['entries'][number];
+    const at = '2026-11-21T12:00:00.000Z';
+    const ago = (minutes: number) => new Date(Date.parse(at) - minutes * 60_000).toISOString();
+    const headline = (supplyReadAt: Wire['supplyReadAt']) =>
+      underlyingCountersV1({ scope: 'coinbase_b20', entries: [entry(1), entry(0)], totals: { ...totals, underlyings: 2 }, observedAt: at, supplyReadAt })[0]!;
+    assert.deepEqual([headline({ oldest: ago(14), newest: ago(12) }).note, headline({ oldest: ago(14), newest: ago(12) }).tone],
+      ['companies whose Coinbase contract holds any, as Base was read 12 min ago', 'neutral']);
+    // Readings far apart: the oldest is named too.
+    assert.equal(headline({ oldest: ago(180), newest: ago(12) }).note, 'companies whose Coinbase contract holds any, as Base was read 12 min ago, the oldest reading 3h ago');
+    // A pass that has not answered for hours: the count is that old, and says so in colour.
+    const stale = headline({ oldest: ago(9 * 60), newest: ago(7 * 60) });
+    assert.deepEqual([stale.note, stale.tone], ['companies whose Coinbase contract holds any, as Base was read 7h ago, the oldest reading 9h ago', 'warn']);
+    assert.equal(headline(null).tone, 'warn');
+    // An API that does not send it yet: the words as before.
+    assert.equal(headline(undefined).note, 'companies whose Coinbase contract holds any, as Base was last read');
+  });
+
 });
 
 // ---------------------------------------------------------------------------

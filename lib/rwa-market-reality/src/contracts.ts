@@ -441,6 +441,11 @@ export const MarketRealityIndexV1Schema = z
       })
       .strict(),
     observedAt: Timestamp,
+    /** When Base was read for the supplies `liveRepresentationCount` stands on: the oldest and the newest of the
+     * readings that answered, null when none has (audit 11-20 DATA-1). A failed read keeps the last measured
+     * supply (STK-1), so without it the headline could be a day old and not say so. Optional on the wire: a
+     * client built before it refuses an answer that carries it, so the API sends it only once those are gone. */
+    supplyReadAt: z.object({ oldest: Timestamp, newest: Timestamp }).strict().nullable().optional(),
   })
   .strict();
 export type MarketRealityIndexV1 = z.infer<typeof MarketRealityIndexV1Schema>;

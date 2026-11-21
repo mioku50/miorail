@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { CalendarRead } from '../src/calendar.js';
-import { StillTermsSchema, stillTerms } from '../src/terms.js';
+import { StillTermsSchema, stillNotOfferedInV1, stillTerms } from '../src/terms.js';
 
 const SATURDAY = new Date('2026-10-31T15:00:00Z'); // 11:00 in New York
 const read: CalendarRead = {
@@ -28,5 +28,18 @@ describe('the terms', () => {
     assert.equal(StillTermsSchema.parse(unread).earnings.calendarReadAt, null);
     assert.equal(StillTermsSchema.safeParse({ ...unread, extra: 1 }).success, false);
     assert.equal(StillTermsSchema.safeParse({ ...unread, notOfferedTo: 'nobody' }).success, false);
+  });
+
+  // Audit 11-20 DOC-8, in two steps because the client's schema is strict.
+  it('accept where Still is not offered as data, and do not send it until the clients that refuse it are gone', () => {
+    const where = stillNotOfferedInV1();
+    assert.deepEqual(where.countries.map((country) => country.code), ['US', 'CU', 'IR', 'KP', 'SY']);
+    assert.equal(where.regions.length, 3);
+    assert.match(where.text, /United States.*Iran.*Crimea.*Luhansk/);
+    const terms = JSON.parse(JSON.stringify(stillTerms(read, SATURDAY)));
+    // The clients served since 2026-11-21 take it.
+    assert.equal(StillTermsSchema.safeParse({ ...terms, notOfferedIn: where }).success, true);
+    // Step two: the commit that adds it to stillTerms makes the field required and replaces this line.
+    assert.equal('notOfferedIn' in terms, false, 'notOfferedIn waits until the clients before 2026-11-21 are gone');
   });
 });

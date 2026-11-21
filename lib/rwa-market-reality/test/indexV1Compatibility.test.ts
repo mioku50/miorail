@@ -125,6 +125,18 @@ test('an assembled index passes the current v1 schema and the one clients were g
   assert.ok(previous.success, `a v1 client refuses this index at ${issues(previous)}`);
 });
 
+// Audit 11-20 DATA-1: `supplyReadAt` is accepted by the clients served since 2026-11-21 and refused by every
+// client before them, this copy among them. The commit that starts sending it replaces this copy with the
+// schema those clients hold, once they are the oldest served.
+test('the supply reading time is accepted, and not sent while older clients would refuse it', async () => {
+  const wire = JSON.parse(JSON.stringify(await assembledIndex())) as Record<string, unknown>;
+  assert.equal('supplyReadAt' in wire, false, 'supplyReadAt waits until the clients before 2026-11-21 are gone');
+  const withRead = { ...wire, supplyReadAt: { oldest: AT, newest: AT } };
+  assert.equal(MarketRealityIndexV1Schema.safeParse(withRead).success, true);
+  assert.equal(MarketRealityIndexV1Schema.safeParse({ ...wire, supplyReadAt: null }).success, true);
+  assert.equal(PreviousIndexV1Schema.safeParse(withRead).success, false);
+});
+
 test('the restored v1 fields say what a Coinbase-only corpus is', async () => {
   const index = await assembledIndex();
   assert.deepEqual(

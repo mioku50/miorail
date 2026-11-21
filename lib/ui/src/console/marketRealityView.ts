@@ -132,6 +132,9 @@ export interface MarketRealityIndexWireV1 {
     boundRepresentations: number;
   };
   observedAt: string;
+  /** When Base was read for the supplies behind the live counts (audit 11-20 DATA-1). Absent from an API that
+   * does not send it yet; null when no supply has been read. */
+  supplyReadAt?: { oldest: string; newest: string } | null;
 }
 
 export interface MarketRealityQuoteWireV1 {
@@ -3619,16 +3622,39 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
     (() => {
       const live = wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length;
       const cut = wire.entries.length < wire.totals.underlyings;
+      const read = supplyReadNoteV1(wire);
       return {
         label: 'With tokens outstanding',
         value: cut ? `at least ${live}` : String(live),
         note: cut
-          ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, as Base was last read`
-          : 'companies whose Coinbase contract holds any, as Base was last read',
-        tone: 'neutral' as const,
+          ? `companies, of the first ${wire.entries.length} read here, whose Coinbase contract holds any, ${read.text}`
+          : `companies whose Coinbase contract holds any, ${read.text}`,
+        tone: read.stale ? ('warn' as const) : ('neutral' as const),
       };
     })(),
   ];
+}
+
+/** Past this, the headline's newest supply reading is old enough to say so in colour: the hourly registry pass and the
+ * three-hourly ratio pass both read supply, so six hours is two of the slower one missed. */
+const SUPPLY_READ_STALE_MS_V1 = 6 * 3_600_000;
+
+/**
+ * How old the supply readings behind the headline are, as the board says ages: "12 min ago", against the answer's
+ * own time (audit 11-20 DATA-1). A failed read keeps the last measured supply, so the count can stand on a reading
+ * hours old; this says when, and which is oldest when the readings are far apart. An API that does not send the
+ * time yet keeps the old words.
+ */
+function supplyReadNoteV1(wire: MarketRealityIndexWireV1): { text: string; stale: boolean } {
+  const read = wire.supplyReadAt;
+  if (read === undefined) return { text: 'as Base was last read', stale: false };
+  if (read === null) return { text: 'though no supply of theirs has been read from Base yet', stale: true };
+  const newest = quoteAgeLabelV1(read.newest, wire.observedAt);
+  const oldest = quoteAgeLabelV1(read.oldest, wire.observedAt);
+  if (newest === null) return { text: 'as Base was last read', stale: false };
+  const stale = Date.parse(wire.observedAt) - Date.parse(read.newest) > SUPPLY_READ_STALE_MS_V1;
+  const spread = oldest !== null && oldest !== newest && Date.parse(read.newest) - Date.parse(read.oldest) > 3_600_000;
+  return { text: `as Base was read ${newest}${spread ? `, the oldest reading ${oldest}` : ''}`, stale };
 }
 
 /** What this page is, said above the grid: Coinbase's B20 contracts, the

@@ -8,6 +8,7 @@ import type { Address } from 'viem';
 import { z } from 'zod';
 
 import type { CalendarRead } from './calendar.js';
+import { STILL_NOT_OFFERED_IN_V1, STILL_SANCTIONED_COUNTRIES_V1, STILL_SANCTIONED_REGIONS_V1 } from './eligibility.js';
 import { formatTokenAmount } from './format.js';
 import { TERMS, earningsWindow, weekendWindow } from './policy.js';
 import { ADDRESSES, ASSETS, STOCKS } from './registry.js';
@@ -84,6 +85,24 @@ export function stillTerms(read: CalendarRead, now: Date) {
 
 export type StillTerms = ReturnType<typeof stillTerms>;
 
+/**
+ * Where Still prepares nothing new, as data (audit 11-20 DOC-8): the United States and the countries under
+ * comprehensive sanctions by ISO code, the regions no country table can place by name, and the one phrase every
+ * page and answer shares. `notOfferedTo` names only US persons, and an agent that reads only the JSON would tell
+ * a person in Iran that Still is open to them.
+ *
+ * The terms do not carry it yet: their schema is strict, and a client built before it refuses terms that carry
+ * it. The schema accepts it from 2026-11-21; `stillTerms` returns it once those clients are gone, and the field
+ * then becomes required.
+ */
+export function stillNotOfferedInV1(): { countries: { code: string; name: string }[]; regions: string[]; text: string } {
+  return {
+    countries: [{ code: 'US', name: 'United States' }, ...STILL_SANCTIONED_COUNTRIES_V1.map(({ code, name }) => ({ code, name }))],
+    regions: [...STILL_SANCTIONED_REGIONS_V1],
+    text: STILL_NOT_OFFERED_IN_V1,
+  };
+}
+
 const ISO = z.string().datetime();
 const ADDRESS = z.custom<Address>((value) => typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value), 'not an address');
 const STOCK_ID = z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc']);
@@ -131,6 +150,15 @@ export const StillTermsSchema = z
     ),
     venues: z.array(z.object({ name: z.string(), address: ADDRESS }).strict()),
     notOfferedTo: z.literal('US persons'),
+    /** See `stillNotOfferedInV1`: accepted now, sent later. */
+    notOfferedIn: z
+      .object({
+        countries: z.array(z.object({ code: z.string().regex(/^[A-Z]{2}$/), name: z.string() }).strict()),
+        regions: z.array(z.string()),
+        text: z.string(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

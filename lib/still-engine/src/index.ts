@@ -18,7 +18,7 @@ export { createNames, displayName, parseSubject, resolveSubject, type Names, typ
 export { createMirrorService, type MirrorOutcome, type MirrorReadingV1, type MirrorService, type MirrorServiceOptions } from './service.js';
 export { aaveCollateralOfV1, computeMirror, type AaveCollateralV1, type MirrorInput } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
-export { STILL_STOCK_LOWER_SHARE_PERCENT_V1, STILL_STOCK_LOWER_SHARE_WHEN_V1, StillTermsSchema, stillTerms, type StillTerms } from './terms.js';
+export { STILL_STOCK_LOWER_SHARE_PERCENT_V1, STILL_STOCK_LOWER_SHARE_WHEN_V1, StillTermsSchema, stillNotOfferedInV1, stillTerms, type StillTerms } from './terms.js';
 export {
   STILL_QUOTE_CLOSING_LIMITS_V1,
   marketOnlyInputV1,
