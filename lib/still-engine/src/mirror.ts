@@ -21,7 +21,7 @@ import {
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
 import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
 import type { CalendarRead } from './calendar.js';
-import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, weekendWindow } from './policy.js';
+import { TERMS, countsForNewLoan, earningsWindow, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
 import { ADDRESSES, CRYPTO, STOCKS, type AssetId, type CryptoAsset, type StockAsset } from './registry.js';
 import type {
@@ -99,7 +99,8 @@ function earningsFrom(calendar: CalendarRead, at: Date): EarningsOf {
         source: 'calendar',
         reportDate: window?.reportDate ?? null,
         window: window ? { startsAt: window.startsAt.toISOString(), endsAt: window.endsAt.toISOString() } : null,
-        lowered: window?.active ?? false,
+        // Open now, or starting before a loan read now could land (audit 11-20 LA-1).
+        lowered: countsForNewLoan(window, at),
       },
       failed: null,
     };
@@ -655,10 +656,13 @@ export interface MirrorInput {
 export function computeMirror({ universe, snapshot, calendar, subject, assembledAt }: MirrorInput): MirrorReport {
   const blockTime = new Date(Number(snapshot.block.timestamp) * 1000);
   const window = weekendWindow(blockTime);
+  // The closed-market share applies inside the window, and to a loan read in the minutes before it, since that loan
+  // lands inside it (audit 11-20 LA-1). `terms.weekend.active` below stays whether the window is open.
+  const closedShare = countsForNewLoan(window, blockTime);
   const earningsOf = earningsFrom(calendar, blockTime);
-  const actual = computeAll(universe, snapshot, window.active, earningsOf, blockTime);
+  const actual = computeAll(universe, snapshot, closedShare, earningsOf, blockTime);
   let weekdayAvailable: bigint | null = null;
-  if (window.active) {
+  if (closedShare) {
     // Earnings windows hold on weekdays too, so the comparison keeps them.
     const weekday = computeAll(universe, snapshot, false, earningsOf, blockTime);
     const known = weekday.venues.filter((v) => v.availableCents !== null);

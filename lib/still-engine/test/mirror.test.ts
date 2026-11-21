@@ -190,6 +190,17 @@ describe('limits from the venue and the issuer', () => {
 });
 
 describe('a market holiday', () => {
+  it('counts stocks at 40% from ten minutes before the window, since a loan read then lands inside it (audit 11-20 LA-1)', () => {
+    const before = run(snapshot(EXAMPLE, BigInt(Date.parse('2026-10-23T23:55:00Z') / 1000))); // Fri 19:55 New York
+    assert.equal(before.terms.weekend.active, false, 'the window itself is not open yet');
+    assert.equal(line(before, 'NVDAc').stillFactorBps, 2800);
+    assert.equal(before.headline.availableCents, '66253');
+    assert.equal(before.headline.weekdayAvailableCents, '78462');
+    const earlier = run(snapshot(EXAMPLE, BigInt(Date.parse('2026-10-23T23:49:00Z') / 1000))); // Fri 19:49
+    assert.equal(line(earlier, 'NVDAc').stillFactorBps, 3500);
+    assert.equal(earlier.headline.weekdayAvailableCents, null);
+  });
+
   it('counts stocks at 40% on Thanksgiving, a Thursday, and says what an open market would give', () => {
     const r = run(snapshot(EXAMPLE, BigInt(Date.parse('2026-11-26T15:00:00Z') / 1000))); // Thu 10:00 New York
     assert.equal(r.terms.weekend.active, true);

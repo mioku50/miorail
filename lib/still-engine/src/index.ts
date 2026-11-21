@@ -1,5 +1,7 @@
 export {
+  STILL_SHARE_LOOKAHEAD_MS,
   TERMS,
+  countsForNewLoan,
   earningsWindow,
   earningsWindowOf,
   marketDate,

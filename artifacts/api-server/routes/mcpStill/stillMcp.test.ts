@@ -82,7 +82,8 @@ test('five tools under Still’s own name, every one a read, and instructions th
     assert.ok(text.includes(STILL_STOCK_LOWER_SHARE_WHEN_V1), text.slice(0, 120));
   }
   // Every rule that lowers a stock to 40%, the unread calendar and the stale reference price included (audit DOC-2).
-  assert.match(instructions, /at 40% for a stock while Wall Street is closed \(weekends and market holidays included\), around its earnings report, while its earnings calendar cannot be read, while its reference price has gone more than 25 open-market hours without an update, or while its price time cannot be read/);
+  // And from ten minutes before either window for a new loan, which lands inside it (audit 11-20 LA-1).
+  assert.match(instructions, /at 40% for a stock while Wall Street is closed \(weekends and market holidays included\) or around its earnings report \(for a new loan, from ten minutes before either begins\), while its earnings calendar cannot be read, while its reference price has gone more than 25 open-market hours without an update, or while its price time cannot be read/);
   assert.match(instructions, /This server only reads: it prepares, signs and sends nothing/);
   assert.match(instructions, /null means unread, never zero/);
   // Eligible jurisdictions, with the places named (audit BASE-2).

@@ -1,5 +1,5 @@
 import React from 'react';
-import { TERMS } from '@mioagent/still-engine/policy';
+import { STILL_SHARE_LOOKAHEAD_MS, TERMS } from '@mioagent/still-engine/policy';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ELIGIBILITY_STATEMENT_V1, STILL_ELIGIBLE_JURISDICTIONS_V1, STILL_REGION_ATTRIBUTION_V1, STILL_US_PERSON_DEFINITION_V1 } from '@mioagent/still-engine/eligibility';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
@@ -76,6 +76,11 @@ export function StillSafety({ model }: { model: StillSafetyModelV1 }) {
           report date to {clockV1(TERMS.earningsEndsDayAfter)} the day after it, New York time, Still lends at most {percentV1(earnings)} against
           that stock. The two never stack. At {stricter}, the collateral could lose about {percentV1(BPS_V1 - Math.min(closed, earnings))} before
           liquidation could start.
+        </p>
+        {/* Audit 11-20 LA-1: judged at its read, a loan armed seconds before 20:00 landed after it at the higher share. */}
+        <p className="still-note">
+          A new loan counts at the lower share from {Math.round(STILL_SHARE_LOOKAHEAD_MS / 60_000)} minutes before either window begins, because
+          it lands once the window has started. A loan your wallet takes longer than that to send lands at the share it was prepared at.
         </p>
         {/* As the engine reads it (calendar.ts, mirror.ts): a stock the calendar lists with an empty list has no report
             scheduled; a stock it leaves out, or a calendar that did not answer, was not read (audit DOC-1, 2026-11-14). */}

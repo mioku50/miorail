@@ -1,5 +1,5 @@
 import { erc20Abi, keccak256, type Address } from 'viem';
-import { createEarningsCalendar, createProviders, earningsWindow, stillShareBps, weekendWindow, type CalendarRead, type StockAsset } from '@mioagent/still-engine';
+import { countsForNewLoan, createEarningsCalendar, createProviders, earningsWindow, stillShareBps, weekendWindow, type CalendarRead, type StockAsset } from '@mioagent/still-engine';
 import { readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-engine/read';
 import { ADDRESSES, STOCKS, type StockId } from '@mioagent/still-engine/registry';
 import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/abi';
@@ -394,14 +394,18 @@ export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockA
   for (const when of [now, blockAt]) {
     const closed = weekendWindow(when);
     const earnings = dates === undefined ? null : earningsWindow(when, dates);
+    // A window counts once it is open, and for a loan read in the minutes before it, since the loan lands inside it
+    // (audit 11-20 LA-1: one armed at 19:59:55 on a Friday landed at 20:00:20 at the open-market share).
+    const closedCounts = countsForNewLoan(closed, when);
+    const earningsCounts = countsForNewLoan(earnings, when);
     // Inside a closed-market window the feed is quiet by design, and the window's own share applies.
     const stale = !closed.active && !unread && stockPriceStale(priceUpdatedAt!, when);
     const ageUnread = !closed.active && unread;
-    const at = stillShareBps('stock', closed.active || stale || ageUnread, dates === undefined || earnings?.active === true);
+    const at = stillShareBps('stock', closedCounts || stale || ageUnread, dates === undefined || earningsCounts);
     if (at >= share) continue;
     share = at;
-    lowered = closed.active ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
-      : earnings?.active ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
+    lowered = closedCounts ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
+      : earningsCounts && earnings ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
         : stale ? { reason: 'price_stale', updatedAt: priceUpdatedAt!.toISOString() }
           : ageUnread ? { reason: 'price_age_unread' }
             : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };

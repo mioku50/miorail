@@ -45,7 +45,7 @@ A shared link previews as its own card: `/w/<wallet>` as that wallet's check, an
 
 1. It reads each asset's collateral factor from the protocol itself, at one Base block.
 2. It lends at **50%** of that factor. At Still's full limit, a new loan's collateral can lose about half its value before liquidation can start; interest narrows that over time.
-3. For a stock it lends at **40%** while Wall Street is closed (weekends and market holidays, by a reviewed calendar) and from the day before a company's earnings report to the evening after it, when a price can gap. An earnings calendar that cannot be read, or that leaves a stock out, counts that stock at 40%.
+3. For a stock it lends at **40%** while Wall Street is closed (weekends and market holidays, by a reviewed calendar) and from the day before a company's earnings report to the evening after it, when a price can gap. A new loan counts at 40% from ten minutes before either window begins, since it lands inside it. An earnings calendar that cannot be read, or that leaves a stock out, counts that stock at 40%.
 4. A stock whose reference price has gone more than 25 hours of open market without an update also counts at 40%, until a new price arrives. So does a stock whose price time cannot be read: Still cannot know that price is fresh.
 5. It leaves 0.0005 ETH in the wallet for network fees and never counts it.
 6. The server refuses a loan above that limit, whatever the screen sent.

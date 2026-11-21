@@ -2,12 +2,14 @@
 // terms it was made under. 2026-10-25: Still's first terms, before it moved into this repo.
 // 2026-10-26: the closed-market window follows the market calendar, holidays included.
 // 2026-11-18: a stock whose price time cannot be read counts as one whose price is stale.
+// 2026-11-21: a new loan is judged where it lands: a closed-market or earnings window that starts within ten minutes
+// counts already (audit 11-20 LA-1).
 
 import { nextWeekendStartV1, weekendWindowV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { BPS, WAD, mulDiv } from './math.js';
 
 export const TERMS = {
-  version: '2026-11-18',
+  version: '2026-11-21',
   /** Still lends at half the protocol's collateral factor: a fresh draw starts 50% from liquidation. */
   shareOfProtocolBps: 5_000n,
   /**
@@ -51,6 +53,24 @@ export const TERMS = {
 } as const;
 
 export type AssetKind = 'stock' | 'crypto';
+/**
+ * How far ahead a new loan's share is judged (audit 11-20 LA-1). A loan is read, reviewed and armed before it lands:
+ * judged at its read, one armed at 19:59:55 on a Friday landed at 20:00:20 at the open-market share, 25% above Still's
+ * closed-market limit for it. So a closed-market or earnings window that starts within this counts already. Ten
+ * minutes covers the thirty-second review and a wallet that takes its time; a loan a wallet holds longer than that
+ * before sending it lands at the share it was prepared at.
+ */
+export const STILL_SHARE_LOOKAHEAD_MS = 10 * 60_000;
+/**
+ * Whether a closed-market or earnings window counts for a new loan read at `at`: open now, or starting within
+ * `STILL_SHARE_LOOKAHEAD_MS`. Its `active` stays what it is; only the share looks ahead.
+ */
+export function countsForNewLoan(window: { active: boolean; startsAt: Date } | null, at: Date): boolean {
+  if (window === null) return false;
+  if (window.active) return true;
+  const ahead = window.startsAt.getTime() - at.getTime();
+  return ahead >= 0 && ahead <= STILL_SHARE_LOOKAHEAD_MS;
+}
 
 /**
  * The share of the protocol's collateral factor Still lends at, for this kind of asset now. For a

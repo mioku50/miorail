@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { WAD } from '../src/math.js';
-import { TERMS, earningsWindow, earningsWindowOf, marketDate, openMarketMsSince, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, stockPriceStale, weekendWindow } from '../src/policy.js';
+import { STILL_SHARE_LOOKAHEAD_MS, TERMS, countsForNewLoan, earningsWindow, earningsWindowOf, marketDate, openMarketMsSince, safetyFromHealthFactor, stillShareBps, stockPriceAgeV1, stockPriceStale, weekendWindow } from '../src/policy.js';
 import { assertMatches } from './matches.js';
 
 const at = (iso: string) => new Date(iso);
@@ -194,3 +194,20 @@ describe('a stock price that was not refreshed (audit BASE-7, terms of 2026-11-1
     assert.equal(stockPriceStale(at('2025-10-21T15:00:00Z'), at('2026-10-21T15:00:00Z')), true);
   });
 });
+
+// Audit 11-20 LA-1: a new loan is judged where it lands, not where it was read.
+describe('a window counts for a new loan from ten minutes before it opens', () => {
+  it('counts an open window, one starting within the look-ahead, and no other', () => {
+    assert.equal(STILL_SHARE_LOOKAHEAD_MS, 10 * 60_000);
+    const friday = (iso: string) => countsForNewLoan(weekendWindow(at(iso)), at(iso));
+    assert.equal(friday('2026-10-23T23:49:59Z'), false); // Fri 19:49:59: ten minutes and a second before
+    assert.equal(friday('2026-10-23T23:50:00Z'), true); // Fri 19:50
+    assert.equal(friday('2026-10-23T23:59:55Z'), true); // the audit's loan, armed at 19:59:55
+    assert.equal(friday('2026-10-24T15:00:00Z'), true); // Saturday: open
+    assert.equal(friday('2026-10-26T00:00:00Z'), false); // Sunday 20:00: closed again, and the next is days away
+    // `active` is left as it is: only the share looks ahead.
+    assert.equal(weekendWindow(at('2026-10-23T23:55:00Z')).active, false);
+    assert.equal(countsForNewLoan(null, at('2026-10-23T23:55:00Z')), false);
+  });
+});
+

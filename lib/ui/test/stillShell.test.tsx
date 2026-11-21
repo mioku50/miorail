@@ -185,6 +185,9 @@ describe('Home', () => {
       ['FRI 8 PM', 'Weekend limits begin.'],
       ['≈ NOV 12', 'Apple dividend · ≈ $0.19 as more AAPLc, an estimate'],
     ]);
+    // Minutes before, the limits already apply to a new loan, which lands after they begin (audit 11-20 LA-1).
+    const close = homeViewV1({ report: report(), sky: skyStateV1({ now: new Date('2026-10-23T23:55:00Z') }), dividends });
+    assert.ok(close.comingUp.some((c) => c.text === 'Weekend limits begin. A new loan counts at them already: it lands after they begin.'));
   });
 
   it('renders the numbers it was given and nothing it was not', () => {

@@ -1,4 +1,4 @@
-import { STOCKS, assetById, type AssetId } from '@mioagent/still-engine';
+import { STOCKS, assetById, countsForNewLoan, type AssetId } from '@mioagent/still-engine';
 import { formatCents, formatPercentBps, formatTokenAmount } from '@mioagent/still-engine/format';
 import type { MirrorInput } from '@mioagent/still-engine';
 import type { MirrorReport, VenueLine } from '@mioagent/still-engine/report';
@@ -393,6 +393,13 @@ function limitAnswerV1(reading: StillAgentReadingV1, w: Words, change: StillRead
   if (report.terms.weekend.active && weekday !== null) {
     steps.push(t(w, `Рынок США закрыт: акции считаются по ${STILL_SHARES_V1.closed}% вместо ${STILL_SHARES_V1.full}% до ${newYorkMomentV1(report.terms.weekend.endsAt)} по Нью-Йорку; на открытом рынке было бы ${formatCents(weekday)}.`, `The US market is closed: stocks count at ${STILL_SHARES_V1.closed}% instead of ${STILL_SHARES_V1.full}% until ${newYorkMomentV1(report.terms.weekend.endsAt)} New York time; an open market would give ${formatCents(weekday)}.`));
   }
+  // Minutes before the window, a new loan already counts at its share: it lands inside it (audit 11-20 LA-1).
+  const closingSoon = !report.terms.weekend.active
+    && countsForNewLoan({ active: false, startsAt: new Date(report.terms.weekend.startsAt) }, new Date(report.reading.blockTime));
+  if (closingSoon && weekday !== null) {
+    steps.push(t(w, `Рынок США закрывается в ${newYorkMomentV1(report.terms.weekend.startsAt)} по Нью-Йорку, а новый заём приземлится уже после: акции считаются по ${STILL_SHARES_V1.closed}% вместо ${STILL_SHARES_V1.full}%; на открытом рынке было бы ${formatCents(weekday)}.`,
+      `The US market closes at ${newYorkMomentV1(report.terms.weekend.startsAt)} New York time, and a new loan would land after it: stocks count at ${STILL_SHARES_V1.closed}% instead of ${STILL_SHARES_V1.full}%; an open market would give ${formatCents(weekday)}.`));
+  }
   const sentences = [t(w, `Сейчас запас для займа — ${formatCents(available)}.`, `Your borrowing room is ${formatCents(available)} now.`)];
   if (change) {
     sentences.push(
@@ -405,6 +412,8 @@ function limitAnswerV1(reading: StillAgentReadingV1, w: Words, change: StillRead
   }
   if (report.terms.weekend.active && weekday !== null && BigInt(weekday) > BigInt(available)) {
     sentences.push(t(w, `Пока рынок закрыт, акции считаются по ${STILL_SHARES_V1.closed}%: на открытом рынке было бы ${formatCents(weekday)}.`, `While the market is closed, stocks count at ${STILL_SHARES_V1.closed}%: an open market would give ${formatCents(weekday)}.`));
+  } else if (closingSoon && weekday !== null && BigInt(weekday) > BigInt(available)) {
+    sentences.push(t(w, `Новый заём приземлится уже после закрытия рынка, поэтому акции считаются по ${STILL_SHARES_V1.closed}%: на открытом рынке было бы ${formatCents(weekday)}.`, `A new loan would land after the market closes, so stocks count at ${STILL_SHARES_V1.closed}%: an open market would give ${formatCents(weekday)}.`));
   }
   return {
     topic: 'analysis',

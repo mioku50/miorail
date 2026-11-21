@@ -38,6 +38,20 @@ describe('Still Aave bounded same-block standing', () => {
     assert.equal(report.shareBpsByStock.NVDAc, 4000);
     assert.deepEqual(report.loweredByStock.NVDAc, { reason: 'earnings', reportDate: '2026-10-22', until: '2026-10-24T00:00:00.000Z' });
   });
+  // Audit 11-20 LA-1: reviewed at 19:59:55 on a Friday, a loan landed at 20:00:20 at the open-market share.
+  it('lends at a window’s share from ten minutes before it opens, since the loan lands inside it', () => {
+    const fresh = new Date('2026-10-23T23:00:00Z');
+    const share = (iso: string, dates = calendar()) => stockShareTermsV1('NVDAc', dates, new Date(iso), new Date(iso), fresh);
+    assert.deepEqual(share('2026-10-23T23:59:55Z'), { share: BigInt(4000), lowered: { reason: 'market_closed', until: '2026-10-26T00:00:00.000Z' } });
+    assert.deepEqual(share('2026-10-23T23:49:59Z'), { share: BigInt(5000), lowered: null });
+    // The clock of the server, not only the block, looks ahead: a block a minute old is no way around it.
+    assert.equal(stockShareTermsV1('NVDAc', calendar(), new Date('2026-10-23T23:48:00Z'), new Date('2026-10-23T23:52:00Z'), fresh).share, BigInt(4000));
+    // An earnings window the same way: NVDAc reporting on Oct 22 opens its window at 00:00 New York on Oct 21.
+    const reports = calendar({ NVDAc: ['2026-10-22'] });
+    const nightBefore = stockShareTermsV1('NVDAc', reports, new Date('2026-10-21T03:55:00Z'), new Date('2026-10-21T03:55:00Z'), new Date('2026-10-21T03:00:00Z'));
+    assert.deepEqual(nightBefore, { share: BigInt(4000), lowered: { reason: 'earnings', reportDate: '2026-10-22', until: '2026-10-24T00:00:00.000Z' } });
+  });
+
   it('counts a stock whose price was not refreshed for over a day of open market as while the market is closed (audit N13-4)', () => {
     const wednesday = new Date('2026-10-21T15:00:00Z'), hour = 3_600_000;
     const at = (hours: number) => new Date(wednesday.getTime() - hours * hour);

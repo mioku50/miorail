@@ -1,6 +1,7 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
+import { countsForNewLoan } from '@mioagent/still-engine/policy';
 
 import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState.js';
 import { dividendMoneyV1 } from './dividendMoney.js';
@@ -181,10 +182,13 @@ export function homeViewV1(input: {
     comingUp.push({ when: comingWhenV1(sky.closed.endsAt, sky.at), icon: 'sun', text: 'Full limits come back with the market.' });
   } else {
     const weekend = newYorkMomentV1(sky.closed.startsAt).startsWith('Fri') && newYorkMomentV1(sky.closed.endsAt).startsWith('Sun');
+    // Minutes before, a new loan already counts at them: it lands after they begin (audit 11-20 LA-1).
+    const already = countsForNewLoan({ active: false, startsAt: new Date(sky.closed.startsAt) }, new Date(sky.at))
+      ? ' A new loan counts at them already: it lands after they begin.' : '';
     comingUp.push({
       when: comingWhenV1(sky.closed.startsAt, sky.at),
       icon: 'moon',
-      text: weekend ? 'Weekend limits begin.' : 'Holiday limits begin: Wall Street closes.',
+      text: `${weekend ? 'Weekend limits begin.' : 'Holiday limits begin: Wall Street closes.'}${already}`,
     });
   }
   for (const line of report.assets) {

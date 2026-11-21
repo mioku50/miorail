@@ -18,7 +18,8 @@ import { ADDRESSES, ASSETS, STOCKS } from './registry.js';
  * the share uses (audit 11-20 DOC-4, LA-3): "40% for a stock " + this.
  */
 export const STILL_STOCK_LOWER_SHARE_WHEN_V1 =
-  'while Wall Street is closed (weekends and market holidays included), around its earnings report, while its earnings calendar cannot be read, ' +
+  'while Wall Street is closed (weekends and market holidays included) or around its earnings report (for a new loan, from ten minutes before either ' +
+  'begins), while its earnings calendar cannot be read, ' +
   `while its reference price has gone more than ${TERMS.stockPriceStaleAfterHours} open-market hours without an update, or while its price time cannot be read`;
 
 /** "40%": the lower share a stock counts at, as the descriptions say it. */
@@ -37,14 +38,14 @@ export function stillTerms(read: CalendarRead, now: Date) {
     sharePercentOfProtocol: Number(TERMS.shareOfProtocolBps) / 100,
     weekend: {
       stockSharePercentOfProtocol: Number(TERMS.weekendStockShareOfProtocolBps) / 100,
-      window: 'while Wall Street is closed, weekends and market holidays alike: from 20:00 New York time after the last session to 20:00 before the next',
+      window: 'while Wall Street is closed, weekends and market holidays alike: from 20:00 New York time after the last session to 20:00 before the next; a new loan counts at it from ten minutes before it begins, since it lands inside it',
       activeNow: weekend.active,
       startsAt: weekend.startsAt.toISOString(),
       endsAt: weekend.endsAt.toISOString(),
     },
     earnings: {
       stockSharePercentOfProtocol: Number(TERMS.earningsStockShareOfProtocolBps) / 100,
-      window: 'around each company’s earnings report: from 00:00 New York time the day before the report date to 20:00 the day after',
+      window: 'around each company’s earnings report: from 00:00 New York time the day before the report date to 20:00 the day after; a new loan counts at it from ten minutes before it begins, since it lands inside it',
       calendar: 'Aave V4 API (api.v4.aave.com), the calendar Aave shows next to these reserves',
       calendarReadAt: read.ok ? read.calendar.readAt.toISOString() : null,
       stocks: STOCKS.map((stock) => {
