@@ -99,7 +99,7 @@ function runRow(overrides: Record<string, unknown> = {}): Record<string, unknown
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS b20_launches, b20_discover_cursors, b20_discover_runs CASCADE');
   await sql.unsafe('DROP FUNCTION IF EXISTS b20_launches_immutable_identity() CASCADE');
   for (const file of [

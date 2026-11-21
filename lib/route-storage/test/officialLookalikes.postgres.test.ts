@@ -30,7 +30,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS official_asset_lookalikes CASCADE');
   for (const file of ['0053_official_asset_lookalikes.sql', '0054_lookalike_matched_alias.sql']) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');

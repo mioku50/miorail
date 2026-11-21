@@ -31,7 +31,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS aerodrome_reward_alerts CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0086_aerodrome_reward_alerts.sql'), 'utf8');
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

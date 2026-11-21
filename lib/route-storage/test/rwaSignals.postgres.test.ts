@@ -34,7 +34,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS rwa_signals CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS rwa_signal_watch CASCADE');
   // Market-tail dependency first, then both signal migrations. 0069 widens the kind CHECK that 0055 created,

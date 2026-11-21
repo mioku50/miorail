@@ -20,7 +20,7 @@ let sql: ReturnType<typeof postgres>;
 
 before(async () => {
   if (!temporary) return;
-  sql = postgres(url!, { max: 1, onnotice() {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice() {} });
   await sql.unsafe('DO $$ BEGIN CREATE ROLE miorail_user; EXCEPTION WHEN duplicate_object THEN NULL; END $$');
   await sql.unsafe('GRANT USAGE, CREATE ON SCHEMA public TO miorail_user');
   await sql.unsafe('SET ROLE miorail_user');

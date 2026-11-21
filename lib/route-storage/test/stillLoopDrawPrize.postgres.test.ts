@@ -61,7 +61,7 @@ function racingTransactions(): [typeof transaction, typeof transaction] {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 4, onnotice: () => {} });
+  sql = postgres(url!, { max: 4, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loop_draws, still_loop_free_entries, still_loop_entries CASCADE');
   for (const file of ['0103_still_loop_draws.sql', '0104_still_loop_draw_entries.sql']) {
     await sql.unsafe((await readFile(resolve(drizzleDir(), file), 'utf8')).replaceAll('--> statement-breakpoint', ''));

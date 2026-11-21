@@ -35,7 +35,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe(
     'DROP TABLE IF EXISTS market_venue_activity_totals, market_venue_transfers, market_venues, market_tail_cursors CASCADE',
   );

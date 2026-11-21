@@ -37,7 +37,7 @@ async function applyV1(name: string): Promise<void> {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe(
     'DROP TABLE IF EXISTS b20_corporate_actions, rwa_signals, rwa_signal_watch, market_venue_transfers, market_venues, market_tail_cursors CASCADE',
   );

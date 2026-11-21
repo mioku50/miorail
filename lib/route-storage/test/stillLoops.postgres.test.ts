@@ -30,7 +30,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loops CASCADE');
   // Applied twice: it must re-run.
   for (let pass = 0; pass < 2; pass += 1) {

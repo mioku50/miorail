@@ -28,7 +28,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 2, onnotice: () => {} });
+  sql = postgres(url!, { max: 2, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS ops_alert_chats, ops_alert_codes CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0085_ops_alert_chats.sql'), 'utf8');
   for (let pass = 0; pass < 2; pass += 1) await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

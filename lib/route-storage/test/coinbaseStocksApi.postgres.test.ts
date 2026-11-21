@@ -18,7 +18,7 @@ const root = resolve(import.meta.dirname, '../../..');
 
 before(async () => {
   if (!local) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   dir = await mkdtemp(join(tmpdir(), 'miorail-coinbase-api-'));
   // This test requires a disposable database. A fresh instance also exercises
   // the real migration chain and source enums, not a simplified test schema.

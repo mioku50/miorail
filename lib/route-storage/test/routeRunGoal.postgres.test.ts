@@ -42,7 +42,7 @@ let sql: ReturnType<typeof postgres> | null = null;
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   // The columns of 0012_t51_route_storage.sql, with the goal column 0014 added
   // and the check 0072 widened. No foreign key: this suite is about the read.
   await sql.unsafe(`

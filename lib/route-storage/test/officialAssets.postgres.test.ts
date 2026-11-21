@@ -36,7 +36,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 4, onnotice: () => {} });
+  sql = postgres(url!, { max: 4, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS official_assets CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS official_asset_sources CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0050_official_assets.sql'), 'utf8');

@@ -34,7 +34,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS b20_launch_buyers CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0035_b20_launch_buyers.sql'), 'utf8');
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

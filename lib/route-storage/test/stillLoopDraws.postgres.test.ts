@@ -30,7 +30,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loop_draws, still_loop_free_entries, still_loop_entries CASCADE');
   // Applied in order, and each twice: they must re-run.
   for (const file of ['0103_still_loop_draws.sql', '0104_still_loop_draw_entries.sql']) {

@@ -31,7 +31,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 4, onnotice: () => {} });
+  sql = postgres(url!, { max: 4, prepare: false, onnotice: () => {} });
   await sql.unsafe(`DO $$ BEGIN CREATE ROLE miorail_user; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
   await sql.unsafe('DROP TABLE IF EXISTS found_shares, base_mcp_action_receipt_events, base_mcp_plugin_sessions, base_mcp_action_receipts, users CASCADE');
   await sql.unsafe('CREATE TABLE users ("id" text PRIMARY KEY)');

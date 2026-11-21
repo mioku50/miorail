@@ -12,7 +12,7 @@ const temporary = !!url && /^postgres:\/\/.*@127\.0\.0\.1:\d+\/miorail_pool_read
 let sql: ReturnType<typeof postgres>;
 before(async () => {
   if (!temporary) return;
-  sql = postgres(url!, { max: 1, onnotice() {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice() {} });
   const root = process.cwd().endsWith('lib/route-storage')
     ? resolve(process.cwd(), '../db/drizzle')
     : resolve(process.cwd(), 'lib/db/drizzle');

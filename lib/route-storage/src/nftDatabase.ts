@@ -46,10 +46,12 @@ import {
 // indexes are the guarantee.
 // ---------------------------------------------------------------------------
 
-/** A payload as JSON text under `CAST(… AS jsonb)`. postgres-js, the driver
- * production runs on, stores that as a JSON string scalar and reads it back as
- * a string, so every read goes through `payloadFromDatabase`, as the swap
- * repository's does. Read raw, each NFT row failed its own contract. */
+/** A payload as JSON text under `CAST(… AS jsonb)`. With prepared statements
+ * postgres-js stores that as a JSON string scalar and reads it back as a
+ * string; production's client runs with `prepare: false` (lib/db), where the
+ * server parses the text, and so do the Postgres tests since 2026-11-21 (audit
+ * 11-20 DD-1). Every read still goes through `payloadFromDatabase`, as the
+ * swap repository's does, which takes either. */
 function jsonb(value: unknown): string {
   return JSON.stringify(value);
 }

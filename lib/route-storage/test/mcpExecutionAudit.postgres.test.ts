@@ -80,7 +80,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS mcp_execution_audit, mcp_handoff_revocations CASCADE');
   await sql.unsafe('DROP FUNCTION IF EXISTS mcp_execution_audit_append_only() CASCADE');
   for (const file of MIGRATIONS) {

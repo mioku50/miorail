@@ -33,7 +33,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS still_loan_alerts, still_loan_notices, lending_executions CASCADE');
   // The alerts table as 0093 made it, then 0099, 0100, 0101 and 0105 on top, each twice: they must re-run.
   for (const file of ['0093_still_loan_alerts.sql', '0099_still_loan_notices.sql', '0099_still_loan_notices.sql',

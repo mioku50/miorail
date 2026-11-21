@@ -32,7 +32,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS b20_project_evidence CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS b20_project_claims CASCADE');
   // Every migration, in order. 0047 widens the reference constraint, and a

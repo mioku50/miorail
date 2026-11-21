@@ -91,7 +91,7 @@ function observationRow(overrides: Record<string, unknown> = {}): Record<string,
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe(
     // `b20_launch_buyers` belongs here too: without it the second run against
     // the same throwaway database fails at `CREATE TABLE`, which reads as a

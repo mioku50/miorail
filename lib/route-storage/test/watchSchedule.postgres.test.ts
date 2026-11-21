@@ -31,7 +31,7 @@ function drizzleDir(): string {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS watch_schedule CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0056_watch_schedule.sql'), 'utf8');
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

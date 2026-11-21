@@ -30,7 +30,7 @@ before(async () => {
         max: 16,
         onnotice: () => {},
       })
-    : postgres(url!, { max: 16, onnotice: () => {} });
+    : postgres(url!, { max: 16, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS base_mcp_action_receipt_events CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS base_mcp_action_receipts CASCADE');
   await sql.unsafe(`
