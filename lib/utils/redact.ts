@@ -52,6 +52,15 @@ export function redactSecretsV1(text: string): string {
   return text.replace(URL_V1, (raw) => redactUrlV1(raw)).replace(BEARER_V1, 'Bearer …');
 }
 
+/**
+ * A log line as written: secrets removed, and every 40-hex address cut to its first and last four (audit PRIV-4,
+ * 2026-11-20: each /mcp/private request and several errors logged the whole wallet, "eip155:8453:<wallet>" included).
+ * A 64-hex hash is left whole: it names a transaction, not a person.
+ */
+export function redactLogLineV1(text: string): string {
+  return redactSecretsV1(text).replace(/\b0x([0-9a-fA-F]{4})[0-9a-fA-F]{32}([0-9a-fA-F]{4})\b/g, '0x$1…$2');
+}
+
 /** An error's own words, with secrets, addresses and hashes removed: for a line that names why something failed. */
 export function redactErrorTextV1(text: string): string {
   return redactSecretsV1(text).replace(/\b0x[0-9a-fA-F]{64}\b/g, '0x…').replace(/\b0x[0-9a-fA-F]{40}\b/g, '0x…');

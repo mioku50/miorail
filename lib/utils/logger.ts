@@ -1,4 +1,4 @@
-import { redactSecretsV1 } from './redact.js';
+import { redactLogLineV1 } from './redact.js';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -33,7 +33,7 @@ export class Logger {
     // Every line is redacted as written (audit OPS-2, 2026-11-14): an error's text quoted in `meta` named an
     // RPC URL with its key, and the journal kept it for weeks.
     if (this.format === 'json') {
-      console[level](redactSecretsV1(JSON.stringify(entry)));
+      console[level](redactLogLineV1(JSON.stringify(entry)));
     } else {
       const metaStr = Object.keys(entry)
         .filter((k) => !['level', 'message', 'timestamp'].includes(k))
@@ -42,7 +42,7 @@ export class Logger {
 
       const formattedMessage =
         `[${entry.timestamp}] ${level.toUpperCase()}: ${message} ${metaStr}`.trim();
-      console[level](redactSecretsV1(formattedMessage));
+      console[level](redactLogLineV1(formattedMessage));
     }
   }
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeErrorV1, errorFactsV1, redactErrorTextV1, redactSecretsV1 } from './redact.js';
+import { describeErrorV1, errorFactsV1, redactErrorTextV1, redactLogLineV1, redactSecretsV1 } from './redact.js';
 import { Logger } from './logger.js';
 
 // Synthetic credentials: shaped like the real ones, belonging to nobody.
@@ -59,4 +59,13 @@ test('every line the logger writes is redacted, in both formats', () => {
     assert.match(line, /infura\.io\/v3\/…/);
   }
   assert.equal(JSON.parse(lines[0]!).detail, 'URL: https://base-mainnet.infura.io/v3/…');
+});
+
+// Audit PRIV-4, 2026-11-20: the API's journal carried whole wallets.
+test('a log line keeps an address by its first and last four, and a hash whole', () => {
+  const wallet = `0x${'1a2b'}${'0'.repeat(32)}${'9f8e'}`;
+  const hash = `0x${'ab'.repeat(32)}`;
+  assert.equal(redactLogLineV1(JSON.stringify({ tenantId: `eip155:8453:${wallet}`, tx: hash })),
+    JSON.stringify({ tenantId: 'eip155:8453:0x1a2b…9f8e', tx: hash }));
+  assert.equal(redactLogLineV1('Bearer abcdefghijklmnop1234 from 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'), 'Bearer … from 0x8335…2913');
 });

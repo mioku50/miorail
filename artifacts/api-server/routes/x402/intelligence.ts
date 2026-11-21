@@ -648,7 +648,11 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     // response finishes the receipt says pending, and a buyer whose connection broke first is not counted as one.
     // The context is the request's own, taken now: the event fires outside it.
     const context = requestContext.getStore();
-    res.on('finish', () => { void markSellerDeliveryV1(payload.dataHash, dbEnabled, context).catch(() => undefined); });
+    // Only an answer that left as a 200: a settlement that failed answers 402 after this handler ran (audit X402-2).
+    res.on('finish', () => {
+      if (res.statusCode !== 200) return;
+      void markSellerDeliveryV1(payload.dataHash, dbEnabled, context).catch(() => undefined);
+    });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Miorail-Data-Hash', payload.dataHash);
     res.json(payload);

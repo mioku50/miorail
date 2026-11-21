@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
   CSP_REPORT_LINES_PER_HOUR_V1,
+  CSP_REPORT_REFUSED_KEPT_V1,
   CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1,
   CSP_REPORT_OWN_ORIGIN_RESERVE_V1,
   CSP_REPORTS_PER_REQUEST_V1,
@@ -165,5 +166,17 @@ describe('noise cannot hide a real report', () => {
     now += 3_600_000;
     recorder.record(fact('https://a.example'), 'one');
     assert.equal(dropped.length, 1);
+  });
+
+  // Audit AUTH-2, 2026-11-20: refused keys were kept without limit within the hour.
+  it('keeps at most a bounded set of refused reports, and still counts each past it', () => {
+    let now = Date.parse('2026-11-14T10:01:00.000Z');
+    const dropped: CspReportDroppedV1[] = [];
+    const recorder = createCspReportRecorderV1({ write: () => {}, writeDropped: (value) => dropped.push(value), nowMs: () => now, linesPerHour: 1, linesPerSender: 1 });
+    recorder.record(fact('https://kept.example'), 'one');
+    for (let n = 0; n < CSP_REPORT_REFUSED_KEPT_V1 + 50; n += 1) recorder.record(fact(`https://x${n}.example`), 'one');
+    now += 3_600_000;
+    recorder.record(fact('https://a.example'), 'one');
+    assert.equal(dropped[0]!.overSenderShare + dropped[0]!.overHourBudget, CSP_REPORT_REFUSED_KEPT_V1 + 50);
   });
 });

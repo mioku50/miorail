@@ -420,8 +420,10 @@ export const MarketRealityIndexV1Schema = z
     /** Which corpus this page is: Coinbase's B20 contracts, the standard Base
      * documents for tokenized stocks and the only issuer Miorail covers. */
     scope: z.literal('coinbase_b20'),
-    /** Every reviewed underlying in `scope`, live markets first. */
-    entries: z.array(MarketRealityIndexEntryV1Schema).max(500),
+    /** Every reviewed underlying in `scope`, live markets first. As many as the reviewed corpus holds (5,000): at 500 the
+     * 501st Coinbase stock would have refused the whole page, and the stock pages and the sitemap with it (audit STK-4,
+     * 2026-11-20, at 415). A client built before this refuses past 500 as before. */
+    entries: z.array(MarketRealityIndexEntryV1Schema).max(5_000),
     /** Corpus-wide, never the page: a count beside a list is a claim about the
      * corpus, and this surface pages. */
     totals: z

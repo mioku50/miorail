@@ -146,6 +146,8 @@ export const CSP_REPORT_LINES_PER_SENDER_PER_HOUR_V1 = 5;
 export const CSP_REPORT_OWN_ORIGIN_RESERVE_V1 = 10;
 /** Senders counted in one hour; one past this is counted as not written. */
 const CSP_REPORT_SENDERS_PER_HOUR_V1 = 5_000;
+/** Refused reports remembered at most this many per hour; past it they are counted, not kept (audit AUTH-2). */
+export const CSP_REPORT_REFUSED_KEPT_V1 = 5_000;
 
 /** What an hour did not write: distinct reports refused by the sender's share or by the hour's budget. */
 export interface CspReportDroppedV1 {
@@ -210,9 +212,10 @@ export function createCspReportRecorderV1(input: {
       const reason = written >= perSender || (!bySender.has(sender) && bySender.size >= CSP_REPORT_SENDERS_PER_HOUR_V1) ? 'overSenderShare'
         : seen.size >= room ? 'overHourBudget' : null;
       if (reason) {
-        // Each distinct report is counted once, however often it is posted again.
+        // Each distinct report is counted once, however often it is posted again; past a bound the keys are no longer
+        // kept and each one is counted (audit AUTH-2, 2026-11-20: the set grew without limit within the hour).
         if (!refused.has(key)) {
-          refused.add(key);
+          if (refused.size < CSP_REPORT_REFUSED_KEPT_V1) refused.add(key);
           dropped[reason] += 1;
           if (dropped.senders.size < CSP_REPORT_SENDERS_PER_HOUR_V1) dropped.senders.add(sender);
         }

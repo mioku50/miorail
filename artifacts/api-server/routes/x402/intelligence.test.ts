@@ -440,6 +440,12 @@ test('a receipt carries the delivered hash and the buyer’s own client name', (
   assert.equal(userAgentOfV1(undefined), null);
 });
 
+test('a delivery is marked only for an answer that left as a 200 (audit X402-2)', () => {
+  // A settlement that failed answers 402 after the handler built the quote: no delivery is marked for it.
+  const source = readFileSync(packageFileV1('routes/x402/intelligence.ts'), 'utf8');
+  assert.match(source, /res\.on\('finish', \(\) => \{\s*if \(res\.statusCode !== 200\) return;\s*void markSellerDeliveryV1/);
+});
+
 test('delivery is recorded on the request context before the receipt is looked up', () => {
   // Settlement lands after the response, so the handler reaches delivery first,
   // when no receipt row exists yet. Guarding the source because the failing path
