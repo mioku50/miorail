@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Redirect, useLocation } from 'wouter';
-import { enterStillLoopDrawV1, putStillLoopOnWallV1, useMyDividends, useStillCheck, useStillLoopDrawMineV1, useStillLoopsMineV1, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
+import { enterStillLoopDrawV1, putStillLoopOnWallV1, takeStillLoopOffWallV1, useMyDividends, useStillCheck, useStillLoopDrawMineV1, useStillLoopsMineV1, useStillLoopsV1, useStillMine, useStillUsdcV1 } from '@mioagent/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
 import {
@@ -263,6 +263,11 @@ export function StillLoopsPage() {
       void queryClient.invalidateQueries({ queryKey: ['still-loops-mine'] });
       void queryClient.invalidateQueries({ queryKey: ['still-loops'] });
       return { label: typeof answer?.label === 'string' ? answer.label : null };
+    },
+    offWall: async (executionId: string) => {
+      await takeStillLoopOffWallV1(executionId);
+      void queryClient.invalidateQueries({ queryKey: ['still-loops-mine'] });
+      void queryClient.invalidateQueries({ queryKey: ['still-loops'] });
     },
   };
   const entry = {

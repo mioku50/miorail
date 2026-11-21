@@ -279,6 +279,8 @@ export interface StillLoopsMineModelV1 {
   loops: StillLoopMineViewV1[] | null | undefined;
   /** Puts one on the wall; resolves with the name shown, null for "Loop #N". */
   onWall: (executionId: string, showName: boolean) => Promise<{ label: string | null }>;
+  /** Takes one off the wall again (audit MCP-2); absent where the page cannot. */
+  offWall?: (executionId: string) => Promise<void>;
 }
 
 /** The signed-in wallet's own Loops: one made in an assistant's chat can go on the wall here too (2026-11-19). */
@@ -288,7 +290,8 @@ function MineV1({ mine }: { mine: StillLoopsMineModelV1 }) {
     <section className="still-section still-loops-mine" aria-labelledby="still-loops-mine">
       <h2 id="still-loops-mine" className="still-more-group-head">Your Loops</h2>
       {mine.loops.map((loop) => (
-        <StillLoopOffer key={loop.executionId} model={{ loop, note: false, onWall: (showName) => mine.onWall(loop.executionId, showName) }} />
+        <StillLoopOffer key={loop.executionId} model={{ loop, note: false, onWall: (showName) => mine.onWall(loop.executionId, showName),
+          ...(mine.offWall ? { offWall: () => mine.offWall!(loop.executionId) } : {}) }} />
       ))}
       <p className="still-note">The wall shows the number, the brand, the card, the price to the dollar and the day: never your wallet or the transaction.</p>
     </section>

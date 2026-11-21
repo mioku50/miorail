@@ -97,6 +97,11 @@ export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z
   const wallet = identity.walletAddress.toLowerCase();
   const writes = /\/(?:arm|submission|transaction|steps|stop|release)$/.test(args.path) || LOOP_WALL_V1.test(args.path);
   if ((args.method === 'POST') !== writes) return { status: 400, body: { error: 'lending_request_invalid' }, wallet };
+  // From a chat the wall takes a Loop by its number only: a model that can see this tool could press it, and a Basename
+  // on a public wall is the owner's own choice, made on /loops (audit MCP-2, 2026-11-20).
+  if (LOOP_WALL_V1.test(args.path) && args.body?.showName !== false) {
+    return { status: 400, body: { error: 'loop_wall_name_on_page_only', detail: 'From a chat a Loop goes on the wall by its number. To show your Basename, put it on the wall from /loops.' }, wallet };
+  }
   const routed = await routeV1(identity, args.method, args.path, args.body ?? {});
   const answer = { status: routed.status, body: cardReviewBodyV1(routed.body) };
   const review = answer.body as { state?: unknown; executionId?: unknown; callsHash?: unknown } | null;

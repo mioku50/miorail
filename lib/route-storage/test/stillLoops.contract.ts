@@ -57,6 +57,13 @@ export function stillLoopsContractV1(label: string, make: () => Promise<StillLoo
       assert.deepEqual([again?.wallLabel, again?.walledAt], ['alice.base.eth', at.toISOString()], 'once on the wall, it stays as it went');
       assert.deepEqual((await repo.wall({ limit: 10 })).map((row) => row.loopNo), [1]);
       assert.deepEqual(await repo.wall({ limit: 0 }), []);
+      // Off again by its owner only, name and all, and back on (audit MCP-2).
+      assert.equal(await repo.takeOffWall({ executionId: id(1), walletAddress: OTHER }), null);
+      const off = await repo.takeOffWall({ executionId: id(1), walletAddress: WALLET });
+      assert.deepEqual([off?.onWall, off?.wallLabel, off?.walledAt], [false, null, null]);
+      assert.deepEqual(await repo.wall({ limit: 10 }), []);
+      assert.equal(await repo.takeOffWall({ executionId: id(1), walletAddress: WALLET }), null, 'already off');
+      assert.equal((await repo.putOnWall({ executionId: id(1), walletAddress: WALLET, label: null, at }))?.onWall, true);
     });
 
     test('one wallet reads its own Loops, the newest first, and no other wallet’s', async () => {

@@ -51,7 +51,7 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
             )}
             {status?.bitrefill ? <p className="still-note">{status.bitrefill}</p> : null}
             {/* The Loop this purchase made, as the review page shows it: a person who signed here saw no wall before 2026-11-19. */}
-            {state.loop ? <StillLoopOffer model={{ loop: { ...state.loop, team: false }, onWall: (showName) => store.putOnWall(showName) }} /> : null}
+            {state.loop ? <StillLoopOffer model={{ loop: { ...state.loop, team: false }, numberOnly: true, onWall: () => store.putOnWall(false) }} /> : null}
             {state.statusUnread ? <p className="still-note">Still could not read the status just now. This is our failure; it says nothing about the transaction.</p> : null}
             <div className="still-mcp-actions">
               {!settled && phase !== 'expired' && prepared.reviewUrl ? (

@@ -77,6 +77,21 @@ describe('Loops in public', () => {
     assert.deepEqual([plain.body.label, plain.body.nameShown], [null, false], 'a name it cannot show plainly is not shown');
   });
 
+  // Audit MCP-2, 2026-11-20: nothing could take a Loop off the public wall.
+  it('take a Loop off the wall again only by its own owner, name and all, and let it go back on', async () => {
+    names[WALLET] = 'alice.base.eth';
+    await request(app()).post(`/api/still/loops/${id(1)}/wall`).send({ showName: true }).expect(200);
+    assert.equal((await request(app(null)).delete(`/api/still/loops/${id(1)}/wall`)).status, 401);
+    assert.equal((await request(app()).delete('/api/still/loops/not-an-id/wall')).status, 400);
+    assert.equal((await request(app(OTHER)).delete(`/api/still/loops/${id(1)}/wall`)).status, 409, 'not someone else’s');
+    const off = await request(app()).delete(`/api/still/loops/${id(1)}/wall`).expect(200);
+    assert.equal(off.body.loop.onWall, false);
+    assert.deepEqual((await request(app(null)).get('/api/public/still/loops').expect(200)).body.wall, []);
+    assert.equal((await repository.byExecution(id(1)))?.wallLabel, null, 'the name goes with it');
+    assert.equal((await request(app()).delete(`/api/still/loops/${id(1)}/wall`)).status, 409, 'already off');
+    assert.equal((await request(app()).post(`/api/still/loops/${id(1)}/wall`).send({ showName: false }).expect(200)).body.loop.onWall, true, 'and back on');
+  });
+
   it('start the week on Monday, UTC', () => {
     assert.equal(stillLoopWeekStartV1(new Date('2026-11-16T00:00:00.000Z')).toISOString(), '2026-11-16T00:00:00.000Z');
     assert.equal(stillLoopWeekStartV1(new Date('2026-11-22T23:59:59.000Z')).toISOString(), '2026-11-16T00:00:00.000Z');

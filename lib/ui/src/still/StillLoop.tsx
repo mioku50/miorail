@@ -51,6 +51,10 @@ export interface StillLoopOfferModelV1 {
   onWall: (showName: boolean) => Promise<{ label: string | null }>;
   /** False where a list of Loops says what the wall shows once, under them all. */
   note?: boolean;
+  /** In a chat the wall takes the number only: a Basename is put on it from /loops (audit MCP-2). */
+  numberOnly?: boolean;
+  /** Takes it off the wall again; offered only where the page can (Still's own /loops). */
+  offWall?: () => Promise<void>;
 }
 
 export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
@@ -91,18 +95,30 @@ export function StillLoopOffer({ model }: { model: StillLoopOfferModelV1 }) {
           {loop.team ? <p className="still-extra-note">A Still team Loop: shown as the team’s and not counted.</p> : null}
           {loop.complete && !loop.team ? (
             state === 'done' ? (
-              <p className="still-extra-note still-loop-walled" role="status">
-                On the Loop wall{label === null ? '' : label.value ? ` as ${label.value}` : ` as Loop #${loop.loopNo}`}.
-                {nameMissing ? ' Your wallet has no Basename to show, so the wall shows the number.' : ''}
-              </p>
+              <>
+                <p className="still-extra-note still-loop-walled" role="status">
+                  On the Loop wall{label === null ? '' : label.value ? ` as ${label.value}` : ` as Loop #${loop.loopNo}`}.
+                  {nameMissing ? ' Your wallet has no Basename to show, so the wall shows the number.' : ''}
+                </p>
+                {model.offWall ? (
+                  <button type="button" className="still-btn sec" onClick={() => {
+                    setState('sending');
+                    model.offWall!().then(() => { setLabel(null); setNameMissing(false); setState('idle'); }, () => setState('failed'));
+                  }}>Take it off the wall</button>
+                ) : null}
+              </>
             ) : (
               <div className="still-share still-loop-actions">
                 <button type="button" className="still-btn" disabled={state === 'sending'} onClick={put}>
                   {state === 'sending' ? 'Putting it on the wall…' : 'Put it on the Loop wall'}
                 </button>
-                <label className="still-note still-loop-name">
-                  <input type="checkbox" checked={showName} onChange={(event) => setShowName(event.target.checked)} /> Show my Basename
-                </label>
+                {model.numberOnly ? (
+                  <span className="still-note still-loop-name">As Loop #{loop.loopNo}. To show your Basename instead, put it on the wall from Still’s Loops page.</span>
+                ) : (
+                  <label className="still-note still-loop-name">
+                    <input type="checkbox" checked={showName} onChange={(event) => setShowName(event.target.checked)} /> Show my Basename
+                  </label>
+                )}
               </div>
             )
           ) : null}

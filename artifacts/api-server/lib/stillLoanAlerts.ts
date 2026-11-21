@@ -1,4 +1,4 @@
-import type { MirrorReadingV1, MirrorReport } from '@mioagent/still-engine';
+import type { MirrorInput, MirrorReadingV1, MirrorReport } from '@mioagent/still-engine';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import type {
@@ -150,9 +150,21 @@ export async function refreshStillLoanAlertsV1(input: {
     if (input.dry) continue;
     const holds = input.readHolds ? await input.readHolds(walletAddress, outcome.report).catch(() => undefined) : undefined;
     const { lines, unread } = stillLoanLinesV1(outcome.report, holds);
+    unread.push(...stillLoanUnreadMorphoMarketsV1(outcome.input).filter((market) => !unread.includes(market)));
     await input.alerts.recordReading({ walletAddress, at: input.now, block: outcome.report.reading.block, lines, unread });
   }
   return report;
+}
+
+/**
+ * The Morpho markets a reading could not read (audit LL-2, 2026-11-20). The Mirror lists no venue for such a market
+ * when the wallet holds none of its collateral, which is just where collateral sits once it is pledged, so the loan's
+ * row went as if repaid and its notices started again. A market not read is a loan not read: its row stays.
+ */
+export function stillLoanUnreadMorphoMarketsV1(input: Pick<MirrorInput, 'snapshot'> | null | undefined): string[] {
+  const morpho = input?.snapshot?.morpho;
+  if (!morpho) return [];
+  return CRYPTO.filter((asset) => (morpho.get(asset.id) ?? null) === null).map((asset) => asset.morphoMarket.toLowerCase());
 }
 
 /** "Aave V4 · Coinbase Stocks", "Morpho · cbBTC/USDC": the Mirror's own names. */

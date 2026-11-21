@@ -82,6 +82,12 @@ export function putStillLoopOnWallV1(executionId: string, showName: boolean): Pr
   return fetchApi(`/api/still/loops/${executionId}/wall`, { method: 'POST', body: JSON.stringify({ showName }) });
 }
 
+/** Takes its owner's own Loop off the wall again, from Still's own page (audit MCP-2). */
+export function takeStillLoopOffWallV1(executionId: string): Promise<unknown> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(executionId)) throw new Error('loop_path_invalid');
+  return fetchApi(`/api/still/loops/${executionId}/wall`, { method: 'DELETE' });
+}
+
 /** Loops in public: the counts and the wall. Null while Loops are off on this server. Home's door reads it once
  * (`poll: false`); /loops re-reads it every minute. */
 export function useStillLoopsV1(options: { poll?: boolean } = {}) {

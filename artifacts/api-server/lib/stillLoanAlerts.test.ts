@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { CRYPTO } from '@mioagent/still-engine/registry';
 import test, { describe } from 'node:test';
 
 import type { MirrorReadingV1, MirrorReport, VenueLine } from '@mioagent/still-engine';
 import { InMemoryStillLoanAlertRepositoryV1 } from '@mioagent/route-storage';
 
-import { refreshStillLoanAlertsV1, STILL_LOAN_PASS_MS_V1, stillLoanHealthOfMarginV1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1, stillLoanPassWalletsV1, stillLoanRepayToWatchAtomicV1, type StillLoanReadV1 } from './stillLoanAlerts.js';
+import { refreshStillLoanAlertsV1, STILL_LOAN_PASS_MS_V1, stillLoanHealthOfMarginV1, stillLoanLabelV1, stillLoanLinesV1, stillLoanNoticeV1, stillLoanPassWalletsV1, stillLoanRepayToWatchAtomicV1, stillLoanUnreadMorphoMarketsV1, type StillLoanReadV1 } from './stillLoanAlerts.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const QUIET = '0x2222222222222222222222222222222222222222';
@@ -46,6 +47,16 @@ describe('what a reading found', () => {
     });
     const owesButUnsafe = reading([venue({ debtAtomic: '1', safety: null })]) as Extract<MirrorReadingV1, { outcome: 'report' }>;
     assert.deepEqual(stillLoanLinesV1(owesButUnsafe.report), { lines: [], unread: [SPOKE] });
+  });
+
+  // Audit LL-2, 2026-11-20: a Morpho market not read, with none of its collateral left in the wallet (it is pledged), left no
+  // venue in the Mirror, so the loan's row went as if repaid.
+  test('a Morpho market the reading could not read is unread, not repaid', () => {
+    const cbbtc = CRYPTO.find((asset) => asset.id === 'cbBTC')!;
+    const morpho = new Map(CRYPTO.map((asset) => [asset.id, asset.id === 'cbBTC' ? null : ({} as never)]));
+    assert.deepEqual(stillLoanUnreadMorphoMarketsV1({ snapshot: { morpho } } as never), [cbbtc.morphoMarket.toLowerCase()]);
+    assert.deepEqual(stillLoanUnreadMorphoMarketsV1({ snapshot: { morpho: new Map(CRYPTO.map((asset) => [asset.id, {} as never])) } } as never), []);
+    assert.deepEqual(stillLoanUnreadMorphoMarketsV1(undefined), []);
   });
 });
 

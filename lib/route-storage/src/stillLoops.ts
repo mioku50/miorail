@@ -58,6 +58,8 @@ export interface StillLoopRepositoryV1 {
   markDelivery(input: { executionId: string; outcome: 'complete' | StillLoopUndeliveredV1; at: Date }): Promise<StillLoopV1 | null>;
   /** The owner's own choice to show a complete Loop on the wall; a team Loop never goes. */
   putOnWall(input: { executionId: string; walletAddress: string; label: string | null; at: Date }): Promise<StillLoopV1 | null>;
+  /** The owner's own choice to take it off again, name and all (audit MCP-2, 2026-11-20: nothing could take one off). */
+  takeOffWall(input: { executionId: string; walletAddress: string }): Promise<StillLoopV1 | null>;
   /** Loops on the wall, the latest shown first. */
   wall(input: { limit: number }): Promise<StillLoopV1[]>;
   /** One wallet's own Loops, the newest first: for its owner's page only. */
@@ -119,6 +121,12 @@ export class InMemoryStillLoopRepositoryV1 implements StillLoopRepositoryV1 {
     return { ...row };
   }
 
+  async takeOffWall(input: { executionId: string; walletAddress: string }): Promise<StillLoopV1 | null> {
+    const row = this.rows.get(input.executionId);
+    if (!row || row.walletAddress !== input.walletAddress || !row.onWall) return null;
+    Object.assign(row, { onWall: false, wallLabel: null, walledAt: null });
+    return { ...row };
+  }
   async wall(input: { limit: number }): Promise<StillLoopV1[]> {
     return [...this.rows.values()].filter((row) => row.onWall)
       .sort((a, b) => Date.parse(b.walledAt!) - Date.parse(a.walledAt!) || b.loopNo - a.loopNo)
@@ -221,6 +229,13 @@ export function createDatabaseStillLoopRepositoryV1(sql: SqlTemplateExecutor): S
           AND NOT team AND delivered_at IS NOT NULL AND NOT on_wall`;
       const row = await byExecution(input.executionId);
       return row && row.walletAddress === input.walletAddress && row.onWall ? row : null;
+    },
+    async takeOffWall(input) {
+      const rows = await sql`
+        UPDATE still_loops SET on_wall = false, wall_label = NULL, walled_at = NULL
+        WHERE execution_id = ${input.executionId}::uuid AND wallet_address = ${input.walletAddress} AND on_wall
+        RETURNING *`;
+      return rows[0] ? loopOfRowV1(rows[0]) : null;
     },
     async wall(input) {
       const limit = Math.max(0, Math.min(Math.trunc(input.limit), 100));

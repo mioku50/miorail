@@ -140,6 +140,34 @@ stillLoopsRouter.post('/:executionId/wall', async (req: Request, res: Response) 
   }
 });
 
+/** Its owner takes it off the wall again, from Still's own page (audit MCP-2, 2026-11-20). The chat card cannot ask
+ * this: its one Loop path is the POST above. */
+stillLoopsRouter.delete('/:executionId/wall', async (req: Request, res: Response) => {
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return;
+  const executionId = String(req.params.executionId ?? '').toLowerCase();
+  if (!UUID_V1.test(executionId)) {
+    res.status(400).json({ error: 'loop_request_invalid' });
+    return;
+  }
+  if (!stillLoopsRuntimeV1.enabled()) {
+    res.status(404).json({ error: 'loops_off' });
+    return;
+  }
+  try {
+    const loop = await stillLoopsRuntimeV1.repository().takeOffWall({ executionId, walletAddress: wallet });
+    if (!loop) {
+      res.status(409).json({ error: 'loop_not_on_wall', detail: 'Only your own Loop on the wall can be taken off it.' });
+      return;
+    }
+    forgetStillLoopsPublicV1();
+    res.json({ loop: stillLoopWireV1(loop) });
+  } catch (error) {
+    logger.warn('Still Loop not taken off the wall', { errorName: error instanceof Error ? error.name : typeof error });
+    res.status(503).json({ error: 'unavailable' });
+  }
+});
+
 /** The session wallet's own Loops, for its owner's page: each with its number, its card and whether it is on the wall,
  * so a Loop made in an assistant's chat can go on the wall from /loops too. Never anybody else's. */
 stillLoopsRouter.get('/mine', async (req: Request, res: Response) => {

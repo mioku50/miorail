@@ -149,6 +149,12 @@ test('the card puts its owner’s own Loop on the wall, and nobody else’s, thr
   for (const n of [1, 2]) await repository.markDelivery({ executionId: id(n), outcome: 'complete', at: NOW });
 
   assert.equal((await stillCardLendingV1(IDENTITY, { method: 'GET', path: `/api/still/loops/${id(1)}/wall` })).status, 400, 'a write is a POST');
+  // A Basename goes on the wall from /loops only: a model that sees this tool could press it (audit MCP-2, 2026-11-20).
+  for (const body of [{ showName: true }, {}]) {
+    const named = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `/api/still/loops/${id(1)}/wall`, body });
+    assert.deepEqual([named.status, (named.body as { error: string }).error], [400, 'loop_wall_name_on_page_only']);
+  }
+  assert.equal((await repository.byExecution(id(1)))?.onWall, false, 'nothing went on the wall');
   const walled = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `/api/still/loops/${id(1)}/wall`, body: { showName: false } });
   assert.equal(walled.status, 200);
   assert.equal(walled.wallet, WALLET);

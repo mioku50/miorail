@@ -54,10 +54,18 @@ describe('a Loop on the loan’s own result', () => {
     const team = renderToStaticMarkup(<StillLoopOffer model={{ loop: { ...LOOP, team: true }, onWall: never }} />);
     assert.match(team, /A Still team Loop: shown as the team’s and not counted\./);
     assert.doesNotMatch(team, /Put it on the Loop wall/);
+    // In a chat the press is by number only, the Basename from /loops (audit MCP-2).
+    const chat = renderToStaticMarkup(<StillLoopOffer model={{ loop: LOOP, onWall: never, numberOnly: true }} />);
+    assert.match(chat, /As Loop #7\. To show your Basename instead, put it on the wall from Still’s Loops page\./);
+    assert.doesNotMatch(chat, /Show my Basename/);
     const walled = renderToStaticMarkup(<StillLoopOffer model={{ loop: { ...LOOP, onWall: true }, onWall: never }} />);
     // Read after a reload, which does not say the wall's name: only that it is there (audit UI-4).
     assert.match(walled, /On the Loop wall\./);
     assert.doesNotMatch(walled, /On the Loop wall as/);
+    // Its owner can take it off again where the page can, and nowhere else (audit MCP-2).
+    assert.doesNotMatch(walled, /Take it off the wall/);
+    const removable = renderToStaticMarkup(<StillLoopOffer model={{ loop: { ...LOOP, onWall: true }, onWall: never, offWall: async () => {} }} />);
+    assert.match(removable, /Take it off the wall/);
     assert.doesNotMatch(walled, /Put it on the Loop wall/);
   });
 });
