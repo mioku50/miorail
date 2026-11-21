@@ -143,7 +143,7 @@ describe('Bitrefill’s word for an invoice, before it is paid', () => {
   });
 
   // Audit 11-20 DIFF-2: an expired token took the step's last slot, the one retry found none, and the loan stopped.
-  it('before a step, a full window is waited out, for 40 seconds at most, instead of stopping the loan', async () => {
+  it('before a step, a full window is waited out, for 30 seconds at most, instead of stopping the loan', async () => {
     const waits: number[] = [];
     const reads = createSpendInvoiceReadsV1({ wait: async (ms) => { waits.push(ms); } });
     let full = 3;
@@ -154,8 +154,8 @@ describe('Bitrefill’s word for an invoice, before it is paid', () => {
     let asked = 0;
     const jammed = { readInvoice: async () => { asked++; return { ok: false as const, reason: 'bitrefill_rate_limited' as const }; } };
     assert.deepEqual(await reads.step({ order: ORDER, checkout: jammed }), { ok: false, reason: 'bitrefill_rate_limited' });
-    assert.equal(asked, 9);
-    assert.equal(waits.reduce((sum, ms) => sum + ms, 0), 40_000);
+    assert.equal(asked, 7);
+    assert.equal(waits.reduce((sum, ms) => sum + ms, 0), 30_000);
     // Silent, then a full window: the second is waited out too.
     waits.length = 0;
     let step = 0;

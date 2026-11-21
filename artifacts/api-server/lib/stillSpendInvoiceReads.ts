@@ -42,9 +42,10 @@ type CheckoutV1 = Pick<BitrefillGuestCheckoutV1, 'readInvoice'>;
 
 interface KeptV1 { value: SpendInvoiceStatusV1 | null; at: number; pending: Promise<SpendInvoiceDisplayV1> | null }
 
-/** The read before a loan's step waits for a slot in a full window this many times, this long each: 40 s in all, within
- * the request's own time, while the window is a minute and frees a slot as each call in it ages out. */
-const STEP_RATE_WAITS_V1 = 8, STEP_RATE_WAIT_MS_V1 = 5_000;
+/** The read before a loan's step waits for a slot in a full window this many times, this long each: 30 s in all, so the
+ * step's request, which also reads and simulates the loan, ends inside the 60 s Nginx gives an API answer
+ * (ops/nginx/miorail-app.conf). The window is a minute and frees a slot as each call in it ages out. */
+const STEP_RATE_WAITS_V1 = 6, STEP_RATE_WAIT_MS_V1 = 5_000;
 
 
 export function createSpendInvoiceReadsV1(options: {
