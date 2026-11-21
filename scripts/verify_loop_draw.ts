@@ -179,7 +179,7 @@ async function main(): Promise<number> {
   console.log(`     fixed at ${list.lockedAt}; the picking block is the first at or after ${due}`);
   if (list.blockAt !== null) check(list.blockAt === due, `the published time the block is due is ${due}`);
   if (!list.block) {
-    console.log('     not drawn yet: the block is read a minute after it is due');
+    console.log('     not drawn yet: the block is read once Base calls it safe, a few minutes after it is due');
     return verdict();
   }
   const block = await blockOf(BigInt(list.block.number));

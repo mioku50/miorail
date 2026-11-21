@@ -169,7 +169,8 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     assertOwner(input.owner); validateSubmission(input); const row = this.rows.get(input.executionId);
     if (!row || !sameOwner(row, input.owner) || row.attemptId !== input.attemptId || !active(row.state)) return null;
     if (input.outcome === 'rejected') {
-      if (row.state !== 'awaiting_wallet') return null;
+      // A loan in steps whose first step landed has a batch: "declined" then cannot make it ready again (audit LL-4).
+      if (row.state !== 'awaiting_wallet' || row.batchId !== null) return null;
       row.state = 'ready'; row.attemptId = null; row.errorCode = null;
     } else {
       // A late unknown cannot erase an already recorded batch. Conflicting
@@ -346,7 +347,7 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
       const rows = input.outcome === 'rejected'
         ? await sql`UPDATE lending_executions SET state = 'ready', attempt_id = NULL, error_code = NULL, updated_at = ${at}::timestamptz, version = version + 1
           WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
-            AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' RETURNING *`
+            AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' AND batch_id IS NULL RETURNING *`
         : await sql`UPDATE lending_executions SET
           state = CASE WHEN error_code = 'conflicting_batch_hints' OR (batch_id IS NOT NULL AND ${input.batchId ?? null}::text IS NOT NULL AND batch_id <> ${input.batchId ?? null}::text) THEN 'unknown'
             WHEN COALESCE(batch_id, ${input.batchId ?? null}::text) IS NULL THEN 'unknown' ELSE 'submitted' END,

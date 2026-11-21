@@ -372,6 +372,8 @@ function DrawRulesV1({ draw }: { draw: StillLoopDrawViewV1 }) {
           with no loan, once it either holds Coinbase’s Verified Account attestation
           (<a href={COINBASE_VERIFY_URL_V1} target="_blank" rel="noopener noreferrer">coinbase.com/onchain-verify</a>), which needs no purchase, or
           made a swap through Still, at any time, in which at least 10 USDC changed hands (Swap AI, or Buy and Sell on Stocks).</li>
+        <li>A Loop is a loan against the brand’s stock you chose for it, paying that brand’s card. On Aave one loan stands on every stock
+          you pledged there; a Loop is named by the stock chosen for it.</li>
         <li>One entry per wallet per draw.</li>
         <li>Open to people 18 or older who are not U.S. persons, from where Still is offered. The Still team has committed not to enter.</li>
         <li>The list is fixed 30 seconds after the close. Its hash, which also covers the moment it was fixed and the number of winners, is shown

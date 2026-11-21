@@ -145,6 +145,9 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     assert.ok(await store.recordStep({ owner: OWNER, executionId: record.executionId, attemptId, index: 0, transactionHash: hash(1), now: NOW }));
     const sending = (await store.get({ owner: OWNER, executionId: record.executionId }))!;
     assert.equal(sending.state, 'awaiting_wallet');
+    // A step landed: "declined" no longer makes the loan ready to send again (audit LL-4, 2026-11-20).
+    assert.equal(await store.recordSubmission({ owner: OWNER, executionId: record.executionId, attemptId, outcome: 'rejected', now: NOW }), null);
+    assert.equal((await store.get({ owner: OWNER, executionId: record.executionId }))!.state, 'awaiting_wallet');
     const receipts = new Map([1, 2, 3].map((n) => [hash(n), receipt(n)] as const));
     assert.equal((await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: record.executionId }, sending, deps(store, receipts, {}))).state, 'awaiting_wallet');
     assert.ok(await store.recordStep({ owner: OWNER, executionId: record.executionId, attemptId, index: 1, transactionHash: hash(2), stop: true, now: NOW }));

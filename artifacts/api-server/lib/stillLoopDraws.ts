@@ -119,7 +119,9 @@ export const stillLoopDrawRuntimeV1 = {
   /** A completed swap through Still with at least 10 USDC on one side, ever; throws when the database could not be read. */
   swapped: (wallet: string): Promise<boolean> => stillLoopSwapVerifiedV1(client as unknown as SqlTemplateExecutor,
     { walletAddress: wallet, minUsdcAtomic: STILL_LOOP_DRAW_SWAP_MIN_USDC_V1 * 1_000_000n }),
-  head: async (): Promise<LoopDrawBlockV1> => blockOfV1(await baseReaderV1().getBlock({ blockTag: 'latest' })),
+  /** The newest block Base calls safe (posted to Ethereum), not the newest it has: the result is written once, so it is
+   * taken from blocks no reorg can replace (audit LOOP-4, 2026-11-20). A few minutes later than the head, no more. */
+  head: async (): Promise<LoopDrawBlockV1> => blockOfV1(await baseReaderV1().getBlock({ blockTag: 'safe' })),
   /** One block, a tenth of a second apart, so the search never bursts the RPC. */
   block: async (number: bigint): Promise<LoopDrawBlockV1> => {
     await new Promise((resolve) => setTimeout(resolve, 100));

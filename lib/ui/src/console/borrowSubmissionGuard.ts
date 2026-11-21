@@ -33,7 +33,8 @@ export function borrowUserRejectedV1(error: unknown): boolean {
   for (let depth = 0; depth < 8 && current && typeof current === 'object' && !seen.has(current); depth++) {
     seen.add(current);
     const record = current as { code?: unknown; name?: unknown; cause?: unknown };
-    if (record.code === 4001 || record.name === 'UserRejectedRequestError') return true;
+    // 5000 is WalletConnect's (CAIP-25) "user rejected", which the chat card's provider passes on as it is (audit WAL-1).
+    if (record.code === 4001 || record.code === 5000 || record.name === 'UserRejectedRequestError') return true;
     current = record.cause;
   }
   return false;
