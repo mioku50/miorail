@@ -117,12 +117,15 @@ describe('the interest one reading adds', () => {
 
 describe('the holds after a reading', () => {
   test('held ones join, cleared ones go, unread ones stay; only a hold the row did not have is news', () => {
-    assert.deepEqual(stillLoanHoldsAfterV1(['PAXG:transfers_paused'], undefined), { holds: ['PAXG:transfers_paused'], appeared: false });
-    assert.deepEqual(stillLoanHoldsAfterV1([], { held: ['NVDAc:transfers_paused'], cleared: [] }), { holds: ['NVDAc:transfers_paused'], appeared: true });
+    assert.deepEqual(stillLoanHoldsAfterV1(['PAXG:transfers_paused'], undefined), { holds: ['PAXG:transfers_paused'], appeared: false, added: [] });
+    assert.deepEqual(stillLoanHoldsAfterV1([], { held: ['NVDAc:transfers_paused'], cleared: [] }), { holds: ['NVDAc:transfers_paused'], appeared: true, added: ['NVDAc:transfers_paused'] });
     assert.deepEqual(stillLoanHoldsAfterV1(['NVDAc:transfers_paused'], { held: ['NVDAc:transfers_paused'], cleared: ['AAPLc:transfers_paused'] }),
-      { holds: ['NVDAc:transfers_paused'], appeared: false });
+      { holds: ['NVDAc:transfers_paused'], appeared: false, added: [] });
     assert.deepEqual(stillLoanHoldsAfterV1(['NVDAc:transfers_paused', 'NVDAc:feed_paused'], { held: [], cleared: ['NVDAc:transfers_paused'] }),
-      { holds: ['NVDAc:feed_paused'], appeared: false });
+      { holds: ['NVDAc:feed_paused'], appeared: false, added: [] });
+    // Which ones are news, for the notice to name (audit 11-20 LL-3).
+    assert.deepEqual(stillLoanHoldsAfterV1(['AAPLc:transfers_paused'], { held: ['AAPLc:transfers_paused', 'NVDAc:feed_paused'], cleared: [] }),
+      { holds: ['AAPLc:transfers_paused', 'NVDAc:feed_paused'], appeared: true, added: ['NVDAc:feed_paused'] });
   });
 });
 

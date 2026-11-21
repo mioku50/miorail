@@ -29,7 +29,7 @@ function loan(over: Partial<StillLoanAlertV1> = {}): StillLoanAlertV1 {
   return {
     walletAddress: WALLET, market: STILL_AAVE_SPOKE_V1, venue: 'aave-v4', state: 'calm', marginBps: 4_812, episode: 0,
     createdAt: '2026-11-10T09:00:00.000Z', readAt: NOW.toISOString(), readBlock: '58000000', told: { base_app: null, telegram: null },
-    debtAtomic: '26410000', rateBps: 366, rateReadAt: NOW.toISOString(), interestAtomic: '0', estimatedAtomic: '0', holds: [], holdEpisode: 0,
+    debtAtomic: '26410000', rateBps: 366, rateReadAt: NOW.toISOString(), interestAtomic: '0', estimatedAtomic: '0', holds: [], holdsNew: [], holdEpisode: 0,
     stateSince: '2026-11-10T09:00:00.000Z', rateToldBps: 366, rateToldAt: '2026-11-10T09:00:00.000Z', rateHighSince: null, rateEpisode: 0, ...over,
   };
 }
@@ -160,6 +160,24 @@ describe('a hold on the collateral', () => {
     assert.equal(notice.title, 'Still loan: NVDAc paused');
     assert.equal(stillLoanHoldNoticeV1(loan({ holds: ['NVDAc:market_frozen'] })), null, 'Aave V4 has no market freeze');
     assert.equal(stillLoanHoldNoticeV1(loan({ holds: [] })), null);
+  });
+
+  // Audit 11-20 LL-3: a second hold was told in the first one's words, and read as a repeat.
+  test('a new hold is told in its own words, the other new ones named after it; an old one is not told again', () => {
+    const second = keepsTheRulesV1(stillLoanHoldNoticeV1(loan({ holds: ['AAPLc:transfers_paused', 'NVDAc:feed_paused'],
+      holdsNew: ['NVDAc:feed_paused'], holdEpisode: 2 })));
+    assert.match(second.title, /NVDAc/);
+    assert.doesNotMatch(second.title + second.message, /AAPLc/);
+    const two = keepsTheRulesV1(stillLoanHoldNoticeV1(loan({ holds: ['AAPLc:transfers_paused', 'METAc:feed_paused', 'NVDAc:transfers_paused'],
+      holdsNew: ['METAc:feed_paused', 'NVDAc:transfers_paused'], holdEpisode: 3 })));
+    assert.equal(two.title, 'Still loan: NVDAc paused');
+    assert.match(two.message, / Also new: METAc feed paused\.$/);
+    assert.doesNotMatch(two.message, /AAPLc/);
+    // A new hold cleared before the notice went is not news; a row from before migration 0109 says what it said.
+    const cleared = keepsTheRulesV1(stillLoanHoldNoticeV1(loan({ holds: ['AAPLc:transfers_paused'], holdsNew: ['NVDAc:feed_paused'], holdEpisode: 2 })));
+    assert.equal(cleared.title, 'Still loan: AAPLc paused');
+    const old = keepsTheRulesV1(stillLoanHoldNoticeV1(loan({ holds: ['NVDAc:reserve_frozen', 'NVDAc:transfers_paused'], holdsNew: [], holdEpisode: 2 })));
+    assert.equal(old.title, 'Still loan: NVDAc paused');
   });
 });
 

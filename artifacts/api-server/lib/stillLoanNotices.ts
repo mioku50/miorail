@@ -344,20 +344,32 @@ function holdWordsV1(venue: StillLoanAlertV1['venue'], s: string, kind: HoldKind
   }
 }
 
-/** What a loan's newest hold is told as: the one that matters most; null when none is one this venue has words for. */
+/** What a loan's newest hold is told as: one of the holds its episode began with, the one that matters most, and
+ * the others that began it named after; on a row that kept none (before migration 0109), the one that matters most of
+ * all its holds. Null when none is one this venue has words for. A second hold used to be told in the first one's
+ * words, and read as a repeat (audit 11-20 LL-3). */
 export function stillLoanHoldNoticeV1(loan: StillLoanAlertV1): StillLoanNoticeTextV1 | null {
-  const holds = loan.holds
+  const parse = (list: readonly string[]) => list
     .map((hold) => {
       const [symbol, kind] = hold.split(':');
       return { symbol: symbol ?? '', kind: kind as HoldKindV1 };
     })
     .filter((hold) => SYMBOL_V1.test(hold.symbol) && (HOLD_ORDER_V1 as readonly string[]).includes(hold.kind))
     .sort((a, b) => HOLD_ORDER_V1.indexOf(a.kind) - HOLD_ORDER_V1.indexOf(b.kind));
-  for (const hold of holds) {
+  const told = (list: ReturnType<typeof parse>) => list.flatMap((hold) => {
     const words = holdWordsV1(loan.venue, hold.symbol, hold.kind);
-    if (words) return { title: titleV1(words.title), message: fitV1([words.message]), targetPath: LOAN_PATH_V1 };
-  }
-  return null;
+    return words ? [words] : [];
+  });
+  // Only the new ones still held: one cleared since is not news.
+  const fresh = told(parse((loan.holdsNew ?? []).filter((hold) => loan.holds.includes(hold))));
+  const [lead, ...others] = fresh.length > 0 ? fresh : told(parse(loan.holds)).slice(0, 1);
+  if (!lead) return null;
+  const also = others.map((words) => words.title.replace(/^Still loan: /, ''));
+  return {
+    title: titleV1(lead.title),
+    message: also.length === 0 ? fitV1([lead.message]) : fitV1([`${lead.message} Also new: ${also.join('; ')}.`, lead.message]),
+    targetPath: LOAN_PATH_V1,
+  };
 }
 
 /** "Fri", in New York time: the day the oracle's price was printed. */

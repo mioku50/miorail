@@ -764,6 +764,13 @@
       "when": 1795730400000,
       "tag": "0108_still_loop_invoice_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1795734000000,
+      "tag": "0109_still_loan_holds_new",
+      "breakpoints": true
     }
   ]
 }

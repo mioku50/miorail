@@ -218,6 +218,22 @@ export function stillLoanAlertsContractV1(label: string, make: () => Promise<Sti
       [loan] = await alerts.holdsDue({ channel: 'telegram', freshSince: AT });
       assert.deepEqual([loan!.holds, loan!.holdEpisode], [['PAXG:transfers_paused', 'PAXG:wallet_frozen'], 2]);
     });
+
+    // Audit 11-20 LL-3: the notice names the holds an episode began with, not the oldest one again.
+    test('an episode keeps the holds it began with, until the next episode begins', async () => {
+      const alerts = await make();
+      await alerts.recordReading({ walletAddress: WALLET, at: AT, block: '100', lines: [held(['PAXG:transfers_paused'])], unread: [] });
+      let [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.holdsNew, loan!.holdEpisode], [['PAXG:transfers_paused'], 1]);
+      // A second hold on top of the first: a new episode, begun by the second alone.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(5), block: '200', lines: [held(['PAXG:transfers_paused', 'PAXG:wallet_frozen'])], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.holds, loan!.holdsNew, loan!.holdEpisode], [['PAXG:transfers_paused', 'PAXG:wallet_frozen'], ['PAXG:wallet_frozen'], 2]);
+      // The same holds read again, or one cleared: the episode, and what began it, stay.
+      await alerts.recordReading({ walletAddress: WALLET, at: later(10), block: '300', lines: [held(['PAXG:wallet_frozen'], ['PAXG:transfers_paused'])], unread: [] });
+      [loan] = await alerts.loansOf(WALLET);
+      assert.deepEqual([loan!.holds, loan!.holdsNew, loan!.holdEpisode], [['PAXG:wallet_frozen'], ['PAXG:wallet_frozen'], 2]);
+    });
   });
 
   describe(`${label}: a loan's week is told once, with the interest since the last note`, () => {

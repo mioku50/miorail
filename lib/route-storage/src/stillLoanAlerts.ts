@@ -82,6 +82,9 @@ export interface StillLoanAlertV1 {
   estimatedAtomic: string;
   /** The holds on its collateral, as 'SYMBOL:kind', sorted. */
   holds: string[];
+  /** The holds the newest hold episode began with, sorted: what its notice names (audit 11-20 LL-3). Empty on a row
+   * from before migration 0109. */
+  holdsNew: string[];
   /** What "once" counts in for holds: it moves each time a hold appears. */
   holdEpisode: number;
   /** When the loan entered the band it is in: the first reading that read it there. */
@@ -320,13 +323,13 @@ export function stillLoanInterestStepV1(input: {
   return { interest: charge, estimated: charge };
 }
 
-/** The holds after a reading, and whether one appeared that the row did not have. */
-export function stillLoanHoldsAfterV1(before: readonly string[], reading: StillLoanHoldReadingV1 | undefined): { holds: string[]; appeared: boolean } {
-  if (!reading) return { holds: [...before].sort(), appeared: false };
+/** The holds after a reading, whether one appeared that the row did not have, and which. */
+export function stillLoanHoldsAfterV1(before: readonly string[], reading: StillLoanHoldReadingV1 | undefined): { holds: string[]; appeared: boolean; added: string[] } {
+  if (!reading) return { holds: [...before].sort(), appeared: false, added: [] };
   const cleared = new Set(reading.cleared);
   const kept = before.filter((hold) => !cleared.has(hold));
-  const appeared = reading.held.some((hold) => !before.includes(hold));
-  return { holds: [...new Set([...kept, ...reading.held])].sort(), appeared };
+  const added = [...new Set(reading.held.filter((hold) => !before.includes(hold)))].sort();
+  return { holds: [...new Set([...kept, ...reading.held])].sort(), appeared: added.length > 0, added };
 }
 
 function assertWalletV1(wallet: string): void {
@@ -422,20 +425,20 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
       const key = `${input.walletAddress}|${line.market}`;
       const row = this.loans.get(key);
       if (!row) {
-        const { holds, appeared } = stillLoanHoldsAfterV1([], line.holds);
+        const { holds, appeared, added } = stillLoanHoldsAfterV1([], line.holds);
         this.loans.set(key, {
           walletAddress: input.walletAddress, market: line.market, venue: line.venue, state: line.state, marginBps: line.marginBps,
           episode: line.state === 'calm' ? 0 : 1, createdAt: at, readAt: at, readBlock: input.block,
           told: { base_app: null, telegram: null },
           debtAtomic: line.debtAtomic ?? null, rateBps: line.rateBps ?? null, rateReadAt: line.rateBps != null ? at : null,
-          interestAtomic: '0', estimatedAtomic: '0', holds, holdEpisode: appeared ? 1 : 0,
+          interestAtomic: '0', estimatedAtomic: '0', holds, holdsNew: added, holdEpisode: appeared ? 1 : 0,
           stateSince: at, ...stillLoanRateAfterV1(null, line.rateBps ?? null, at),
         });
         continue;
       }
       if (BigInt(row.readBlock) > BigInt(input.block)) continue;
       const step = stillLoanInterestStepV1({ before: row, debtAtomic: line.debtAtomic ?? null, at: input.at });
-      const { holds, appeared } = stillLoanHoldsAfterV1(row.holds, line.holds);
+      const { holds, appeared, added } = stillLoanHoldsAfterV1(row.holds, line.holds);
       Object.assign(row, {
         episode: row.episode + (stillLoanStateRankV1(line.state) > stillLoanStateRankV1(row.state) ? 1 : 0),
         stateSince: line.state === row.state ? row.stateSince : at,
@@ -444,7 +447,7 @@ export class InMemoryStillLoanAlertRepositoryV1 implements StillLoanAlertReposit
         rateReadAt: line.rateBps != null ? at : row.rateReadAt,
         interestAtomic: (BigInt(row.interestAtomic) + step.interest).toString(),
         estimatedAtomic: (BigInt(row.estimatedAtomic) + step.estimated).toString(),
-        holds, holdEpisode: row.holdEpisode + (appeared ? 1 : 0),
+        holds, holdsNew: appeared ? added : row.holdsNew, holdEpisode: row.holdEpisode + (appeared ? 1 : 0),
         ...stillLoanRateAfterV1(row, line.rateBps ?? null, at),
       });
     }
@@ -593,6 +596,7 @@ function loanOfRowV1(row: Record<string, unknown>): StillLoanAlertV1 {
     interestAtomic: text(row.interest_atomic) ?? '0',
     estimatedAtomic: text(row.estimated_atomic) ?? '0',
     holds: Array.isArray(row.holds) ? row.holds.map(String).sort() : [],
+    holdsNew: Array.isArray(row.holds_new) ? row.holds_new.map(String).sort() : [],
     holdEpisode: Number(row.hold_episode ?? 0),
     // A row written before migration 0100 entered its band no later than its last reading.
     stateSince: at(row.state_since ?? row.read_at),
@@ -676,18 +680,18 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
             rateEpisode: Number(row.rate_episode ?? 0) }
           : null;
         const step = stillLoanInterestStepV1({ before, debtAtomic: line.debtAtomic ?? null, at: input.at });
-        const { holds, appeared } = stillLoanHoldsAfterV1(before?.holds ?? [], line.holds);
+        const { holds, appeared, added } = stillLoanHoldsAfterV1(before?.holds ?? [], line.holds);
         const stateSince = before && before.state === line.state ? before.stateSince : at;
         const rate = stillLoanRateAfterV1(before, line.rateBps ?? null, at);
         await sql`
           INSERT INTO still_loan_alerts AS a
             (wallet_address, market, venue, state, margin_bps, episode, created_at, read_at, read_block,
-             debt_atomic, rate_bps, rate_read_at, interest_atomic, estimated_atomic, holds, hold_episode,
+             debt_atomic, rate_bps, rate_read_at, interest_atomic, estimated_atomic, holds, holds_new, hold_episode,
              state_since, rate_told_bps, rate_told_at, rate_high_since, rate_episode)
           VALUES (${input.walletAddress}, ${line.market}, ${line.venue}, ${line.state}, ${line.marginBps},
                   ${line.state === 'calm' ? 0 : 1}, ${at}::timestamptz, ${at}::timestamptz, ${input.block}::bigint,
                   ${line.debtAtomic ?? null}::numeric, ${line.rateBps ?? null}::integer, ${line.rateBps != null ? at : null}::timestamptz,
-                  0, 0, ${holds}::text[], ${appeared ? 1 : 0},
+                  0, 0, ${holds}::text[], ${added}::text[], ${appeared ? 1 : 0},
                   ${stateSince}::timestamptz, ${rate.rateToldBps}::integer, ${rate.rateToldAt}::timestamptz,
                   ${rate.rateHighSince}::timestamptz, ${rate.rateEpisode}::int)
           ON CONFLICT (wallet_address, market) DO UPDATE
@@ -705,6 +709,7 @@ export function createDatabaseStillLoanAlertRepositoryV1(sql: SqlTemplateExecuto
                  interest_atomic = a.interest_atomic + ${step.interest.toString()}::numeric,
                  estimated_atomic = a.estimated_atomic + ${step.estimated.toString()}::numeric,
                  holds = EXCLUDED.holds,
+                 holds_new = CASE WHEN ${appeared}::boolean THEN EXCLUDED.holds_new ELSE a.holds_new END,
                  hold_episode = a.hold_episode + ${appeared ? 1 : 0}::int,
                  state_since = EXCLUDED.state_since,
                  rate_told_bps = EXCLUDED.rate_told_bps,
