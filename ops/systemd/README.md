@@ -64,6 +64,17 @@ stops it with the key in place. Its first pass only opens its cursors, so
 nothing recorded before it existed is ever sent. Migration 0071 must be applied
 before the first deploy that enables it.
 
+## Still Agent errands
+
+`miorail-still-agent-errands` is a oneshot on a 5-minute timer, installed by the
+same loop. It claims each Still Agent errand's day once, moves the errand to
+its next day, and sends the reminder from the person's own bot, from Still's
+agents bot (`STILL_AGENT_BOT_TOKEN`), or nowhere but the site. It reports `off`
+unless `STILL_AGENT_V1=on`. Personal bots need `STILL_AGENT_BOT_KEY` (32 random
+bytes, base64), which seals their tokens; without it reminders still go from the
+agents bot. Migration 0110 must be applied before the first deploy that enables
+it.
+
 The order matters once, on a new host: nothing else can run usefully until
 `miorail-rwa-official` has recorded a corpus, because the other three read the
 official universe to decide what to look at.

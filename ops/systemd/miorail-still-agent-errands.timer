@@ -1,0 +1,15 @@
+[Unit]
+# Every five minutes.
+#
+# An errand is due at 09:00 where its owner is, so its reminder arrives within
+# about five minutes of that. A pass with nothing due costs one query.
+Description=Remind Still Agent errands on their day
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

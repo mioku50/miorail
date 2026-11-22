@@ -54,6 +54,8 @@ function fakeBot(refuse: (chatId: string, attempt: number) => Error | null = () 
     },
     setWebhook: async () => {},
     getWebhookInfo: async () => ({ url: '', pendingUpdateCount: 0, lastErrorDate: null }),
+    deleteWebhook: async () => {},
+    getManagedBotToken: async () => { throw new Error('not managed'); },
   };
   return { bot, sent };
 }

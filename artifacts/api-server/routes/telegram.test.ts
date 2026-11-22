@@ -50,6 +50,8 @@ beforeEach(() => {
     },
     setWebhook: async () => {},
     getWebhookInfo: async () => ({ url: '', pendingUpdateCount: 0, lastErrorDate: null }),
+    deleteWebhook: async () => {},
+    getManagedBotToken: async () => { throw new Error('not managed'); },
   };
   resetTelegramBotUsernameV1();
   Object.assign(telegramRuntime, {

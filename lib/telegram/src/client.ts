@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// The Bot API, four methods of it.
+// The Bot API, the methods Miorail's bots use.
 //
 // Every request goes to `https://api.telegram.org/bot<token>/<method>`, so the
 // URL itself is the secret. Nothing here logs a request, and a failure carries
@@ -56,8 +56,12 @@ export interface TelegramBotClientV1 {
     html: string;
     button?: { text: string; url: string };
   }): Promise<void>;
-  setWebhook(input: { url: string; secretToken: string }): Promise<void>;
+  /** `allowedUpdates` defaults to messages only. */
+  setWebhook(input: { url: string; secretToken: string; allowedUpdates?: readonly string[] }): Promise<void>;
+  deleteWebhook(): Promise<void>;
   getWebhookInfo(): Promise<TelegramWebhookInfoV1>;
+  /** Managed Bots (Bot API 9.6): the token of a bot this bot manages, by the managed bot's user id. */
+  getManagedBotToken(botId: string): Promise<string>;
 }
 
 const CHAT_ID_V1 = /^-?[1-9][0-9]{0,19}$/;
@@ -139,11 +143,24 @@ export function createTelegramBotClientV1(input: {
       await call('setWebhook', {
         url: webhook.url,
         secret_token: webhook.secretToken,
-        // Messages only: no inline queries, no group events, nothing this bot
-        // has an answer for.
-        allowed_updates: ['message'],
+        // Messages only, unless the caller names more: no inline queries, no
+        // group events, nothing this bot has an answer for.
+        allowed_updates: webhook.allowedUpdates ? [...webhook.allowedUpdates] : ['message'],
         max_connections: 5,
       });
+    },
+
+    async deleteWebhook() {
+      await call('deleteWebhook', { drop_pending_updates: true });
+    },
+
+    async getManagedBotToken(botId) {
+      if (!/^[1-9][0-9]{0,19}$/.test(botId)) throw new TelegramBotErrorV1('bad_request', null);
+      const result = await call('getManagedBotToken', { user_id: Number.isSafeInteger(Number(botId)) ? Number(botId) : botId });
+      // The token itself, as a string; never logged, never put into an error.
+      const token = typeof result === 'string' ? result : (result as { token?: unknown } | null)?.token;
+      if (typeof token !== 'string' || !/^[0-9]{5,16}:[A-Za-z0-9_-]{30,64}$/.test(token)) throw new TelegramBotErrorV1('unavailable', null);
+      return token;
     },
 
     async getWebhookInfo() {

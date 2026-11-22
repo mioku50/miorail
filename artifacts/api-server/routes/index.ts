@@ -31,6 +31,7 @@ import { publicStillEligibilityRouter, stillEligibilityRouter } from './stillEli
 import { stillMineRouter } from './stillMine';
 import { stillSpendRouter } from './stillSpend';
 import { publicStillLoopsRouter, stillLoopsRouter } from './stillLoops';
+import { stillAgentRouter, stillAgentTelegramRouter } from './stillAgent';
 import { cspReportRouter } from './cspReport';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
@@ -77,6 +78,8 @@ routes.use('/mcp/base', mcpBasePublicRouter);
 // Only POST /telegram/webhook is answered here; /telegram/link falls through
 // to the session gate below.
 routes.use('/telegram', telegramWebhookRouter);
+// Still Agent's bots: the agents bot and the bots it made for people, each told apart by its own secret.
+routes.use('/telegram', stillAgentTelegramRouter);
 routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);
@@ -104,6 +107,8 @@ routes.use('/stocks', stocksTodayRouter);
 routes.use('/still/spend', stillSpendRouter);
 // The session's own Loop, on the wall at its owner's word.
 routes.use('/still/loops', stillLoopsRouter);
+// The session's own Still Agent and its errands, while STILL_AGENT_V1=on.
+routes.use('/still/agent', stillAgentRouter);
 // The session's own loans and what Still could lend it, never an address the client names.
 // The sign-in's confirmation that it is not a US person (lib/stillRegion.ts).
 routes.use('/still', stillEligibilityRouter);

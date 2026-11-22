@@ -117,6 +117,8 @@ export * from './opsAlertChats.js';
 export * from './aerodromeRewardAlerts.js';
 export * from './stillLoanAlerts.js';
 export * from './stillLoops.js';
+export * from './stillAgent.js';
+export * from './stillAgentMemory.js';
 export * from './stillLoopDraws.js';
 export * from './stillLoopInvoiceReads.js';
 export * from './foundShares.js';

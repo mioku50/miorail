@@ -24,6 +24,7 @@
     "./loops": "./src/loops.ts",
     "./loop-draws": "./src/loopDraws.ts",
     "./subscriptions": "./src/subscriptions.ts",
+    "./agent": "./src/agent.ts",
     "./spend-cap": "./src/spendCap.ts",
     "./rfc3161": "./src/rfc3161.ts"
   },
