@@ -16,6 +16,7 @@ import {
   loopBrandProductsV1,
   STILL_SUBSCRIPTIONS_V1,
   stillSubscriptionProductsV1,
+  stillSubscriptionStoreRoutesV1,
   type SpendGiftCategoryV1,
   type SpendTypeV1,
 } from '@mioagent/ui/still';
@@ -62,6 +63,18 @@ export function StillSpendPage() {
   const listed = results?.products && subscriptionsOpen && service ? stillSubscriptionProductsV1(service, results.products)
     // A brand's word finds other stores too ("Xbox": Kinguin, G2A, a game's points): only its own cards make a Loop.
     : results?.products && loop ? loopBrandProductsV1(loop.brand, results.products) : results?.products ?? null;
+  // A service's own card missing for this country: the app store cards that pay its plan bought inside its app are
+  // read then, and only then, by the search the store's own tile runs (cached alike, so pressing it shows them at once).
+  const routeTiles = subscriptionsOpen && service && !search.isFetching && listed?.length === 0 ? stillSubscriptionStoreRoutesV1(service) : [];
+  const appleTile = routeTiles.find((row) => row.store === 'apple') ?? null;
+  const googleTile = routeTiles.find((row) => row.store === 'google') ?? null;
+  const appleRead = useStillSpendSearchV1(appleTile ? { type: 'giftcard', country, query: appleTile.search, category: null } : null);
+  const googleRead = useStillSpendSearchV1(googleTile ? { type: 'giftcard', country, query: googleTile.search, category: null } : null);
+  const storeRoutes = ([[appleTile, appleRead.data], [googleTile, googleRead.data]] as const).flatMap(([tile, data]) => {
+    if (!tile?.store || data === undefined) return [];
+    const found = spendSearchViewV1(data).products;
+    return found && stillSubscriptionProductsV1(tile.key, found).length > 0 ? [tile.store] : [];
+  });
   const walletAtomic = usdc.data?.raw ?? null;
   const detail = useMemo(() => product.data !== undefined ? spendProductViewV1(product.data, room, walletAtomic) : null, [product.data, room?.cents, room?.complete, walletAtomic]);
   const productError = product.error
@@ -104,7 +117,7 @@ export function StillSpendPage() {
         // A category replaces the brand searched for, and a brand replaces the category; either closes the subscriptions.
         category, onCategory: (next) => { setCategory(next); setLoop(null); setQuery(''); setAsked(''); setSubscriptionsOpen(false); setService(null); setSelected(null); pick(null); },
         subscriptions: {
-          open: subscriptionsOpen, chosen: service,
+          open: subscriptionsOpen, chosen: service, storeRoutes,
           onOpen: (open) => {
             if (open) setType('giftcard');
             setSubscriptionsOpen(open); setLoop(null); setService(null); setCategory(null); setQuery(''); setAsked(''); setSelected(null); pick(null);

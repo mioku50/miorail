@@ -125,6 +125,7 @@ test('the instructions and the spend search tell an assistant how a subscription
   for (const words of [client.getInstructions() ?? '', search]) {
     assert.match(words, /service's own card first \(Discord Nitro, Netflix/);
     assert.match(words, /X Premium, ChatGPT Plus, Claude Pro/);
+    assert.match(words, /Discord Nitro, in its iPhone and Android apps\. When such a service’s own card is not listed/);
     assert.match(words, /does not renew by itself/);
     assert.match(words, /Never suggest a VPN\./);
     assert.match(words, /a card tops up only an account of its own country/);

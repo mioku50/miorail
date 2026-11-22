@@ -305,6 +305,35 @@ describe('the Spend page', () => {
     assert.doesNotMatch(renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', onCategory: noop, products: [], selected: null, product: null })} />), /<strong>Subscriptions<\/strong>/);
   });
 
+  it('a service’s missing card offers the store cards of the same country that pay its plan bought inside its app, only those found', () => {
+    const render = (patch: Partial<NonNullable<StillSpendModelV1['subscriptions']>>, country = 'IE') => renderToStaticMarkup(<StillSpend model={model({
+      type: 'giftcard', country, onCategory: noop, products: [], selected: null, product: null,
+      subscriptions: { open: true, chosen: 'discord', onOpen: noop, onChoose: noop, ...patch } })} />);
+    const button = (label: string) =>
+      new RegExp(`<button type="button" class="still-spend-category"><span class="still-spend-category-icon"><svg[^>]*>(?:(?!</svg>).)+</svg></span>${label}</button>`);
+    // Ireland, 2026-11-22: Bitrefill's Nitro card is US only, its Apple card for Ireland is listed, a Google Play one is not.
+    const ireland = render({ storeRoutes: ['apple'] });
+    assert.match(ireland, /Bitrefill lists no Discord Nitro card for Ireland now\./);
+    assert.match(ireland, /Nitro bought inside Discord’s iPhone app is billed by Apple, so an Apple gift card for Ireland pays it\. Nitro bought on Discord’s website is billed by Discord, and no store card pays it\./);
+    assert.match(ireland, button('Apple gift card for Ireland'));
+    assert.doesNotMatch(ireland, /Google Play gift card/);
+    const both = render({ storeRoutes: ['apple', 'google'] }, 'DE');
+    assert.match(both, /Nitro bought inside Discord’s iPhone and Android apps is billed by Apple or Google Play, so that store’s gift card for Germany pays it\./);
+    assert.match(both, button('Apple gift card for Germany'));
+    assert.match(both, button('Google Play gift card for Germany'));
+    assert.ok(both.indexOf('>Apple gift card for Germany</button>') < both.indexOf('>Google Play gift card for Germany</button>'), 'in the table’s order');
+    assert.match(render({ storeRoutes: ['google'] }, 'DE'), /Nitro bought inside Discord’s Android app is billed by Google Play, so a Google Play gift card for Germany pays it\./);
+    // Bulgaria lists neither store's card; a store not read yet is not offered either.
+    for (const unread of [render({ storeRoutes: [] }, 'BG'), render({}, 'BG')]) {
+      assert.match(unread, /Bitrefill lists no Discord Nitro card for Bulgaria now\./);
+      assert.doesNotMatch(unread, /gift card for|billed by/);
+    }
+    // A service not read to sell its plan inside its app gets no store route, whatever the page passes.
+    const netflix = render({ chosen: 'netflix', storeRoutes: ['apple', 'google'] });
+    assert.match(netflix, /Bitrefill lists no Netflix card for Ireland now\./);
+    assert.doesNotMatch(netflix, /gift card for|billed by/);
+  });
+
   it('a country with no top-up says so and offers its mobile data, rather than nothing in stock', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', country: 'RU', products: [], selected: null, product: null })} />);
     assert.match(html, /Bitrefill lists no top-up for a number in Russia\./);

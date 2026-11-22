@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { STILL_SUBSCRIPTIONS_V1, stillSubscriptionGuideV1, stillSubscriptionProductsV1 } from '../src/subscriptions.js';
+import {
+  STILL_SUBSCRIPTIONS_V1,
+  stillSubscriptionAppsV1,
+  stillSubscriptionGuideV1,
+  stillSubscriptionProductsV1,
+  stillSubscriptionStoreRoutesV1,
+} from '../src/subscriptions.js';
 
 // Real Bitrefill product ids, read from its catalogue through Still's search on 2026-11-17 (DE, GB, FR, BR and others).
 const REAL_V1: ReadonlyArray<[string, string]> = [
@@ -33,8 +39,23 @@ describe('subscriptions Still can pay with a card', () => {
     assert.deepEqual(STILL_SUBSCRIPTIONS_V1.filter((row) => row.store).map((row) => [row.key, row.store]), [['apple', 'apple'], ['google-play', 'google']]);
   });
 
+  it('send a plan sold inside its app to the store tiles that bill it, for the services read only', () => {
+    // Discord, read 2026-11-22: Nitro in the Irish App Store, and Discord's terms cancel in-app plans in the App Store or Google Play.
+    assert.deepEqual(STILL_SUBSCRIPTIONS_V1.filter((row) => row.inApp).map((row) => [row.key, row.inApp!.plan, row.inApp!.stores, row.inApp!.checked]),
+      [['discord', 'Nitro', ['apple', 'google'], '2026-11-22']]);
+    assert.deepEqual(stillSubscriptionStoreRoutesV1('discord').map((row) => row.key), ['apple', 'google-play']);
+    assert.deepEqual(stillSubscriptionStoreRoutesV1('netflix'), [], 'not every service sells its plan inside its app');
+    assert.deepEqual(stillSubscriptionStoreRoutesV1('spotify'), []);
+    assert.equal(stillSubscriptionAppsV1(['apple', 'google']), 'iPhone and Android apps');
+    assert.equal(stillSubscriptionAppsV1(['apple']), 'iPhone app');
+    assert.equal(stillSubscriptionAppsV1(['google']), 'Android app');
+  });
+
   it('tell an assistant the own card first, the store balance of the same country second, and the limits plainly', () => {
     const guide = stillSubscriptionGuideV1();
+    // A plan sold inside its app: the person's own store card comes before another country's card of the service (2026-11-22).
+    assert.match(guide, /Some services sell their plan inside their own app, where the app store bills it: Discord Nitro, in its iPhone and Android apps\./);
+    assert.match(guide, /offer the card of the store that bills it, for that same country, for the plan bought inside the app, before another country’s card of the service: it works on the person’s own account\./);
     assert.match(guide, /service's own card first \(Discord Nitro, Netflix, Disney\+, Xbox and Game Pass, PlayStation, Nintendo, Twitch, Crunchyroll\)/);
     assert.match(guide, /same country as the person’s store account/);
     // A store's balance pays what that store bills, never a plan the service bills on its own website (audit P3, 2026-11-18).

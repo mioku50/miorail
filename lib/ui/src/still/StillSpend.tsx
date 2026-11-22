@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { formatCents } from '@mioagent/still-engine/format';
 import { STILL_SPEND_CAP_TEXT_V1 } from '@mioagent/still-engine/spend-cap';
-import { STILL_SUBSCRIPTIONS_V1 } from '@mioagent/still-engine/subscriptions';
+import { STILL_SUBSCRIPTIONS_V1, stillSubscriptionAppsV1, stillSubscriptionStoreRoutesV1 } from '@mioagent/still-engine/subscriptions';
 
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
@@ -52,7 +52,13 @@ export interface StillSpendModelV1 {
   onCategory?: (category: SpendGiftCategoryV1 | null) => void;
   /** Subscriptions a card pays (lib/still-engine/src/subscriptions.ts): the list, and the service chosen in it.
    * Without this, they are not offered. */
-  subscriptions?: { open: boolean; chosen: string | null; onOpen: (open: boolean) => void; onChoose: (key: string) => void };
+  subscriptions?: {
+    open: boolean; chosen: string | null; onOpen: (open: boolean) => void; onChoose: (key: string) => void;
+    /** Under the chosen service's missing card: the app stores that bill its plan bought inside its app
+     * (subscriptions.ts `inApp`) and whose card for the country Bitrefill lists. Absent or empty while
+     * unread, or when there is none: then nothing more is offered. */
+    storeRoutes?: readonly ('apple' | 'google')[];
+  };
   /** Opened from /loops for one brand (/spend?card=apple): its own cards only, and what paying one with a loan
    * against its stock makes. Absent otherwise. `makesLoop` is true only once this server says Loops are on: a link
    * from an old post must not promise one (audit 11-20 SPEND-4). */
@@ -197,8 +203,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                   </div>
                 )
                 : model.products && model.products.length === 0 && model.type === 'giftcard' && model.subscriptions?.open && model.subscriptions.chosen ? (
-                  <p className="still-note">Bitrefill lists no {STILL_SUBSCRIPTIONS_V1.find((row) => row.key === model.subscriptions!.chosen)?.name ?? 'such'} card
-                    for {spendCountryNameV1(model.country)} now.</p>
+                  <SubscriptionMissingV1 subscriptions={model.subscriptions} country={model.country} />
                 )
                 : model.products && model.products.length === 0 ? (
                   <p className="still-note">Nothing in stock here for {spendCountryNameV1(model.country)}{model.type === 'giftcard' && model.category
@@ -581,6 +586,41 @@ export function StillSpendShared({ sky, view, reading, cardUrl }: { sky: SkyStat
         </p>
         <StillLink href="/spend">See what a loan could pay for</StillLink>
       </div>
+    </div>
+  );
+}
+
+const STORE_BILLERS_V1 = { apple: 'Apple', google: 'Google Play' } as const;
+
+/**
+ * A service's own card missing for the country, said so. For a plan its app sells (subscriptions.ts `inApp`), the
+ * app store cards of the same country that pay it are one press away, as mobile data is beside a missing top-up:
+ * only a store the page found a card of, so no button leads to another "none" (operator, 2026-11-22).
+ */
+function SubscriptionMissingV1({ subscriptions, country }: { subscriptions: NonNullable<StillSpendModelV1['subscriptions']>; country: string }) {
+  const service = STILL_SUBSCRIPTIONS_V1.find((row) => row.key === subscriptions.chosen);
+  const countryName = spendCountryNameV1(country);
+  const routes = service?.inApp
+    ? stillSubscriptionStoreRoutesV1(service.key).filter((row) => row.store !== undefined && subscriptions.storeRoutes?.includes(row.store))
+    : [];
+  let route: string | null = null;
+  if (service?.inApp && routes.length > 0) {
+    const { app, plan } = service.inApp;
+    const stores = routes.map((row) => row.store!);
+    const billers = stores.map((store) => STORE_BILLERS_V1[store]);
+    const card = billers.length > 1 ? 'that store’s gift card' : `${/^[AEIOU]/.test(billers[0]!) ? 'an' : 'a'} ${billers[0]} gift card`;
+    route = `${plan} bought inside ${app}’s ${stillSubscriptionAppsV1(stores)} is billed by ${billers.join(' or ')}, so ${card} for ${countryName} `
+      + `pays it. ${plan} bought on ${app}’s website is billed by ${app}, and no store card pays it.`;
+  }
+  return (
+    <div className="still-spend-empty">
+      <p className="still-note">Bitrefill lists no {service?.name ?? 'such'} card for {countryName} now.</p>
+      {route ? <p className="still-note">{route}</p> : null}
+      {route ? routes.map((row) => (
+        <button key={row.key} type="button" className="still-spend-category" onClick={() => subscriptions.onChoose(row.key)}>
+          <span className="still-spend-category-icon"><StillIconV1 name="giftcard" /></span>{STORE_BILLERS_V1[row.store!]} gift card for {countryName}
+        </button>
+      )) : null}
     </div>
   );
 }
