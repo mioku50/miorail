@@ -24,6 +24,13 @@ never broadcasts.
 The server's own wallet exists only as an x402 *spender* for metered reads it
 pays for. It cannot touch a user's funds.
 
+### Voucher signing and Still contract admin powers
+
+Two narrow Still contracts live on Base mainnet outside the user-transaction boundary:
+
+- **`StillGifts` (`contracts/src/StillGifts.sol`) and `STILL_GIFTS_SIGNER_KEY`:** The server holds `STILL_GIFTS_SIGNER_KEY` solely to sign offchain EIP-712 claim vouchers (`Gift(wallet, kind, token, amount, deadline)`). That key never holds user funds, never signs transactions, and never broadcasts: each recipient submits their own `claim(...)` transaction. Onchain, the contract bounds every voucher by `maxAmount[token]`, enforces a single claim per `(wallet, kind)` bitmask, and checks voucher `deadline` and `paused`. The contract **owner** (a separate operator key, never stored in the API `.env`) can call `setSigner`, `setMaxAmounts`, `setPaused`, `withdraw`, and two-step `transferOwnership`/`acceptOwnership`; claimed gifts remain the recipient's.
+- **`StillAgents` (`contracts/src/StillAgents.sol`):** Soulbound ERC-5192 token (one per wallet, token ID equals the wallet address). Payments forward immediately to `payee` in the mint call. The contract **owner** (operator key, never on the API host) can call `setPrices`, `setPayee`, `setMintOpen`, `setBaseUri`, and two-step `transferOwnership`/`acceptOwnership`. The owner cannot transfer, lock, or burn any holder's token; only the holder can burn their own token.
+
 ### What the client may decide
 
 The client sends an intent — "swap 100 USDC to ETH". It does **not** send, and

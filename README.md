@@ -5,7 +5,8 @@
 ![Still: spend without selling](artifacts/interface/public/og-still.png)
 
 - **Try it:** [miorail.xyz](https://miorail.xyz). Check any Base wallet without signing in: `https://miorail.xyz/w/<address or name>`.
-- **Live on Base mainnet** (`8453`). Loans live in Aave V4 and Morpho Blue, under your own wallet. Still deploys no contracts and never holds your collateral or your USDC.
+- **Live on Base mainnet** (`8453`). Loans live directly in **Aave V4** and **Morpho Blue**, recorded under your own wallet — Still deploys no lending, vault, or proxy contracts and never holds your collateral or borrowed USDC.
+- **Verified Still contracts on Base:** [`StillAgents.sol`](contracts/src/StillAgents.sol) (soulbound Agent NFT) and [`StillGifts.sol`](contracts/src/StillGifts.sol) (project-funded tokenized-stock gift claims) — both **exact matches** on Sourcify; see [Still contracts on Base](#still-contracts-on-base).
 - **Read the rules first:** [Loan safety](https://miorail.xyz/safety) · the terms as JSON: [`/api/public/still/terms`](https://miorail.xyz/api/public/still/terms)
 - **For assistants:** `https://miorail.xyz/mcp/still`, read-only, no sign-in
 - **Licence:** AGPL-3.0-only · **Security bugs:** report them privately, as [SECURITY.md](SECURITY.md) says, never as a public issue
@@ -27,14 +28,15 @@ Still turns what a Base wallet holds into a USDC credit line, without selling it
 your wallet ── signs ──▶ Aave V4 / Morpho Blue on Base      the loan, recorded under your wallet
      ▲
      │  exact calls: decoded, simulated on a fresh block, Still's limit checked
-Still server ── reads Base at one block, prepares and reviews; holds no key and no funds
+Still server ── reads Base at one block, prepares and reviews unsigned loan calls
 ```
 
 - **Home** reads the wallet at one Base block and says, in dollars, how much it could borrow and how safe its loans are. A read that failed is called unread, never shown as zero.
 - **Get money** (`/borrow`) takes the collateral and the amount you choose, prepares the exact calls, simulates them, and enforces Still's limit on the server before your wallet opens.
 - **Repay** (`/repay`) pays an exact amount or all of it, and can take the collateral back in the same review.
 - **Spend** (`/spend`) shows what a loan could pay for at Bitrefill (eSIMs, phone top-ups, gift cards), priced in USDC, and pays one invoice of up to 210 USDC: with a loan in the same transaction (or in steps, for a wallet that cannot batch calls), or from USDC already in the wallet.
-- **Agent** (`/agent`) answers questions about your own wallet. A what-if ("what if NVDA falls 30%?") is the engine's arithmetic, not a model's guess. It never signs or sends.
+- **Agent** (`/agent`) answers questions about your own wallet. A what-if ("what if NVDA falls 30%?") is the engine's arithmetic, not a model's guess. It never signs or sends. A wallet can also mint one soulbound Still Agent NFT on Base ([`StillAgents.sol`](contracts/src/StillAgents.sol)) and connect its own Telegram bot, which answers the same questions with the same engine, links straight to Still's review screen, and carries Still's notices about that wallet.
+- **Still Gifts** (`/gifts`) distributes project-funded pieces of tokenized stocks for real actions on Still, claimed onchain by the recipient's own wallet through [`StillGifts.sol`](contracts/src/StillGifts.sol) using server-signed EIP-712 vouchers.
 - **Alerts:** a connected Telegram chat is told when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
 
 Your own wallet signs every step: Base Account, Coinbase Wallet, MetaMask, Rabby, or any wallet through WalletConnect. A wallet that cannot send a batch gets the same loan in steps, one transaction each, and the server reads each landed step from Base before it asks for the next. Still adds no fee to a loan or a repayment, and every Still loan transaction carries its ERC-8021 Builder Code.
@@ -54,7 +56,7 @@ The terms are versioned and live in [`lib/still-engine/src/policy.ts`](lib/still
 
 ## Who Still is for
 
-Coinbase's tokenized stocks are available only to persons in eligible jurisdictions outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase, a stock buy or a draw entry, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories, and Cuba, Iran, North Korea and Syria, which are under comprehensive US sanctions. An address it cannot place is refused too.
+Coinbase's tokenized stocks are available only to persons in eligible jurisdictions outside the United States, and Still follows that. Before the server hands out the calls of a new loan, a Spend purchase or a stock buy, or makes a new Still Agent, it reads which country the connection comes from by its IP address ([IP geolocation by DB-IP](https://db-ip.com)) and refuses the United States and its territories, and Cuba, Iran, North Korea and Syria, which are under comprehensive US sanctions. An address it cannot place is refused too.
 
 One exception, and what it rests on: when DB-IP places an address in the United States or a territory but a regional internet registry other than ARIN holds its block, Still asks that registry's own record of the network (RDAP). A network the registry records in a country Still is offered in is not refused for its address, and the person confirms as from anywhere else. That record is where the network's holder says it is, which is not proof of where a connection comes from: it is there because DB-IP's data lags blocks that moved from ARIN to another registry (a Frankfurt VPN exit read as American on 2026-11-15). No record, no answer, or a record in a refused place refuses as before, and a sanctioned country is never reopened this way.
 
@@ -105,7 +107,7 @@ Someone at home in Aave or Morpho gains little from this. Still is for people wh
 | `https://miorail.xyz/mcp` | none | Tokenized-stock evidence, B20 measurements and Still's terms. Read-only. |
 | `https://miorail.xyz/mcp/private` | OAuth 2.1 with your wallet | Every `/mcp` read and Still's Bitrefill reads, plus tools bound to the wallet that signed in: its own Still report, and review links for a loan, a repayment, a purchase, a stock buy or sale, or a swap. Another wallet's check and a what-if stay on `/mcp/still`. |
 
-No server signs or sends anything. A tool that prepares an action returns a five-minute link to the same review page Get money opens, bound to your wallet; you check it and sign it there. A loan, a repayment and a purchase it links are reviewed by the same server checks as Get money and Repay, Still's limit included. A chat that draws MCP Apps, as Claude does, shows that review as Still's card. Tool names, inputs and what each answer guarantees: [docs/MCP.md](docs/MCP.md).
+A tool that prepares an action returns a five-minute link to the same review page Get money opens, bound to your wallet. You review the action there and your wallet signs and submits the transaction. A loan, a repayment and a purchase it links are reviewed by the same server checks as Get money and Repay, Still's limit included. A chat that draws MCP Apps, as Claude does, shows that review as Still's card. Tool names, inputs and what each answer guarantees: [docs/MCP.md](docs/MCP.md).
 
 ## Miorail underneath
 
@@ -130,10 +132,40 @@ In Coinbase Wallet (formerly Base App), Still opens as an ordinary web page in t
 - Receipt success alone is insufficient. A Route Proof reconciles expected and actual asset and position changes, and gas.
 - RPC URLs, secrets, approval URLs, paid response bodies and delivery secrets do not enter public evidence or rendered traces.
 - Before a tokenized-stock clearance is minted, the token's own onchain transfer policy is asked about that exact wallet, and a measured denial refuses. It is the issuer's own per-address rule; where Still is offered is a separate check, above.
-- An assistant can prepare a review and can never confirm one. The clearance that authorises asking for an unsigned request is minted only in a person's own session, against terms the server re-established at that moment, and it expires in minutes.
+- An assistant can prepare a review. The person's wallet authorises and submits the transaction. For a tokenized-stock action, the server issues clearance in the person's own session after rechecking the terms. The clearance expires in minutes.
 - The public Builder Code travels as an optional `dataSuffix` capability on `wallet_sendCalls`. A wallet that does not name that capability gets the same ERC-8021 suffix appended to each call's data, which the contracts ignore; a call that already carries the code is never suffixed twice. Attribution never changes what a call does and never blocks a transaction.
 
 More in [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
+
+## Still contracts on Base
+
+Still deploys **no lending, vault, or proxy contracts**. Every loan, repayment, collateral withdrawal, and swap goes directly from your wallet to **Aave V4**, **Morpho Blue**, or the quoted router on Base — Still never takes custody of user collateral or USDC.
+
+Still maintains only **two small, standalone contracts** on Base Mainnet (`8453`), compiled with `solc 0.8.24` (`via_ir = true`, `optimizer_runs = 200`). Sourcify verified both **creation and runtime bytecode as exact matches** against the exact source files in this repository:
+
+| Contract | Purpose | Base Mainnet (`8453`) address | Verification | Tests |
+| --- | --- | --- | --- | --- |
+| [StillAgents.sol](contracts/src/StillAgents.sol) | Soulbound ERC-721 / ERC-5192 Still Agent NFT, one per wallet. | [`0x7D21311f43BdaaF1Adbe119f1b82d627dDe2F1C8`](https://basescan.org/address/0x7D21311f43BdaaF1Adbe119f1b82d627dDe2F1C8) | [Sourcify (exact match)](https://repo.sourcify.dev/8453/0x7D21311f43BdaaF1Adbe119f1b82d627dDe2F1C8) · [API](https://sourcify.dev/server/v2/contract/8453/0x7D21311f43BdaaF1Adbe119f1b82d627dDe2F1C8?fields=compilation) | [StillAgents.t.sol](contracts/test/StillAgents.t.sol) |
+| [StillGifts.sol](contracts/src/StillGifts.sol) | Holds project-funded tokenized stocks and pays wallet claims verified by EIP-712 vouchers. | [`0xeC8EAa6E46b640B0E1aFD899BFfc8cf8ef5d94F4`](https://basescan.org/address/0xeC8EAa6E46b640B0E1aFD899BFfc8cf8ef5d94F4) | [Sourcify (exact match)](https://repo.sourcify.dev/8453/0xeC8EAa6E46b640B0E1aFD899BFfc8cf8ef5d94F4) · [API](https://sourcify.dev/server/v2/contract/8453/0xeC8EAa6E46b640B0E1aFD899BFfc8cf8ef5d94F4?fields=compilation) | [StillGifts.t.sol](contracts/test/StillGifts.t.sol) |
+
+### What these contracts can and cannot do
+
+- **`StillAgents.sol` (`0x7D21…F1C8`):** Mints at most one non-transferable Still Agent per wallet (`tokenId = uint256(uint160(wallet))`). Transfers and approvals always revert (`Soulbound()`). Mint payments (ETH or USDC / EIP-2612 permit) forward atomically to `payee` in the same call, so the contract holds zero balance. Only the holder can call `burn()`. The owner (an operator key held off the API server) can only update prices, `payee`, `mintOpen`, `baseUri`, and two-step ownership — it can never seize, freeze, move, or burn any holder's token.
+- **`StillGifts.sol` (`0xeC8E…94F4`):** Holds only project-funded gift inventory — never user deposits or collateral. Each recipient submits their own `claim(...)` transaction with a server-signed EIP-712 voucher (`Gift(wallet, kind, token, amount, deadline)`). Onchain checks enforce a single claim per `(wallet, kind)` bitmask, a per-token `maxAmount` cap, voucher `deadline`, EIP-2 low-`s` signature validation, and reentrancy protection. The owner (operator key held off the API server) can rotate `signer`, update `maxAmount`, pause claims, withdraw unspent project inventory, and transfer ownership in two steps; once claimed, tokens belong exclusively to the recipient.
+
+### Verify locally with Foundry
+
+```bash
+cd contracts
+forge test --no-match-contract Fork
+```
+
+To also run the Base mainnet USDC permit fork test against live Base state:
+
+```bash
+cd contracts
+BASE_FORK_RPC=<your-base-rpc-url> forge test --match-path test/StillAgentsFork.t.sol
+```
 
 ## Proven on Base mainnet
 
@@ -164,7 +196,8 @@ The product name is Miorail; the `@mioagent/*` package namespace remains for com
 | --- | --- |
 | `artifacts/api-server` | Express API, authenticated product routes, the three MCP servers, workers, and reconciliation. |
 | `artifacts/interface` | The Still web app at miorail.xyz, which Coinbase Wallet (formerly Base App) opens in its in-app browser, and Still's Farcaster mini app. |
-| `artifacts/miniapp` | The earlier Next.js surface, served at `/app`. |
+| `artifacts/miniapp` | Earlier Next.js surface (retired on production; `/app` now redirects to `/`). |
+| `contracts/src`, `contracts/test` | Base Mainnet contracts (`StillAgents.sol`, `StillGifts.sol`) and their Foundry test suites (`contracts/legacy` holds an undeployed historical Sepolia experiment). |
 | `lib/still-engine` | Still's terms, the Mirror engine and its Morpho and Aave arithmetic. |
 | `lib/route-domain`, `lib/route-storage` | Versioned contracts, stable hashes, additive persistence, and append-only proof history. |
 | `lib/intent-engine`, `lib/route-engine`, `lib/route-card` | Typed intent, deterministic comparison, and Route Card projection. |
